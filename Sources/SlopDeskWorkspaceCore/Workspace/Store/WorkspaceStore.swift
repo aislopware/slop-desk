@@ -3290,8 +3290,8 @@ public final class WorkspaceStore {
         _ = workspaceMirrorRevision
     }
 
-    /// The channel feeding ``workspaceMirror``'s host truth. `nil` headless / in tests / with
-    /// `SLOPDESK_WORKSPACE_DOC` off — the control-push overlay then drives the UI on its own.
+    /// The channel feeding ``workspaceMirror``'s host truth. `nil` headless and in tests — the
+    /// control-push overlay then drives the UI on its own.
     @ObservationIgnored
     public internal(set) var workspaceChannel: WorkspaceChannelClient?
 

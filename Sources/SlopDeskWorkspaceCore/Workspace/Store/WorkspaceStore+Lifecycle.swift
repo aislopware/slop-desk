@@ -37,8 +37,7 @@ extension WorkspaceStore {
     ///   already moved to host truth, and its panes are the host's own),
     /// - it was never armed — the automation bootstrap owns its launch's layout and publishes it
     ///   itself, and the canvas model has no document at all,
-    /// - there is no channel (headless, a unit test) or the client's own `SLOPDESK_WORKSPACE_DOC`
-    ///   is off,
+    /// - there is no channel (headless, a unit test),
     /// - the channel is REFUSED or CLOSED: a definite answer that this host serves no document.
     ///   Holding past it would leave a window full of panes that never connect, which is strictly
     ///   worse than the churn,
@@ -72,7 +71,7 @@ extension WorkspaceStore {
         // lands, so nothing in it may open a PTY.
         if let launchAdoptIntentID { return !workspaceMirror.isPending(launchAdoptIntentID) }
         guard pendingLaunchAdopt != nil else { return true }
-        guard workspaceChannel != nil, WorkspaceChannelClient.isEnabledByDefault else { return true }
+        guard workspaceChannel != nil else { return true }
         switch workspaceChannelState {
         case .idle,
              .opening: return false

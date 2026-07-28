@@ -241,22 +241,13 @@ public final class HostServer: @unchecked Sendable {
     /// ``HostTransport``'s `reaperTask`).
     private var journalSweepTask: Task<Void, Never>?
 
-    /// `SLOPDESK_WORKSPACE_DOC` — the workspace-document channel (docs/45). **Default-ON**
-    /// (`!= "0"` to disable).
-    ///
-    /// With it off, `channelClass == 1` is refused. The retained type-21/26/27/32/33/34/36 edge sinks
-    /// still push every per-pane fact, but the LAYOUT does not come back: a client renders its tree
-    /// from the document and a refusal leaves it with none. So this default and
-    /// `WorkspaceChannelClient.isEnabledByDefault` move together — turning it off here without
-    /// turning it off there gives that client a blank window and no error.
-    public let workspaceDocEnabled: Bool
-
-    /// The host's single copy of the workspace. `nil` when ``workspaceDocEnabled`` is false.
-    let workspaceDocument: HostWorkspaceDocument?
+    /// The host's single copy of the workspace (docs/45). Every host serves one: a client renders its
+    /// tree FROM this document, so a host without one is a host a client cannot draw.
+    let workspaceDocument: HostWorkspaceDocument
 
     /// Where that copy lives between daemon runs, and where the first-run default comes from. `nil`
-    /// when the document is off, or when Application Support cannot be resolved — a host that cannot
-    /// persist still serves a workspace, it just mints a fresh one every start.
+    /// when Application Support cannot be resolved — a host that cannot persist still serves a
+    /// workspace, it just mints a fresh one every start.
     let workspaceStore: HostWorkspaceStore?
 
     /// At most ONE workspace channel per mux connection, keyed by `connectionID` and guarded by
@@ -306,7 +297,6 @@ public final class HostServer: @unchecked Sendable {
         resumeOnRecovery: Bool? = nil,
         scrollbackJournals: ScrollbackJournalStore? = nil,
         scrollbackSweepInterval: Duration = .seconds(24 * 3600),
-        workspaceDocEnabled: Bool? = nil,
         workspaceStore: HostWorkspaceStore? = nil,
         workspaceReconcileInterval: Duration = .milliseconds(500),
     ) {
@@ -321,21 +311,17 @@ public final class HostServer: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.scrollbackSweepInterval = scrollbackSweepInterval
         self.workspaceReconcileInterval = workspaceReconcileInterval
-        // Default-ON idiom (`!= "0"`): the client's layout is this document, so a host that does not
-        // serve it is a host a client cannot render.
-        let wantsDocument = workspaceDocEnabled
-            ?? (ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] != "0")
-        self.workspaceDocEnabled = wantsDocument
         // A fresh `epoch` per HostServer instance — which is per hostd start. Without it a restarted
         // daemon counts `stateNum` back up from 1 and a returning client one behind would accept a
         // delta computed against a completely different document.
-        workspaceDocument = wantsDocument ? HostWorkspaceDocument() : nil
+        workspaceDocument = HostWorkspaceDocument()
         // Injected by tests, which must never read or write the developer's real Application
         // Support: `load()` mints and `scheduleSave` writes, and one test doing either against the
-        // shared path would silently replace a workspace somebody is using.
-        self.workspaceStore = wantsDocument
-            ? (workspaceStore ?? HostWorkspaceStore.make(hostDisplayName: HostWorkspaceStore.hostDisplayName()))
-            : nil
+        // shared path would silently replace a workspace somebody is using. Every test that calls
+        // ``start()`` has to inject one (or point `SLOPDESK_WORKSPACE_STATE_DIR` at a scratch
+        // directory) — construction alone reaches no disk, `load()` does.
+        self.workspaceStore = workspaceStore
+            ?? HostWorkspaceStore.make(hostDisplayName: HostWorkspaceStore.hostDisplayName())
         gitWatchEnabled = ProcessInfo.processInfo.environment["SLOPDESK_GIT_WATCH"] != "0"
         transport = HostTransport()
 
@@ -393,7 +379,8 @@ public final class HostServer: @unchecked Sendable {
             // The store killed a session behind the document's back. Without this the document goes
             // semantically stale with no signal and every client keeps rendering a live row for a
             // shell that was reaped on a TTL.
-            guard let document = self?.workspaceDocument else { return }
+            guard let self else { return }
+            let document = workspaceDocument
             let paneID = session.sessionID
             Task { await document.markPaneDead(paneID) }
         }
@@ -446,7 +433,6 @@ public final class HostServer: @unchecked Sendable {
     /// cancelled by ``stop()`` so a repeated Start→Stop cycle never leaks a loop — the same contract
     /// `startJournalSweep` has.
     private func startWorkspaceReconciler() {
-        guard workspaceDocEnabled else { return }
         let interval = workspaceReconcileInterval
         workspaceReconcileTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -476,7 +462,7 @@ public final class HostServer: @unchecked Sendable {
     /// `project/gitSummary` costs no new codec on either end: the client already has a decoder for
     /// exactly these bytes.
     private func publishProjectGitSummary(_ status: WireMessage.ProjectGitStatus) {
-        guard let document = workspaceDocument else { return }
+        let document = workspaceDocument
         let id = projectObjectID(forKey: status.repoRoot)
         let key = status.repoRoot
         let body = Self.wireBody(of: .projectGitStatus(status))
@@ -562,7 +548,7 @@ public final class HostServer: @unchecked Sendable {
         workspaceReconcileTask = nil
         // A debounce that outlives the process loses the last thing the user did.
         await workspaceStore?.flush()
-        await workspaceDocument?.shutdown()
+        await workspaceDocument.shutdown()
         drainWorkspaceChannels()
         // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
@@ -642,9 +628,10 @@ public final class HostServer: @unchecked Sendable {
     /// no client kind and the client's own resize path has no platform gate — a client-side rule
     /// alone would be defeated by any build that predates it.
     ///
-    /// **No workspace channel means CONTRIBUTES.** That is the shipped `slopdesk-client` CLI and the
-    /// `SLOPDESK_WORKSPACE_DOC=0` case; defaulting them to passive would leave a CLI unable to size
-    /// its own pane.
+    /// **No workspace channel means CONTRIBUTES.** That is the shipped `slopdesk-client` CLI, which
+    /// only ever opens class 0 or 2, and the window before a GUI client's subscribe lands (closed by
+    /// ``reresolveSizePassivity(connectionID:)``); defaulting them to passive would leave a CLI unable
+    /// to size its own pane.
     func sizePassiveForConnection(_ connectionID: UUID) -> Bool {
         guard let channel = workspaceChannel(for: connectionID) else { return false }
         // A phone must never crush a Mac. The subscribe's own `contributesSize` flag is a client
@@ -844,7 +831,8 @@ public final class HostServer: @unchecked Sendable {
         // else, because a roster that merely stops arriving is indistinguishable from a stalled host.
         let workspace = workspaceChannels.removeValue(forKey: id)
         lock.unlock()
-        if let workspace, let document = workspaceDocument {
+        if let workspace {
+            let document = workspaceDocument
             Task { await document.removeSubscriber(id: workspace.id) }
         }
         if let conn { Task { await conn.close() } }

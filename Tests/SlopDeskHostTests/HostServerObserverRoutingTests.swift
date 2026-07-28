@@ -24,7 +24,6 @@ final class HostServerObserverRoutingTests: XCTestCase {
         let server = HostServer(
             port: 0,
             shellPath: "/bin/cat",
-            workspaceDocEnabled: false,
         )
         let (clientControl, hostControl) = LoopbackMuxLink.pair()
         let (clientData, hostData) = LoopbackMuxLink.pair()

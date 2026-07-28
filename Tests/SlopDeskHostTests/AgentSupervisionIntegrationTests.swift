@@ -33,7 +33,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         // via the ShellIntegration shim — points HISTFILE at the real ~/.zsh_history. These tests
         // drive agent-status plumbing, not shell behaviour, so a plain sh with a throwaway HOME
         // touches none of the developer's rc or history files.
-        let server = HostServer(port: 0, shellPath: "/bin/sh", workspaceDocEnabled: false)
+        let server = HostServer(port: 0, shellPath: "/bin/sh")
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
@@ -81,7 +81,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
 
     /// `listPanesForControl()` reflects a reported state on the matching pane.
     func testListPanesReflectsReportedState() async throws {
-        let server = HostServer(port: 0, shellPath: "/bin/sh", workspaceDocEnabled: false) // history-safe (see above)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
@@ -111,7 +111,6 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
             port: 0,
             agentControlSocketPath: socketPath,
             ctlBinaryPath: ctlBin,
-            workspaceDocEnabled: false,
         )
         defer { Task { await server.stop() } }
 
@@ -153,7 +152,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     /// teardown paths) fan nothing: the working report would be the last event, so the set would
     /// keep the closed pane forever.
     func testTeardownOfWorkingPaneReleasesPreventSleepTracking() async throws {
-        let server = HostServer(port: 0, shellPath: "/bin/sh", workspaceDocEnabled: false) // history-safe (see above)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
@@ -212,7 +211,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     /// A freshly-spawned pane reports a state in the closed supervision set (a live pane with no
     /// claude → "idle"), never an enum case name or empty string.
     func testFreshPaneStateIsInClosedSet() async throws {
-        let server = HostServer(port: 0, shellPath: "/bin/sh", workspaceDocEnabled: false) // history-safe (see above)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
         let paneId = try await server.spawnStandalonePane(
             cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,

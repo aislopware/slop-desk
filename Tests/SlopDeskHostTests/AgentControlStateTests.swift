@@ -44,7 +44,7 @@ final class AgentControlStateTests: XCTestCase {
     /// `list-panes` on an empty host still emits a well-formed `panes` array (no `state` to read,
     /// but the verb must not crash). The state-bearing path is covered by the live-PTY test below.
     func testListPanesEmptyStillOK() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         let resp = AgentControlHandler.dispatch(id: "1", method: "list-panes", params: [:], server: server)
         let obj = (try? JSONSerialization.jsonObject(
             with: Data(resp.trimmingCharacters(in: .newlines).utf8),
@@ -61,7 +61,7 @@ final class AgentControlStateTests: XCTestCase {
     }
 
     func testReportMissingPaneIdIsError() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         let resp = AgentControlHandler.dispatch(
             id: "1", method: "report", params: ["state": "working"], server: server,
         )
@@ -69,7 +69,7 @@ final class AgentControlStateTests: XCTestCase {
     }
 
     func testReportMissingStateIsError() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         let resp = AgentControlHandler.dispatch(
             id: "2", method: "report",
             params: ["paneId": "00000000-0000-0000-0000-000000000000"], server: server,
@@ -78,7 +78,7 @@ final class AgentControlStateTests: XCTestCase {
     }
 
     func testReportInvalidStateIsError() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         // An unknown state string must be REJECTED before touching any session (validate-then-drop).
         let resp = AgentControlHandler.dispatch(
             id: "3", method: "report",
@@ -91,7 +91,7 @@ final class AgentControlStateTests: XCTestCase {
     }
 
     func testReportValidStateUnknownPaneIsNotFound() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         // A VALID state but a missing pane → "not found" (state validated FIRST, then lookup).
         let resp = AgentControlHandler.dispatch(
             id: "4", method: "report",
@@ -139,7 +139,7 @@ final class AgentControlStateTests: XCTestCase {
     }
 
     func testReadUnwrappedMissingPaneIsError() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         let resp = AgentControlHandler.dispatch(
             id: "5", method: "read",
             params: ["source": "unwrapped"], server: server,

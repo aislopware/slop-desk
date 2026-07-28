@@ -62,22 +62,12 @@ public final class WorkspaceChannelClient {
         case opening
         /// Subscribed and applying frames. The associated value is the last acked `stateNum`.
         case live(Int64)
-        /// The host does not serve this channel — the flag is off there, or a subscriber for this
-        /// connection already exists. A definite answer, so the client stops rather than retrying.
+        /// The host does not serve this channel — a subscriber for this connection already exists, or
+        /// the peer does not route the class at all. A definite answer, so the client stops rather
+        /// than retrying.
         case refused
         /// The channel died. The connection layer restarts us; nothing retries in here.
         case closed
-    }
-
-    /// `SLOPDESK_WORKSPACE_DOC` — `!= "0"`, **default-ON**. The client's layout IS the document, so
-    /// with the channel closed there is no layout: `topology` stays `nil`, the store renders zero
-    /// sessions and every mutation is a silent no-op.
-    ///
-    /// That is also why this default and `HostServer.workspaceDocEnabled`'s move TOGETHER. A
-    /// default-ON client against a default-OFF host gets `sendOpenAck(accepted: false)`, which
-    /// publishes ``State/refused`` and never retries — a blank window with no error anywhere.
-    public static var isEnabledByDefault: Bool {
-        ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] != "0"
     }
 
     /// What this device calls itself in the presence roster — what OTHER clients see when a pane is

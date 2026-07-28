@@ -1101,8 +1101,8 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    **iOS is size-passive by default.** A phone must never crush a Mac. Enforced HOST-side, from the
    workspace channel's `clientKind`: `MuxChannelOpen` carries no client kind, so a client-side gate
    alone would be defeated by any build that predates it. A pane channel with **no** workspace channel
-   behind it **CONTRIBUTES** — that is `slopdesk-client` and every `SLOPDESK_WORKSPACE_DOC=0` client,
-   and defaulting them to passive would leave a CLI unable to size its own pane. Panes opened before
+   behind it **CONTRIBUTES** — that is `slopdesk-client`, which only ever opens class 0 or 2, and
+   defaulting it to passive would leave a CLI unable to size its own pane. Panes opened before
    the workspace `subscribe` lands are re-resolved by the subscribe itself. **A pane no VOTER holds
    is sized by its size-passive members instead** — "never crush a Mac" is about a Mac that is
    THERE, and folding every contributor away on an iOS-only setup left the shell at the `openpty`
@@ -1349,6 +1349,10 @@ Ships behind **`SLOPDESK_WORKSPACE_DOC`** (`== "1"`, default-OFF during bake-in;
 default-ON once hardware-proven). When off, the retained type-21/26/27/32/33/34/36 sinks **are** the
 fallback — they still write `fastPath` and, with no `entries` to lose to, drive the UI exactly as today.
 
+**Terminal state (2026-07-29):** the flag is DELETED and the channel is unconditional on both ends
+(DECISIONS, "The workspace document is unconditional"). The fallback described above stopped being
+one the moment Phase 5b projected the tree — the sinks carry per-pane FACTS, never the LAYOUT.
+
 **Host**
 - `HostWorkspaceDocument` actor (pane + project records only — topology still client-owned), `epoch`,
   `stateNum`.
@@ -1478,6 +1482,8 @@ the review round after it added exactly one op (26 `setPaneVideoTarget`, below).
 - **`SLOPDESK_WORKSPACE_DOC` is default-ON (`!= "0"`) on BOTH ends, in one commit.** The 47 assignment
   sites are intents; `recentlyClosedTabs`, `plannedTabSuccessor`, `replaceTree` and `mutateTree` are
   deleted; `syncInputTabs` is host truth via `tab/syncInputArmed`, and therefore persisted.
+  *(2026-07-29: the flag is deleted outright. The one-commit coupling it needed is now structural —
+  there is no off position for the two ends to disagree about.)*
 - **`followSessionFocus` is read** (§8.2) — an unfollowing device overlays its own focus on the
   projection and sends no intent, while still publishing presence.
 - **The GUI gates prove the shipping path.** `check-macos.sh` and `check-video.sh` give their daemon a
@@ -1685,7 +1691,7 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
 | Risk | Phase | Mitigation |
 |---|---|---|
 | The `MuxChannelSession` subscriber-set rewrite touches the out-FIFO, the 1024-shed control queue, the credit window, journal ownership, the input task and `rebindRelay`'s reattach ordering **simultaneously** | 6 | Last phase; **two-subscriber `SubprocessE2ETests` with a real PTY** is the gate, not loopback — plus a process-table shell count, so a join that secretly forked cannot pass |
-| A corrupt `workspace-state.json` bricks every client at once | 5 | Decode-fail → the **default** document + `.corrupt-<ts>` preserve-aside; `SLOPDESK_WORKSPACE_DOC=0` falls back to the retained fast-path sinks |
+| A corrupt `workspace-state.json` bricks every client at once | 5 | Decode-fail → the **default** document + `.corrupt-<ts>` preserve-aside. There is no fallback and never was one: the fast-path sinks carry per-pane facts, not the LAYOUT, so a host that serves no document serves no tree |
 | `WorkspaceTreeOps` was written for trusted local `@MainActor` callers and now takes network input | 5 | Depth cap 12, `u8` child counts, all counts bounded before allocate, every referenced ID must pre-exist; `WorkspaceIntentHostileTests` |
 | Laggard-eviction threshold is a policy invention with no prior art in this repo | 6 | Calibrated below the real 64 MiB offline gate; real cellular-iOS soak, not a unit test; same commit as fan-out |
 | Golden hand-merge performed **three** times (Phase 3 codec keys, Phase 4 wire keys, `muxEnvelopes` class-1 record) against a 48-key corpus with 13 non-emitted frozen keys | 3, 4 | Never `>`-redirect; regenerate with no `SLOPDESK_*` env; the frozen-key list goes in the Phase-3 commit message |
@@ -1698,14 +1704,13 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
 
 **Open questions**
 
-1. ~~Should `SLOPDESK_WORKSPACE_DOC` ever flip default-ON before Phase 6 lands?~~ **SETTLED**
-   (DECISIONS, Multi-client Phase 5b — "the pane's facts get somewhere to live" ruling 1, then "the
-   store's mutations become intents" ruling 1). While the store owns `tree` the flag gates a
-   TRANSPORT and stays OFF: a flag-off client draws the same sidebar one RTT staler, off the per-pane
-   control pushes and `workspace-cache.json`, and the render path is not allowed to depend on it. It
-   flips **default-ON on BOTH ends in the same commit that projects the tree**, because a
-   default-ON client against a default-OFF host is answered `.refused`, holds `topology == nil`, and
-   renders a blank window with no error.
+1. ~~Should `SLOPDESK_WORKSPACE_DOC` ever flip default-ON before Phase 6 lands?~~ **CLOSED — the
+   answer is removal, not a default** (DECISIONS, "The workspace document is unconditional",
+   2026-07-29). The two earlier rulings are superseded. The flag's off position is a host that
+   answers `.refused`, a client that holds `topology == nil` and never retries, and every mutation a
+   silent no-op — a blank window with no error. Nobody wants that configuration, and a switch with
+   one usable position is a coupling hazard wearing a settings label. Multi-client sync is
+   first-class and always-on, like tmux and zellij, and has no toggle at all.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
    **The MECHANISM is now soaked** (`scripts/soak-fanout-laggard.sh`, real `slopdesk-hostd` + two
    `slopdesk-client`s, the laggard frozen with `SIGSTOP` so it stops reading AND stops acking in the

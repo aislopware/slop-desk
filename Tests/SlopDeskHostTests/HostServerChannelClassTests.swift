@@ -28,7 +28,7 @@ final class HostServerChannelClassTests: XCTestCase {
     /// history. `cat` on a pty stays alive (so a leaked pane is VISIBLE to the assertion) and reads
     /// no startup files.
     private func makeRig() async -> Rig {
-        let server = HostServer(port: 0, shellPath: "/bin/cat", workspaceDocEnabled: false)
+        let server = HostServer(port: 0, shellPath: "/bin/cat")
         let (clientControl, hostControl) = LoopbackMuxLink.pair()
         let (clientData, hostData) = LoopbackMuxLink.pair()
         let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)

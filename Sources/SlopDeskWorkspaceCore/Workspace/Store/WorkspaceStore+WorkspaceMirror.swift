@@ -524,8 +524,8 @@ public extension WorkspaceStore {
     /// Re-opening on every establish is deliberate: the previous subscription died with the old link,
     /// and the target may have CHANGED — a host that refused the class is not evidence about the next
     /// one. `stop()` clears the refusal for that reason.
-    func startWorkspaceChannelIfEnabled() {
-        guard let workspaceChannel, WorkspaceChannelClient.isEnabledByDefault else { return }
+    func startWorkspaceChannel() {
+        guard let workspaceChannel else { return }
         workspaceChannel.stop()
         workspaceChannel.start()
     }
@@ -584,10 +584,10 @@ public extension WorkspaceStore {
     /// What the store does when the app-global shared connection comes up: redial the panes that were
     /// left disconnected, then re-open the workspace subscription.
     ///
-    /// Re-opening every time is deliberate — see ``startWorkspaceChannelIfEnabled()``.
+    /// Re-opening every time is deliberate — see ``startWorkspaceChannel()``.
     func handleConnectionEstablished() {
         redialDisconnectedPanes()
-        startWorkspaceChannelIfEnabled()
+        startWorkspaceChannel()
     }
 
     /// Builds the production channel: `channelClass 1` on the app-global shared connection.

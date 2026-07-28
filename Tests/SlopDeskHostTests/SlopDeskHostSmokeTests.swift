@@ -13,7 +13,7 @@ final class SlopDeskHostSmokeTests: XCTestCase {
     }
 
     func testHostServerHoldsPortAndStartsEmpty() {
-        let server = HostServer(port: 7420, workspaceDocEnabled: false)
+        let server = HostServer(port: 7420)
         XCTAssertEqual(server.port, 7420)
         XCTAssertTrue(server.liveSessionIDs().isEmpty)
         XCTAssertTrue(server.shellPath.hasPrefix("/"))

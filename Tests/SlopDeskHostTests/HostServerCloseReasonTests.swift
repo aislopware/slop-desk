@@ -25,7 +25,7 @@ final class HostServerCloseReasonTests: XCTestCase {
     }
 
     private func makeRig() async -> Rig {
-        let server = HostServer(port: 0, shellPath: "/bin/cat", workspaceDocEnabled: false)
+        let server = HostServer(port: 0, shellPath: "/bin/cat")
         let (clientControl, hostControl) = LoopbackMuxLink.pair()
         let (clientData, hostData) = LoopbackMuxLink.pair()
         let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)

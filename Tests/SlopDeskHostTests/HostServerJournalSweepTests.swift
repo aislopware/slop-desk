@@ -47,7 +47,6 @@ final class HostServerJournalSweepTests: XCTestCase {
             resumeOnRecovery: true,
             scrollbackJournals: store,
             scrollbackSweepInterval: .milliseconds(50),
-            workspaceDocEnabled: false,
         )
 
         waitUntil { store.sweepCallCountForTesting() >= 2 }

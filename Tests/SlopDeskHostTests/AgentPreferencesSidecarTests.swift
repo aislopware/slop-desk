@@ -73,11 +73,11 @@ final class AgentPreferencesSidecarTests: XCTestCase {
 
     /// Explicit override: `resumeOnRecovery: false` forces `detachEnabled` off even when detach is requested.
     func testResumeOffForcesDetachOffViaInitOverride() {
-        let on = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let on = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         XCTAssertTrue(on.detachEnabled, "resume ON + detach requested ⇒ reattach machinery stays enabled")
         XCTAssertTrue(on.resumeOnRecovery)
 
-        let off = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: false, workspaceDocEnabled: false)
+        let off = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: false)
         XCTAssertFalse(
             off.detachEnabled,
             "resume OFF must disable the reattach machinery — recovery spawns a fresh shell, not a no-op toggle",
@@ -91,7 +91,7 @@ final class AgentPreferencesSidecarTests: XCTestCase {
     func testResumeFlagFromSidecarOverlayActuatesDetachGate() {
         // resume=0 via the same overlay the sidecar populates → detach forced off.
         EnvConfig.overlay = EnvBridge.toEnv(AgentPreferences(resumeOnRecovery: false))
-        let serverOff = HostServer(port: 0, detachEnabled: true, workspaceDocEnabled: false)
+        let serverOff = HostServer(port: 0, detachEnabled: true)
         XCTAssertFalse(
             serverOff.detachEnabled,
             "sidecar resume=0 must reach HostServer and disable detach (the actuation consumer)",
@@ -99,7 +99,7 @@ final class AgentPreferencesSidecarTests: XCTestCase {
 
         // resume=1 → detach honoured.
         EnvConfig.overlay = EnvBridge.toEnv(AgentPreferences(resumeOnRecovery: true))
-        let serverOn = HostServer(port: 0, detachEnabled: true, workspaceDocEnabled: false)
+        let serverOn = HostServer(port: 0, detachEnabled: true)
         XCTAssertTrue(serverOn.detachEnabled, "sidecar resume=1 leaves the detach/reattach machinery enabled")
     }
 }

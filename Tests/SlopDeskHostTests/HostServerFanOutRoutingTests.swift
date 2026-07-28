@@ -43,7 +43,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// same session once per attached client. An orchestrator would see one shell twice, with two
     /// identical pane ids.
     func testAFannedOutPaneIsListedOnce() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -64,7 +64,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// the killed pane reported by `listPanesForControl`, re-shut by `stop()`, and read as
     /// still-attached by `recoverFailedRebind`'s live-map scan.
     func testKillPaneForControlRemovesEveryKeyNamingThePane() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -84,7 +84,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// The same for the deliberate-close reap: `removeMuxSession` must not leave N−1 stale entries
     /// pointing at a session it just shut down.
     func testRemovingASessionDropsEveryAliasingKey() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let pane = makeFannedOutPane(on: server, sessionID: UUID())
@@ -102,7 +102,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// A peer `channelClose` under a fan-out must not reap the other client's running agent. It
     /// drops only the closer's registration; the session — and its PTY — stays live.
     func testAPeerCloseWhileAnotherClientWatchesIsALeaveNotAReap() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -129,7 +129,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// pane, and — critically — the session must NOT be parked in the detached store, because
     /// parking engages the 64 MiB offline gate that pauses the PTY drain for everyone.
     func testALinkDropWithAnotherClientAttachedDoesNotParkTheSession() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -154,7 +154,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
 
     /// The LAST link dropping parks the session, exactly as it always has.
     func testTheLastLinkDroppingStillParksTheSession() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -175,7 +175,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// longer names is reaped refcount-blind. Without this the fan-out's refcounted close would
     /// leave a running shell with no UI anywhere and no document entry.
     func testAPaneRemovedFromTheTopologyIsReapedRegardlessOfItsSubscriberCount() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let closed = UUID()
@@ -208,7 +208,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// INCUMBENT: its input/control/sender tasks cancelled, its pane silent, and — since it was the
     /// only member — its still-connected session parked in the detached store.
     func testALinkDropDuringAJoinRetiresTheJoinerNotTheIncumbent() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -245,7 +245,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
 
     /// The same window reached by a clean peer `channelClose` — a client cancelling a slow join.
     func testAPeerCloseDuringAJoinLeavesTheIncumbentsShellRunning() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()

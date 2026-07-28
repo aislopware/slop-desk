@@ -69,7 +69,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
     /// A detach-enabled server with NO listener started — only the detach/reattach state
     /// machine is exercised (explicit flags so ambient `SLOPDESK_*` env can't flip the gate).
     private func makeServer() -> HostServer {
-        HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
     }
 
     /// A dead channel pair — what `open.data`/`open.control` look like once `finishLink` ran.

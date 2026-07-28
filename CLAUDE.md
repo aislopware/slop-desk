@@ -78,6 +78,7 @@ Grep `SLOPDESK_` for the full set. **Default idiom:** `!= "0"` → default-ON; `
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |
 | `SLOPDESK_AUDIO` | host app-audio stream gate (default-ON); `_CODEC=pcm` bypasses AAC-ELD |
 | `SLOPDESK_SUB_LAG_BYTES` | laggard-eviction threshold, default **32 MiB** — deliberately BELOW the 64 MiB offline gate. TUNING, not a toggle. A lone subscriber is never evicted because eviction needs two or more members |
+| `SLOPDESK_WORKSPACE_STATE_DIR` | relocates `workspace-state.json`. EVERY `HostServer` builds a `HostWorkspaceStore` — a test that calls `start()` must set this or inject `workspaceStore:`, or it reads/overwrites the developer's real workspace |
 
 ## Traps
 
@@ -87,4 +88,5 @@ Grep `SLOPDESK_` for the full set. **Default idiom:** `!= "0"` → default-ON; `
 - No contiguous secret literals in fixtures (GitHub push protection) — assemble at runtime
 - libghostty xcframework: `ThirdParty/ghostty/build-libghostty.sh` (Zig; never blocks headless core)
 - Test-first: prove fail before fix; no tautological asserts
+- **Multi-client sync has NO toggle** — workspace document and PTY fan-out are both unconditional (tmux/zellij semantics). Do not reintroduce `SLOPDESK_WORKSPACE_DOC` / `SLOPDESK_PANE_FANOUT`; a host that refuses `channelClass 1` gives a client a blank window with no error
 - VT HEVC: no `max_ref_frames=1` (all-IDR); no `UsingHardware…` query under low-latency RC (`-12900`); no Lossless key; `DataRateLimits` = bitrate/8

@@ -87,13 +87,13 @@ final class DetachedSessionStoreTests: XCTestCase {
     /// `SLOPDESK_DETACH_TTL_SECS`/`detachTTLSecs` opts into timed eviction.
     func testHostServerTTLResolution() {
         XCTAssertNil(
-            HostServer(port: 0, detachTTLSecs: 0, workspaceDocEnabled: false).detachTTL,
+            HostServer(port: 0, detachTTLSecs: 0).detachTTL,
             "0 must mean never, not instant eviction",
         )
-        XCTAssertEqual(HostServer(port: 0, detachTTLSecs: 7, workspaceDocEnabled: false).detachTTL, .seconds(7))
+        XCTAssertEqual(HostServer(port: 0, detachTTLSecs: 7).detachTTL, .seconds(7))
         if ProcessInfo.processInfo.environment["SLOPDESK_DETACH_TTL_SECS"] == nil {
             XCTAssertNil(
-                HostServer(port: 0, workspaceDocEnabled: false).detachTTL,
+                HostServer(port: 0).detachTTL,
                 "the default is tmux semantics: never",
             )
         }
@@ -104,15 +104,15 @@ final class DetachedSessionStoreTests: XCTestCase {
     func testHostServerDetachCapResolution() {
         if ProcessInfo.processInfo.environment["SLOPDESK_DETACH_MAX_SESSIONS"] == nil {
             XCTAssertNil(
-                HostServer(port: 0, workspaceDocEnabled: false).detachMaxSessionsResolved,
+                HostServer(port: 0).detachMaxSessionsResolved,
                 "default is no cap",
             )
         }
         XCTAssertEqual(
-            HostServer(port: 0, detachMaxSessions: 512, workspaceDocEnabled: false).detachMaxSessionsResolved, 512,
+            HostServer(port: 0, detachMaxSessions: 512).detachMaxSessionsResolved, 512,
         )
         XCTAssertNil(
-            HostServer(port: 0, detachMaxSessions: 0, workspaceDocEnabled: false).detachMaxSessionsResolved,
+            HostServer(port: 0, detachMaxSessions: 0).detachMaxSessionsResolved,
             "a non-positive cap means unbounded, not instant eviction",
         )
     }

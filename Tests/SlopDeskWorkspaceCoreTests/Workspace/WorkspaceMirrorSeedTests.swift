@@ -6,8 +6,8 @@ import XCTest
 
 /// The store's mirror starts out holding the SAME layout the store restored.
 ///
-/// A client that has yet to receive a type-37 frame — a fresh launch, an offline relaunch,
-/// `SLOPDESK_WORKSPACE_DOC=0` — reads `nil` from `workspaceMirror.topology` without this seed, and
+/// A client that has yet to receive a type-37 frame — a fresh launch, an offline relaunch — reads
+/// `nil` from `workspaceMirror.topology` without this seed, and
 /// every mirror-backed read then answers "nothing known". That is silent: `WorkspaceMirrorBox.stageIntent`
 /// returns `nil` for a nil topology and every mutating call built on it becomes a no-op with no error
 /// anywhere.

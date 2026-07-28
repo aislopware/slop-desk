@@ -4328,3 +4328,94 @@ never evicted because eviction requires two or more members — not because the 
 `paneFanoutEnabled` appears in no encoder or decoder. `MuxChannelClass`'s raw values are untouched
 and the `channelClass` byte has been on the wire and golden-pinned since the mux landed; only its
 ROUTING moves. `golden/golden_vectors.json` is byte-identical.
+
+## The workspace document is unconditional (2026-07-29)
+
+Supersedes both "`SLOPDESK_WORKSPACE_DOC` stays default-OFF, and the client is not allowed to need
+it" (Multi-client Phase 5b, 2026-07-27) and "`SLOPDESK_WORKSPACE_DOC` flips default-ON on BOTH ends
+in the SAME commit" (Multi-client Phase 5b, 2026-07-27), and closes docs/45 §10 open question 1. The
+companion to "Multi-client fan-out is unconditional": multi-client sync is a first-class, always-on
+feature and ships with **no toggle at all**. `SLOPDESK_WORKSPACE_DOC` is deleted — the environment
+variable, `HostServer.workspaceDocEnabled` (property, init parameter, both guards),
+`WorkspaceChannelClient.isEnabledByDefault`, and its two conjuncts.
+
+### 1. A switch whose off position is a broken product is not a switch
+
+The 2026-07-27 coupling ruling described the off position exactly, and describing it is what settles
+it. A host with the flag off answers `sendOpenAck(accepted: false)`; the client publishes
+``WorkspaceChannelClient/State/refused`` and never retries, because a refusal is a definite answer
+rather than a transient failure; `topology` stays `nil`; `stageIntent` returns `nil`, so every
+mutation is a silent no-op that compiles. What the user gets is a blank window with no error
+anywhere. There is no configuration in which somebody wants that, and a flag with one usable position
+is a coupling hazard with a settings-shaped disguise — the two ends had to move in one commit
+precisely because the mismatch is undiagnosable from the UI.
+
+The "flag gates a TRANSPORT, so nothing on the render path may depend on it" rule from the earlier
+entry is not repudiated; it was overtaken. Once `WorkspaceStore.tree` became a projection of
+`workspaceMirror.topology`, the render path DOES depend on the channel, and the answer stated there
+was to flip the flag rather than keep a tree-owning path beside the projection. Removing it is that
+answer taken to its end.
+
+### 2. Only the flag's share of the optionality goes
+
+`HostServer.workspaceDocument` was Optional for exactly one reason — a single ternary on the flag —
+so it becomes non-Optional and `openWorkspaceChannel`'s flag-off refusal arm goes with it as
+unreachable code.
+
+`HostServer.workspaceStore` stays Optional, and this is the distinction the change turns on:
+`HostWorkspaceStore.make(...)` returns `nil` when Application Support cannot be resolved, and
+`installWorkspaceDocument` has a live degraded arm for it that mints a fresh default each start and
+keeps `pristine` true. A host that cannot persist still serves a workspace. Only the `: nil` arm of
+the flag's ternary is deleted; the `?` on the type, `workspaceStore?.flush()` in `stop()`, and the
+injected `workspaceStore:` init parameter are all untouched.
+
+Also explicitly not dead: `State.refused` and `sendOpenAck(accepted: false)` for `channelClass == 1`,
+which a second workspace channel on one mux connection still produces (two subscribers behind one
+link would each keep their own acked base for the same viewer, and the roster would show one device
+twice). `testASecondWorkspaceChannelOnOneConnectionIsRefused` is what keeps that path pinned.
+
+### 3. "No workspace channel means CONTRIBUTES" survives, minus one clause
+
+`sizePassiveForConnection` returning `false` for a connection with no workspace channel is unchanged.
+Its populations are: the shipped `slopdesk-client` CLI, which can only ever open `channelClass` 0 or
+2; the transient window in which a GUI client has opened pane channels but its subscribe has not
+landed, which is what `reresolveSizePassivity(connectionID:)` exists to close; and any peer that does
+not know the class. The flag-off client is struck from that list and nothing else about the rule
+moves.
+
+### 4. What the removal costs, named rather than discovered
+
+Every host unit test that passed `workspaceDocEnabled: false` did so to stop `HostServer.init` from
+constructing a `HostWorkspaceStore` at the developer's real Application Support path. With the
+argument gone they all construct one. That is inert as the suite stands — no XCTest calls
+`HostServer.start()`, so `installWorkspaceDocument()` and therefore `store.load()` never run, and
+`stop()`'s `flush()` returns early with nothing pending — but it is a live trap for the next test
+that adds a `start()`.
+
+So the standing rule from the Phase-5 entry is restated wider: **any test that calls
+`HostServer.start()` must inject a `workspaceStore:` or point `SLOPDESK_WORKSPACE_STATE_DIR` at a
+scratch directory.** The construction is free; reaching disk is not.
+
+### 5. Proven by inversion, and by an env read that must stay inert
+
+`testTheFlagOffRefusesTheChannel` is inverted, not deleted:
+`testTheWorkspaceChannelIsServedWithTheEnvironmentSetToZero` sets `SLOPDESK_WORKSPACE_DOC=0` in the
+process environment, builds the rig under it, and requires an accepted open AND a real snapshot. It
+is red before the change and green after, and it stays red if anyone re-introduces an env read —
+which a constructor-argument test could not do, because after the change there is no argument to
+pass. Deleting the test instead would have left the suite identically green on both sides of the
+change, which proves nothing.
+
+### 6. No wire change, no golden change
+
+`workspaceDocEnabled` appears in no encoder or decoder, and the golden generator reads no
+`SLOPDESK_*` variable. `MuxChannelClass.workspace`'s raw value `1` and the type-17/37 envelopes are
+untouched — only whether the host is willing to route the class, which it now always is.
+`golden/golden_vectors.json` is byte-identical.
+
+### 7. What `make check` still cannot see
+
+Green here proves the removal compiles and the unit contracts hold. It does not prove two clients
+converge — `scripts/check-multiclient.sh` (Accessibility TCC, unlocked Aqua) and
+`scripts/check-launch-restore.sh` are the only gates that reach the shipping workspace-document path,
+and neither runs under `make check`.

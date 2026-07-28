@@ -78,10 +78,10 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     // MARK: - Size-passivity is a HOST verdict
 
     /// The fallback that keeps the CLI working. A pane channel with no workspace channel behind it is
-    /// `slopdesk-client` (and every `SLOPDESK_WORKSPACE_DOC=0` client); defaulting it to passive would
-    /// leave it unable to size its own pane, and would take the two-subscriber E2E gate with it.
+    /// `slopdesk-client`, or a GUI client whose subscribe has not landed yet; defaulting it to passive
+    /// would leave it unable to size its own pane, and would take the two-subscriber E2E gate with it.
     func testAPaneWithNoWorkspaceChannelContributes() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         defer { Task { await server.stop() } }
         XCTAssertFalse(
             server.sizePassiveForConnection(UUID()),
@@ -90,7 +90,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     }
 
     func testAnIOSClientIsSizePassiveAndAMacIsNot() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         defer { Task { await server.stop() } }
 
         let phone = UUID()
@@ -117,7 +117,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     /// voter present the phone would keep publishing `contributes: true` after the re-resolve — for
     /// the right reason, but the assertion would then be blind to the thing it exists to check.
     func testASubscribeReresolvesPassivityForPanesOpenedFirst() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         defer { Task { await server.stop() } }
 
         let connectionID = UUID()
@@ -145,7 +145,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     // MARK: - The published record
 
     func testTheRosterNamesTheResolvedGridAndTheDeviceHoldingIt() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         defer { Task { await server.stop() } }
 
         let connectionID = UUID()
@@ -179,7 +179,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     /// The join misses for `slopdesk-client`, which opens no workspace channel. Dropping the
     /// attachment there would publish a pane that a client is demonstrably holding as unheld.
     func testAnUnlabelledAttachmentIsStillPublished() {
-        let server = HostServer(port: 0, workspaceDocEnabled: false)
+        let server = HostServer(port: 0)
         defer { Task { await server.stop() } }
 
         let session = makeSession(sessionID: UUID())

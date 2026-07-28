@@ -22,7 +22,7 @@ extension HostServer {
     /// a fresh default each start. Degraded, not broken — and `pristine` stays true, so a client can
     /// still upload the layout it has.
     func installWorkspaceDocument() async {
-        guard let document = workspaceDocument else { return }
+        let document = workspaceDocument
         // The roster's pane half is DERIVED from the live session maps, so the document asks for it
         // at broadcast time rather than being told. Weak: the document outlives nothing, but a strong
         // capture here would be a retain cycle through the server's own property.
@@ -55,13 +55,7 @@ extension HostServer {
     /// and CONTROL is unwindowed, so a workspace frame can never be stalled behind a PTY output flood
     /// waiting on flow-control credit.
     func openWorkspaceChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
-        guard let document = workspaceDocument else {
-            // Flag off. Refuse rather than accept-and-say-nothing: a client that knows about the
-            // channel needs to learn immediately that this host does not serve it, so it can fall
-            // back to the edge sinks instead of waiting forever for a snapshot.
-            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
-            return
-        }
+        let document = workspaceDocument
         guard workspaceChannel(for: connectionID) == nil else {
             // Two subscribers behind one link would each keep their own acked base for the same
             // viewer, and the roster would show one device twice.
@@ -207,8 +201,8 @@ extension HostServer {
     }
 
     private func dropWorkspaceSubscriber(connectionID: UUID) {
-        guard let session = unregisterWorkspaceChannel(connectionID: connectionID),
-              let document = workspaceDocument else { return }
+        guard let session = unregisterWorkspaceChannel(connectionID: connectionID) else { return }
+        let document = workspaceDocument
         Task { await document.removeSubscriber(id: session.id) }
     }
 
@@ -220,7 +214,7 @@ extension HostServer {
     /// pass itself is idempotent and an unchanged capture produces no version bump, so a redundant
     /// kick costs a few lock acquisitions and nothing on the wire.
     func kickWorkspaceReconcile() {
-        guard workspaceDocEnabled, !workspaceReconcileIsRunning() else { return }
+        guard !workspaceReconcileIsRunning() else { return }
         Task { [weak self] in await self?.reconcileWorkspaceDocument() }
     }
 
@@ -233,7 +227,7 @@ extension HostServer {
     /// by construction and, because `merge` reports whether anything changed and `stateNum` only
     /// moves when it did, an idle host stays completely silent.
     func reconcileWorkspaceDocument() async {
-        guard let document = workspaceDocument else { return }
+        let document = workspaceDocument
         // No audience, no work: a wall of detached agents must not keep capturing for nobody.
         guard await document.subscriberCount > 0 else { return }
 

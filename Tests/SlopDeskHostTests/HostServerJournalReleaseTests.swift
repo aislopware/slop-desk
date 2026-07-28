@@ -58,7 +58,6 @@ final class HostServerJournalReleaseTests: XCTestCase {
             detachMaxSessions: detachMaxSessions,
             resumeOnRecovery: true,
             scrollbackJournals: journals,
-            workspaceDocEnabled: false,
         )
     }
 

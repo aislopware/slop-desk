@@ -250,9 +250,8 @@ public struct SlopDeskClientApp: App {
         // a dead, blank terminal behind a green pill until a manual per-pane Reconnect.
         // The workspace-document channel (`channelClass 1`, docs/45 §5) rides the SAME shared
         // connection and holds it up on its own, so a client with every pane closed keeps rendering
-        // the rail. Behind `SLOPDESK_WORKSPACE_DOC`; with it off the channel is never opened and the
-        // per-pane control sinks drive the UI exactly as before. Re-opened on every establish: the
-        // previous subscription died with the old link, and the target may have changed.
+        // the rail. Re-opened on every establish: the previous subscription died with the old link,
+        // and the target may have changed.
         store.installWorkspaceChannel(muxRegistry: muxRegistry, target: { appConnection.target })
         store.attachCompletionSeenStore(preferences)
         appConnection.onConnectionEstablished = { [weak store] in store?.handleConnectionEstablished() }

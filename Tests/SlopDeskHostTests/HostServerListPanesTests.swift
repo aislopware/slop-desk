@@ -32,7 +32,7 @@ final class HostServerListPanesTests: XCTestCase {
     /// only the former removes the session from `muxSessions`, and a test that skips it would keep
     /// the pane visible through the mux source and pass no matter what this method does.
     func testDetachedPaneIsListed() throws {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let id = UUID()
@@ -66,7 +66,7 @@ final class HostServerListPanesTests: XCTestCase {
     /// Pinning it means a future refactor that parks a session without unregistering it shows up
     /// as a duplicate row rather than as a silent double-count.
     func testDetachedPaneIsNotListedTwice() {
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true)
         defer { Task { await server.stop() } }
 
         let connectionID = UUID()
@@ -83,7 +83,7 @@ final class HostServerListPanesTests: XCTestCase {
     /// With detach disabled there is no store at all (`detachedStore == nil`); the listing must
     /// degrade to the mux/control sources rather than trap on the optional.
     func testListingWorksWithDetachDisabled() {
-        let server = HostServer(port: 0, detachEnabled: false, resumeOnRecovery: false, workspaceDocEnabled: false)
+        let server = HostServer(port: 0, detachEnabled: false, resumeOnRecovery: false)
         defer { Task { await server.stop() } }
 
         let id = UUID()

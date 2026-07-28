@@ -69,7 +69,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         temporaryDirectories = []
     }
 
-    private func makeRig(workspaceDocEnabled: Bool = true) async -> Rig {
+    private func makeRig() async -> Rig {
         // A REAL store, pointed at a scratch directory. Never the default location: `load()` mints
         // and the persist sink writes, and one test doing either against Application Support would
         // silently replace a workspace somebody is using.
@@ -78,7 +78,6 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         temporaryDirectories.append(directory)
         let server = HostServer(
             port: 0,
-            workspaceDocEnabled: workspaceDocEnabled,
             workspaceStore: HostWorkspaceStore(
                 fileURL: directory.appendingPathComponent("workspace-state.json"),
                 hostDisplayName: "mac-studio",
@@ -264,7 +263,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         XCTAssertGreaterThan(frame.new, 0)
         // Decodes as a document, and the epoch is this host's.
         _ = try WorkspaceStateCodec.decodeSnapshot(frame.payload)
-        let document = try XCTUnwrap(rig.server.workspaceDocument)
+        let document = rig.server.workspaceDocument
         let epoch = await document.epoch
         XCTAssertEqual(frame.epoch, epoch)
         await rig.server.stop()
@@ -283,18 +282,24 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         await rig.server.stop()
     }
 
-    func testTheFlagOffRefusesTheChannel() async throws {
-        let rig = await makeRig(workspaceDocEnabled: false)
-        XCTAssertNil(rig.server.workspaceDocument)
-        let pair = try await rig.client.openChannel(
-            sessionID: UUID(),
-            lastReceivedSeq: 0,
-            channelClass: MuxChannelClass.workspace.rawValue,
-        )
-        // A refusal must be DEFINITE — a client that knows about the channel needs to learn it is
-        // unserved so it can fall back to the edge sinks, rather than wait forever for a snapshot.
-        let verdict = await rig.client.awaitOpenAck(for: pair.data.channelID)
-        XCTAssertFalse(verdict.accepted)
+    /// The workspace channel has no off position. A host that finds `SLOPDESK_WORKSPACE_DOC=0` in its
+    /// environment serves the document anyway: a client renders its layout FROM the document, so a
+    /// refusal leaves it with a blank window and no error to explain it.
+    ///
+    /// The environment is the subject on purpose — there is no constructor argument left to pass, so
+    /// this is the only surface the gate could come back through. Safe here because `HostServer` reads
+    /// its environment once, at `init`, which the rig performs between the `setenv` and the `defer`;
+    /// that is NOT a pattern to copy into a test whose subject reads the environment lazily.
+    func testTheWorkspaceChannelIsServedWithTheEnvironmentSetToZero() async throws {
+        setenv("SLOPDESK_WORKSPACE_DOC", "0", 1)
+        defer { unsetenv("SLOPDESK_WORKSPACE_DOC") }
+        let rig = await makeRig()
+        let (_, collector, _) = try await openWorkspace(rig)
+        defer { collector.stop() }
+        // A snapshot, not merely a non-nil document: it proves the document was installed and served,
+        // which is what a client needs before it can draw anything at all.
+        let snapshot = await awaitEvent(collector, kind: .snapshot)
+        XCTAssertNotNil(snapshot, "the document is served regardless of the environment")
         await rig.server.stop()
     }
 
@@ -563,7 +568,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
 
     func testAProjectGitSummaryReachesTheDocumentAsTheTypeThirtyFiveBody() async throws {
         let rig = await makeRig()
-        let document = try XCTUnwrap(rig.server.workspaceDocument)
+        let document = rig.server.workspaceDocument
         let status = WireMessage.ProjectGitStatus(
             repoRoot: "/repo",
             branch: "main",
