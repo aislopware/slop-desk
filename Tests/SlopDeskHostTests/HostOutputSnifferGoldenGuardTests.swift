@@ -14,8 +14,8 @@ private final class NowBox: @unchecked Sendable {
 
 /// Closes the golden corpus's blind spot over the OSC title/bell/command-status sniffer.
 ///
-/// `golden/golden_vectors.json` holds 48 keys, but `slopdesk-corevectors` only EMITS 35 of them;
-/// `scripts/golden-check.sh` diffs the emitted subset and prints the rest as "frozen keys are
+/// `golden/golden_vectors.json` holds 52 keys, but `slopdesk-corevectors` only EMITS 39 of them;
+/// `scripts/golden-check.sh` diffs that pinned emitted set and prints the rest as "frozen keys are
 /// XCTest-pinned, not emitted". Two of those frozen keys — `hostOutputSniffer` and
 /// `terminalModeTracker` — sit directly on the PATH-1 title path, and nothing in the test suite
 /// actually replayed them: the sniffer's own `HostOutputSnifferTests` pin BEHAVIOUR with
