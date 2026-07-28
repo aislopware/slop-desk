@@ -307,6 +307,13 @@ private final class RuntimeConformanceCacheChurn: @unchecked Sendable {
     private let running = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
     private let finished = DispatchGroup()
     private let threads: Int
+    /// Whether the churn threads still hold `running`.
+    ///
+    /// They dereference it on every iteration, so the storage is only this object's to free once each
+    /// of them has LEFT the group — `start()` hands it over, `stop()` takes it back by joining. In
+    /// between, `deinit` leaks the four bytes instead: a live thread reading freed memory is a crash
+    /// with no connection to the code that caused it, and the next test in the bundle wears it.
+    private var threadsHoldRunning = false
 
     init(threads: Int) {
         self.threads = threads
@@ -314,11 +321,13 @@ private final class RuntimeConformanceCacheChurn: @unchecked Sendable {
     }
 
     deinit {
+        guard !threadsHoldRunning else { return }
         running.deallocate()
     }
 
     func start() {
         running.pointee = 1
+        threadsHoldRunning = true
         for thread in 0..<threads {
             finished.enter()
             let running = running
@@ -340,9 +349,20 @@ private final class RuntimeConformanceCacheChurn: @unchecked Sendable {
         }
     }
 
+    /// Stops the churn and JOINS it. The join is the load-bearing half: each thread reads `running`
+    /// until it observes the store, so the flag is unsafe to free until every one of them is gone.
+    /// The timeout only keeps a wedged thread from hanging the bundle — it hands the flag to that
+    /// thread for good rather than freeing it underneath.
     func stop() {
         running.pointee = 0
-        _ = finished.wait(timeout: .now() + 10)
+        let joined = finished.wait(timeout: .now() + 30) == .success
+        threadsHoldRunning = !joined
+        XCTAssertTrue(
+            joined,
+            "the runtime-cache churn threads did not stop within 30s of being told to — the fork "
+                + "contention test's teardown is wedged, and its `running` flag is leaked deliberately "
+                + "so the threads still reading it do not read freed memory",
+        )
     }
 }
 

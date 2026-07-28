@@ -23,6 +23,29 @@ import XCTest
 /// notice. The same discipline as `HostOutputSnifferGoldenGuardTests` reading the committed corpus
 /// out of the working tree.
 final class GuiGateLaunchContractTests: XCTestCase {
+    /// The ways a shell script can NAME the macOS app: the bundle, the binary inside it, and the
+    /// identifier LaunchServices answers to.
+    ///
+    /// A launch has to spell one of these — a path is a path, and `open -b` takes the identifier —
+    /// which is what lets ``testEveryScriptThatNamesTheAppIsASubjectOfTheseContracts`` be a NET
+    /// rather than one more enumeration of launch syntaxes.
+    private static let appNames = [
+        "SlopDesk.app",
+        "Contents/MacOS/SlopDesk",
+        "com.slopdesk.client.macos", // PRODUCT_BUNDLE_IDENTIFIER, Apps/ClientApp-macOS/project.yml
+    ]
+
+    /// Every `scripts/*.sh`. Both walks and the fail-closed net read the one directory.
+    private func allScripts() throws -> [String] {
+        let scripts = try FileManager.default
+            .contentsOfDirectory(atPath: scriptURL("scripts").path)
+            .filter { $0.hasSuffix(".sh") }
+            .sorted()
+            .map { "scripts/\($0)" }
+        XCTAssertFalse(scripts.isEmpty, "scripts/ holds no shell scripts — the walk found nothing to read")
+        return scripts
+    }
+
     /// Every script under `scripts/` that brings up `SlopDesk.app` — DISCOVERED, never listed.
     ///
     /// `scripts/` sits beside `Tests/` in the package root, so walk up from this file rather than
@@ -43,13 +66,12 @@ final class GuiGateLaunchContractTests: XCTestCase {
     ///
     /// RED when this was first derived rather than listed: a throwaway `scripts/*.sh` that execs
     /// `"${APP_BIN}"` bare is named by six separate assertions. Under the list it was named by none.
+    ///
+    /// Recognising a launch is still recognition, so it is backstopped:
+    /// ``testEveryScriptThatNamesTheAppIsASubjectOfTheseContracts`` fails any script that NAMES the
+    /// app without landing in this set, whatever syntax brings it up.
     private func appLaunchingScripts() throws -> [String] {
-        let scripts = try FileManager.default
-            .contentsOfDirectory(atPath: scriptURL("scripts").path)
-            .filter { $0.hasSuffix(".sh") }
-            .sorted()
-            .map { "scripts/\($0)" }
-        XCTAssertFalse(scripts.isEmpty, "scripts/ holds no shell scripts — the walk found nothing to read")
+        let scripts = try allScripts()
         let discovered = try scripts.filter {
             try !launchCommands(of: $0, invoking: appBinaryTokens(of: $0)).isEmpty
                 || !openLaunchLines(of: $0).isEmpty
@@ -73,29 +95,148 @@ final class GuiGateLaunchContractTests: XCTestCase {
     }
 
     /// Every shell token in `script` that denotes the app's bundle binary: the literal path inside the
-    /// bundle, plus `"${VAR}"` for any variable assigned one — the same indirection the daemon side
-    /// needs, because every gate today launches through an `APP_BIN=…` assignment and a rule that
-    /// knew only the literal would read the ASSIGNMENT and never the exec.
+    /// bundle, plus every spelling of a variable whose RESOLVED value names it — the same indirection
+    /// the daemon side needs, because every gate today launches through an `APP_BIN=…` assignment and
+    /// a rule that knew only the literal would read the ASSIGNMENT and never the exec.
     private func appBinaryTokens(of script: String) throws -> [String] {
-        let marker = "Contents/MacOS/SlopDesk"
-        var tokens = [marker]
-        for line in try codeBody(of: script).split(separator: "\n").map(String.init) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard let equals = trimmed.firstIndex(of: "="), trimmed.starts(with: /[A-Z_]/) else { continue }
-            let name = String(trimmed[..<equals])
-            guard name.allSatisfy({ $0.isUppercase || $0 == "_" }) else { continue }
-            if trimmed[trimmed.index(after: equals)...].contains(marker) { tokens.append("\"${\(name)}\"") }
-        }
-        return tokens
+        try binaryTokens(
+            of: script,
+            literals: ["Contents/MacOS/SlopDesk"],
+            naming: ["Contents/MacOS/SlopDesk"],
+        )
     }
 
-    /// The lines that hand the bundle to LaunchServices. Both the discovery signal for an
-    /// `open`-only script and the offender list ``testNoGateLaunchesTheAppThroughOpen`` reports.
+    /// `literals`, plus `${VAR}` and `$VAR` for every variable whose RESOLVED value names one of
+    /// `markers`.
+    ///
+    /// Resolution is transitive and reads any shell identifier, not only the SHOUTED ones, so
+    /// `run="${APP_BIN}"` is as much a token as the assignment that spelled the path. Both halves are
+    /// holes otherwise, and each is one letter wide: a launch through a lowercase variable, or through
+    /// a second variable pointed at the first, reads as no launch at all.
+    private func binaryTokens(
+        of script: String,
+        literals: [String],
+        naming markers: [String],
+    ) throws -> [String] {
+        var tokens = literals
+        for (name, value) in try resolvedValues(of: script) where markers.contains(where: value.contains) {
+            tokens.append("${\(name)}")
+            tokens.append("$\(name)")
+        }
+        return tokens.sorted()
+    }
+
+    /// The `open` invocations this walk cannot PROVE are aimed at something other than the app. Both
+    /// the discovery signal for an `open`-only script and the offender list
+    /// ``testNoGateLaunchesTheAppThroughOpen`` reports.
+    ///
+    /// FAILS CLOSED, and that is the whole of it. Matching `open "${APP…` matches the variable
+    /// somebody happened to name: `open "${BUNDLE}"` is the same launch under a different letter, and
+    /// a script the walk cannot see is a script outside all six isolation contracts at once. So an
+    /// argument counts as an offender unless it can be read AND read as something else — a
+    /// path-shaped word is resolved through the script's own assignments, while a word this walk
+    /// cannot resolve at all (a `$(…)` substitution, a variable the script never assigns) counts
+    /// against it.
+    ///
+    /// Only path-shaped words are candidates: `open` is an ordinary English verb, and two gates print
+    /// "open the screenshot" on their way out.
     private func openLaunchLines(of script: String) throws -> [String] {
-        try codeBody(of: script)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .filter { $0.contains("open \"${APP") || $0.contains("open \"") && $0.contains("SlopDesk.app") }
+        let values = try resolvedValues(of: script)
+        return try codeLines(of: script).filter { line in
+            guard let verb = line.firstRange(of: /\bopen[ \t]+/) else { return false }
+            return shellWords(String(line[verb.upperBound...]))
+                .filter { $0.contains("$") || $0.contains("/") || $0.contains(".app") }
+                .contains { argument in
+                    if argument.contains("$(") || argument.contains("`") { return true }
+                    if referencedVariables(in: argument).contains(where: { values[$0] == nil }) { return true }
+                    let expanded = expand(argument, with: values)
+                    return Self.appNames.contains(where: expanded.contains)
+                }
+        }
+    }
+
+    /// The variable an assignment line binds, when the line IS one: `name=value`, optionally behind
+    /// `export` / `local` / `readonly` / `declare`.
+    ///
+    /// Any shell identifier, not only the SHOUTED ones. A rule that reads `APP_BIN=` and not
+    /// `app_bin=` is a rule with a lowercase way around it.
+    private func assignment(in line: String) -> (name: String, value: String)? {
+        var text = line.trimmingCharacters(in: .whitespaces)
+        for keyword in ["export ", "local ", "readonly ", "declare "] where text.hasPrefix(keyword) {
+            text = String(text.dropFirst(keyword.count)).trimmingCharacters(in: .whitespaces)
+        }
+        guard let equals = text.firstIndex(of: "=") else { return nil }
+        let name = String(text[..<equals])
+        guard let first = name.first, first.isLetter || first == "_",
+              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
+        else { return nil }
+        return (name, String(text[text.index(after: equals)...]))
+    }
+
+    /// Every variable `script` assigns, RESOLVED: each value with the variables it names replaced by
+    /// their own resolved values, so a chain of assignments reads as the path it ends up being.
+    ///
+    /// Command substitutions stay verbatim. A `$(cd … && pwd)` prefix says nothing about whether the
+    /// TAIL of the path is the app bundle, and the tail is the part that matters.
+    private func resolvedValues(of script: String) throws -> [String: String] {
+        var values: [String: String] = [:]
+        for line in try codeLines(of: script) {
+            guard let assigned = assignment(in: line) else { continue }
+            values[assigned.name] = assigned.value
+        }
+        // Substituted to a fixed point, under a cap: a self-referential `PATH="${PATH}:…"` has none.
+        for _ in 0..<8 {
+            var changed = false
+            for (name, value) in values {
+                let expanded = expand(value, with: values)
+                guard expanded != value else { continue }
+                values[name] = expanded
+                changed = true
+            }
+            if !changed { break }
+        }
+        return values
+    }
+
+    /// `text` with every `${NAME}` / `$NAME` in `values` replaced. Longest name first, so `$APP_BIN`
+    /// is never eaten by `$APP`.
+    private func expand(_ text: String, with values: [String: String]) -> String {
+        var expanded = text
+        for name in values.keys.sorted(by: { $0.count > $1.count }) {
+            guard let value = values[name] else { continue }
+            expanded = expanded.replacingOccurrences(of: "${\(name)}", with: value)
+            expanded = expanded.replacingOccurrences(of: "$\(name)", with: value)
+        }
+        return expanded
+    }
+
+    /// Every variable name `text` references, `${NAME}` or `$NAME`, whatever expansion operator
+    /// follows it — `${WORK%/*}` references `WORK`.
+    private func referencedVariables(in text: String) -> [String] {
+        text.matches(of: /\$\{?([A-Za-z_][A-Za-z0-9_]*)/).map { String($0.1) }
+    }
+
+    /// `text` split on whitespace OUTSIDE quotes, so `"${APP} Support"` stays one word.
+    private func shellWords(_ text: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var quote: Character?
+        for character in text {
+            if let open = quote {
+                current.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                quote = character
+                current.append(character)
+            } else if character.isWhitespace {
+                if !current.isEmpty { words.append(current) }
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { words.append(current) }
+        return words
     }
 
     /// Every script under `scripts/` that stands up a HOST DAEMON — DISCOVERED, never listed.
@@ -112,13 +253,7 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// a sixth daemon launch nobody had counted, running `slopdesk-videohostd` with no container at
     /// all.
     private func daemonLaunchingScripts() throws -> [String] {
-        let scripts = try FileManager.default
-            .contentsOfDirectory(atPath: scriptURL("scripts").path)
-            .filter { $0.hasSuffix(".sh") }
-            .sorted()
-            .map { "scripts/\($0)" }
-        XCTAssertFalse(scripts.isEmpty, "scripts/ holds no shell scripts — the walk found nothing to read")
-        return try scripts.filter { try !launchCommands(of: $0, invoking: daemonBinaryTokens(of: $0)).isEmpty }
+        try allScripts().filter { try !launchCommands(of: $0, invoking: daemonBinaryTokens(of: $0)).isEmpty }
     }
 
     private func scriptURL(_ relativePath: String) -> URL {
@@ -134,11 +269,15 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// rejected, so a whole-file substring search would find `workspace-state.json` in the prose
     /// explaining why the gate must not read it.
     private func codeBody(of script: String) throws -> String {
+        try codeLines(of: script).joined(separator: "\n")
+    }
+
+    /// ``codeBody(of:)`` a line at a time.
+    private func codeLines(of script: String) throws -> [String] {
         try String(contentsOf: scriptURL(script), encoding: .utf8)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
-            .joined(separator: "\n")
     }
 
     /// REVERT-TO-FAIL: drop `-ApplePersistenceIgnoreState YES` from any gate's launch and this names
@@ -160,6 +299,41 @@ final class GuiGateLaunchContractTests: XCTestCase {
                         + command.trimmingCharacters(in: .whitespacesAndNewlines),
                 )
             }
+        }
+    }
+
+    /// FAIL-CLOSED: a script that NAMES the app is a subject of every contract here, or this one
+    /// names the script.
+    ///
+    /// ``appLaunchingScripts`` recognises two launch syntaxes, an exec of the bundle binary and an
+    /// `open` of the bundle, and recognition is the shape of the defect this file exists for: it holds
+    /// for the spellings somebody thought of. `open -b` on the bundle identifier, an `osascript`
+    /// `tell application`, a `launchctl` submit, a path assembled by `$(…)` and run out of an array —
+    /// each brings the app up through a line neither walk reads, and a script neither walk reads
+    /// carries NONE of the isolation the six contracts below demand.
+    ///
+    /// So the net hangs the other way round. Whatever the syntax, a launch has to NAME the app —
+    /// through the bundle, the binary inside it, or the identifier LaunchServices takes — and naming
+    /// it while escaping the walk is itself the failure. Recognising launches stays the job of
+    /// ``appLaunchingScripts``; this says the recognising has to have WORKED.
+    ///
+    /// RED without it: a throwaway `scripts/*.sh` whose only line is `open "${BUNDLE}"` — the same
+    /// LaunchServices launch as `open "${APP}"`, one letter apart — is a subject of nothing and all 17
+    /// contracts here pass.
+    func testEveryScriptThatNamesTheAppIsASubjectOfTheseContracts() throws {
+        let discovered = try Set(appLaunchingScripts())
+        for script in try allScripts() {
+            let code = try codeBody(of: script)
+            guard let named = Self.appNames.first(where: code.contains) else { continue }
+            XCTAssertTrue(
+                discovered.contains(script),
+                "\(script) names the macOS app (`\(named)`) and neither walk over scripts/ can see how "
+                    + "it brings it up, so it is the subject of NONE of the contracts here — no "
+                    + "CFFIXED_USER_HOME, no private UserDefaults suite, no -ApplePersistenceIgnoreState "
+                    + "YES, and free to dial the developer's own live slopdesk-hostd. Either exec the "
+                    + "bundle binary through a path `appBinaryTokens` can resolve, or make the launch one "
+                    + "`openLaunchLines` can read.",
+            )
         }
     }
 
@@ -526,25 +700,20 @@ final class GuiGateLaunchContractTests: XCTestCase {
     }
 
     /// Every shell token in `script` that denotes a host-daemon binary: the literal build-product
-    /// paths, plus `"${VAR}"` for any variable assigned one.
+    /// paths, plus every spelling of a variable whose resolved value names one.
     ///
     /// The indirection is not cosmetic — `soak-fanout-laggard.sh` and `check-video.sh` both launch
     /// through a `HOSTD=…` variable, so a contract that grepped for the literal binary name would
     /// find the ASSIGNMENT, call it a launch, and never read the exec at all.
     private func daemonBinaryTokens(of script: String) throws -> [String] {
         let names = ["slopdesk-hostd", "slopdesk-videohostd"]
-        // debug AND release: `video-input-test.sh` runs the release build, and a rule that only knows
-        // one configuration is a rule with a documented way around it.
-        var tokens = names.flatMap { [".build/debug/\($0)", ".build/release/\($0)"] }
-        for line in try codeBody(of: script).split(separator: "\n").map(String.init) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard let equals = trimmed.firstIndex(of: "="), trimmed.starts(with: /[A-Z_]/) else { continue }
-            let name = String(trimmed[..<equals])
-            guard name.allSatisfy({ $0.isUppercase || $0 == "_" }) else { continue }
-            let value = String(trimmed[trimmed.index(after: equals)...])
-            if names.contains(where: value.contains) { tokens.append("\"${\(name)}\"") }
-        }
-        return tokens
+        return try binaryTokens(
+            of: script,
+            // debug AND release: `video-input-test.sh` runs the release build, and a rule that only
+            // knows one configuration is a rule with a documented way around it.
+            literals: names.flatMap { [".build/debug/\($0)", ".build/release/\($0)"] },
+            naming: names,
+        )
     }
 
     /// Every WHOLE shell command that execs the app: the `"${APP_BIN}"` line plus its backslash
@@ -566,19 +735,18 @@ final class GuiGateLaunchContractTests: XCTestCase {
         of script: String,
         invoking tokens: [String] = ["\"${APP_BIN}\""],
     ) throws -> [String] {
-        let lines = try codeBody(of: script)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+        let lines = try codeLines(of: script)
         let notALaunch = ["pkill", "swift build", "! -x", "-x ${", "await ", "grep "]
         var commands: [String] = []
         for (index, line) in lines.enumerated() {
             guard tokens.contains(where: line.contains) else { continue }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if notALaunch.contains(where: trimmed.contains) { continue }
-            // `HOSTD="${ROOT}/.build/debug/slopdesk-hostd"` names the binary and launches nothing.
-            if let equals = trimmed.firstIndex(of: "="),
-               trimmed[..<equals].allSatisfy({ $0.isUppercase || $0 == "_" }),
-               !trimmed[..<equals].isEmpty,
+            // `HOSTD="${ROOT}/.build/debug/slopdesk-hostd"` names the binary and launches nothing. The
+            // value has to be the WHOLE line for that to hold: `CFFIXED_USER_HOME=… "${APP_BIN}" &` is
+            // an assignment AND the launch that needs reading most.
+            if let assigned = assignment(in: trimmed),
+               shellWords(assigned.value).count <= 1,
                !trimmed.contains("$(")
             { continue }
             var start = index

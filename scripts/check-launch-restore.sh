@@ -88,7 +88,7 @@
 # the closing desktop grab is a bonus, not evidence.
 #
 # A MISSING SHELL NAMES ITS OWN CAUSE. "3 pane(s) in the layout but 2 live shell(s)" is this gate's
-# most informative red and used to be its most opaque: the host logs `attached for pane` for a pane
+# most informative red, and on its own its most opaque: the host logs `attached for pane` for a pane
 # whose child died between `fork()` and `execve()`, so the daemon's own log says everything went
 # fine. What the missing shell leaves behind is a CRASH REPORT — for `slopdesk-hostd`, not for the
 # app, because the corpse is the forked child and it still carries the parent's name. So every
