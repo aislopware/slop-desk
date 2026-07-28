@@ -2079,6 +2079,12 @@
       "kind": "channelClose"
     },
     {
+      "channelId": 6,
+      "closeReason": 1,
+      "hex": "00000006000000060401",
+      "kind": "channelClose"
+    },
+    {
       "bytesToAdd": 262144,
       "channelId": 7,
       "hex": "00000009000000070500040000",

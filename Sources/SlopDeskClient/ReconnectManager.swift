@@ -137,18 +137,20 @@ public final class ReconnectManager: Sendable {
                 // respawn host shells whose output strands in a consumer-less inbox (a per-flap
                 // memory ratchet plus a shell-respawn loop). A post-exit pane needs an explicit
                 // re-dial, which builds a NEW client.
-                // And `isRetiredByHost`: a per-channel `channelClose` ends the inbound stream
-                // exactly as a drop does, but it is the host stating that THIS pane is done —
-                // its document reaped the pane, or it evicted this subscriber. Re-opening a
-                // channel under a session id the host no longer holds is a SPAWN, so the campaign
-                // must not run at all; recovery is an explicit re-dial, which builds a NEW client.
-                // (Awaits, not `||` with an autoclosure: an actor-isolated read can't sit in the
-                // short-circuit operand's nonisolated autoclosure.)
+                // And `isHostClosed`: a per-channel `channelClose` ends the inbound stream exactly
+                // as a drop does, but it is the host stating that THIS attachment is over — its
+                // document reaped the pane, or it evicted this subscriber. Neither is the
+                // campaign's to answer: re-opening a reaped pane's session id is a SPAWN, and
+                // re-joining as the evicted laggard costs a state transfer and gets evicted again.
+                // The campaign therefore asks only WHETHER the host closed, never WHY; the reason
+                // decides what the layer above may do next, and that recovery always builds a NEW
+                // client. (Awaits, not `||` with an autoclosure: an actor-isolated read can't sit
+                // in the short-circuit operand's nonisolated autoclosure.)
                 let paused = await client.isPaused
                 let closed = await client.isClosed
                 let exited = await client.isExited
-                let retired = await client.isRetiredByHost
-                if paused || closed || exited || retired { continue }
+                let hostClosed = await client.isHostClosed
+                if paused || closed || exited || hostClosed { continue }
                 onLog?("reconnect: transport dropped (\(reason)) — retrying")
                 await Self.reconnectLoop(
                     client: client, host: host, port: port, backoff: backoff,
@@ -195,15 +197,16 @@ public final class ReconnectManager: Sendable {
             // `isExited`: the remote child exited — TERMINAL for this client (its wake stream is
             // permanently finished; `connect` refuses), so a campaign would likewise burn doomed
             // retries; and mid-campaign, a freshly-respawned shell that exits instantly must stop
-            // the loop rather than respawn another. `isRetiredByHost`: the host closed this pane's
-            // channel mid-campaign — every further `connect` would spawn a shell for a pane the
-            // host has already reaped, so the campaign ends here. (Awaits, not `||`: an
-            // actor-isolated read can't sit in a short-circuit autoclosure.)
+            // the loop rather than respawn another. `isHostClosed`: the host closed this pane's
+            // channel mid-campaign — every further `connect` would either spawn a shell for a pane
+            // the host has already reaped or re-join as the subscriber it just evicted, so the
+            // campaign ends here whichever reason it gave. (Awaits, not `||`: an actor-isolated
+            // read can't sit in a short-circuit autoclosure.)
             let paused = await client.isPaused
             let closed = await client.isClosed
             let exited = await client.isExited
-            let retired = await client.isRetiredByHost
-            if paused || closed || exited || retired { return }
+            let hostClosed = await client.isHostClosed
+            if paused || closed || exited || hostClosed { return }
             attempt += 1
             // Cap: stop after maxReconnectAttempts so a permanently-gone host does not
             // keep the pane stuck in "reconnecting" forever. Surface a log line so

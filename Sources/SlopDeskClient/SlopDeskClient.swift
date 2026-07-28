@@ -287,16 +287,20 @@ public actor SlopDeskClient {
     /// `isPaused`/`isClosed`. A respawn is an explicit re-dial, which builds a NEW client.
     private var childExited = false
 
-    /// Set when the HOST retired this pane's channel — a per-channel `channelClose`, as opposed to
-    /// the link dying under it. TERMINAL for this client instance, for the same reason `childExited`
-    /// is: the host only closes a pane channel once its document has reaped the pane (or evicted
-    /// this subscriber), and re-opening a channel under a session id the host no longer holds is a
-    /// fresh SPAWN — a whole login shell for a pane that is on its way out of the layout. So
-    /// ``ReconnectManager`` gates on ``isRetiredByHost`` beside `isPaused`/`isClosed`/`isExited`, and
-    /// the UI reads it to show a definite disconnect rather than a retry that will never be made.
-    /// A drop leaves it `false`: nothing was said about the pane, and recovering that is the
+    /// Why the HOST closed this pane's channel — a per-channel `channelClose` and the reason it
+    /// carried — as opposed to the link dying under it (`nil`).
+    ///
+    /// Either value is TERMINAL for this client INSTANCE, for the same reason `childExited` is: the
+    /// transport under it is spent, and re-opening from in here would re-use a session id the host
+    /// may no longer hold. So ``ReconnectManager`` gates on ``isHostClosed`` beside
+    /// `isPaused`/`isClosed`/`isExited`, and ``connect(host:port:handshakeTimeout:)`` refuses. What
+    /// the two values differ on is what may happen ABOVE this client, which reads the reason:
+    /// `.retired` means the pane itself is gone (a re-dial is a SPAWN — a whole login shell for a
+    /// pane on its way out of the layout), while `.subscriberEvicted` means only this attachment
+    /// ended and the pane is still there to be reattached by a NEW client.
+    /// A drop leaves it `nil`: nothing was said about the pane, and recovering that is the
     /// campaign's whole job.
-    private var retiredByHost = false
+    private var hostCloseReason: MuxCloseReason?
 
     /// Monotonic connect-attempt counter. Each ``connect(...)`` captures its value at entry; if a
     /// NEWER connect starts during this one's `await transport.connect(...)` suspension (the actor is
@@ -424,10 +428,13 @@ public actor SlopDeskClient {
     ) async throws {
         guard !closed else { throw ClientError.invalidState("connect after close") }
         guard !childExited else { throw ClientError.invalidState("connect after child exit") }
-        // The enforcement point for `retiredByHost`, at the one call that actually opens a channel:
-        // the host has retired this pane, so no path may re-open it under the same client. An
-        // explicit user re-dial is unaffected — it builds a NEW client.
-        guard !retiredByHost else { throw ClientError.invalidState("connect after host closed the channel") }
+        // The enforcement point for `hostCloseReason`, at the one call that actually opens a
+        // channel: the host closed this pane's channel, so no path may re-open it under the same
+        // client — whichever reason it gave. A re-dial that is ALLOWED (an explicit user reconnect,
+        // or the app-connection fan-out after an eviction) is unaffected: it builds a NEW client.
+        guard hostCloseReason == nil else {
+            throw ClientError.invalidState("connect after host closed the channel")
+        }
         self.host = host
         self.port = port
 
@@ -573,9 +580,9 @@ public actor SlopDeskClient {
                 for try await message in inbound {
                     await handleInbound(message)
                 }
-                await handleStreamEnded(error: nil, hostClosed: transport.hostClosedChannel)
+                await handleStreamEnded(error: nil, hostClose: transport.hostCloseReason)
             } catch {
-                await handleStreamEnded(error: error, hostClosed: transport.hostClosedChannel)
+                await handleStreamEnded(error: error, hostClose: transport.hostCloseReason)
             }
         }
     }
@@ -730,15 +737,16 @@ public actor SlopDeskClient {
         ackPending = true
     }
 
-    /// - Parameter hostClosed: whether the transport reports this end as a per-channel
-    ///   `channelClose` from the HOST rather than the link going away. Read from the pump's OWN
-    ///   captured transport, not `self.transport`, so a connect that replaces the transport while
-    ///   the old pump is still unwinding cannot attribute one channel's end to another's.
-    private func handleStreamEnded(error: Error?, hostClosed: Bool) {
-        // The host retired this pane's channel. TERMINAL, and recorded BEFORE the event goes out so
-        // every subscriber that reads `isRetiredByHost` on the `.disconnected` — the reconnect
-        // campaign first among them — sees it already set (the `childExited` ordering).
-        if hostClosed { retiredByHost = true }
+    /// - Parameter hostClose: why the transport reports this end as a per-channel `channelClose`
+    ///   from the HOST, or `nil` for the link going away. Read from the pump's OWN captured
+    ///   transport, not `self.transport`, so a connect that replaces the transport while the old
+    ///   pump is still unwinding cannot attribute one channel's end to another's.
+    private func handleStreamEnded(error: Error?, hostClose: MuxCloseReason?) {
+        // The host closed this pane's channel. TERMINAL for this client, and recorded BEFORE the
+        // event goes out so every subscriber that reads `isHostClosed`/`hostChannelCloseReason` on
+        // the `.disconnected` — the reconnect campaign first among them — sees it already set (the
+        // `childExited` ordering).
+        if let hostClose { hostCloseReason = hostClose }
         // The link is gone: the dead connection's resume verdict must not survive it — a stale
         // `.resumedSession` read between the drop and the next connect would let the UI skip the
         // fresh-session wipe the NEXT session may need. Reset unconditionally (before the guards:
@@ -904,11 +912,19 @@ public actor SlopDeskClient {
     /// drop and launch a reconnect campaign that respawns host shells into a consumer-less inbox.
     public var isExited: Bool { childExited }
 
-    /// True once the HOST closed this pane's channel (see `retiredByHost`). ``ReconnectManager``
-    /// consults this ALONGSIDE ``isPaused``/``isClosed``/``isExited``: a `channelClose` sets none of
-    /// those, and it ends the inbound stream exactly as a drop does — so without this the campaign
-    /// re-opens the channel and the host forks a shell for a pane it has already reaped.
-    public var isRetiredByHost: Bool { retiredByHost }
+    /// True once the HOST closed this pane's channel, for any reason (see `hostCloseReason`).
+    /// ``ReconnectManager`` consults this ALONGSIDE ``isPaused``/``isClosed``/``isExited``: a
+    /// `channelClose` sets none of those, and it ends the inbound stream exactly as a drop does — so
+    /// without this the campaign re-opens the channel, which for a reaped pane forks a shell the
+    /// host has already given up on and for an evicted subscriber re-joins to be evicted again.
+    public var isHostClosed: Bool { hostCloseReason != nil }
+
+    /// WHY the host closed this pane's channel, `nil` if it did not (see ``MuxCloseReason``). The
+    /// campaign gate is ``isHostClosed`` and asks nothing about the reason — every host close ends
+    /// THIS client. The reason is for the layer above, which owns the different question of whether
+    /// a NEW client may be built for the pane: `.retired` says the pane is gone, `.subscriberEvicted`
+    /// says only this attachment was.
+    public var hostChannelCloseReason: MuxCloseReason? { hostCloseReason }
 
     /// Test-only: simulate a hard network loss — tear down the transport (cancelling the
     /// underlying NWConnections) WITHOUT sending a clean `bye`, exactly as an iOS TCP

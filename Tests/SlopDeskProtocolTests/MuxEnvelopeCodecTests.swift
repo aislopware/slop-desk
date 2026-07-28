@@ -65,9 +65,44 @@ final class MuxEnvelopeCodecTests: XCTestCase {
 
     func testChannelCloseRoundTrip() throws {
         for id: UInt32 in [0, 1, 3, UInt32.max] {
-            let frame = MuxFrame.channelClose(channelID: id)
-            XCTAssertEqual(try roundTrip(frame), frame)
+            for reason in MuxCloseReason.allCases {
+                let frame = MuxFrame.channelClose(channelID: id, reason: reason)
+                XCTAssertEqual(try roundTrip(frame), frame, "reason \(reason) must survive the wire")
+            }
         }
+    }
+
+    /// The default close is the EMPTY body it has always been, so nothing on the wire moves for the
+    /// close every client already sends. The reason costs a byte only when it says something.
+    func testTheRetiredCloseIsStillAnEmptyBody() {
+        let implicit = MuxEnvelopeCodec.encode(.channelClose(channelID: 6))
+        XCTAssertEqual(implicit, MuxEnvelopeCodec.encode(.channelClose(channelID: 6, reason: .retired)))
+        XCTAssertEqual(implicit.count, 4 + 4 + 1, "length prefix + channelID + muxType, and no body")
+        XCTAssertEqual(
+            MuxEnvelopeCodec.encode(.channelClose(channelID: 6, reason: .subscriberEvicted)).count,
+            4 + 4 + 1 + 1,
+            "a stated reason is exactly one byte",
+        )
+    }
+
+    /// A close must always CLOSE. An unrecognised reason byte is read as the conservative
+    /// `.retired` rather than thrown: throwing would drop the frame at the router and leave the
+    /// channel — and its PTY — alive with nobody on the other end.
+    func testAnUnknownCloseReasonDecodesAsRetiredRatherThanThrowing() throws {
+        var inner = Data()
+        inner.appendBE(UInt32(9))
+        inner.append(MuxFrameType.channelClose.rawValue)
+        inner.append(0xFE) // not a MuxCloseReason this build knows
+        XCTAssertEqual(try MuxEnvelopeCodec.decode(inner: inner), .channelClose(channelID: 9, reason: .retired))
+    }
+
+    /// …but a body LONGER than the reason is malformed, exactly like `channelOpenAck`'s tail.
+    func testATrailingByteAfterTheCloseReasonIsMalformed() {
+        var inner = Data()
+        inner.appendBE(UInt32(9))
+        inner.append(MuxFrameType.channelClose.rawValue)
+        inner.append(contentsOf: [0x00, 0x00])
+        XCTAssertThrowsError(try MuxEnvelopeCodec.decode(inner: inner))
     }
 
     func testWindowAdjustRoundTrip() throws {

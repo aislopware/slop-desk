@@ -177,8 +177,9 @@ public final class ConnectionViewModel {
     /// `.disconnected` is not mis-read as a drop to reconnect.
     private var deliberatelyClosed = false
 
-    /// True once the HOST closed this pane's channel (``SlopDeskClient/isRetiredByHost``) and until
-    /// the next EXPLICIT ``connect()``.
+    /// True once the HOST reaped the PANE under this channel
+    /// (``SlopDeskClient/hostChannelCloseReason`` `== .retired`) and until the next EXPLICIT
+    /// ``connect()``.
     ///
     /// Under `SLOPDESK_PANE_FANOUT` a tab closed on one client is a host-side topology delete, and
     /// the host answers it `channelClose` FIRST, document frame SECOND. In that window this client
@@ -189,7 +190,28 @@ public final class ConnectionViewModel {
     /// `.reconnecting` no retry will ever follow — a "frozen dot" is the failure this codebase
     /// keeps closing elsewhere. Cleared by ``performConnect()``: an explicit re-dial is a decision
     /// this client is entitled to make, and it builds a NEW client anyway.
+    ///
+    /// Scoped to the REAP, never to "the host closed the channel": the other host close — a laggard
+    /// eviction — leaves the pane in the topology forever, so latching this on it would strand the
+    /// pane undiallable for the process lifetime. That one is ``evictedByHost``.
     private var retiredByHost = false
+
+    /// True once the host EVICTED this client from a pane that is still running
+    /// (``SlopDeskClient/hostChannelCloseReason`` `== .subscriberEvicted`), until the next
+    /// ``performConnect()``.
+    ///
+    /// The pane, its shell and its other members survive an eviction, and nothing will ever remove
+    /// the pane from this client's topology — so unlike a reap, the ONLY way back is a dial this
+    /// client makes. That makes the two answers different from `retiredByHost`'s:
+    ///
+    /// - the pane still reads a definite `.disconnected`, because the campaign is gated for this
+    ///   too: an instant re-dial re-joins to be evicted again and bills the host a state transfer
+    ///   every lap, so recovery must be an EVENT and not a reflex;
+    /// - but ``connectIfNeeded()`` is NOT gated, so the app-connection fan-out
+    ///   (``WorkspaceStore/redialDisconnectedPanes()``) and the leaf's connect-on-remount both
+    ///   reattach. Each is a coarse, user-or-link-level transition that happens once — exactly the
+    ///   moment this client is likely to be healthy enough to keep up.
+    private var evictedByHost = false
 
     /// Serial OUT path (renderer → host). Keystrokes + resizes funnel through ONE ordered FIFO drained
     /// by ONE task, so a fast burst (typing / multi-segment paste / an escape sequence split across
@@ -380,10 +402,11 @@ public final class ConnectionViewModel {
         // Tear down any prior session first (re-connect to a new target).
         await teardown()
         deliberatelyClosed = false
-        // An EXPLICIT re-dial ("Reconnect Pane", the connect-gate) overrides a host retirement: the
+        // An EXPLICIT re-dial ("Reconnect Pane", the connect-gate) overrides EITHER host close: the
         // user is asking for a shell on this pane, and `makeClient()` below builds a client that
         // carries none of the old one's terminal state.
         retiredByHost = false
+        evictedByHost = false
         terminal.reset()
 
         let client = makeClient()
@@ -566,11 +589,17 @@ public final class ConnectionViewModel {
     /// reconnect paths ("Reconnect Pane", the connect-gate) still call ``connect()`` directly, so their
     /// force-redial semantics are unaffected.
     public func connectIfNeeded() async {
-        // A pane the HOST retired is not an idle channel waiting to be woken. Both AUTOMATIC dial
+        // A pane the HOST REAPED is not an idle channel waiting to be woken. Both AUTOMATIC dial
         // paths land here — the leaf's connect-on-remount `.task` and
         // ``WorkspaceStore/redialDisconnectedPanes()`` — and the status they would act on is
         // `.disconnected`, which is exactly the arm that dials. Gating on the reason, not on the
         // status, is what keeps a re-dial from slipping in behind the document diff.
+        //
+        // `evictedByHost` is deliberately NOT gated here. An eviction leaves the pane running and
+        // in the topology, so this is where it comes back: the fan-out fires when the app
+        // connection re-establishes and the remount when the user returns to the tab, and both are
+        // one-shot events rather than the campaign's immediate retry. Gating it here is what left
+        // an evicted client rendering a pane it could never reattach to.
         guard !retiredByHost else { return }
         switch status {
         case .disconnected,
@@ -653,9 +682,16 @@ public final class ConnectionViewModel {
                 guard let self else { return }
                 // WHY a drop is a drop is not knowable from the event: a per-channel `channelClose`
                 // ends the stream exactly as a link failure does, and only the client (which asked
-                // its transport) can tell them apart. Asked here, ONCE, on the `.disconnected`
-                // edge — the fold itself stays synchronous, and every other event skips the hop.
-                if case .disconnected = event, await client.isRetiredByHost { retiredByHost = true }
+                // its transport, which asked the mux) can tell them apart — and tell the two host
+                // closes apart from each other. Asked here, ONCE, on the `.disconnected` edge — the
+                // fold itself stays synchronous, and every other event skips the hop.
+                if case .disconnected = event {
+                    switch await client.hostChannelCloseReason {
+                    case .retired: retiredByHost = true
+                    case .subscriberEvicted: evictedByHost = true
+                    case nil: break // the link died; nothing was said about this pane
+                    }
+                }
                 foldEvent(event)
             }
         }
@@ -672,10 +708,12 @@ public final class ConnectionViewModel {
             // `progress` on the same edge (no stuck spinner across a drop/reconnect). The fresh shell
             // re-reports its own.
             onProgressUpdate?(nil)
-            // `retiredByHost` reads as deliberate too — it IS deliberate, just decided at the other
-            // end. No campaign will follow it (``ReconnectManager`` gates on the same fact), so
-            // showing "reconnecting" would be a spinner for a retry nobody is making.
-            if deliberatelyClosed || retiredByHost {
+            // Both host closes read as deliberate too — they ARE deliberate, just decided at the
+            // other end. No campaign will follow either (``ReconnectManager`` gates on the same
+            // fact), so showing "reconnecting" would be a spinner for a retry nobody is making.
+            // That the eviction is RECOVERABLE does not make it a retry: what recovers it is the
+            // fan-out or the user, and until one of them happens the pane is honestly disconnected.
+            if deliberatelyClosed || retiredByHost || evictedByHost {
                 status = .disconnected
             } else {
                 // A fresh drop: enter reconnecting with no attempt info yet (the supervisor's `onProgress`

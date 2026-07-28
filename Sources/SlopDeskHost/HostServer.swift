@@ -1780,6 +1780,8 @@ public final class HostServer: @unchecked Sendable {
         guard !doomed.isEmpty else { return }
         for key in doomed {
             guard let connection = muxConnection(for: key.connectionID) else { continue }
+            // `.retired` (the default): the pane is leaving the layout, so the session id this
+            // channel names is about to stop existing. A client that re-opens it gets a SPAWN.
             Task { await connection.closeChannel(key.channelID) }
         }
         for key in doomed { removeMuxSession(key) }
@@ -1812,7 +1814,12 @@ public final class HostServer: @unchecked Sendable {
                   let key = channelKey(for: session, subscriber: id) else { return }
             leavePaneChannel(key)
             guard let connection = muxConnection(for: key.connectionID) else { return }
-            Task { await connection.closeChannel(key.channelID) }
+            // `.subscriberEvicted`, and this is the ONE place the difference from the document's
+            // reap survives: the pane, its shell and its other members are all still here, so the
+            // evicted client is looking at something it may reattach to. The close frame is the only
+            // thing it will ever be told — nothing removes the pane from its topology — so the
+            // reason has to ride it.
+            Task { await connection.closeChannel(key.channelID, reason: .subscriberEvicted) }
         }
     }
 
@@ -2374,6 +2381,19 @@ public final class HostServer: @unchecked Sendable {
     /// (testing only).
     func reapPanesRemovedFromTopologyForTesting(_ removed: Set<UUID>) {
         reapPanesRemovedFromTopology(removed)
+    }
+
+    /// Installs the REAL laggard-eviction wiring on `session` against a retained `connection`, so a
+    /// test can fire the seam `MuxChannelSession.evictLaggingSubscribers` fires and watch what
+    /// reaches the far end (testing only). Reproducing the lag itself needs a real PTY and tens of
+    /// megabytes — `scripts/soak-fanout-laggard.sh` — so this drives the closure directly.
+    func armSubscriberEvictionForTesting(
+        _ session: MuxChannelSession,
+        on connection: MuxNWConnection,
+        connectionID: UUID,
+    ) {
+        retainMuxConnection(connectionID, connection)
+        wireSubscriberEviction(session)
     }
 
     /// Drives the REAL `detachMuxSession` — the handleLinkDown park path (testing only).

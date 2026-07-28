@@ -364,23 +364,32 @@ public actor MuxSubChannel: MessageChannel {
         wakeSendGateWaiters()
     }
 
-    /// Whether this channel ended because the PEER sent `channelClose` for it, as opposed to the
-    /// link under it dying or this side closing it.
+    /// Why the PEER closed this channel, or `nil` if it did not — the link under it died, or this
+    /// side closed it.
     ///
-    /// The distinction is a DECISION vs an ACCIDENT. A link that drops takes every channel on it
-    /// with it and says nothing about any of them — that is what a reconnect campaign exists to
-    /// recover. A per-channel `channelClose` is the peer naming ONE channel and retiring it, and on
-    /// a pane channel the host sends exactly one only when the document reaped the pane or the
-    /// subscriber was evicted (`HostServer.reapPanesRemovedFromTopology` / `wireSubscriberEviction`).
-    /// Answering either by re-opening is wrong: the pane is gone, and a channel naming a session the
-    /// host no longer has is a fresh SPAWN.
-    public private(set) var closedByPeer = false
+    /// The outer distinction is a DECISION vs an ACCIDENT. A link that drops takes every channel on
+    /// it with it and says nothing about any of them — that is what a reconnect campaign exists to
+    /// recover. A per-channel `channelClose` is the peer naming ONE channel, and on a pane channel
+    /// the host sends exactly one only when the document reaped the pane
+    /// (`HostServer.reapPanesRemovedFromTopology`) or this subscriber was evicted
+    /// (`wireSubscriberEviction`).
+    ///
+    /// The INNER distinction is which of those two it was, and it decides opposite behaviours: a
+    /// reaped pane is gone, so re-opening under its session id is a fresh SPAWN; an evicted
+    /// subscriber's pane is still there, so re-opening is a reattach the client is entitled to make
+    /// once — just never as a reflex. The peer is the only one who knows, so it says so on the wire
+    /// (``MuxCloseReason``) and this carries the answer up.
+    public private(set) var peerCloseReason: MuxCloseReason?
 
-    /// Finishes the inbound stream cleanly AND records that the PEER retired this channel
-    /// (``closedByPeer``). The `channelClose` arm of ``MuxNWConnection``'s router; every other
-    /// teardown path keeps plain ``finish()``.
-    func finishClosedByPeer() {
-        closedByPeer = true
+    /// Whether this channel ended because the PEER sent `channelClose` for it. Derived from
+    /// ``peerCloseReason`` so the fact and its reason can never disagree.
+    public var closedByPeer: Bool { peerCloseReason != nil }
+
+    /// Finishes the inbound stream cleanly AND records that the PEER closed this channel, with the
+    /// reason it gave. The `channelClose` arm of ``MuxNWConnection``'s router; every other teardown
+    /// path keeps plain ``finish()``.
+    func finishClosedByPeer(reason: MuxCloseReason) {
+        peerCloseReason = reason
         finish()
     }
 

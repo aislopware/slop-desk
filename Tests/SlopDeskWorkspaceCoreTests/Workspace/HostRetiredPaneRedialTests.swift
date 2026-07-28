@@ -30,8 +30,10 @@ final class HostRetiredPaneRedialTests: XCTestCase {
     // MARK: - Doubles
 
     /// An in-memory PTY transport whose end can be either kind: the HOST retiring this channel
-    /// (`channelClose` — ``hostClosedChannel``) or the link dying under it (nothing said about the
-    /// pane). Everything downstream keys on that difference, so the double has to carry it.
+    /// (`channelClose` carrying ``MuxCloseReason/retired`` — ``hostCloseReason``) or the link dying
+    /// under it (nothing said about the pane). Everything downstream keys on that difference, so the
+    /// double has to carry it. The OTHER host close — a laggard eviction — is
+    /// `EvictedSubscriberRedialTests`, and it is answered differently.
     private actor RetirableTransport: ClientTransporting {
         private var _sessionID: UUID?
         var sessionID: UUID? { _sessionID }
@@ -39,7 +41,7 @@ final class HostRetiredPaneRedialTests: XCTestCase {
         var returningClient: Bool { false }
         nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
         private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        private(set) var hostClosedChannel = false
+        private(set) var hostCloseReason: MuxCloseReason?
 
         init() {
             var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
@@ -58,9 +60,10 @@ final class HostRetiredPaneRedialTests: XCTestCase {
             _sessionID = UUID()
         }
 
-        /// The host reaping this pane: a per-channel `channelClose`, then the merged inbound ends.
+        /// The host reaping this pane: a per-channel `channelClose` naming a session it is dropping,
+        /// then the merged inbound ends.
         func retireFromHost() {
-            hostClosedChannel = true
+            hostCloseReason = .retired
             continuation.finish()
         }
 

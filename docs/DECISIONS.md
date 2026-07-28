@@ -4128,9 +4128,10 @@ the campaign's first attempt fires with no backoff at all.
 
 Above the transport a retirement and a drop are the same event: a stream that ended. Only
 `MuxNWConnection` still holds the difference, so the `channelClose` arm marks the sub-channel
-(`MuxSubChannel.closedByPeer`), `MuxClientTransport` reports it as `hostClosedChannel`, and
-`SlopDeskClient` records `retiredByHost` BEFORE it yields the event — the `childExited` ordering, so
-every subscriber reading the flag on that `.disconnected` sees it already set.
+(`MuxSubChannel.peerCloseReason`), `MuxClientTransport` reports it as `hostCloseReason`, and
+`SlopDeskClient` records it BEFORE it yields the event — the `childExited` ordering, so every
+subscriber reading the mark on that `.disconnected` sees it already set. (The mark starts life as a
+bool and becomes a `MuxCloseReason` on 2026-07-28, below — the same seam, one level finer.)
 
 Keyed on the FRAME, never on the resulting state. A REFUSED `channelOpenAck` also resolves to
 `.closed` and also finishes the sub-channel, and it is not a retirement — it is a verdict on an open
@@ -4141,7 +4142,7 @@ the state.
 ### 4. Terminal for the SESSION, not just for the campaign
 
 There are three dial paths and gating one only moves the spawn. `ReconnectManager` gates on
-`isRetiredByHost` beside `isPaused`/`isClosed`/`isExited`; `SlopDeskClient.connect` refuses outright,
+`isHostClosed` beside `isPaused`/`isClosed`/`isExited`; `SlopDeskClient.connect` refuses outright,
 which is the enforcement point at the one call that opens a channel; and `ConnectionViewModel`
 carries its own mirror so `connectIfNeeded()` — the leaf's remount task AND
 `redialDisconnectedPanes()` — returns. The mirror is needed because `connect()` builds a NEW client:
@@ -4151,12 +4152,17 @@ An EXPLICIT re-dial clears it. The user asking for a shell on this pane is a dec
 entitled to make; what it must not do is make it automatically, a round trip before it learns the
 pane is gone.
 
+**Scope (2026-07-28, below).** The `connectIfNeeded()` mirror is `retiredByHost` and answers only the
+REAPED pane. The eviction close latches `evictedByHost` instead, which gates the campaign and the
+status but NOT `connectIfNeeded()` — see §6.
+
 ### 5. The status is `.disconnected`, because the campaign it would be waiting for is gated off
 
 Leaving the fold at `.reconnecting(attempt: 0)` would have produced exactly the frozen dot this repo
-keeps closing elsewhere: a spinner for a retry nobody is making. `retiredByHost` reads as deliberate
-in the fold — it IS deliberate, decided at the other end. `observeEvents` asks the client once, on
-the `.disconnected` edge, so the fold stays synchronous and every other event skips the hop.
+keeps closing elsewhere: a spinner for a retry nobody is making. A host close reads as deliberate in
+the fold — it IS deliberate, decided at the other end. `observeEvents` asks the client once, on
+the `.disconnected` edge, so the fold stays synchronous and every other event skips the hop. Both
+closes answer this the same way; there is no campaign behind either.
 
 ### 6. It covers the EVICTION close too, and that is the right answer, not a side effect
 
@@ -4164,6 +4170,11 @@ the `.disconnected` edge, so the fold stays synchronous and every other event sk
 protect the session. An instant re-dial there re-joins to be evicted again — a churn loop that costs
 the host a state transfer each time. Both closes mean "your attachment is over, by host decision",
 and in both the recovery is an explicit re-dial or the app-connection fan-out, not a reflex.
+
+**That last sentence names a recovery §4's guard disables — corrected 2026-07-28, below.** The
+fan-out runs through `connectIfNeeded()`, which §4 gates, so an evicted client had neither recovery.
+The eviction close now says so on the wire and only the reap latches the `connectIfNeeded()` guard;
+the campaign stays gated for both, which is the churn this section is actually about.
 
 ### 7. The gate stops tolerating it, and gets an assertion a churn cannot outlive
 
@@ -4174,3 +4185,65 @@ permanently and passes no settle. Proven red by neutralising the three gates and
 on: the shell census still said "2 pane(s), 2 live shell(s) ✅" and 7a failed by name. The settle
 drops 20 s → 4 s, which is now sized for the only thing left in it — the kernel collecting a PTY
 child the host killed before it broadcast the diff.
+
+## An evicted subscriber can come back; a reaped pane cannot (2026-07-28)
+
+Amends the ruling above: its §6 says an evicted client recovers by "an explicit re-dial or the
+app-connection fan-out", and its §4 gates `connectIfNeeded()` — which IS the fan-out
+(`WorkspaceStore.handleConnectionEstablished()` → `redialDisconnectedPanes()` →
+`ConnectionViewModel.connectIfNeeded()`). So under `SLOPDESK_PANE_FANOUT=1` a client that lagged past
+`SLOPDESK_SUB_LAG_BYTES` was evicted, kept the pane on screen — `leavePaneChannel` drops only that
+client's registration, so the topology never loses it — and had exactly one way back: the user.
+For the process lifetime, nothing else could dial it.
+
+### 1. Retirement and eviction are opposite facts, and only the host knows which
+
+A reap means the PANE is gone: its session id stops existing, so re-opening the channel is a fresh
+login shell for a row that is one round trip from leaving the layout. An eviction means only the
+ATTACHMENT is gone: the shell is still running, the other members still hold it, and this client's
+topology still names it. The first must never be dialled again; the second is the only thing that
+CAN dial itself back.
+
+Above the transport both are one stream ending, and after an eviction nothing further is ever said —
+no document frame follows, because nothing about the layout changed. So the fact has to ride the
+close: `channelClose` gains an optional `[UInt8 reason]` (`MuxCloseReason`, docs/20 §8.3.2), and
+`MuxSubChannel.peerCloseReason` carries it up through `MuxClientTransport.hostCloseReason` to
+`SlopDeskClient.hostChannelCloseReason`.
+
+`.retired` is the ABSENT body — the empty-bodied close every peer already sends — so the default path
+stays byte-identical and only the eviction costs a byte. And a close always CLOSES: the reason is
+advice about recovery, never permission to skip the teardown, so an absent body and an unrecognised
+byte read the same conservative way (`.retired`, which withholds the automatic re-dial) instead of
+throwing and stranding the channel open with its PTY.
+
+### 2. The campaign is gated for BOTH; only `connectIfNeeded()` discriminates
+
+This is the split the previous ruling collapsed. `ReconnectManager` asks `isHostClosed` and never the
+reason — an immediate retry is wrong for a reap (a spawn) and wrong for an eviction (it re-joins to
+be evicted again, billing the host a state transfer every lap). `SlopDeskClient.connect` refuses for
+both, because THIS client instance is spent either way.
+
+`ConnectionViewModel` is where they part. `retiredByHost` gates `connectIfNeeded()`; `evictedByHost`
+does not. What that admits is precisely two events: the app-connection fan-out, and the leaf's
+connect-on-remount when the user returns to the tab. Neither is a reflex — each is a one-shot,
+client-level transition, and the fan-out in particular fires exactly when this client has just proven
+it can hold a connection again. Recovery is an EVENT, not a retry.
+
+### 3. The status stays `.disconnected`, and that is not a lie
+
+The alternative ruling — eviction is terminal until the user acts — would have obliged the UI to
+render the pane unreachable, because a pane drawn as live that can never reattach is a lie. It is not
+the answer taken: the recovery above is real. But the pane still reads `.disconnected` between the
+eviction and that recovery, because no campaign is running and `.reconnecting` would be the frozen
+dot this repo keeps closing. `.disconnected` is what a drop with no retry behind it actually is, and
+it is the state both the fan-out and an explicit Reconnect act on.
+
+### 4. Proven where it can go red
+
+`EvictedSubscriberRedialTests` drives the real `LivePaneSession` → `SlopDeskClient` path: the fan-out
+recovers an evicted pane (red before the split — one channel, timed out waiting for two), the
+campaign still does not (the control that keeps it from becoming churn), and the reap is still left
+alone in the same rig. `HostServerCloseReasonTests` pins the reason at its origin over a real mux
+loopback, so the one line in `wireSubscriberEviction` cannot be dropped silently; `MuxPeerCloseMarkTests`
+and `MuxEnvelopeCodecTests` pin the wire, including that the default close is still an empty body.
+`scripts/soak-fanout-laggard.sh` remains the proof against a real PTY and a real SIGSTOPped laggard.

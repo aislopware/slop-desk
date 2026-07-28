@@ -176,7 +176,12 @@ public actor MuxNWConnection {
 
     /// Closes `channelID`: sends `channelClose` on both links and finishes its sub-channels'
     /// inbound streams. Other channels on the shared connection are untouched.
-    public func closeChannel(_ id: UInt32) async {
+    ///
+    /// `reason` is what the OTHER end is told (``MuxCloseReason``), and it is the only place the
+    /// difference survives: both of the host's pane closes arrive here, and above the transport they
+    /// are the same stream ending. `.retired` — this channel names something this side no longer has
+    /// — is the default and the empty-bodied frame every close has always sent.
+    public func closeChannel(_ id: UInt32, reason: MuxCloseReason = .retired) async {
         // A close while an openAck is still outstanding (connect raced a teardown): resolve
         // the waiter as refused and drop any recorded verdict — nothing may park forever.
         openAckResults.removeValue(forKey: id)
@@ -185,7 +190,7 @@ public actor MuxNWConnection {
                 waiter.continuation.resume(returning: (false, 0))
             }
         }
-        let close = MuxEnvelopeCodec.encode(.channelClose(channelID: id))
+        let close = MuxEnvelopeCodec.encode(.channelClose(channelID: id, reason: reason))
         // Best-effort + pipelined: NWConnection FIFO guarantees the close follows any prior
         // data; a failed write means the shared link is already gone, so the failure is left to
         // surface via the link-down path rather than thrown here.
@@ -532,13 +537,14 @@ public actor MuxNWConnection {
                 let target = (link == .control) ? controlChannels.removeValue(forKey: channelID)
                     : dataChannels.removeValue(forKey: channelID)
                 if link == .data { dataReceiveWindows.removeValue(forKey: channelID) } // drop credit state
-                // A `channelClose` FRAME is the peer retiring this ONE channel, and the sub-channel
-                // records that (``MuxSubChannel/closedByPeer``) so the consumer can tell it apart
-                // from the link dying under it. Keyed on the frame, NOT on `newState`: a REFUSED
-                // `channelOpenAck` also resolves to `.closed` here, and a refusal is an answer about
-                // an open this side is still making — not a retired channel.
-                if case .channelClose = frame {
-                    if let target { await target.finishClosedByPeer() }
+                // A `channelClose` FRAME is the peer closing this ONE channel, and the sub-channel
+                // records that with the peer's REASON (``MuxSubChannel/peerCloseReason``) so the
+                // consumer can tell it apart both from the link dying under it and from the other
+                // kind of close. Keyed on the frame, NOT on `newState`: a REFUSED `channelOpenAck`
+                // also resolves to `.closed` here, and a refusal is an answer about an open this
+                // side is still making — not a closed channel.
+                if case let .channelClose(_, reason) = frame {
+                    if let target { await target.finishClosedByPeer(reason: reason) }
                 } else if let target {
                     await target.finish()
                 }

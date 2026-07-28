@@ -1222,7 +1222,11 @@ inside the existing render diff.
     does, exactly as the inline path always did.
   - An evicted client reconnects cold and gets `composeSnapshotReplay`'s render-once state transfer.
     **This is precisely why the 2026-07-25 PATH-B work makes multi-attach affordable: eviction costs
-    one screen, not a history.**
+    one screen, not a history.** What triggers that reconnect is the app-connection fan-out, the
+    leaf's connect-on-remount, or the user — never the reconnect campaign, whose immediate retry
+    would re-join to be evicted again and bill that state transfer every lap. The close says which
+    kind it is (`MuxCloseReason.subscriberEvicted`, docs/20 §8.3.2); nothing else ever tells the
+    client, because an eviction changes nothing about the layout.
 
   This lands **in the same commit** as the fan-out. Without it, Phase 6 makes the product worse.
 
@@ -1621,14 +1625,21 @@ tab on client A made client B spawn a fresh PTY for the pane that just died: the
 applied `closeTab` with `channelClose` to every subscriber FIRST and the removing document frame
 SECOND, so B held a dead channel for a pane it still had on screen, and a pane channel naming a
 session the host no longer has is a SPAWN. Not the leaf — the pane's own `ReconnectManager`, which
-cannot tell a per-channel close from a link drop once the inbound stream has ended. The mux now
-carries the difference (`MuxSubChannel.closedByPeer` → `ClientTransporting.hostClosedChannel` →
-`SlopDeskClient.isRetiredByHost`), and every automatic dial path — the campaign,
+cannot tell a per-channel close from a link drop once the inbound stream has ended. The mux carries
+the difference (`MuxSubChannel.peerCloseReason` → `ClientTransporting.hostCloseReason` →
+`SlopDeskClient.hostChannelCloseReason`), and every automatic dial path — the campaign,
 `SlopDeskClient.connect`, `connectIfNeeded()` and with it `redialDisconnectedPanes()` — refuses a
-retired pane; an EXPLICIT re-dial still works. The same rule covers the eviction close, where an
-instant re-join would only be evicted again. Rulings in
-[DECISIONS](DECISIONS.md#a-pane-the-host-retired-is-not-re-dialled-2026-07-28); headless regression in
-`HostRetiredPaneRedialTests` + `MuxPeerCloseMarkTests`. The gate no longer tolerates it: step 7a
+retired pane; an EXPLICIT re-dial still works.
+
+The eviction close carries a DIFFERENT reason (`MuxCloseReason.subscriberEvicted`), because the two
+facts are opposites: an evicted client's pane is still running and stays in its topology forever, so
+treating it as retired stranded it undiallable for the process lifetime. The campaign is gated for
+both (an instant re-join would only be evicted again), but `connectIfNeeded()` is gated only by the
+REAP — so the app-connection fan-out and the leaf's connect-on-remount reattach an evicted pane.
+Rulings in [DECISIONS](DECISIONS.md#a-pane-the-host-retired-is-not-re-dialled-2026-07-28) and
+[its amendment](DECISIONS.md#an-evicted-subscriber-can-come-back-a-reaped-pane-cannot-2026-07-28);
+headless regression in `HostRetiredPaneRedialTests`, `EvictedSubscriberRedialTests`,
+`HostServerCloseReasonTests` + `MuxPeerCloseMarkTests`. The gate no longer tolerates it: step 7a
 asserts no pane uuid appears twice in `attached for pane …` — permanent evidence, unlike a live
 census, which passed even on the buggy build — and the settle it had been given drops 20 s → 4 s.
 

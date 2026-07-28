@@ -523,6 +523,30 @@ unchanged: the rendered bytes ride the SAME ascending replay seqs (re-chunked, l
 covered so the client's ack releases every retained entry), and the client needs no new
 capability — it is `output` frames like any other replay. See docs/DECISIONS.md 2026-07-25.
 
+### 8.3.2 Mux path: `channelClose.reason` (2026-07-28)
+
+`channelClose`'s body is
+
+```
+[ optional UInt8 reason ]      // MuxCloseReason
+```
+
+| value | reason | meaning |
+|-------|--------|---------|
+| absent / `0` | `retired` | the sender no longer has whatever this channel names. On a pane channel: the document reaped the pane (`HostServer.reapPanesRemovedFromTopology`), and the frame that removes it from the layout is one round trip behind. Re-opening under the same session id is a fresh **SPAWN** |
+| `1` | `subscriberEvicted` | only the addressee's ATTACHMENT ended — the pane, its shell and its other members are untouched (`wireSubscriberEviction`: a laggard past `SLOPDESK_SUB_LAG_BYTES`). Re-opening is a reattach, not a spawn |
+
+`retired` is the **absent** body, so every close that has always been sent is byte-identical and only
+a close that means something else costs a byte. **A close always closes**: the reason is advice about
+recovery, so an absent body *and* an unrecognised byte both decode as `retired` (the conservative
+reading — it withholds an automatic re-dial rather than inventing one) rather than throwing and
+leaving the channel open. A body longer than one byte is `malformedBody`, like `channelOpenAck`'s
+tail.
+
+The distinction cannot be re-derived above the transport — a reap and an eviction are the same
+stream ending, and after an eviction NOTHING else ever tells the client (the pane stays in its
+topology). See docs/DECISIONS.md 2026-07-28.
+
 ### 8.4 `SlopDeskTransport` public API (WF-2)
 
 - `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single canonical params:

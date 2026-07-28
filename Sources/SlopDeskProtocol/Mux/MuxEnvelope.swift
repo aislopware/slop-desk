@@ -19,11 +19,34 @@ public enum MuxFrameType: UInt8, Sendable, Equatable, CaseIterable {
     /// Opaque application payload for an open channel. Body is a passed-through
     /// ``WireMessage`` frame — the mux layer does **not** parse it.
     case channelData = 3
-    /// One side is done sending on the channel (SSH `CHANNEL_CLOSE`). Body = empty.
+    /// One side is done sending on the channel (SSH `CHANNEL_CLOSE`). Body =
+    /// `[optional UInt8 reason]` — a ``MuxCloseReason``, absent for the default `.retired`.
     case channelClose = 4
     /// Replenish a channel's flow-control window (SSH `CHANNEL_WINDOW_ADJUST`).
     /// Body = `[UInt32 BE bytesToAdd]`.
     case windowAdjust = 5
+}
+
+/// WHY a peer closed one channel — the half of a `channelClose` that decides what the other end may
+/// do next.
+///
+/// Above the transport a close is a stream that ended, and the two reasons a host closes a PANE
+/// channel demand opposite answers. `MuxSubChannel.closedByPeer` records that the FRAME arrived;
+/// this records what the frame meant, and it has to ride the wire because only the sender knows.
+///
+/// The reason is ADVICE about recovery, never permission to skip the teardown: every value closes
+/// the channel identically. So an absent body and an unrecognised byte both read as ``retired`` —
+/// the conservative reading, which withholds the automatic re-dial rather than inventing one.
+public enum MuxCloseReason: UInt8, Sendable, Equatable, CaseIterable {
+    /// The channel names something the peer no longer has: the document reaped the pane, or this
+    /// side is done with it. Re-opening under the same session id is a fresh SPAWN, so nothing
+    /// automatic may dial it again — recovery is an explicit user re-dial.
+    case retired = 0
+    /// Only THIS subscriber's attachment ended — the pane, its shell and its other members are
+    /// untouched (`HostServer.wireSubscriberEviction`: a laggard removed to protect the session).
+    /// Re-opening resumes a session the host still holds, so it is a reattach rather than a spawn;
+    /// what it must not be is a reflex, because an instant re-dial re-joins to be evicted again.
+    case subscriberEvicted = 1
 }
 
 /// One decoded TCP mux frame.
@@ -52,8 +75,10 @@ public enum MuxFrame: Equatable, Sendable {
     case channelOpenAck(channelID: UInt32, accepted: Bool, resumeFromSeq: Int64)
     /// `channelData`: OPAQUE inner ``WireMessage`` frame bytes for `channelID`.
     case channelData(channelID: UInt32, payload: Data)
-    /// `channelClose`: this side will send no more frames on `channelID`.
-    case channelClose(channelID: UInt32)
+    /// `channelClose`: this side will send no more frames on `channelID`. `reason` is the peer's
+    /// statement of WHY (see ``MuxCloseReason``); it defaults to `.retired`, which is the shape and
+    /// the bytes a close has always had.
+    case channelClose(channelID: UInt32, reason: MuxCloseReason = .retired)
     /// `windowAdjust`: grant `bytesToAdd` more flow-control credit on `channelID`.
     case windowAdjust(channelID: UInt32, bytesToAdd: UInt32)
 
@@ -63,7 +88,7 @@ public enum MuxFrame: Equatable, Sendable {
         case let .channelOpen(channelID, _, _, _, _): channelID
         case let .channelOpenAck(channelID, _, _): channelID
         case let .channelData(channelID, _): channelID
-        case let .channelClose(channelID): channelID
+        case let .channelClose(channelID, _): channelID
         case let .windowAdjust(channelID, _): channelID
         }
     }
@@ -132,8 +157,11 @@ public enum MuxEnvelopeCodec {
         case let .channelData(_, payload):
             out.append(payload) // opaque — carried verbatim
 
-        case .channelClose:
-            break // empty body
+        case let .channelClose(_, reason):
+            // `.retired` is the ABSENT body — the empty-bodied close every peer has always sent, so
+            // the default path stays byte-identical and only a close that means something else
+            // costs a byte. The decoder reads the absence back as `.retired`.
+            if reason != .retired { out.append(reason.rawValue) }
 
         case let .windowAdjust(_, bytesToAdd):
             out.appendBE(bytesToAdd)
@@ -222,7 +250,19 @@ public enum MuxEnvelopeCodec {
             return .channelData(channelID: channelID, payload: reader.remaining())
 
         case .channelClose:
-            return .channelClose(channelID: channelID)
+            // A close must always CLOSE: the reason only advises what may happen afterwards, so
+            // neither an absent body (the default `.retired` encoding) nor an unrecognised byte may
+            // throw and leave the channel open — both read as `.retired`, the reading that
+            // withholds an automatic re-dial. Trailing bytes past the reason are still malformed.
+            guard reader.bytesRemaining > 0 else { return .channelClose(channelID: channelID, reason: .retired) }
+            let reasonByte = try reader.readUInt8()
+            guard reader.bytesRemaining == 0 else {
+                throw SlopDeskError.malformedBody("channelClose: trailing bytes")
+            }
+            return .channelClose(
+                channelID: channelID,
+                reason: MuxCloseReason(rawValue: reasonByte) ?? .retired,
+            )
 
         case .windowAdjust:
             let bytesToAdd = try reader.readUInt32()

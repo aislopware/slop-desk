@@ -1331,6 +1331,15 @@ root["muxEnvelopes"] = [
         ["channelId": UInt32(4), "payloadHex": ""],
     ),
     muxRecord("channelClose", .channelClose(channelID: 6), ["channelId": UInt32(6)]),
+    // The close REASON (docs/20 §8.3.2). `.retired` is the empty body above — the shape every close
+    // has always had — so only a close that means something else costs a byte, and this record is
+    // what pins that byte. Above the transport the host's two pane closes are the same stream
+    // ending; this is where the difference is made.
+    muxRecord(
+        "channelClose",
+        .channelClose(channelID: 6, reason: .subscriberEvicted),
+        ["channelId": UInt32(6), "closeReason": Int(MuxCloseReason.subscriberEvicted.rawValue)],
+    ),
     muxRecord(
         "windowAdjust",
         .windowAdjust(channelID: 7, bytesToAdd: 262_144),

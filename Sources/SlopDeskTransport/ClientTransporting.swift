@@ -22,15 +22,17 @@ public protocol ClientTransporting: Sendable {
     /// Merged inbound stream of host→client messages (`output`/`exit`/`title`/`bell`).
     var inbound: AsyncThrowingStream<WireMessage, Error> { get }
 
-    /// Whether the inbound stream ended because the HOST retired this channel — a per-channel
-    /// `channelClose` — rather than because the link under it died.
+    /// Why the HOST closed this channel — a per-channel `channelClose` and the reason it carried —
+    /// or `nil` if the stream ended because the link under it died.
     ///
-    /// Read once the stream ends, and it decides whether the end is RECOVERABLE. The host closes a
-    /// pane channel only when the document reaped the pane or the subscriber was evicted, so
-    /// re-opening under the same session id spawns a fresh shell for a pane that no longer exists.
-    /// A link drop says nothing about the pane and stays the reconnect campaign's job.
-    /// Default `false` for transports with no per-channel close (fakes/tests).
-    var hostClosedChannel: Bool { get async }
+    /// Read once the stream ends, and it decides whether the end is RECOVERABLE and by what. The
+    /// host closes a pane channel for exactly two reasons and they are opposites:
+    /// `.retired` means its document reaped the pane, so re-opening under the same session id spawns
+    /// a fresh shell for a pane that no longer exists; `.subscriberEvicted` means only this client's
+    /// attachment ended, so the pane is still there to reattach to. A link drop says nothing about
+    /// the pane at all and stays the reconnect campaign's job.
+    /// Default `nil` for transports with no per-channel close (fakes/tests).
+    var hostCloseReason: MuxCloseReason? { get async }
 
     /// Connects (or resumes) the session and completes the handshake.
     func connect(
@@ -77,10 +79,10 @@ public protocol InitialCwdConfigurableTransport: Sendable {
 }
 
 public extension ClientTransporting {
-    /// Default `false`: only the mux transport has per-channel closes to distinguish. A double whose
+    /// Default `nil`: only the mux transport has per-channel closes to distinguish. A double whose
     /// stream simply ends is reporting a drop, which is exactly what the reconnect campaign is for.
     /// A SYNCHRONOUS getter legally witnesses the `async` requirement — the repo's fake-witness idiom.
-    var hostClosedChannel: Bool { false }
+    var hostCloseReason: MuxCloseReason? { nil }
 
     /// Default no-op: only windowed transports (the mux) account consumption.
     func noteOutputConsumed(wireBytes _: Int) {}

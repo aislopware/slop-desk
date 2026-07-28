@@ -108,14 +108,14 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
 
     public nonisolated var inbound: AsyncThrowingStream<WireMessage, Error> { inboundStream }
 
-    /// Whether the HOST retired this channel with a `channelClose`, rather than the shared link
-    /// dying under it. Either sub-channel carrying the mark is enough: `closeChannel` sends the
-    /// frame on BOTH links, and whichever arrives first is the one that ends the merged stream.
-    public var hostClosedChannel: Bool {
+    /// Why the HOST closed this channel, or `nil` if the shared link died under it instead. Either
+    /// sub-channel carrying the mark is enough: `closeChannel` sends the frame on BOTH links with
+    /// the SAME reason, and whichever arrives first is the one that ends the merged stream.
+    public var hostCloseReason: MuxCloseReason? {
         get async {
-            if let dataChannel, await dataChannel.closedByPeer { return true }
-            if let controlChannel, await controlChannel.closedByPeer { return true }
-            return false
+            if let dataChannel, let reason = await dataChannel.peerCloseReason { return reason }
+            if let controlChannel, let reason = await controlChannel.peerCloseReason { return reason }
+            return nil
         }
     }
 
