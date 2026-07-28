@@ -287,6 +287,17 @@ public actor SlopDeskClient {
     /// `isPaused`/`isClosed`. A respawn is an explicit re-dial, which builds a NEW client.
     private var childExited = false
 
+    /// Set when the HOST retired this pane's channel — a per-channel `channelClose`, as opposed to
+    /// the link dying under it. TERMINAL for this client instance, for the same reason `childExited`
+    /// is: the host only closes a pane channel once its document has reaped the pane (or evicted
+    /// this subscriber), and re-opening a channel under a session id the host no longer holds is a
+    /// fresh SPAWN — a whole login shell for a pane that is on its way out of the layout. So
+    /// ``ReconnectManager`` gates on ``isRetiredByHost`` beside `isPaused`/`isClosed`/`isExited`, and
+    /// the UI reads it to show a definite disconnect rather than a retry that will never be made.
+    /// A drop leaves it `false`: nothing was said about the pane, and recovering that is the
+    /// campaign's whole job.
+    private var retiredByHost = false
+
     /// Monotonic connect-attempt counter. Each ``connect(...)`` captures its value at entry; if a
     /// NEWER connect starts during this one's `await transport.connect(...)` suspension (the actor is
     /// reentrant at every await), the older invocation observes its captured generation is now stale
@@ -300,7 +311,7 @@ public actor SlopDeskClient {
 
     /// Set while we are deliberately replacing the transport (reconnect entry / pause).
     /// `teardownTransport()` closes the OLD transport, finishing the OLD inbound stream and landing
-    /// the old pump in ``handleStreamEnded(error:)`` with `nil` — a SELF-INFLICTED end, not a real
+    /// the old pump in ``handleStreamEnded(error:hostClosed:)`` with `nil` — a SELF-INFLICTED end, not a real
     /// drop. This flag lets `handleStreamEnded` suppress that spurious `.disconnected` (mirror of
     /// the `closed` guard), so `ReconnectManager` does not queue a redundant reconnect campaign. The
     /// real drop path (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
@@ -413,6 +424,10 @@ public actor SlopDeskClient {
     ) async throws {
         guard !closed else { throw ClientError.invalidState("connect after close") }
         guard !childExited else { throw ClientError.invalidState("connect after child exit") }
+        // The enforcement point for `retiredByHost`, at the one call that actually opens a channel:
+        // the host has retired this pane, so no path may re-open it under the same client. An
+        // explicit user re-dial is unaffected — it builds a NEW client.
+        guard !retiredByHost else { throw ClientError.invalidState("connect after host closed the channel") }
         self.host = host
         self.port = port
 
@@ -558,9 +573,9 @@ public actor SlopDeskClient {
                 for try await message in inbound {
                     await handleInbound(message)
                 }
-                await handleStreamEnded(error: nil)
+                await handleStreamEnded(error: nil, hostClosed: transport.hostClosedChannel)
             } catch {
-                await handleStreamEnded(error: error)
+                await handleStreamEnded(error: error, hostClosed: transport.hostClosedChannel)
             }
         }
     }
@@ -715,7 +730,15 @@ public actor SlopDeskClient {
         ackPending = true
     }
 
-    private func handleStreamEnded(error: Error?) {
+    /// - Parameter hostClosed: whether the transport reports this end as a per-channel
+    ///   `channelClose` from the HOST rather than the link going away. Read from the pump's OWN
+    ///   captured transport, not `self.transport`, so a connect that replaces the transport while
+    ///   the old pump is still unwinding cannot attribute one channel's end to another's.
+    private func handleStreamEnded(error: Error?, hostClosed: Bool) {
+        // The host retired this pane's channel. TERMINAL, and recorded BEFORE the event goes out so
+        // every subscriber that reads `isRetiredByHost` on the `.disconnected` — the reconnect
+        // campaign first among them — sees it already set (the `childExited` ordering).
+        if hostClosed { retiredByHost = true }
         // The link is gone: the dead connection's resume verdict must not survive it — a stale
         // `.resumedSession` read between the drop and the next connect would let the UI skip the
         // fresh-session wipe the NEXT session may need. Reset unconditionally (before the guards:
@@ -881,6 +904,12 @@ public actor SlopDeskClient {
     /// drop and launch a reconnect campaign that respawns host shells into a consumer-less inbox.
     public var isExited: Bool { childExited }
 
+    /// True once the HOST closed this pane's channel (see `retiredByHost`). ``ReconnectManager``
+    /// consults this ALONGSIDE ``isPaused``/``isClosed``/``isExited``: a `channelClose` sets none of
+    /// those, and it ends the inbound stream exactly as a drop does — so without this the campaign
+    /// re-opens the channel and the host forks a shell for a pane it has already reaped.
+    public var isRetiredByHost: Bool { retiredByHost }
+
     /// Test-only: simulate a hard network loss — tear down the transport (cancelling the
     /// underlying NWConnections) WITHOUT sending a clean `bye`, exactly as an iOS TCP
     /// teardown or a NetBird path flap would. Preserves `sessionID` + `highestContiguousSeq`
@@ -888,7 +917,7 @@ public actor SlopDeskClient {
     /// surfaced ``output`` / ``events`` streams stay open (this is a drop, not a close).
     ///
     /// Marked underscored + documented as test-only; the production drop path is the
-    /// transport failing on its own (handled by ``handleStreamEnded(error:)``).
+    /// transport failing on its own (handled by ``handleStreamEnded(error:hostClosed:)``).
     public func forceDropForTesting() async {
         await teardownTransport()
     }
@@ -909,7 +938,7 @@ public actor SlopDeskClient {
         await transport?.close()
         transport = nil
         // Drain the old inbound pump to completion. `close()` above finished the old
-        // inbound stream, so the pump is unwinding into `handleStreamEnded(error: nil)`.
+        // inbound stream, so the pump is unwinding into `handleStreamEnded`.
         // Awaiting its `.value` here guarantees that self-inflicted end is fully processed
         // BEFORE the caller clears `tearingDown` — so its `.disconnected` is suppressed
         // deterministically (not by timing). The task never throws (`Task<Void, Never>`).

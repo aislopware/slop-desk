@@ -364,6 +364,26 @@ public actor MuxSubChannel: MessageChannel {
         wakeSendGateWaiters()
     }
 
+    /// Whether this channel ended because the PEER sent `channelClose` for it, as opposed to the
+    /// link under it dying or this side closing it.
+    ///
+    /// The distinction is a DECISION vs an ACCIDENT. A link that drops takes every channel on it
+    /// with it and says nothing about any of them — that is what a reconnect campaign exists to
+    /// recover. A per-channel `channelClose` is the peer naming ONE channel and retiring it, and on
+    /// a pane channel the host sends exactly one only when the document reaped the pane or the
+    /// subscriber was evicted (`HostServer.reapPanesRemovedFromTopology` / `wireSubscriberEviction`).
+    /// Answering either by re-opening is wrong: the pane is gone, and a channel naming a session the
+    /// host no longer has is a fresh SPAWN.
+    public private(set) var closedByPeer = false
+
+    /// Finishes the inbound stream cleanly AND records that the PEER retired this channel
+    /// (``closedByPeer``). The `channelClose` arm of ``MuxNWConnection``'s router; every other
+    /// teardown path keeps plain ``finish()``.
+    func finishClosedByPeer() {
+        closedByPeer = true
+        finish()
+    }
+
     /// Finishes the inbound stream with `error` (the shared connection failed under this channel).
     /// Also wakes any parked sender (it sees `finished` and throws) so the failure does not leak it.
     func finish(throwing error: Error) {

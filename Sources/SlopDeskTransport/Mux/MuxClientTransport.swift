@@ -108,6 +108,17 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
 
     public nonisolated var inbound: AsyncThrowingStream<WireMessage, Error> { inboundStream }
 
+    /// Whether the HOST retired this channel with a `channelClose`, rather than the shared link
+    /// dying under it. Either sub-channel carrying the mark is enough: `closeChannel` sends the
+    /// frame on BOTH links, and whichever arrives first is the one that ends the merged stream.
+    public var hostClosedChannel: Bool {
+        get async {
+            if let dataChannel, await dataChannel.closedByPeer { return true }
+            if let controlChannel, await controlChannel.closedByPeer { return true }
+            return false
+        }
+    }
+
     private var initialCwd: String?
 
     // Actor-isolated (not `async`): the cross-actor hop supplies the async-ness the

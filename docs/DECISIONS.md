@@ -3933,7 +3933,8 @@ leaf re-dials in the window between the host's `channelClose` and the document d
 pane, and a pane channel naming a session the host no longer has is a SPAWN. Transient — the diff
 lands, the leaf unmounts, the shell is reaped, and the live count is exact afterwards — and absent
 with the flag off, where B holds no channel to re-dial. Recorded in [45 §9 Phase 6], not fixed here:
-it belongs to the flag that is still default-OFF.
+it belongs to the flag that is still default-OFF. **Fixed since** — and it was the reconnect campaign,
+not the leaf: see "A pane the host retired is not re-dialled" below.
 
 ## The launch dial hold: a pane does not open a PTY under an unconfirmed id (2026-07-28)
 
@@ -4093,3 +4094,83 @@ through it has already reached that member, and a zero would read as "has shippe
 the read loop on every join. A joiner's seed also claims what the drain fanned into its outbox while
 its snapshot was on the wire; that optimism is bounded by one gate capacity and self-corrects on the
 next frames, which is cheaper than threading an exact watermark through the join.
+
+## A pane the host retired is not re-dialled (2026-07-28)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §9 Phase 6. The transient
+recorded there — "closing a tab on client A makes client B spawn a fresh PTY for the pane that just
+died" — is closed. `SLOPDESK_PANE_FANOUT=1 scripts/check-multiclient.sh` had it in its own log every
+run: four panes, **five** `attached for pane …` lines, one uuid appearing twice.
+
+    mux channel  7 (conn …ADCA27): joined live session 5AD35312… as subscriber 1
+    mux channel 11 (conn …ADCA27): shell /bin/sh (pid 75883) attached for pane 5AD35312…
+
+### 1. The window is real, and it belongs to the HOST's own ordering
+
+`HostServer+Workspace` answers an applied `closeTab` in a fixed order: `reapPanesRemovedFromTopology`
+(a `channelClose` to every subscriber) and only then `reconcileWorkspaceDocument()` (the frame that
+removes the pane). Client B therefore learns the channel is dead one round trip BEFORE it learns the
+pane is gone. Client A never sees the window because its optimistic patch removed the pane on the
+frame the user clicked, so its session was already torn down `deliberatelyClosed` when the host's
+close arrived. Reordering the host would not fix it either: the two facts ride different channels and
+land on different client tasks, so their arrival order is not the host's to promise.
+
+### 2. It was never the leaf, and that is why a leaf-level gate would have been theatre
+
+The obvious reading — "B's leaf re-dials" — does not survive reading the code. The leaf's connect
+task is keyed on `dialTaskKey`, which moves only on the pane id or `panesMayDial`, and neither moves
+here; and its body routes through `ConnectionViewModel.connectIfNeeded()`, which returns on
+`.reconnecting`. The dial came from the pane's own `ReconnectManager`: the peer `channelClose` ends
+the inbound stream exactly as a link failure does, `handleStreamEnded` yielded `.disconnected`, and
+the campaign's first attempt fires with no backoff at all.
+
+### 3. The discriminator has to come from the MUX, because it is gone by the time anyone can ask
+
+Above the transport a retirement and a drop are the same event: a stream that ended. Only
+`MuxNWConnection` still holds the difference, so the `channelClose` arm marks the sub-channel
+(`MuxSubChannel.closedByPeer`), `MuxClientTransport` reports it as `hostClosedChannel`, and
+`SlopDeskClient` records `retiredByHost` BEFORE it yields the event — the `childExited` ordering, so
+every subscriber reading the flag on that `.disconnected` sees it already set.
+
+Keyed on the FRAME, never on the resulting state. A REFUSED `channelOpenAck` also resolves to
+`.closed` and also finishes the sub-channel, and it is not a retirement — it is a verdict on an open
+this side is still making (`attachedElsewhere` is the shipped one), whose campaign must keep running.
+`MuxPeerCloseMarkTests` pins both, and the refusal case goes red the moment the check is relaxed to
+the state.
+
+### 4. Terminal for the SESSION, not just for the campaign
+
+There are three dial paths and gating one only moves the spawn. `ReconnectManager` gates on
+`isRetiredByHost` beside `isPaused`/`isClosed`/`isExited`; `SlopDeskClient.connect` refuses outright,
+which is the enforcement point at the one call that opens a channel; and `ConnectionViewModel`
+carries its own mirror so `connectIfNeeded()` — the leaf's remount task AND
+`redialDisconnectedPanes()` — returns. The mirror is needed because `connect()` builds a NEW client:
+a client-level guard alone is invisible to the path that replaces the client.
+
+An EXPLICIT re-dial clears it. The user asking for a shell on this pane is a decision this client is
+entitled to make; what it must not do is make it automatically, a round trip before it learns the
+pane is gone.
+
+### 5. The status is `.disconnected`, because the campaign it would be waiting for is gated off
+
+Leaving the fold at `.reconnecting(attempt: 0)` would have produced exactly the frozen dot this repo
+keeps closing elsewhere: a spinner for a retry nobody is making. `retiredByHost` reads as deliberate
+in the fold — it IS deliberate, decided at the other end. `observeEvents` asks the client once, on
+the `.disconnected` edge, so the fold stays synchronous and every other event skips the hop.
+
+### 6. It covers the EVICTION close too, and that is the right answer, not a side effect
+
+`wireSubscriberEviction` is the other place the host closes a pane channel: a laggard removed to
+protect the session. An instant re-dial there re-joins to be evicted again — a churn loop that costs
+the host a state transfer each time. Both closes mean "your attachment is over, by host decision",
+and in both the recovery is an explicit re-dial or the app-connection fan-out, not a reflex.
+
+### 7. The gate stops tolerating it, and gets an assertion a churn cannot outlive
+
+`check-multiclient.sh` had been taught a 20 s settle because the spawn was transient and a live
+census could only be told to wait it out. A live count is the wrong instrument for something that
+dies: 7a now asserts that no pane uuid appears twice in `attached for pane …`, which is written down
+permanently and passes no settle. Proven red by neutralising the three gates and re-running the flag
+on: the shell census still said "2 pane(s), 2 live shell(s) ✅" and 7a failed by name. The settle
+drops 20 s → 4 s, which is now sized for the only thing left in it — the kernel collecting a PTY
+child the host killed before it broadcast the diff.

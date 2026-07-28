@@ -177,6 +177,20 @@ public final class ConnectionViewModel {
     /// `.disconnected` is not mis-read as a drop to reconnect.
     private var deliberatelyClosed = false
 
+    /// True once the HOST closed this pane's channel (``SlopDeskClient/isRetiredByHost``) and until
+    /// the next EXPLICIT ``connect()``.
+    ///
+    /// Under `SLOPDESK_PANE_FANOUT` a tab closed on one client is a host-side topology delete, and
+    /// the host answers it `channelClose` FIRST, document frame SECOND. In that window this client
+    /// still has the pane on screen and a dead channel under it — and every automatic dial path
+    /// would re-open it, which for a session the host no longer holds is a fresh SPAWN. So the
+    /// window is closed on BOTH counts: nothing dials (``connectIfNeeded()`` returns, and the
+    /// campaign never starts), and the pane reads a definite `.disconnected` rather than a
+    /// `.reconnecting` no retry will ever follow — a "frozen dot" is the failure this codebase
+    /// keeps closing elsewhere. Cleared by ``performConnect()``: an explicit re-dial is a decision
+    /// this client is entitled to make, and it builds a NEW client anyway.
+    private var retiredByHost = false
+
     /// Serial OUT path (renderer → host). Keystrokes + resizes funnel through ONE ordered FIFO drained
     /// by ONE task, so a fast burst (typing / multi-segment paste / an escape sequence split across
     /// writes) reaches the host PTY IN ORDER. A per-event `Task { await client.sendInput }` does NOT
@@ -366,6 +380,10 @@ public final class ConnectionViewModel {
         // Tear down any prior session first (re-connect to a new target).
         await teardown()
         deliberatelyClosed = false
+        // An EXPLICIT re-dial ("Reconnect Pane", the connect-gate) overrides a host retirement: the
+        // user is asking for a shell on this pane, and `makeClient()` below builds a client that
+        // carries none of the old one's terminal state.
+        retiredByHost = false
         terminal.reset()
 
         let client = makeClient()
@@ -548,6 +566,12 @@ public final class ConnectionViewModel {
     /// reconnect paths ("Reconnect Pane", the connect-gate) still call ``connect()`` directly, so their
     /// force-redial semantics are unaffected.
     public func connectIfNeeded() async {
+        // A pane the HOST retired is not an idle channel waiting to be woken. Both AUTOMATIC dial
+        // paths land here — the leaf's connect-on-remount `.task` and
+        // ``WorkspaceStore/redialDisconnectedPanes()`` — and the status they would act on is
+        // `.disconnected`, which is exactly the arm that dials. Gating on the reason, not on the
+        // status, is what keeps a re-dial from slipping in behind the document diff.
+        guard !retiredByHost else { return }
         switch status {
         case .disconnected,
              .failed,
@@ -627,6 +651,11 @@ public final class ConnectionViewModel {
         observeTask = Task { @MainActor [weak self] in
             for await event in client.events {
                 guard let self else { return }
+                // WHY a drop is a drop is not knowable from the event: a per-channel `channelClose`
+                // ends the stream exactly as a link failure does, and only the client (which asked
+                // its transport) can tell them apart. Asked here, ONCE, on the `.disconnected`
+                // edge — the fold itself stays synchronous, and every other event skips the hop.
+                if case .disconnected = event, await client.isRetiredByHost { retiredByHost = true }
                 foldEvent(event)
             }
         }
@@ -643,7 +672,10 @@ public final class ConnectionViewModel {
             // `progress` on the same edge (no stuck spinner across a drop/reconnect). The fresh shell
             // re-reports its own.
             onProgressUpdate?(nil)
-            if deliberatelyClosed {
+            // `retiredByHost` reads as deliberate too — it IS deliberate, just decided at the other
+            // end. No campaign will follow it (``ReconnectManager`` gates on the same fact), so
+            // showing "reconnecting" would be a spinner for a retry nobody is making.
+            if deliberatelyClosed || retiredByHost {
                 status = .disconnected
             } else {
                 // A fresh drop: enter reconnecting with no attempt info yet (the supervisor's `onProgress`

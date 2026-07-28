@@ -17,7 +17,9 @@
 #     against a host that already has one) and projects host truth instead,
 #   - a REAL menu gesture on client A — Split Right, New Tab, Close Tab — reaches client B's own
 #     projection, in both directions (a pane appearing AND a tab disappearing),
-#   - the pane inventory is exact: N panes in the layout ⇒ N live shells on the host.
+#   - the pane inventory is exact: N panes in the layout ⇒ N live shells on the host,
+#   - and no pane was ever minted a SECOND shell — a live census can be waited out, a duplicated
+#     `attached for pane <uuid>` line cannot.
 #
 # HOW IT OBSERVES THE SECOND CLIENT — the interesting design problem, decided out loud:
 #   The claim under test is "client B's VIEW follows", so the observation has to come off client B.
@@ -364,17 +366,14 @@ converge "after A closes that tab" 1 2
 # leak is a shell that is still THERE. hostd forks nothing but PTYs, so its child set IS the shell
 # set; if that ever stops being true this goes red and somebody looks.
 #
-# REACHED, then HELD — never a single read the instant `converge` returns. With
-# `SLOPDESK_PANE_FANOUT=1` the close that just happened leaves a TRANSIENT extra PTY: client B's leaf
-# re-dials the dying pane in the window between the host's `channelClose` and the document diff that
-# removes it, and a pane channel naming a session the host no longer has is a SPAWN (docs/DECISIONS.md
-# — "One thing hardware said that no test had"). `converge` returns when the DIFF lands, which is
-# before B's leaf unmounts and the host reaps that orphan, so a single-shot read here goes red on a
-# CORRECT system. Waiting cannot hide the failure it exists to catch, because a leak is permanent:
-# the deadline expires and the same message prints. The hold afterwards is the other half — a re-dial
-# that lands late must not slip in behind the assertion.
-LIVE_SHELL_SETTLE=40 # ×0.5 s
-LIVE_SHELL_HOLD=6    # ×1 s
+# REACHED, then HELD — never a single read the instant `converge` returns. The settle covers ONE
+# thing: the host kills a reaped pane's PTY child before it broadcasts the diff `converge` waits on,
+# so `pgrep` can still see a child the kernel has not collected yet. That is milliseconds, not a
+# round trip, and the budget is sized for a loaded machine rather than for a churn — a re-dial is
+# caught by 7a below, which no amount of waiting can satisfy. The hold afterwards is the other half:
+# a shell that appears LATE must not slip in behind the assertion.
+LIVE_SHELL_SETTLE=8 # ×0.5 s
+LIVE_SHELL_HOLD=6   # ×1 s
 live_shells() { { pgrep -P "${HOSTD_PID}" || true; } | grep -c . || true; }
 FINAL_SIG="$(signature "${SOCK_A}" 2> /dev/null || true)"
 PANE_COUNT="$(count_of pane "${FINAL_SIG}")"
@@ -395,6 +394,31 @@ for second in $(seq 1 "${LIVE_SHELL_HOLD}"); do
     shell_census_failed "${second}s after the counts matched — a pane was re-dialled behind the check"
 done
 echo "==> ${PANE_COUNT} pane(s) in the layout, ${PANE_COUNT} live shell(s) on the host, held ${LIVE_SHELL_HOLD}s ✅"
+
+# 7a. ONE pane, ONE shell, EVER — the assertion a churn cannot outlive.
+#
+# The census above counts what is ALIVE, so anything that spawns and dies inside the settle is
+# invisible to it. That is exactly the shape of the bug this run exists to keep closed: with
+# `SLOPDESK_PANE_FANOUT=1` the tab close made client B re-dial the dying pane in the window between
+# the host's `channelClose` and the document diff removing it, and a pane channel naming a session
+# the host no longer has is a SPAWN — a whole login shell, rc files and all, for a pane the user had
+# just closed (docs/DECISIONS.md, "A pane the host retired is not re-dialled"). It was transient, so
+# a live count could only ever be told to wait it out.
+#
+# `attached for pane <uuid>` is the host's own line for MINTING a shell, one per pane per lifetime;
+# a second client fanning onto the same pane logs `joined live session … as subscriber` instead. So
+# the same uuid appearing twice is a second shell for one pane, it is written down permanently, and
+# no settle can make it go away. Asserted in BOTH modes: with the flag off the re-dial has no
+# channel to happen on, which is a fact worth pinning rather than assuming.
+DOUBLE_ATTACHED="$(awk '/attached for pane /{ print $NF }' "${HOSTD_LOG}" | sort | uniq -d)"
+if [[ -n "${DOUBLE_ATTACHED}" ]]; then
+  echo "--- panes the host minted a shell for more than once ---" >&2
+  grep 'attached for pane ' "${HOSTD_LOG}" >&2 || true
+  fatal "$(wc -l <<< "${DOUBLE_ATTACHED}" | tr -d ' ') pane(s) got a SECOND shell — a pane was
+    re-dialled after the host retired its channel: ${DOUBLE_ATTACHED//$'\n'/ }"
+fi
+ATTACH_LINES="$(grep -c 'attached for pane ' "${HOSTD_LOG}" 2> /dev/null || true)"
+echo "==> ${ATTACH_LINES} shell mint(s), no pane minted twice ✅"
 
 # 7b. PTY fan-out — a SEPARATE claim, only when the flag asked for it.
 #

@@ -137,12 +137,18 @@ public final class ReconnectManager: Sendable {
                 // respawn host shells whose output strands in a consumer-less inbox (a per-flap
                 // memory ratchet plus a shell-respawn loop). A post-exit pane needs an explicit
                 // re-dial, which builds a NEW client.
+                // And `isRetiredByHost`: a per-channel `channelClose` ends the inbound stream
+                // exactly as a drop does, but it is the host stating that THIS pane is done —
+                // its document reaped the pane, or it evicted this subscriber. Re-opening a
+                // channel under a session id the host no longer holds is a SPAWN, so the campaign
+                // must not run at all; recovery is an explicit re-dial, which builds a NEW client.
                 // (Awaits, not `||` with an autoclosure: an actor-isolated read can't sit in the
                 // short-circuit operand's nonisolated autoclosure.)
                 let paused = await client.isPaused
                 let closed = await client.isClosed
                 let exited = await client.isExited
-                if paused || closed || exited { continue }
+                let retired = await client.isRetiredByHost
+                if paused || closed || exited || retired { continue }
                 onLog?("reconnect: transport dropped (\(reason)) — retrying")
                 await Self.reconnectLoop(
                     client: client, host: host, port: port, backoff: backoff,
@@ -189,12 +195,15 @@ public final class ReconnectManager: Sendable {
             // `isExited`: the remote child exited — TERMINAL for this client (its wake stream is
             // permanently finished; `connect` refuses), so a campaign would likewise burn doomed
             // retries; and mid-campaign, a freshly-respawned shell that exits instantly must stop
-            // the loop rather than respawn another. (Awaits, not `||`: an actor-isolated read
-            // can't sit in a short-circuit autoclosure.)
+            // the loop rather than respawn another. `isRetiredByHost`: the host closed this pane's
+            // channel mid-campaign — every further `connect` would spawn a shell for a pane the
+            // host has already reaped, so the campaign ends here. (Awaits, not `||`: an
+            // actor-isolated read can't sit in a short-circuit autoclosure.)
             let paused = await client.isPaused
             let closed = await client.isClosed
             let exited = await client.isExited
-            if paused || closed || exited { return }
+            let retired = await client.isRetiredByHost
+            if paused || closed || exited || retired { return }
             attempt += 1
             // Cap: stop after maxReconnectAttempts so a permanently-gone host does not
             // keep the pane stuck in "reconnecting" forever. Surface a log line so

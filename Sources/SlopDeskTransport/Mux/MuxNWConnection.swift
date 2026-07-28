@@ -532,7 +532,16 @@ public actor MuxNWConnection {
                 let target = (link == .control) ? controlChannels.removeValue(forKey: channelID)
                     : dataChannels.removeValue(forKey: channelID)
                 if link == .data { dataReceiveWindows.removeValue(forKey: channelID) } // drop credit state
-                if let target { await target.finish() }
+                // A `channelClose` FRAME is the peer retiring this ONE channel, and the sub-channel
+                // records that (``MuxSubChannel/closedByPeer``) so the consumer can tell it apart
+                // from the link dying under it. Keyed on the frame, NOT on `newState`: a REFUSED
+                // `channelOpenAck` also resolves to `.closed` here, and a refusal is an answer about
+                // an open this side is still making — not a retired channel.
+                if case .channelClose = frame {
+                    if let target { await target.finishClosedByPeer() }
+                } else if let target {
+                    await target.finish()
+                }
                 // Drive host relay shutdown for a PEER channelClose. Without a per-channel
                 // reconnect/resume mechanism, a cleanly-closed channel's shell must NOT be kept alive —
                 // otherwise the PTY + master fd leak on every clean close. Keyed off the DATA link

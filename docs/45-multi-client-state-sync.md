@@ -1616,15 +1616,21 @@ to appear in a hostd `joined live session … as subscriber` line, and only then
 `attachedElsewhere` refusals mean anything ("no refusals" alone is satisfied by a second client that
 never tried). Green on two real macOS instances against one daemon.
 
-**Observed there, and NOT yet addressed:** with the flag ON, closing a tab on client A makes client B
-spawn a fresh PTY for the pane that just died — B's leaf re-dials in the window between the host's
-`channelClose` and the document diff that removes the pane from B's projection, and a pane channel
-naming a session the host no longer has is a SPAWN. It is transient (the diff lands, the leaf
-unmounts, the shell is reaped, and the gate's N-panes-⇒-N-shells count is exact afterwards) and it
-does not happen with the flag off, where B holds no channel to re-dial. With a real login shell it is
-still a whole rc execution for a pane the user just closed. The gate WAITS for that "afterwards" and
-then holds it, because `converge` returns on the document diff and the reap comes behind it — a
-single-shot census would call the transient a leak.
+**Observed there, and now CLOSED — a retired pane is not re-dialled.** With the flag ON, closing a
+tab on client A made client B spawn a fresh PTY for the pane that just died: the host answers an
+applied `closeTab` with `channelClose` to every subscriber FIRST and the removing document frame
+SECOND, so B held a dead channel for a pane it still had on screen, and a pane channel naming a
+session the host no longer has is a SPAWN. Not the leaf — the pane's own `ReconnectManager`, which
+cannot tell a per-channel close from a link drop once the inbound stream has ended. The mux now
+carries the difference (`MuxSubChannel.closedByPeer` → `ClientTransporting.hostClosedChannel` →
+`SlopDeskClient.isRetiredByHost`), and every automatic dial path — the campaign,
+`SlopDeskClient.connect`, `connectIfNeeded()` and with it `redialDisconnectedPanes()` — refuses a
+retired pane; an EXPLICIT re-dial still works. The same rule covers the eviction close, where an
+instant re-join would only be evicted again. Rulings in
+[DECISIONS](DECISIONS.md#a-pane-the-host-retired-is-not-re-dialled-2026-07-28); headless regression in
+`HostRetiredPaneRedialTests` + `MuxPeerCloseMarkTests`. The gate no longer tolerates it: step 7a
+asserts no pane uuid appears twice in `attached for pane …` — permanent evidence, unlike a live
+census, which passed even on the buggy build — and the settle it had been given drops 20 s → 4 s.
 
 **The iOS half now RUNS: `bash scripts/check-ios-tests.sh`.** `check-ios.sh` type-checks the
 `#if os(iOS)` slice and executes nothing, and `swift test` compiles the macOS slice — so every iOS
