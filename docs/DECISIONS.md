@@ -3166,7 +3166,7 @@ the bytes were EMITTED for — persist it beside the journal and render the rest
 
 ### 5. Workspace channel transport rules
 
-- ✅ **`channelClass`: 0 PTY · 1 workspace · 2 read-only observer.** The field is already encoded, decoded and golden-pinned, and read nowhere in the host — the seam is free. Workspace routing goes in `spawnMuxChannel` **before** the `attachedElsewhere` critical section, so the PTY exclusivity invariant is untouched until Phase 6.
+- ✅ **`channelClass`: 0 PTY · 1 workspace · 2 read-only observer.** The field is already encoded, decoded and golden-pinned, and read nowhere in the host — the seam is free. Workspace routing goes in `spawnMuxChannel` **before** the pane-routing critical section, so the one-shell-per-sessionID invariant is untouched.
 - ✅ **The workspace channel must NEVER use `enqueueControl`.** It sheds NEW messages past `maxControlOutQueued = 1024`, so a shed snapshot leaves a client pinned at `stateNum 0` **with no retry trigger** — a silent, permanently blank workspace. The channel owns its own send task with **depth-1 coalescing**: a pending diff is discarded and recomputed, never queued. Host memory is O(clients × state) regardless of how slow a client is; a sleeping iPhone is free.
 - ✅ **Diff from the ACKED base, not the last-sent base** (mosh SSP). A diff is then a set of independent property assignments, so duplicates and reorders are no-ops *by construction* and a lost frame self-heals on the next tick. **There is no retransmit path on either side.**
 - ✅ **Only kinds 0 (snapshot) and 1 (diff) advance `stateNum` or trigger an ack.** A presence or intent-result frame that advanced it would make the host retire, via `assumedAcked`, a diff it never sent — permanent silent divergence on the very first `renameTab`.
@@ -3858,6 +3858,10 @@ view type-checks.
 
 ### 7. The `attachedElsewhere` refusal is flag-conditional, not deleted
 
+> **SUPERSEDED 2026-07-29** by "Multi-client fan-out is unconditional" at the end of this log. The
+> flag is deleted, and the refusal with it — ungating PATH D makes the branch unreachable, not merely
+> flag-off. What follows is the 2026-07-27 reasoning, kept as written.
+
 docs/45 §9 said "delete it". It survives as the flag-OFF branch instead, and that is what keeps the
 shipping path byte-identical: with the flag unset the JOIN route is unreachable, `subscribers.count`
 never exceeds 1, the drain never leaves its inline single-send, and no outbox is ever built. It gets
@@ -4247,3 +4251,80 @@ alone in the same rig. `HostServerCloseReasonTests` pins the reason at its origi
 loopback, so the one line in `wireSubscriberEviction` cannot be dropped silently; `MuxPeerCloseMarkTests`
 and `MuxEnvelopeCodecTests` pin the wire, including that the default close is still an empty body.
 `scripts/soak-fanout-laggard.sh` remains the proof against a real PTY and a real SIGSTOPped laggard.
+
+## Multi-client fan-out is unconditional (2026-07-29)
+
+Supersedes "Multi-client Phase 6 §7 — the `attachedElsewhere` refusal is flag-conditional, not
+deleted" (2026-07-27) and discharges docs/45 §9 Phase 6 correction #1, which held the deletion until
+"the day the flag flips default-ON". The ruling: multi-client sync is a first-class, always-on
+feature — tmux and zellij do not ask permission to share a session either — so it ships with **no
+toggle at all**. `SLOPDESK_PANE_FANOUT` is deleted: the environment variable, the
+`HostServer.paneFanoutEnabled` property, the init parameter, and both guards it fed.
+
+### 1. The `attachedElsewhere` refusal is not conditional, it is unreachable
+
+Ungating PATH D does not merely make the refusal rare, it makes it dead, and the difference is worth
+writing down because a "flag-off branch" that survives as dead code is how a deleted feature comes
+back. `attachedElsewhere` was `joining == nil && liveElsewhere != nil`. With the flag gone, `joining`
+is assigned from exactly the condition `let live = liveElsewhere`, so `liveElsewhere != nil` implies
+`joining != nil` and the conjunction is unsatisfiable.
+
+The step that had to be read rather than assumed is `registerJoiningKeyLocked`, because a registration
+that could FAIL would resurrect the refusal under a new name. It cannot: it returns a non-optional
+`MuxSubscriberID`, its body is `reserveSubscriberID()` plus two dictionary writes, and that resolves
+to a post-incremented counter with no bound, no throw and no early return. There is no
+registration-failed path for the refusal to survive as, so the local, the branch, and the comment
+block explaining why the branch was not deletable all go.
+
+One refusal on a live sessionID remains, and it is a different fact at a different time:
+`performJoin`'s `joinSubscriber` returning nil — the pane emptied or the joining link died while the
+host was composing its state transfer. It fires AFTER the accept ack, unregisters the key, and drops
+the resize contributor. Deleting the exclusivity refusal does not touch it.
+
+### 2. The detached-store claim needed a real guard, not a substitution
+
+The one edit in this change that is not mechanical. The claim gate read `!attachedElsewhere`;
+substituting the now-constant `false` would let a JOINING open also enter `store.claim`, and a hit
+would have `muxSessions[key] = session` overwrite the registration `registerJoiningKeyLocked` wrote
+one statement earlier — the joiner's key naming the CLAIMED session while `muxSubscriberIDs[key]`
+names a member of the JOINED one. That is unreachable today only because a live session is never
+also in the detached store, which is an inference about the store, not a stated invariant of this
+critical section. It is written as `joining == nil`, so the mutual exclusion is in the code.
+
+### 3. What the deleted refusal actually protected, and what now proves it
+
+"One attachment per sessionID" was never the point; one SHELL per sessionID was. A second
+`channelOpen` falling through to `spawnFreshShell` meant a second `openpty()` + `fork()` under one id
+and `claimJournal` rotating the incumbent's journal writer out mid-session. The JOIN route is what
+makes that impossible, so the test that pinned the refusal is inverted into the narrower claim that
+survives it: `SubprocessE2ETests.testASecondClientJoinsTheLiveSessionAndForksNoSecondShell` counts
+`/bin/sh` children of the real hostd pid **out of the process table** before and after the second
+client attaches, and requires the same single pid.
+
+Counted rather than inferred, because a host that answered the second open by forking again would
+satisfy every byte-level assertion in `testTwoClientsShareOneRealPTY` — both clients would see a
+working shell, their own — and still be broken. `comm` is matched as `-sh` as well as `sh`: a pane's
+shell is a LOGIN shell, so `argv[0]` carries the conventional leading hyphen.
+
+### 4. The gate stops being able to run blind
+
+`scripts/check-multiclient.sh`'s step 7b was conditional on the flag, which made the fan-out
+assertion optional in exactly the runs that did not set it — a gate that can pass without observing
+the feature it exists to check. It is unconditional now. Its refusal grep goes with it rather than
+staying: the log string it searched for is deleted, so the check could only ever pass vacuously, and
+a tautological assertion in a gate is worse than no assertion because it reads like coverage. The
+`SLOPDESK_PANE_FANOUT` the script passed to each CLIENT process was already dead — no client-side
+code ever read the variable.
+
+### 5. What is tuning and stays
+
+`SLOPDESK_SUB_LAG_BYTES` (default 32 MiB, deliberately below the 64 MiB offline gate) and the
+`min(lastAckedSeq)` retention fold are NOT feature toggles and are untouched. Neither was ever gated
+on the flag: `evictLaggards` skips a one-member subscriber set on its own, so a lone subscriber is
+never evicted because eviction requires two or more members — not because the fan-out was off.
+
+### 6. No wire change, no golden change
+
+`paneFanoutEnabled` appears in no encoder or decoder. `MuxChannelClass`'s raw values are untouched
+and the `channelClass` byte has been on the wire and golden-pinned since the mux landed; only its
+ROUTING moves. `golden/golden_vectors.json` is byte-identical.

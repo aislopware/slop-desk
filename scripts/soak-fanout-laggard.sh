@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # soak-fanout-laggard.sh — the PTY fan-out under a REAL slow subscriber (docs/45 §8.6, §10 Q2).
 #
-# Real processes only: one `slopdesk-hostd` with SLOPDESK_PANE_FANOUT=1, several `slopdesk-client`s,
+# Real processes only: one `slopdesk-hostd`, several `slopdesk-client`s,
 # a real PTY, and a laggard made slow the way a backgrounded phone is slow — SIGSTOP, so it stops
 # reading its socket AND stops acking at the same instant. Nothing here is mocked or in-memory: the
 # in-memory loopback provably misses the open-order and credit-window races this exists to catch.
@@ -100,7 +100,7 @@ HOME="${WORK}/home" SLOPDESK_APP_SUPPORT_DIR="${WORK}/state" \
   SLOPDESK_SCROLLBACK_DIR="${WORK}/state/scrollback" \
   SLOPDESK_FILE_DROP_DIR="${WORK}/state/drop" \
   SLOPDESK_WORKSPACE_STATE_DIR="${WORK}/state" \
-  SLOPDESK_PANE_FANOUT=1 SLOPDESK_SUB_LAG_BYTES="${THRESH}" \
+  SLOPDESK_SUB_LAG_BYTES="${THRESH}" \
   "${HOSTD}" --port 0 --shell /bin/sh > "${WORK}/hostd.out" 2> "${WORK}/hostd.err" &
 HOSTD_PID=$!
 echo "${HOSTD_PID}" >> "${PIDFILE}"
@@ -201,7 +201,7 @@ await_text slow JOINED || {
   exit 2
 }
 grep -q 'joined live session' "${WORK}/hostd.err" || {
-  echo "soak: the host never logged a JOIN — is SLOPDESK_PANE_FANOUT honoured?" >&2
+  echo "soak: the host never logged a JOIN — a second client on a live pane must join it" >&2
   exit 2
 }
 note "two clients share pane ${SHARED} (fast ${FAST}, slow ${SLOW})"

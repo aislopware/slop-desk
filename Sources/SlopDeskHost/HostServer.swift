@@ -99,9 +99,9 @@ public final class HostServer: @unchecked Sendable {
 
     /// Which SUBSCRIBER of its session each live key is, guarded by `lock`.
     ///
-    /// Under ``paneFanoutEnabled`` several keys map to ONE `MuxChannelSession`, and every
-    /// per-client action — a link drop, a peer `channelClose`, an eviction — has to name the ONE
-    /// member it concerns rather than the session. A key with no entry is the pane's original
+    /// Several keys map to ONE `MuxChannelSession`, and every per-client action — a link drop, a
+    /// peer `channelClose`, an eviction — has to name the ONE member it concerns rather than the
+    /// session. A key with no entry is the pane's original
     /// channel (``MuxChannelSession/primarySubscriberID``), and that is the ONLY thing a missing
     /// entry may mean: a JOIN writes its entry in the same critical section that writes
     /// `muxSessions` (``registerJoiningKeyLocked(_:key:)``), so no key is ever briefly
@@ -251,17 +251,6 @@ public final class HostServer: @unchecked Sendable {
     /// turning it off there gives that client a blank window and no error.
     public let workspaceDocEnabled: Bool
 
-    /// `SLOPDESK_PANE_FANOUT` — two clients on one PTY (docs/45 §9 Phase 6). **Default-OFF**
-    /// (`== "1"` to enable), and it stays that way until hardware says otherwise: this is the
-    /// riskiest change in the plan and the shipping path must not move under it.
-    ///
-    /// It gates exactly two things: whether a `channelOpen` for a LIVE sessionID takes the JOIN
-    /// route or hits the exclusivity refusal, and — as a consequence, since only a join can create
-    /// a second member — whether a pane's drain ever leaves its inline single-send fast path.
-    /// Everything else (min-fold retention, the lag metric, refcounted leave, the deduped readers)
-    /// is unconditional and is the identity function on a one-subscriber pane.
-    public let paneFanoutEnabled: Bool
-
     /// The host's single copy of the workspace. `nil` when ``workspaceDocEnabled`` is false.
     let workspaceDocument: HostWorkspaceDocument?
 
@@ -320,7 +309,6 @@ public final class HostServer: @unchecked Sendable {
         workspaceDocEnabled: Bool? = nil,
         workspaceStore: HostWorkspaceStore? = nil,
         workspaceReconcileInterval: Duration = .milliseconds(500),
-        paneFanoutEnabled: Bool? = nil,
     ) {
         self.port = port
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
@@ -338,10 +326,6 @@ public final class HostServer: @unchecked Sendable {
         let wantsDocument = workspaceDocEnabled
             ?? (ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] != "0")
         self.workspaceDocEnabled = wantsDocument
-        // Default-OFF idiom (`== "1"`): the LAST phase, and the riskiest — the shipping path keeps
-        // one client per pane until hardware has watched two.
-        self.paneFanoutEnabled = paneFanoutEnabled
-            ?? (ProcessInfo.processInfo.environment["SLOPDESK_PANE_FANOUT"] == "1")
         // A fresh `epoch` per HostServer instance — which is per hostd start. Without it a restarted
         // daemon counts `stateNum` back up from 1 and a returning client one behind would accept a
         // delta computed against a completely different document.
@@ -1006,10 +990,10 @@ public final class HostServer: @unchecked Sendable {
     ///   with `resumeFromSeq=0` (the `sendOpenAck` with `accepted: true` on a fresh shell)
     ///   signals this.
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
-        // FIRST line, and deliberately BEFORE the exclusivity critical section below: a workspace
-        // channel carries no PTY, so it must never touch the `attachedElsewhere` / detached-claim
-        // reasoning that keeps one shell to one attachment. Routing here leaves that invariant
-        // literally untouched (docs/45 §5.1).
+        // FIRST line, and deliberately BEFORE the pane-routing critical section below: a workspace
+        // channel carries no PTY, so it must never touch the JOIN / detached-claim reasoning that
+        // keeps ONE shell per sessionID. Routing here leaves that invariant literally untouched
+        // (docs/45 §5.1).
         if open.channelClass == MuxChannelClass.workspace.rawValue {
             openWorkspaceChannel(open, on: connection, connectionID: connectionID)
             return
@@ -1052,33 +1036,27 @@ public final class HostServer: @unchecked Sendable {
         // must NOT spawn a SECOND PTY and overwrite the live session in `muxSessions` (orphaning the
         // first PTY + master fd + reaper thread). Re-ack idempotently and return.
         let alreadyLive = muxSessions[key] != nil
-        // Same sessionID already LIVE under a DIFFERENT composite key (a second connection /
-        // window presenting a persisted id that is still attached): refuse. Aliasing one live
-        // session under two keys would freeze the loser AND make its close path kill the winner's
-        // PTY; spawning a duplicate fresh shell instead would interleave two writers into the one
-        // sessionID-keyed journal. One attachment per sessionID, ever — the loser gets
-        // `accepted: false` and may retry with a fresh id.
+        // Same sessionID already LIVE under a DIFFERENT composite key (a second connection / window
+        // presenting an id somebody is still holding): this is the JOIN, and it is what a host does
+        // — a pane is shared, never handed over and never duplicated.
         //
-        // ⚠️ The refusal is NOT simply deletable. `store.claim` only ever finds DETACHED sessions,
-        // so a second `channelOpen` for a LIVE sessionID would fall straight through to
-        // `spawnFreshShell`: a second `openpty()` + `fork()` under one sessionID, and `claimJournal`
-        // ROTATES OUT the live session's journal writer — the first client's transcript stops being
-        // written mid-session. The JOIN route below is what makes deleting it safe, so it is added
-        // AHEAD of the refusal rather than in place of it.
+        // The invariant the routing keeps is about the SHELL: exactly one `openpty()` + `fork()` per
+        // sessionID, ever. `store.claim` only ever finds DETACHED sessions, so a live id that failed
+        // to route here would fall through to `spawnFreshShell` and `claimJournal` would rotate the
+        // live session's journal writer out — the incumbent's transcript stopping mid-session.
         let liveElsewhere: MuxChannelSession? = (!isStopping && !alreadyLive && hasRealSessionID)
             ? muxSessions.first { $0.key != key && $0.value.sessionID == open.sessionID }?.value
             : nil
-        // PATH D — JOIN: the sessionID is LIVE under another key and the fan-out is on. Take THAT
-        // session object (never a second one) and register this key against it now, inside the same
-        // critical section, so a third concurrent open sees the pane as held and routes here too.
-        // The subscriber itself is added OUTSIDE the lock — it composes a snapshot and awaits sends.
+        // PATH D — JOIN: take THAT session object (never a second one) and register this key against
+        // it now, inside the same critical section, so a third concurrent open sees the pane as held
+        // and routes here too. The subscriber itself is added OUTSIDE the lock — it composes a
+        // snapshot and awaits sends.
         var joining: MuxChannelSession?
         var joiningSubscriber: MuxSubscriberID?
-        if paneFanoutEnabled, let live = liveElsewhere {
+        if let live = liveElsewhere {
             joining = live
             joiningSubscriber = registerJoiningKeyLocked(live, key: key)
         }
-        let attachedElsewhere = joining == nil && liveElsewhere != nil
         // PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
         // its TTL task atomically — `claim` auto-evicts a child-exited entry and returns nil,
         // PATH C → falls to B). Registering the claimed session under its NEW key in this same
@@ -1089,7 +1067,13 @@ public final class HostServer: @unchecked Sendable {
         // reaped session's own detached-exit closure stands down (`remove` returns false) —
         // the per-id teardown it would have done is finished below, outside the lock.
         var reapedDeadChild: MuxChannelSession?
-        if !isStopping, !alreadyLive, !attachedElsewhere, hasRealSessionID, let store = detachedStore {
+        // `joining == nil` rather than a lookup that happens to miss: a key that JOINED must never
+        // also take the claim, because the `muxSessions[key] = session` below would overwrite the
+        // registration `registerJoiningKeyLocked` just wrote — leaving the key naming the CLAIMED
+        // session while `muxSubscriberIDs[key]` names a member of the JOINED one. A live session is
+        // never simultaneously in the detached store, but that is a fact about the store; the
+        // exclusion belongs here, where the two writes are.
+        if !isStopping, !alreadyLive, joining == nil, hasRealSessionID, let store = detachedStore {
             switch store.claim(open.sessionID) {
             case let .claimed(session):
                 claimed = session
@@ -1121,14 +1105,6 @@ public final class HostServer: @unchecked Sendable {
         }
         if alreadyLive {
             Task { await connection.sendOpenAck(open.channelID, accepted: true) }
-            return
-        }
-        if attachedElsewhere {
-            onLog?(
-                "mux channel \(open.channelID) (conn \(connectionID)): refused — "
-                    + "session \(open.sessionID) is already attached on another connection",
-            )
-            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
         if let session = joining, let subscriber = joiningSubscriber {
@@ -1164,23 +1140,11 @@ public final class HostServer: @unchecked Sendable {
     /// An observer joins something; it never creates one. There is no fresh-spawn fallback and no
     /// detached claim — the only two answers to "observe a pane nobody is holding" are a refusal and
     /// a login shell nobody asked for, and the second is the failure the class guard exists to stop.
-    ///
-    /// Gated by ``paneFanoutEnabled``, mirroring ``openWorkspaceChannel(_:on:connectionID:)``'s own
-    /// flag-off refusal: with `SLOPDESK_PANE_FANOUT` unset no observer subscriber can exist, so the
-    /// shipping path keeps exactly one member per pane.
     private func openPaneObserverChannel(
         _ open: MuxChannelOpen,
         on connection: MuxNWConnection,
         connectionID: UUID,
     ) {
-        guard paneFanoutEnabled else {
-            onLog?(
-                "mux channel \(open.channelID) (conn \(connectionID)): declined — "
-                    + "the observer class needs SLOPDESK_PANE_FANOUT=1",
-            )
-            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
-            return
-        }
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         let hasRealSessionID = open.sessionID != WireMessage.newSessionID
         // The same critical section shape the pane route uses: resolve the target and register this

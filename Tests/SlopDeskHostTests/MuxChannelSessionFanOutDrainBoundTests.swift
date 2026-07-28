@@ -125,10 +125,10 @@ final class MuxChannelSessionFanOutDrainBoundTests: XCTestCase {
         )
     }
 
-    /// The other direction, and the guard on the `SLOPDESK_PANE_FANOUT`-off path: the fan-out source
-    /// must be INERT for a pane that never fanned out. With the queue bound raised well above what
-    /// this feeds, a parked inline member is the out-FIFO's business alone — nothing else may pause
-    /// the read loop on its behalf, or the shipping default gets a bound it never had.
+    /// The other direction: the fan-out source must be INERT for a pane that never fanned out. With
+    /// the queue bound raised well above what this feeds, a parked inline member is the out-FIFO's
+    /// business alone — nothing else may pause the read loop on its behalf, or a one-client pane
+    /// gets a bound it never had.
     func testTheInlineDrainIsBoundedByItsQueueAloneAndNothingElse() async {
         let rec = PauseRec()
         let primary = ByteSink()

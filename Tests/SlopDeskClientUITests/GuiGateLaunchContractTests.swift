@@ -868,19 +868,54 @@ final class GuiGateLaunchContractTests: XCTestCase {
         )
     }
 
+    /// The fan-out assertion runs on EVERY invocation, or the gate can pass without observing the
+    /// feature it exists to check.
+    ///
+    /// Step 7b used to sit inside `if [[ "${FANOUT}" == "1" ]]`, so a plain `bash
+    /// scripts/check-multiclient.sh` — the invocation in CLAUDE.md, and the one anybody actually
+    /// runs — skipped it and printed a line saying that was expected. This repo has shipped five
+    /// gates that could run blind to their own subject; a shell conditional around the only
+    /// PTY-sharing assertion is how the sixth would happen.
+    ///
+    /// The claim is also pinned as POSITIVE. Counting refusals and expecting none is satisfied by a
+    /// second client that never attached at all, and — since the exclusivity refusal is deleted — by
+    /// a host with no such log line left to emit. Only `joined live session … as subscriber`,
+    /// required per pane, separates sharing from nothing having happened.
+    func testTheMulticlientGateAssertsTheFanOutUnconditionally() throws {
+        let code = try codeBody(of: "scripts/check-multiclient.sh")
+        XCTAssertTrue(
+            code.contains("joined live session ${pane_id} as subscriber"),
+            "check-multiclient.sh lost its per-pane JOIN assertion — nothing is left that observes "
+                + "two clients sharing one PTY",
+        )
+        XCTAssertFalse(
+            code.contains("FANOUT"),
+            "check-multiclient.sh names a fan-out toggle again; the fan-out assertion must not be "
+                + "reachable only under a flag",
+        )
+        // The negative that must NOT come back: the refusal it once grepped for is deleted, so the
+        // check could only ever pass vacuously — coverage-shaped and incapable of failing.
+        XCTAssertFalse(
+            code.contains("already attached on another connection"),
+            "check-multiclient.sh greps for a refusal the host no longer emits — a check that cannot "
+                + "fail reads like coverage and is worse than none",
+        )
+    }
+
     /// The restore gate must wait for THIS phase's link-down, not for any link-down ever.
     ///
     /// `${HOSTD_LOG}` is never truncated — the spawn counts it asserts on are cumulative by design —
     /// so a bare "has the host parked these sessions?" is satisfied FOR EVER by the first phase's
-    /// parking. The phase-C wait then returned on its first poll and the relaunch dialled while phase
-    /// B's sessions were still bound; the host answered `already attached on another connection` and
-    /// the three restored panes came up with DEAD terminals. Every phase-C assertion still passed:
-    /// they read the workspace document, which is host truth whether or not anything is attached to
-    /// it, plus a live-PTY count a refusal leaves untouched.
+    /// parking. The phase-C wait then returns on its first poll and the relaunch dials while phase
+    /// B's sessions are still bound — which JOINS them. Phase C is supposed to prove a RESTORE:
+    /// sessions parked in the detached store, claimed back by a relaunched app. Fanning onto a
+    /// SIGSTOPped predecessor that never let go proves nothing about that path and would pass every
+    /// phase-C assertion, because they read the workspace document (host truth whether or not
+    /// anything is attached) plus a live-PTY count the predecessor's own shells satisfy.
     ///
-    /// RED before the fix, on hardware: freeze the phase-B client with `SIGSTOP` (a slow link-down,
-    /// no FIN) and the gate exits 0 with three `refused — … is already attached on another
-    /// connection` lines in the host log.
+    /// So the wait is what makes the phase mean what it says, and it is per-phase for the same
+    /// reason: freeze the phase-B client with `SIGSTOP` (a slow link-down, no FIN) and a cumulative
+    /// baseline cannot tell this phase's parking from the last one's.
     func testTheRestoreGateWaitsForThisPhasesDetach() throws {
         let code = try codeBody(of: "scripts/check-launch-restore.sh")
         XCTAssertTrue(

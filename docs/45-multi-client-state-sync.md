@@ -62,9 +62,13 @@ tmux's server, zellij's session process, WezTerm's mux.
 
 ---
 
-## 2. Where we are today
+## 2. The starting point this plan was written against
 
-### 2.1 The transport fact that gates everything
+> Historical. Every phase below has shipped; §2 records the single-subscriber transport as it stood
+> before Phase 1, which is what the plan had to move. The exclusivity refusal it describes is gone —
+> see Phase 6 and `docs/DECISIONS.md`, "Multi-client fan-out is unconditional".
+
+### 2.1 The transport fact that gated everything
 
 `spawnMuxChannel` computes `attachedElsewhere` inside one critical section and answers
 `channelOpenAck(accepted: false)` when a live `sessionID` is presented from a second connection
@@ -282,8 +286,8 @@ its own rule rather than a table cell):
 2 = .paneObserver  read-only PTY subscriber            (Phase 6)
 ```
 
-`HostServer.spawnMuxChannel` (`:616`) gains a **first line**, placed **before** the `attachedElsewhere`
-critical section at `:634-643`, so the PTY exclusivity invariant is untouched through Phase 5:
+`HostServer.spawnMuxChannel` (`:616`) gains a **first line**, placed **before** the critical section
+that routes a pane open, so the one-shell-per-sessionID invariant is untouched:
 
 ```swift
 if open.channelClass == MuxChannelClass.workspace {
@@ -953,7 +957,7 @@ CLIENT                                                     HOST (hostd)
   |←------------------------------------------------ helloAck --|
   |                                                              |
   |-- channelOpen(channelClass: 1, sessionID: zero) -----------→ |  routed BEFORE the
-  |←------------------------------------------- channelOpenAck --|  attachedElsewhere gate
+  |←------------------------------------------- channelOpenAck --|  pane-routing section
   |                                                              |
   |-- 17 workspaceRequest(subscribe: clientInstanceID, kind,     |
   |        knownEpoch, knownStateNum, flags, label) -----------→ |
@@ -1355,7 +1359,7 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 - **`pane/completionEpoch`** bumped on each working→done edge.
 - **`project/gitSummary`** fed from `RepoStatusWatcher` (type 35 keeps pushing as the fast path).
 - ctl panes get entries under `root/unattachedSessionID`.
-- `channelClass == 1` routing in `spawnMuxChannel`, **before** the `attachedElsewhere` gate.
+- `channelClass == 1` routing in `spawnMuxChannel`, **before** the pane-routing critical section.
 
 **Client** — SHIPPED; four bullets below were revised in the doing, see
 [DECISIONS](DECISIONS.md) § *Multi-client Phase 4d*.
@@ -1530,7 +1534,7 @@ gesture on client A (System Events, addressed by unix id) and reads what client 
 - **A cross-SESSION dock.** Refused by design — a pane's spec lives in its session's side table, so
   moving one between sessions is a different op with a different invariant, and no gesture asks.
 
-### Phase 6 — PTY fan-out · `SLOPDESK_PANE_FANOUT` (`== "1"`, default-OFF), LAST — **SHIPPED BEHIND THE FLAG**
+### Phase 6 — PTY fan-out, LAST — **SHIPPED, AND UNCONDITIONAL**
 
 **Value: two clients watch one live nvim.** Four commits, no wire change and no golden change in any
 of them: `golden/golden_vectors.json` is byte-identical across the whole phase and no unknown-type
@@ -1555,11 +1559,15 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
 
 **Eight corrections this phase earned, against the text above and in §8.3:**
 
-1. **The `attachedElsewhere` refusal is flag-CONDITIONAL, not deleted.** It survives as the flag-OFF
-   branch, which is what keeps the shipping path byte-identical: with `SLOPDESK_PANE_FANOUT` unset
-   the JOIN route is unreachable, `subscribers.count` never exceeds 1, the drain never leaves its
-   inline single-send, and no outbox is ever built. It gets deleted the day the flag flips
-   default-ON, not before.
+1. **The `attachedElsewhere` refusal is DELETED, and it was not merely deleted — it was
+   unreachable.** This correction originally said the refusal survives as a flag-OFF branch until
+   the flag flips default-ON. The flag is gone entirely (2026-07-29 ruling: multi-client sync is
+   first-class and has no toggle), and with PATH D ungated the refusal is not rare, it is dead:
+   `joining` is assigned from exactly the condition that makes `liveElsewhere` non-nil, so
+   `joining == nil && liveElsewhere != nil` is unsatisfiable. `registerJoiningKeyLocked` returns a
+   non-optional id and cannot fail, so there is no registration-failed path for it to survive as
+   either. The detached-store claim guard that read `!attachedElsewhere` becomes `joining == nil` —
+   see `docs/DECISIONS.md`, "Multi-client fan-out is unconditional" §2.
 2. **There are FOUR `TIOCSWINSZ` writers, not two.** §8.3 rule 6 names `setWindowSize` and the ctl
    verb and misses two: `PTYProcess.beginRedrawJiggle` (`:367`) and `endRedrawJiggle` (`:388`), plus
    the spawn-time `openpty` winsize (`:99`). The jiggle pair stays deliberately OUTSIDE the fold — it
@@ -1608,19 +1616,20 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
      made no offer — so a Mac that has opened its channel but not yet offered still shuts the phone
      out, and OBSERVERS are excluded from it, because a spectator never inherits the vote.
 
-**Gate:** `SubprocessE2ETests`' `testTwoClientsShareOneRealPTY` — two shipped `slopdesk-client`
-processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per
+**Gate:** `SubprocessE2ETests`' `testTwoClientsShareOneRealPTY` (both clients see the same PTY bytes)
+and `testASecondClientJoinsTheLiveSessionAndForksNoSecondShell` (the join forks nothing — `/bin/sh`
+children of the real hostd pid, counted out of the process table before and after). Two shipped
+`slopdesk-client` processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per
 [CLAUDE.md](../CLAUDE.md) the in-memory loopback provably misses open-order races, so a loopback test
-is not acceptable evidence here. Plus `bash scripts/check-ios.sh`, and the full suite green with
-`SLOPDESK_PANE_FANOUT` unset AND `=1`.
+is not acceptable evidence here. Plus `bash scripts/check-ios.sh`. There is ONE configuration to run.
 
-**Hardware, as far as it goes:** `SLOPDESK_PANE_FANOUT=1 bash scripts/check-multiclient.sh` runs the
-Phase 5b gate with the flag on and adds one assertion of its own — every pane in the FINAL layout has
-to appear in a hostd `joined live session … as subscriber` line, and only then does the absence of
-`attachedElsewhere` refusals mean anything ("no refusals" alone is satisfied by a second client that
-never tried). Green on two real macOS instances against one daemon.
+**Hardware, as far as it goes:** `bash scripts/check-multiclient.sh` runs the Phase 5b gate and
+asserts the fan-out unconditionally in step 7b — every pane in the FINAL layout has to appear in a
+hostd `joined live session … as subscriber` line. The assertion is POSITIVE and per-pane on purpose:
+counting refusals and expecting none is satisfied both by a second client that never tried and by a
+host with no refusal left to log. Green on two real macOS instances against one daemon.
 
-**Observed there, and now CLOSED — a retired pane is not re-dialled.** With the flag ON, closing a
+**Observed there, and now CLOSED — a retired pane is not re-dialled.** Closing a
 tab on client A made client B spawn a fresh PTY for the pane that just died: the host answers an
 applied `closeTab` with `channelClose` to every subscriber FIRST and the removing document frame
 SECOND, so B held a dead channel for a pane it still had on screen, and a pane channel naming a
@@ -1675,7 +1684,7 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
 
 | Risk | Phase | Mitigation |
 |---|---|---|
-| The `MuxChannelSession` subscriber-set rewrite touches the out-FIFO, the 1024-shed control queue, the credit window, journal ownership, the input task and `rebindRelay`'s reattach ordering **simultaneously** | 6 | Last phase; `SLOPDESK_PANE_FANOUT` default-OFF; **two-subscriber `SubprocessE2ETests` with a real PTY** is the gate, not loopback |
+| The `MuxChannelSession` subscriber-set rewrite touches the out-FIFO, the 1024-shed control queue, the credit window, journal ownership, the input task and `rebindRelay`'s reattach ordering **simultaneously** | 6 | Last phase; **two-subscriber `SubprocessE2ETests` with a real PTY** is the gate, not loopback — plus a process-table shell count, so a join that secretly forked cannot pass |
 | A corrupt `workspace-state.json` bricks every client at once | 5 | Decode-fail → the **default** document + `.corrupt-<ts>` preserve-aside; `SLOPDESK_WORKSPACE_DOC=0` falls back to the retained fast-path sinks |
 | `WorkspaceTreeOps` was written for trusted local `@MainActor` callers and now takes network input | 5 | Depth cap 12, `u8` child counts, all counts bounded before allocate, every referenced ID must pre-exist; `WorkspaceIntentHostileTests` |
 | Laggard-eviction threshold is a policy invention with no prior art in this repo | 6 | Calibrated below the real 64 MiB offline gate; real cellular-iOS soak, not a unit test; same commit as fan-out |

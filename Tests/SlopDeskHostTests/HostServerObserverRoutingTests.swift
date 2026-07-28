@@ -5,7 +5,7 @@ import XCTest
 @testable import SlopDeskTransport
 
 /// `channelClass == 2` opens a READ-ONLY view of a pane somebody else is already holding
-/// (docs/45 §8.4) — and opens nothing at all when `SLOPDESK_PANE_FANOUT` is off.
+/// (docs/45 §8.4), and opens nothing at all when there is no such pane.
 ///
 /// Loopback over a REAL mux (the `HostServerChannelClassTests` rig): the thing under test is the
 /// ROUTING decision, which a direct handler call would step straight over.
@@ -20,12 +20,11 @@ final class HostServerObserverRoutingTests: XCTestCase {
         let host: MuxNWConnection
     }
 
-    private func makeRig(fanout: Bool) async -> Rig {
+    private func makeRig() async -> Rig {
         let server = HostServer(
             port: 0,
             shellPath: "/bin/cat",
             workspaceDocEnabled: false,
-            paneFanoutEnabled: fanout,
         )
         let (clientControl, hostControl) = LoopbackMuxLink.pair()
         let (clientData, hostData) = LoopbackMuxLink.pair()
@@ -55,32 +54,16 @@ final class HostServerObserverRoutingTests: XCTestCase {
         return (verdict.accepted, pair.data.channelID)
     }
 
-    // MARK: - Flag OFF: the shipping path is untouched
+    // MARK: - A read-only view of a live pane
 
-    /// The flag is the whole safety story for the riskiest phase in the plan. With it unset, class 2
-    /// is refused exactly as an unrouted class is — mirroring `openWorkspaceChannel`'s own flag-off
-    /// refusal — so no observer subscriber can exist on the shipping path.
-    func testAnObserverIsRefusedWhenFanoutIsOff() async throws {
-        let rig = await makeRig(fanout: false)
-        let live = UUID()
-        let pane = try await open(rig, sessionID: live, channelClass: MuxChannelClass.pane.rawValue)
-        XCTAssertTrue(pane.accepted, "precondition: the pane itself opens")
-
-        let observer = try await open(rig, sessionID: live, channelClass: MuxChannelClass.paneObserver.rawValue)
-        XCTAssertFalse(observer.accepted, "the observer class is gated by SLOPDESK_PANE_FANOUT")
-        XCTAssertEqual(
-            rig.server.listPanesForControl().count, 1,
-            "a refused observer forks nothing — the one pane is the one that opened",
-        )
-        await rig.server.stop()
-    }
-
-    // MARK: - Flag ON: a read-only view of a live pane
-
-    /// The point of the class: a second client watches a pane it may not type into. It joins the
-    /// EXISTING session — one PTY, two subscribers — rather than forking a second shell.
+    /// The point of the class, and the default configuration: a second client watches a pane it may
+    /// not type into. It joins the EXISTING session — one PTY, two subscribers — rather than forking
+    /// a second shell.
+    ///
+    /// The rig names no fan-out setting because there is none to name. Sharing a pane is what this
+    /// host does, so this is the plain behaviour of a default `HostServer`.
     func testAnObserverJoinsALivePaneWithoutForkingASecondShell() async throws {
-        let rig = await makeRig(fanout: true)
+        let rig = await makeRig()
         let live = UUID()
         let pane = try await open(rig, sessionID: live, channelClass: MuxChannelClass.pane.rawValue)
         XCTAssertTrue(pane.accepted)
@@ -103,7 +86,7 @@ final class HostServerObserverRoutingTests: XCTestCase {
     /// that pane"; with no such pane the only answers are a refusal or a login shell nobody asked
     /// for, and the second is how `channelClass` routing broke before it was gated at all.
     func testAnObserverOfAnUnknownSessionForksNothing() async throws {
-        let rig = await makeRig(fanout: true)
+        let rig = await makeRig()
         let accepted = try await open(
             rig,
             sessionID: UUID(),
@@ -117,10 +100,10 @@ final class HostServerObserverRoutingTests: XCTestCase {
         await rig.server.stop()
     }
 
-    /// A class from the future stays refused with the fan-out ON: widening the accepted set to
-    /// {0, 1, 2} must not turn the guard into a wildcard.
-    func testAnUnknownClassIsStillRefusedWithFanoutOn() async throws {
-        let rig = await makeRig(fanout: true)
+    /// A class from the future stays refused: serving all of {0, 1, 2} must not turn the guard into
+    /// a wildcard.
+    func testAnUnknownClassIsStillRefused() async throws {
+        let rig = await makeRig()
         let accepted = try await open(rig, sessionID: UUID(), channelClass: 3).accepted
         XCTAssertFalse(accepted)
         XCTAssertTrue(rig.server.listPanesForControl().isEmpty)

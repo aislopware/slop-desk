@@ -74,15 +74,18 @@ final class HostServerChannelClassTests: XCTestCase {
         await rig.server.stop()
     }
 
-    /// Class 2 (`paneObserver`) is a READ-ONLY view of a live pane, and this rig runs with
-    /// `SLOPDESK_PANE_FANOUT` off — so it is refused exactly as an unknown class is, and forks
-    /// nothing for a pane it was never going to be allowed to watch. The flag-ON route is
-    /// `HostServerObserverRoutingTests`.
-    func testTheObserverClassForksNothingWithTheFanoutOff() async throws {
+    /// Class 2 (`paneObserver`) is a READ-ONLY view of a LIVE pane, and `openClass` mints a fresh
+    /// UUID — so there is nothing here to watch. It is refused exactly as an unknown class is, and
+    /// the point of the assertion is the second line: an observer of nothing must not be served a
+    /// login shell to make it something. The join route is `HostServerObserverRoutingTests`.
+    func testTheObserverClassForksNothingForAPaneNobodyHolds() async throws {
         let rig = await makeRig()
         let accepted = try await openClass(rig, MuxChannelClass.paneObserver.rawValue)
-        XCTAssertFalse(accepted, "the observer class is gated by SLOPDESK_PANE_FANOUT")
-        XCTAssertTrue(rig.server.listPanesForControl().isEmpty)
+        XCTAssertFalse(accepted, "there is no live pane under this session id to observe")
+        XCTAssertTrue(
+            rig.server.listPanesForControl().isEmpty,
+            "a refused observer must never reach the PTY spawn path",
+        )
         await rig.server.stop()
     }
 

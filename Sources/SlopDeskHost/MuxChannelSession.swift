@@ -194,9 +194,8 @@ final class MuxChannelSession: @unchecked Sendable {
     /// dropping its outbox, so the returning client is a genuine one-member pane again.
     /// Guarded by `fanoutLock`.
     ///
-    /// While false — every session on the shipping path, where `SLOPDESK_PANE_FANOUT` is unset and
-    /// the JOIN route is unreachable — the drain is the byte-identical inline send it has always
-    /// been and no outbox is ever built.
+    /// While false — every pane exactly one client is holding, which is most of them — the drain is
+    /// a plain inline send and no outbox is ever built.
     private var fanoutActive = false
 
     /// Mints the next JOIN's subscriber id. `primarySubscriberID` (0) belongs to the channel the
@@ -4199,8 +4198,8 @@ extension MuxChannelSession {
     ///
     /// `0` unless somebody is delivered from an OUTBOX: a pane on the inline path is already bounded
     /// by the out-FIFO's own accounting (the drain parks IN the send, so the bytes stay `outstanding`),
-    /// and an EMPTY set is the detached budget's business, not this source's. That is what keeps the
-    /// `SLOPDESK_PANE_FANOUT`-off path and the whole detach/reattach sequence byte-identical.
+    /// and an EMPTY set is the detached budget's business, not this source's. That is what keeps a
+    /// one-member pane and the whole detach/reattach sequence on the plain inline path.
     ///
     /// The frontier is a MAX, which is the entire difference between this and "the slowest member":
     /// one parked phone can never assert the pause while a Studio is still consuming. Its cost is

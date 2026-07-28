@@ -75,8 +75,8 @@ func usage() -> Never {
                           shell / restore the disk-journaled scrollback; E2E harness)
       --observe           WATCH the pane named by --session-id read-only instead of holding
                           one: the host drops this channel's input and the pane's size fold
-                          ignores it. Needs SLOPDESK_PANE_FANOUT=1 on the host and a pane
-                          that is already live, else the channel is refused.
+                          ignores it. Needs a pane that is already live, else the channel
+                          is refused.
 
     Disconnect key (interactive mode): Ctrl-] cleanly disconnects and exits 0.
 

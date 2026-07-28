@@ -264,30 +264,4 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         )
         XCTAssertEqual(session.subscriberCountForTesting, 1)
     }
-
-    // MARK: - The flag
-
-    /// The default is OFF, and it is read with the `== "1"` idiom (`!= "0"` would make it
-    /// default-ON, which is the opposite of what the last and riskiest phase may ship as).
-    ///
-    /// The unset-env assertion is SKIPPED when the suite itself is run with the flag on — that run
-    /// exists to prove the fan-out path is green, and the flag it sets is the very input under test.
-    func testPaneFanoutIsOffByDefault() throws {
-        try XCTSkipUnless(
-            ProcessInfo.processInfo.environment["SLOPDESK_PANE_FANOUT"] == nil,
-            "the ambient environment names the flag this assertion is about",
-        )
-        XCTAssertFalse(
-            HostServer(port: 0, workspaceDocEnabled: false).paneFanoutEnabled,
-            "SLOPDESK_PANE_FANOUT is default-OFF — the shipping path keeps one client per pane",
-        )
-    }
-
-    /// An explicit override wins over the environment in BOTH directions — the seam every test in
-    /// this file (and every future one) needs in order to pin behaviour independently of how the
-    /// suite happens to be invoked.
-    func testAnExplicitFanoutOverrideWinsOverTheEnvironment() {
-        XCTAssertTrue(HostServer(port: 0, workspaceDocEnabled: false, paneFanoutEnabled: true).paneFanoutEnabled)
-        XCTAssertFalse(HostServer(port: 0, workspaceDocEnabled: false, paneFanoutEnabled: false).paneFanoutEnabled)
-    }
 }

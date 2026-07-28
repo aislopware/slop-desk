@@ -9,14 +9,14 @@ import Foundation
 /// An unknown class from a newer peer is refused with `accepted: false`, never guessed at. Guessing
 /// would route a workspace channel into the PTY spawn path and fork a shell nobody asked for.
 public enum MuxChannelClass: UInt8, Sendable, CaseIterable {
-    /// Today's PTY channel — one shell, one attachment. Unchanged.
+    /// The PTY channel. One shell per sessionID; a second open on a live one JOINS it.
     case pane = 0
     /// The workspace-document channel: at most ONE per mux connection, CONTROL sub-channel only
     /// (the DATA sub-channel `openChannel` also creates stays idle).
     case workspace = 1
     /// A READ-ONLY subscriber on a pane another client already holds (docs/45 §8.4). The host joins
     /// it to the existing session — one PTY, N readers — and DROPS its `input` frames while still
-    /// crediting them; it contributes nothing to the pane's size fold. Gated by
-    /// `SLOPDESK_PANE_FANOUT`, and refused outright when that is off.
+    /// crediting them; it contributes nothing to the pane's size fold. Refused when no such pane is
+    /// live — an observer joins something, it never creates one.
     case paneObserver = 2
 }

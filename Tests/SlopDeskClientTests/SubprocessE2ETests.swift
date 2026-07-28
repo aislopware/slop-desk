@@ -460,9 +460,10 @@ final class SubprocessE2ETests: XCTestCase {
     /// acceptable evidence for the fan-out: B's `channelOpen` lands against a LIVE session whose
     /// drain is already running, which is exactly the window a loopback harness cannot create.
     ///
-    /// Without `SLOPDESK_PANE_FANOUT=1` the host refuses B's channel (`attachedElsewhere`), so
-    /// this test is meaningful only with the flag on — the flag-OFF refusal is pinned separately
-    /// by `testSecondClientIsRefusedWhenFanoutIsOff`.
+    /// The environment carries no fan-out setting of any kind: sharing a pane is what a host does,
+    /// so B joining is the plain default rather than a configuration this test arranges. The
+    /// companion claim — that the join forks no SECOND shell — is
+    /// `testASecondClientJoinsTheLiveSessionAndForksNoSecondShell`.
     func testTwoClientsShareOneRealPTY() throws {
         guard let hostdURL = builtProductURL("slopdesk-hostd"),
               let clientURL = builtProductURL("slopdesk-client")
@@ -475,9 +476,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
-        hostEnv["SLOPDESK_PANE_FANOUT"] = "1"
-        hostd.environment = hostEnv
+        hostd.environment = try sandboxHostEnvironment(home: sandboxHome)
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
         hostd.standardOutput = Pipe()
@@ -567,10 +566,18 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
-    /// The flag-OFF contract, unchanged: a second client presenting a LIVE session id is
-    /// REFUSED, and the incumbent keeps its pane. This is what makes the fan-out's default-OFF
-    /// claim checkable rather than asserted.
-    func testSecondClientIsRefusedWhenFanoutIsOff() throws {
+    /// The exclusivity rule this replaces said "one attachment per sessionID, ever". What is true
+    /// is narrower and it is about the SHELL, not the attachment: a second client presenting a LIVE
+    /// sessionID joins the pane that exists, and the host performs exactly ONE `openpty()`/`fork()`
+    /// for that id — never two.
+    ///
+    /// Counted from the process table, not inferred from a log line or a mock. Two shells under one
+    /// sessionID is the concrete disaster the old refusal existed to prevent: two writers
+    /// interleaving into one journal, and `claimJournal` rotating the incumbent's writer out
+    /// mid-session. A host that answered the second open by forking again would satisfy every
+    /// byte-level assertion in `testTwoClientsShareOneRealPTY` — both clients would see their own
+    /// shell — and would still be broken. Only the count catches it.
+    func testASecondClientJoinsTheLiveSessionAndForksNoSecondShell() throws {
         guard let hostdURL = builtProductURL("slopdesk-hostd"),
               let clientURL = builtProductURL("slopdesk-client")
         else {
@@ -582,9 +589,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
-        hostEnv["SLOPDESK_PANE_FANOUT"] = nil // the shipping default
-        hostd.environment = hostEnv
+        hostd.environment = try sandboxHostEnvironment(home: sandboxHome)
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
         hostd.standardOutput = Pipe()
@@ -595,7 +600,7 @@ final class SubprocessE2ETests: XCTestCase {
         else { throw XCTSkip("hostd did not report a bound port in time") }
 
         let sessionID = UUID()
-        let marker = "REFUSAL_INCUMBENT_\(UInt32.random(in: 0..<1_000_000))"
+        let marker = "ONESHELL_INCUMBENT_\(UInt32.random(in: 0..<1_000_000))"
 
         func launchClient() throws -> (process: Process, stdin: FileHandle, out: OutputBox) {
             let client = Process()
@@ -618,31 +623,57 @@ final class SubprocessE2ETests: XCTestCase {
             return (client, stdinPipe.fileHandleForWriting, collected)
         }
 
+        func wait(for text: String, in box: OutputBox, timeout: TimeInterval) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if box.string.contains(text) { return true }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return box.string.contains(text)
+        }
+
         let a = try launchClient()
         defer { if a.process.isRunning { a.process.terminate() } }
         writeToChild(a.stdin, "echo \(marker)\n")
-        let deadline = Date().addingTimeInterval(20)
-        while Date() < deadline, !a.out.string.contains(marker) { Thread.sleep(forTimeInterval: 0.05) }
-        guard a.out.string.contains(marker) else {
+        guard wait(for: marker, in: a.out, timeout: 20) else {
             throw XCTSkip("client A never saw its own echo (sandboxed PTY?): \(a.out.string.prefix(300))")
         }
 
+        // The baseline the whole test turns on: A's pane IS one forked shell, so a count of 1 here
+        // is measuring the thing rather than an empty table.
+        let afterA = shellChildren(ofParent: hostd.processIdentifier)
+        XCTAssertEqual(
+            afterA.count, 1,
+            "precondition: one client on one pane is one shell; got pids \(afterA)",
+        )
+
         let b = try launchClient()
         defer { if b.process.isRunning { b.process.terminate() } }
+        // B joins rather than exiting. Asserted BEFORE the count, because a B that was refused and
+        // died would leave the count at 1 and pass the real assertion vacuously.
         XCTAssertTrue(
-            waitForExit(b.process, timeout: 15),
-            "with the fan-out off the host must refuse the second client, which then exits",
+            wait(for: marker, in: b.out, timeout: 20),
+            "the second client must JOIN the live session and receive its state transfer; got: "
+                + "\(b.out.string.prefix(600))",
         )
-        XCTAssertNotEqual(b.process.terminationStatus, 0, "a refused client exits non-zero")
+        XCTAssertTrue(b.process.isRunning, "the second client stays connected")
 
-        // The incumbent is untouched by the refusal.
-        let after = "REFUSAL_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
+        // THE assertion: the join forked nothing. Same shell, same pid.
+        let afterB = shellChildren(ofParent: hostd.processIdentifier)
+        XCTAssertEqual(
+            afterB, afterA,
+            "a second client on a live sessionID must join the ONE shell, not fork another — "
+                + "before: \(afterA), after: \(afterB)",
+        )
+
+        // The incumbent is untouched by the join.
+        let after = "ONESHELL_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
         writeToChild(a.stdin, "echo \(after)\n")
         let deadline2 = Date().addingTimeInterval(15)
         while Date() < deadline2, !a.out.string.contains(after) { Thread.sleep(forTimeInterval: 0.05) }
         XCTAssertTrue(
             a.out.string.contains(after),
-            "the refused join must leave the incumbent's pane working; got: \(a.out.string.suffix(600))",
+            "the join must leave the incumbent's pane working; got: \(a.out.string.suffix(600))",
         )
     }
 
@@ -672,9 +703,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
-        hostEnv["SLOPDESK_PANE_FANOUT"] = "1"
-        hostd.environment = hostEnv
+        hostd.environment = try sandboxHostEnvironment(home: sandboxHome)
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
         hostd.standardOutput = Pipe()
@@ -763,6 +792,41 @@ final class SubprocessE2ETests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// The pids of `parent`'s directly-forked `sh` children, sorted — the process table's own answer
+    /// to "how many shells did the host fork".
+    ///
+    /// Read from `ps` rather than from anything the host reports about itself, because the failure
+    /// being excluded is precisely the host being wrong about how many shells it owns. Zombies are
+    /// dropped: a reaped-but-unwaited shell is not a second shell.
+    ///
+    /// The name is matched as `-sh` as well as `sh`: a pane's shell is spawned as a LOGIN shell, so
+    /// its `argv[0]` — and therefore `comm` — carries the conventional leading hyphen.
+    private func shellChildren(ofParent parent: pid_t) -> [pid_t] {
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-A", "-o", "pid=,ppid=,stat=,comm="]
+        let out = Pipe()
+        ps.standardOutput = out
+        ps.standardError = Pipe()
+        guard (try? ps.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        var pids: [pid_t] = []
+        for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
+            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard columns.count >= 4,
+                  let pid = pid_t(columns[0]),
+                  let ppid = pid_t(columns[1]),
+                  ppid == parent,
+                  !columns[2].hasPrefix("Z"),
+                  let name = columns[3].split(separator: "/").last,
+                  name.drop(while: { $0 == "-" }) == "sh"
+            else { continue }
+            pids.append(pid)
+        }
+        return pids.sorted()
+    }
 
     /// Writes to a child's stdin WITHOUT taking the process down when that child is already gone.
     /// `FileHandle.write` raises on `EPIPE`, and the default `SIGPIPE` disposition kills the test

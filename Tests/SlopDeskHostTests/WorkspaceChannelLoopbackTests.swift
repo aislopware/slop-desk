@@ -49,9 +49,9 @@ final class LoopbackMuxLink: MuxByteLink, @unchecked Sendable {
 /// End-to-end over a real mux: a `channelOpen` with `channelClass == 1` must reach the workspace
 /// handler and NEVER the PTY spawn path.
 ///
-/// The whole design leans on that separation. `spawnMuxChannel`'s critical section — the
-/// `attachedElsewhere` refusal and the detached-store claim — is what guarantees one shell to one
-/// attachment; the workspace route is placed BEFORE it precisely so that reasoning stays untouched.
+/// The whole design leans on that separation. `spawnMuxChannel`'s critical section — the JOIN route
+/// and the detached-store claim — is what guarantees ONE shell per sessionID; the workspace route is
+/// placed BEFORE it precisely so that reasoning stays untouched.
 /// A test that called the handler directly would prove the handler works and say nothing about the
 /// decision, which is the part that can regress.
 final class WorkspaceChannelLoopbackTests: XCTestCase {
@@ -273,8 +273,8 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
     func testAWorkspaceOpenNeverForksAPTY() async throws {
         // The invariant the routing PLACEMENT exists to protect. `listPanesForControl` enumerates
         // every pane the host owns across all three inventories; a workspace open must add none —
-        // and must never touch the `attachedElsewhere` refusal or the detached-store claim that
-        // keep one shell to one attachment.
+        // and must never touch the JOIN route or the detached-store claim that keep one shell per
+        // sessionID.
         let rig = await makeRig()
         let (control, collector, _) = try await openWorkspace(rig)
         defer { collector.stop() }

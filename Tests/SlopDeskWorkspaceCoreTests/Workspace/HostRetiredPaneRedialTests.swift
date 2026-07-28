@@ -8,14 +8,14 @@ import XCTest
 
 /// A pane whose channel the HOST closed is not dialled again.
 ///
-/// Under `SLOPDESK_PANE_FANOUT` two clients hold one pane. Closing its tab on client A is a
-/// HOST-side topology delete, and the host answers it in a fixed order: `channelClose` to every
+/// Two clients hold one pane. Closing its tab on client A is a HOST-side topology delete, and the
+/// host answers it in a fixed order: `channelClose` to every
 /// subscriber first (`HostServer.reapPanesRemovedFromTopology`), the document frame that removes the
 /// pane second (`reconcileWorkspaceDocument`). Client B therefore learns that the channel died one
 /// round trip BEFORE it learns the pane is gone — and in that window its reconnect campaign treated
 /// the close as a transport drop and re-opened the channel. A pane channel naming a session the host
 /// no longer has is a fresh SPAWN, so a whole login shell was forked for a pane the user had just
-/// closed. Measured on hardware, `SLOPDESK_PANE_FANOUT=1 scripts/check-multiclient.sh`:
+/// closed. Measured on hardware, `scripts/check-multiclient.sh`:
 ///
 ///     mux channel  7 (conn …ADCA27): joined live session 5AD35312… as subscriber 1
 ///     mux channel 11 (conn …ADCA27): shell /bin/sh (pid 75883) attached for pane 5AD35312…

@@ -35,8 +35,8 @@
 #         own `SLOPDESK_CLIENT_SOCKET`, so the two are addressed independently.
 #   The comparison is TOPOLOGY only — pane ids, their owning tab, pane kind, tab order, per-tab pane
 #   count, session tab counts. Titles / cwd / focus are deliberately excluded: docs/45 §4.1 files
-#   them as LIVENESS (pushed on a pane's own control channel, which with `SLOPDESK_PANE_FANOUT` off
-#   only ONE client holds) and §8.2 makes focus device-overridable on purpose. Topology is what
+#   them as LIVENESS (pushed on a pane's own control channel) and §8.2 makes focus device-overridable
+#   on purpose. Topology is what
 #   Phase 5b makes host-owned, and topology is what this gate pins.
 #
 # THE GESTURE is a real menu click (System Events, addressed by unix id) rather than an env seam:
@@ -50,7 +50,6 @@
 #
 # USAGE:
 #   bash scripts/check-multiclient.sh
-#   SLOPDESK_PANE_FANOUT=1 bash scripts/check-multiclient.sh   # + the PTY fan-out assertion (step 7b)
 #
 # EXIT: non-zero if a build fails, a client dies, either client never opens a workspace channel, the
 # two projections ever disagree, a gesture never lands, or the shell count does not match the layout.
@@ -96,11 +95,6 @@ remove_defaults_suite() {
   defaults delete "${DEFAULTS_SUITE}" 2> /dev/null || true
   rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist"
 }
-
-# `SLOPDESK_PANE_FANOUT` is `== "1"`, default-OFF, and stays that way. With it unset the two clients
-# CANNOT hold one pane's PTY — which is fine, because LAYOUT convergence is the Phase 5b claim. Step
-# 7b is the separate assertion for the flag-ON shape, and it is skipped when the flag is unset.
-FANOUT="${SLOPDESK_PANE_FANOUT:-}"
 
 APP_PROC_PAT="multiclient-verify/DD.*MacOS/SlopDesk"
 HOSTD_PID=""
@@ -277,7 +271,6 @@ HOME="${HOSTD_HOME}" SLOPDESK_APP_SUPPORT_DIR="${HOSTD_STATE}" \
   SLOPDESK_SCROLLBACK_DIR="${HOSTD_STATE}/scrollback" \
   SLOPDESK_FILE_DROP_DIR="${HOSTD_STATE}/drop" \
   SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
-  SLOPDESK_PANE_FANOUT="${FANOUT}" \
   "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
   --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
 HOSTD_PID=$!
@@ -316,7 +309,6 @@ launch_client() {
     SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
     SLOPDESK_CLIENT_SOCKET="${socket}" \
     SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
-    SLOPDESK_PANE_FANOUT="${FANOUT}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > "${WORK}/client-${name}.log" 2>&1 &
   echo "$!"
 }
@@ -482,8 +474,8 @@ echo "==> ${PANE_COUNT} pane(s) in the layout, ${PANE_COUNT} live shell(s) on th
 # 7a. ONE pane, ONE shell, EVER — the assertion a churn cannot outlive.
 #
 # The census above counts what is ALIVE, so anything that spawns and dies inside the settle is
-# invisible to it. That is exactly the shape of the bug this run exists to keep closed: with
-# `SLOPDESK_PANE_FANOUT=1` the tab close made client B re-dial the dying pane in the window between
+# invisible to it. That is exactly the shape of the bug this run exists to keep closed: the tab close
+# made client B re-dial the dying pane in the window between
 # the host's `channelClose` and the document diff removing it, and a pane channel naming a session
 # the host no longer has is a SPAWN — a whole login shell, rc files and all, for a pane the user had
 # just closed (docs/DECISIONS.md, "A pane the host retired is not re-dialled"). It was transient, so
@@ -492,8 +484,7 @@ echo "==> ${PANE_COUNT} pane(s) in the layout, ${PANE_COUNT} live shell(s) on th
 # `attached for pane <uuid>` is the host's own line for MINTING a shell, one per pane per lifetime;
 # a second client fanning onto the same pane logs `joined live session … as subscriber` instead. So
 # the same uuid appearing twice is a second shell for one pane, it is written down permanently, and
-# no settle can make it go away. Asserted in BOTH modes: with the flag off the re-dial has no
-# channel to happen on, which is a fact worth pinning rather than assuming.
+# no settle can make it go away.
 DOUBLE_ATTACHED="$(awk '/attached for pane /{ print $NF }' "${HOSTD_LOG}" | sort | uniq -d)"
 if [[ -n "${DOUBLE_ATTACHED}" ]]; then
   echo "--- panes the host minted a shell for more than once ---" >&2
@@ -504,26 +495,20 @@ fi
 ATTACH_LINES="$(grep -c 'attached for pane ' "${HOSTD_LOG}" 2> /dev/null || true)"
 echo "==> ${ATTACH_LINES} shell mint(s), no pane minted twice ✅"
 
-# 7b. PTY fan-out — a SEPARATE claim, only when the flag asked for it.
+# 7b. PTY fan-out — a SEPARATE claim from 7a, and UNCONDITIONAL.
 #
-# Asserted POSITIVELY, per pane. "No `attachedElsewhere` refusals" alone is satisfiable by a second
-# client that never tried to attach at all, which is the reading a flag-ON gate must not accept — so
-# every pane in the FINAL layout has to appear in a `joined live session … as subscriber` line, and
-# only then does the absence of refusals mean anything.
-if [[ "${FANOUT}" == "1" ]]; then
-  while read -r pane_id; do
-    grep -q "joined live session ${pane_id} as subscriber" "${HOSTD_LOG}" ||
-      fatal "SLOPDESK_PANE_FANOUT=1 but no second subscriber ever joined pane ${pane_id} — the
-    flag-ON JOIN route did not run for it"
-  done < <(awk '/^pane /{ print $2 }' <<< "${FINAL_SIG}")
-  REFUSALS="$(grep -c 'already attached on another connection' "${HOSTD_LOG}" 2> /dev/null || true)"
-  [[ "${REFUSALS}" == "0" ]] ||
-    fatal "SLOPDESK_PANE_FANOUT=1 but the host still refused ${REFUSALS} pane attach(es) as
-    attachedElsewhere"
-  echo "==> fan-out ON: all ${PANE_COUNT} pane(s) took a second subscriber, 0 refusals ✅"
-else
-  echo "==> fan-out OFF (default): B holds no PTY, which is expected — layout is the claim here."
-fi
+# Asserted POSITIVELY, per pane: every pane in the FINAL layout has to appear in a `joined live
+# session … as subscriber` line. A negative — counting refusals and expecting none — is satisfied by
+# a second client that never tried to attach at all, and by a host that no longer has a refusal to
+# log. Only the positive distinguishes "both clients hold this PTY" from "nothing happened".
+#
+# There is no mode in which this is skipped. Sharing a pane is what the host does, so a run of this
+# gate that did not observe it observed a broken host.
+while read -r pane_id; do
+  grep -q "joined live session ${pane_id} as subscriber" "${HOSTD_LOG}" ||
+    fatal "no second subscriber ever joined pane ${pane_id} — the JOIN route did not run for it"
+done < <(awk '/^pane /{ print $2 }' <<< "${FINAL_SIG}")
+echo "==> fan-out: all ${PANE_COUNT} pane(s) took a second subscriber ✅"
 
 # ── 8. The picture a human reads ────────────────────────────────────────────────────────────────
 # Side by side in one frame, plus one full-screen grab per client with that client raised, so the

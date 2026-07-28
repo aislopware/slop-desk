@@ -651,9 +651,10 @@ hold_steady() {
     in — it was asked for a session id that is not in the layout on screen"
     fi
     # …and the LIVE count, which is a different claim from the cumulative one and fails differently:
-    # a churn whose re-dial the host REFUSES (`already attached on another connection`) leaves the
-    # spawn count untouched and the panes DEAD. The revert-to-fail run hit exactly that on its first
-    # pass — three ✅ lines, then zero live shells.
+    # a churn that re-dials without spawning — a JOIN onto sessions the previous client still holds —
+    # leaves the cumulative spawn count untouched while the shells belong to somebody else. The
+    # `DETACH_BASELINE` wait is what keeps this phase a genuine REATTACH rather than a fan-on to a
+    # predecessor that has not let go.
     # Sampled ONCE and reported from that one sample, for the reason stated on `dump_children`.
     census="$(hostd_children)"
     live="$(wc -w <<< "$(pty_pids_of "${census}")" | tr -d ' ')"

@@ -56,8 +56,8 @@ final class MuxPeerCloseMarkTests: XCTestCase {
 
     /// A REFUSED `channelOpenAck` also lands the router on `.closed` and also finishes the
     /// sub-channel — and it is NOT a retirement. It is an answer about an open this side is still
-    /// making (`attachedElsewhere` is the shipped one), and the campaign that retries it must keep
-    /// running. So the discriminator is the FRAME, never the resulting state.
+    /// making (a host shutting down, or a pane that emptied mid-join), and the campaign that retries
+    /// it must keep running. So the discriminator is the FRAME, never the resulting state.
     func testARefusedOpenAckIsNotAPeerClose() async throws {
         let (client, peerData, _) = await makeClient()
         let pair = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)

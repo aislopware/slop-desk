@@ -31,7 +31,7 @@ Clean checkout builds with no prerequisite (no Rust/FFI). Headless `swift build`
 | `bash scripts/check-launch-restore.sh` | The ONLY gate that reaches the SHIPPING launch path — restore `workspace.json` → offer it → `connectIfSavedTarget()`. Every other GUI gate sets `SLOPDESK_AUTOCONNECT_*`, so `hasAutomationEnvironment()` is true and the app takes the automation branch instead (persistence nil, the layout replaced by one synthetic pane). Run it after `WorkspaceStore` restore / autosave, `connectIfSavedTarget()`, or `runArmedLaunchAdoptIfPossible` changes |
 | `bash scripts/herdr-sync.sh` | After `SlopDeskAgentDetect` engine/manifest changes, or to sync herdr upstream — builds the REAL herdr binary and diffs both engines on ~10k screens (`scripts/herdr-differential.py`); pin = `scripts/herdr.pin` |
 | `scripts/check-macos.sh`, `check-video.sh` | GUI proof; needs unlocked Aqua + Screen Recording TCC (not over SSH) |
-| `scripts/check-multiclient.sh` | After workspace-document / intent / projection changes — TWO app instances on one hostd, a real menu gesture on one, `slopdesk --socket` reads the OTHER's projection. Also needs **Accessibility** TCC (it drives a menu). `SLOPDESK_PANE_FANOUT=1` adds the fan-out assertion |
+| `scripts/check-multiclient.sh` | After workspace-document / intent / projection changes — TWO app instances on one hostd, a real menu gesture on one, `slopdesk --socket` reads the OTHER's projection. Also needs **Accessibility** TCC (it drives a menu). Step 7b asserts the PTY fan-out unconditionally — every pane in the final layout must take a second subscriber |
 | `bash scripts/soak-fanout-laggard.sh` | After fan-out / subscriber-set / out-FIFO / queue-gate / ReplayBuffer-retention changes — real hostd + clients + PTY, laggard frozen with `SIGSTOP`. Asserts retention loses nothing, eviction takes the LAGGARD not the session, the fast member is never head-of-lined, and a pane that shrank back to one member still backpressures the PTY. ~80 s, no GUI/TCC. `SLOPDESK_SUB_LAG_BYTES` picks the threshold (default 4 MiB for speed; set `33554432` to soak the shipped one) |
 
 **CI:** lint jobs gate merges. Hosted runners lack Xcode 26.5 → `swift build`/`swift test`/golden are **not** enforced on CI — run `make check` locally.
@@ -77,8 +77,7 @@ Grep `SLOPDESK_` for the full set. **Default idiom:** `!= "0"` → default-ON; `
 | `SLOPDESK_DISPLAY_CAPTURE` | `window` / `display` / `include` |
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |
 | `SLOPDESK_AUDIO` | host app-audio stream gate (default-ON); `_CODEC=pcm` bypasses AAC-ELD |
-| `SLOPDESK_PANE_FANOUT` | `== "1"` → **default-OFF**. N clients on ONE PTY (docs/45 §9 Phase 6) + `channelClass 2` read-only observers. OFF = today's one-attachment refusal, byte-identical. Host-side only |
-| `SLOPDESK_SUB_LAG_BYTES` | laggard-eviction threshold, default **32 MiB** — deliberately BELOW the 64 MiB offline gate. Only read under fan-out; a lone subscriber is never evicted |
+| `SLOPDESK_SUB_LAG_BYTES` | laggard-eviction threshold, default **32 MiB** — deliberately BELOW the 64 MiB offline gate. TUNING, not a toggle. A lone subscriber is never evicted because eviction needs two or more members |
 
 ## Traps
 

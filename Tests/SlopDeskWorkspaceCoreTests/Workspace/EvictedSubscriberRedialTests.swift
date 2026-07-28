@@ -8,8 +8,8 @@ import XCTest
 
 /// An evicted subscriber can come back; a reaped pane cannot.
 ///
-/// Under `SLOPDESK_PANE_FANOUT` the host closes a pane channel for two opposite reasons. The
-/// document's reap (`HostServer.reapPanesRemovedFromTopology`) means the PANE is gone, and the
+/// The host closes a pane channel for two opposite reasons. The document's reap
+/// (`HostServer.reapPanesRemovedFromTopology`) means the PANE is gone, and the
 /// document frame that removes it is one round trip behind — so nothing on this client may dial it
 /// again. The laggard eviction (`wireSubscriberEviction`) means only THIS client's attachment is
 /// gone: the pane, its shell and its other members are all still there, and nothing will ever remove

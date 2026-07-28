@@ -181,8 +181,8 @@ public final class ConnectionViewModel {
     /// (``SlopDeskClient/hostChannelCloseReason`` `== .retired`) and until the next EXPLICIT
     /// ``connect()``.
     ///
-    /// Under `SLOPDESK_PANE_FANOUT` a tab closed on one client is a host-side topology delete, and
-    /// the host answers it `channelClose` FIRST, document frame SECOND. In that window this client
+    /// A tab closed on one client is a host-side topology delete, and the host answers it
+    /// `channelClose` FIRST, document frame SECOND. In that window this client
     /// still has the pane on screen and a dead channel under it — and every automatic dial path
     /// would re-open it, which for a session the host no longer holds is a fresh SPAWN. So the
     /// window is closed on BOTH counts: nothing dials (``connectIfNeeded()`` returns, and the
