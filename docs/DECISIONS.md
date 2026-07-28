@@ -3927,3 +3927,87 @@ pane, and a pane channel naming a session the host no longer has is a SPAWN. Tra
 lands, the leaf unmounts, the shell is reaped, and the live count is exact afterwards — and absent
 with the flag off, where B holds no channel to re-dial. Recorded in [45 §9 Phase 6], not fixed here:
 it belongs to the flag that is still default-OFF.
+
+## The launch dial hold: a pane does not open a PTY under an unconfirmed id (2026-07-28)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §7.4 point 5. Hardware found
+a client whose restored pane ids diverged from a non-pristine host's dialling its own ids anyway:
+the host spawned a shell for each unknown session id, the `adoptWorkspace` came back
+`rejectedStale`, and the client then projected host truth and abandoned what it had dialled.
+Measured, one hostd and two launches: `client ['5C95FF8D','71673628','6573D268']` vs
+`host ['11111111','22222222','33333333']` → **three panes on screen, SIX shells**. After the hold,
+same script, **three**.
+
+### 1. It is a bug, not a tradeoff — because SHOWING and DIALLING are separable
+
+The framing that nearly made this a design decision was that any fix "regresses the case
+`runArmedLaunchAdoptIfPossible` exists for: the first connect to a genuinely new host". That is only
+true of fixes that touch the OFFER — host-scoping `workspace.json`, or refusing to propose. The
+offer is not the problem. What the optimistic patch buys is the layout on screen in the first frame,
+and that is untouched here: the panes render, in their tabs, with their titles and cached folder
+names. What it cannot buy is a PTY, because opening one is the single act on this path that a
+`rejectedStale` cannot take back. So the hold is on the DIAL alone, and the pristine-host case keeps
+everything it had.
+
+### 2. The hold waits on the ADOPT'S OWN intent id, not on "some patch is pending"
+
+`adoptWorkspace` is the one op whose verdict a client genuinely cannot predict — `documentIsPristine`
+is a fact about the host's file that no cell carries, which is why `WorkspaceMirrorBox.stageIntent`
+hardcodes `documentIsPristine: true` for the optimistic run. Every other pane-minting op (split, new
+tab, reopen) is pre-checked against the same applier the host runs, so its ids are as good as
+accepted and its panes dial on the frame the user asked for — Phase 5 ruling 1 survives intact. So
+`send(intent:args:intentID:)` takes the id, `runArmedLaunchAdoptIfPossible` mints and keeps it, and
+`isPending(_:)` answers the gate. Waiting on `pendingIntentCount == 0` instead would have let any
+gesture in that window extend the hold for reasons unrelated to it.
+
+### 3. The id is claimed BEFORE the stage, and that ordering is the whole fix working
+
+Staging announces itself on the mirror, and the mirror's change hook re-runs the gate. An id recorded
+after `stageAdopt` returns leaves the gate reading "no offer outstanding" for exactly the turn in
+which the offer became a prediction — and the fan-out inside that turn dials every restored pane.
+`beginPending` runs before the announcement, so an id claimed first is already answerable when the
+re-entrant refresh fires. This was caught by the headless test, not by reading the code.
+
+### 4. Bounded, and every terminal state opens it
+
+A hold with no release is worse than the churn: a window of panes that never connect. So it opens on
+`rejectedStale`, on `applied` + the frame behind it, on the `pendingTimeout` backstop (a host that
+accepted and died), on `box.reset()`, on a channel that answers `refused` or `closed`, on a store
+with no channel at all, and on the in-process loopback (whose document adopted this very seed). The
+gate is a STORED, observed property because its inputs are `@ObservationIgnored` launch state and a
+plain-class channel state — a computed one would never invalidate the SwiftUI body that keys on it.
+
+### 5. Released by a store fan-out, not only by the leaf that re-renders
+
+`TerminalLeafView`'s connect task is keyed on `dialTaskKey`, which moves `nil → pane` on release, so
+a mounted leaf re-fires. That alone would leave anything SwiftUI has not got to — a satellite window,
+a leaf mid-mount — waiting for an unrelated nudge. So the release also calls
+`redialDisconnectedPanes()`, which no-ops on a healthy channel. It also makes the property provable
+with no view in the process, which is how it is tested.
+
+### 6. The AUTOMATION bootstrap is deliberately NOT held
+
+`bootstrapTree` also ends in `stageAdopt`, and its refusal has the same shape — `check-multiclient.sh`
+engineers exactly that for its second client, and its §6 note already accounts for the throwaway
+shell. It is left alone: the bootstrap runs only under `SLOPDESK_AUTOCONNECT_*`, which no user sets,
+so holding it would buy a round trip of latency and regression risk in two load-bearing GUI gates for
+zero user-facing benefit. The boundary is `pendingLaunchAdopt`, which the bootstrap clears when it
+takes over the launch.
+
+### 7. The gate got a phase, and the fixture that feeds it is DERIVED
+
+`check-launch-restore.sh` phase C relaunches with a layout whose pane ids the host has never seen and
+asserts that not one of them reaches the host — plus, in `hold_steady`, that the whole log's
+`attached for pane` count never leaves the pane count, which is the number that went to six. The
+divergent layout is derived from the committed fixture by rewriting every UUID (`uuid5`, so runs are
+reproducible) rather than committed beside it: a second file is a second thing to keep in step, and
+the day it drifted the gate would pass while testing a different shape. Disjointness and pane count
+are asserted, so a derivation that quietly produced the same ids fails loudly.
+
+### 8. The gate's own hostd HOME is now wiped between runs
+
+Found while running phase C: the scrollback JOURNAL lives under `<Application Support>` off HOME, and
+the gate reset only `SLOPDESK_WORKSPACE_STATE_DIR`. With the fixture pinning the pane ids, run N+1
+inherited run N's transcripts and phase A's "cold launch against a pristine host" replayed bytes from
+a session it never had. That is the one input that differed between two otherwise identical runs, and
+one of them went red. Wiping it is the gate keeping the promise its own comment already made.

@@ -185,7 +185,8 @@ final class LaunchRestoreGateContractTests: XCTestCase {
     /// Conversely, the assertions that make it a gate rather than a launcher. Each of these is a
     /// distinct failure the path has actually shipped: a projection that drifts off the restored
     /// layout, a pane torn down and re-dialled (its PTY abandoned on the host), an autosave that
-    /// keeps the shape but replaces the ids, and a relaunch that respawns instead of reattaching.
+    /// keeps the shape but replaces the ids, a relaunch that respawns instead of reattaching, and a
+    /// relaunch that dials pane ids host truth has never carried.
     func testTheGateAssertsEveryHalfOfTheClaim() throws {
         let code = try codeBody(of: Self.gateScript)
         for expected in [
@@ -194,12 +195,52 @@ final class LaunchRestoreGateContractTests: XCTestCase {
             "restored panes but", // pane count == live shell count
             "the autosaved layout no longer names restored pane", // identity survived the launch
             "the relaunch did not keep the SAME shells", // reattach, never respawn
+            "an id that is not in any layout on", // phase C: the divergent ids never reached the host
+            "shell(s) in total for", // …and the whole-log spawn count, which is what went to six
         ] {
             XCTAssertTrue(
                 code.contains(expected),
                 "check-launch-restore.sh lost its `\(expected)` assertion",
             )
         }
+    }
+
+    /// Phase C's divergent layout is DERIVED from the committed fixture, and the two properties that
+    /// make it mean anything are asserted in the script itself: the ids must be disjoint from the
+    /// fixture's, and there must be the same number of panes.
+    ///
+    /// A derivation that quietly produced the fixture's own ids would leave phase C green while
+    /// testing phase B a second time — the failure mode a second committed file has too, in slower
+    /// motion, the day one of them is edited and the other is not.
+    func testThePhaseCLayoutIsDerivedAndProvenDivergent() throws {
+        let code = try codeBody(of: Self.gateScript)
+        XCTAssertTrue(
+            code.contains("uuid5"),
+            "check-launch-restore.sh no longer DERIVES its divergent layout from the fixture — a "
+                + "hand-written second file drifts the day only one of the two is updated",
+        )
+        XCTAssertTrue(
+            code.contains("shares a pane id with the fixture"),
+            "check-launch-restore.sh no longer proves the divergent ids are actually divergent",
+        )
+        XCTAssertTrue(
+            code.contains("same ${PANE_COUNT} panes as the fixture"),
+            "check-launch-restore.sh no longer proves the divergent layout is the same SHAPE",
+        )
+    }
+
+    /// The daemon's HOME is reset alongside its workspace dir. The scrollback journal lives under
+    /// `<Application Support>`, resolved off HOME, and the fixture pins the pane ids — so without
+    /// this, run N+1 inherits run N's transcripts and phase A's "cold launch against a pristine host"
+    /// replays bytes from a session it never had. It is the one input that can differ between two
+    /// otherwise identical runs, and one of them went red.
+    func testTheGateStartsItsDaemonFromAFullyFreshState() throws {
+        let code = try codeBody(of: Self.gateScript)
+        XCTAssertTrue(
+            code.contains(#"rm -rf "${HOSTD_WORKSPACE}" "${HOSTD_HOME}""#),
+            "check-launch-restore.sh no longer wipes the daemon's HOME — a stale scrollback journal "
+                + "makes phase A's cold launch replay a session it never had",
+        )
     }
 
     /// The invariant is WATCHED, not settled for. The churn this gate exists to catch is one wire
@@ -209,9 +250,10 @@ final class LaunchRestoreGateContractTests: XCTestCase {
     func testTheGateWatchesRatherThanSettles() throws {
         let code = try codeBody(of: Self.gateScript)
         XCTAssertTrue(
-            code.contains("hold_steady \"phase A\"") && code.contains("hold_steady \"phase B\""),
-            "check-launch-restore.sh no longer holds the invariant across a watch window in both "
-                + "phases — a late replacement would land after the assertion and never be seen",
+            code.contains("hold_steady \"phase A\"") && code.contains("hold_steady \"phase B\"")
+                && code.contains("hold_steady \"phase C\""),
+            "check-launch-restore.sh no longer holds the invariant across a watch window in every "
+                + "phase — a late replacement would land after the assertion and never be seen",
         )
         let watch = try XCTUnwrap(
             Self.shellAssignment("WATCH_SECONDS", in: code).flatMap(Int.init),

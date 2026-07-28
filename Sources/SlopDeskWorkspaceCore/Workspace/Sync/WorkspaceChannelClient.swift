@@ -474,6 +474,11 @@ public final class WorkspaceChannelClient {
     /// drives the registry, that tears down every restored pane's shell and dials a throwaway for the
     /// host's own. A refusal costs one snap-back of a layout nobody had moved to.
     ///
+    /// `intentID` is the identity the optimistic patch is staged under, so a caller that has to know
+    /// when ITS request was decided can ask ``WorkspaceMirrorBox/isPending(_:)`` afterwards. Minted
+    /// here by default; the launch adopt supplies its own, because it is the one op whose verdict the
+    /// client genuinely cannot predict.
+    ///
     /// - Returns: `false` when this client can already tell the intent is invalid against the
     ///   document it holds. Nothing is staged and nothing is sent: a request whose answer is already
     ///   known is a round trip and a rollback for no reason.
@@ -481,10 +486,11 @@ public final class WorkspaceChannelClient {
     public func send(
         intent op: WorkspaceIntentOp,
         args: Data,
+        intentID: UUID = UUID(),
         now: TimeInterval = Date().timeIntervalSince1970,
     ) -> Bool {
         guard case .live = state else { return false }
-        guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
+        guard let intent = box.stageIntent(intentID, op: op, args: args, issuedAt: now) else { return false }
         // A loopback client IS the far end: it answers here, before this call returns, so the patch
         // staged one line above is already retired by the document frame the answer carries.
         if let localDocument {

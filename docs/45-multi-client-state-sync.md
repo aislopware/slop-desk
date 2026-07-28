@@ -921,6 +921,25 @@ Four ordered facts hold this together, and each exists because the one before it
    host's default pane running a PTY nobody was attached to. A refusal is unchanged: `rejectedStale`
    snaps the patch away and host truth stands.
 
+5. **No pane DIALS while that offer is unanswered** (`WorkspaceStore.panesMayDial`). Point 4 keeps
+   the restored layout on screen across the round trip, which is right — and that layout is also a
+   PREDICTION, because `documentIsPristine` is a fact about the host's own file that no cell carries.
+   Showing a pane and opening a PTY for it are different acts, and only the first is reversible:
+   `HostServer` spawns a fresh shell for ANY unknown non-zero session id (PATH B), so a client whose
+   `workspace.json` names panes this host has never seen — a schema bump that decode-failed to the
+   default, a layout restored from a backup, the same client meeting a second host — gets a shell per
+   stale id, and the refusal then replaces every one of those panes with host truth. Measured on
+   hardware before the hold: three panes on screen, SIX shells.
+
+   So the dial waits for the verdict, either verdict. The hold is per-LAUNCH and keyed on the adopt's
+   own `intentID` (`WorkspaceMirrorBox.isPending`), so it is bounded by the same `pendingTimeout`
+   backstop every optimistic patch has, and it is released by the mirror's own change hook — an
+   `intentResult` that snaps the patch away, or the document frame behind an accepted one. It covers
+   NOTHING else: a split, a new tab and a reopened one all dial on the frame the user asked for,
+   because the client proposes those ids and its own applier has already agreed the host will take
+   them (Phase 5 ruling 1). Cost, measured on loopback: ~0.13 s on a launch that reaches its shells
+   in ~1.1 s. Gated by `scripts/check-launch-restore.sh` phase C.
+
 ```
 CLIENT                                                     HOST (hostd)
   |                                                              |
@@ -953,7 +972,8 @@ CLIENT                                                     HOST (hostd)
   |-- 17 presence(clock, viewingTab, viewingPane, WxH) -------→   |
   |←-- 37 kind 2 presence (client roster + per-pane attachment) -|
   |                                                              |
-  |   LAZY, and ONLY for a pane whose attachedBy is empty or     |
+  |   LAZY, and ONLY once the launch adopt has been ANSWERED     |
+  |   (point 5) and for a pane whose attachedBy is empty or      |
   |   contains me:                                               |
   |-- channelOpen(channelClass: 0, sessionID: <host PaneID>) --→  |  the ordinary PTY path,
   |←-- channelOpenAck(resumeFromSeq) + snapshot replay ----------|  completely unchanged

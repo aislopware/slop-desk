@@ -32,6 +32,17 @@
 #     - and the three shells are REATTACHED, not respawned: zero new `attached for pane` lines and
 #       the very same PTY pids as phase A. A relaunch that respawns is a relaunch that abandoned
 #       three agents mid-run.
+#   PHASE C — relaunch with a layout whose pane ids DIVERGE from host truth:
+#     The case phases A and B cannot reach, because in both of them the client and the host agree on
+#     the ids. A client's `workspace.json` can name panes this host has never heard of — a schema
+#     bump that decode-fails to the default, a layout restored from a backup, the same client meeting
+#     a second host. The client shows that layout optimistically, offers it, and is refused.
+#     - the client must project HOST truth (the same signature phases A and B assert), and
+#     - the host must spawn NOTHING for the divergent ids. Not "the fixture's panes were not
+#       respawned" — the whole log's `attached for pane` count must still be three. Measured before
+#       the launch dial hold: three panes on screen, SIX shells, three of them abandoned. Every one
+#       of those runs a real login shell — rc files, Starship, agent `SessionStart` hooks — before
+#       it is killed.
 #
 # HOW IT REACHES THE SHIPPING PATH WITH NO NEW CLIENT SEAM — the design constraint, decided out loud:
 #   The temptation is an env pair that seeds a layout and fires the reconnect. That would be a second
@@ -76,7 +87,8 @@
 #
 # EXIT: non-zero if a build fails, the client dies, it never answers its control socket, it projects
 # anything but the restored layout, the shell count ever leaves the pane count, the autosaved layout
-# loses the restored pane ids, or a relaunch respawns a shell instead of reattaching.
+# loses the restored pane ids, a relaunch respawns a shell instead of reattaching, or a relaunch with
+# divergent ids puts one of them on the wire.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -211,6 +223,61 @@ if [[ "${PANE_COUNT}" != "3" || "${FIXTURE_TABS}" != "2" ]]; then
 fi
 echo "==> fixture: ${PANE_COUNT} panes across ${FIXTURE_TABS} tabs"
 
+# ── 0b. The DIVERGENT layout phase C relaunches with ─────────────────────────────────────────────
+# Derived from the committed fixture rather than committed alongside it, and that is deliberate: the
+# claim is "the SAME shape under ids this host has never seen", so it must track the fixture
+# automatically. A second checked-in file would be a second thing to keep in step, and the day it
+# drifted this gate would go on passing while testing a different shape.
+#
+# Every UUID in the file is rewritten through a stable derivation (uuid5 of the original), so the run
+# is reproducible; the disjointness of the two pane sets is then ASSERTED rather than assumed.
+DIVERGENT="${WORK}/divergent-workspace.json"
+python3 - "${FIXTURE}" "${DIVERGENT}" << 'PY' || fatal "could not derive the divergent layout"
+import re, sys, uuid
+
+NS = uuid.UUID("5D0D5DE5-0000-4000-8000-000000000001")
+text = open(sys.argv[1]).read()
+pattern = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
+seen = {}
+def rewrite(match):
+    original = match.group(0)
+    if original not in seen:
+        seen[original] = str(uuid.uuid5(NS, original)).upper()
+    return seen[original]
+out = pattern.sub(rewrite, text)
+if not seen:
+    sys.exit("the fixture carries no UUIDs — nothing to diverge")
+open(sys.argv[2], "w").write(out)
+PY
+DIVERGENT_PANES="$(
+  python3 - "${DIVERGENT}" << 'PY'
+import json, sys
+
+def leaves(node):
+    if "leaf" in node:
+        return [node["leaf"]["raw"]]
+    out = []
+    for child in node["split"]["children"]:
+        out += leaves(child["node"])
+    return out
+
+doc = json.load(open(sys.argv[1]))
+ids = []
+for session in doc["sessions"]:
+    for tab in session["tabs"]:
+        ids += leaves(tab["root"])
+print("\n".join(sorted(ids)))
+PY
+)" || fatal "the derived divergent layout is not readable as a workspace tree"
+# Self-check: a derivation that quietly produced the SAME ids would make phase C assert nothing.
+if [[ -n "$(comm -12 <(sort <<< "${FIXTURE_PANES}") <(sort <<< "${DIVERGENT_PANES}"))" ]]; then
+  fatal "the divergent layout shares a pane id with the fixture — phase C would test nothing"
+fi
+if [[ "$(grep -c . <<< "${DIVERGENT_PANES}" || true)" != "${PANE_COUNT}" ]]; then
+  fatal "the divergent layout must have the same ${PANE_COUNT} panes as the fixture"
+fi
+echo "==> divergent layout derived: $(tr '\n' ' ' <<< "${DIVERGENT_PANES}")"
+
 # ── The two observables ─────────────────────────────────────────────────────────────────────────
 # What the CLIENT says it is rendering. The shipping client-control socket answers it off
 # `WorkspaceStore.tree` — the projection of `workspaceMirror.topology`, the exact value the window
@@ -261,6 +328,11 @@ spawned_shells() {
   echo "${total}"
 }
 spawned_shells_are() { [[ "$(spawned_shells)" == "$1" ]]; }
+
+# How many shells the host has spawned for ANY pane. Distinct from `spawned_shells` above, and phase
+# C is the reason: a client dialling ids the host has never seen spawns a PTY per id, and every one
+# of those is invisible to a per-fixture-pane count. This is the number that went to six.
+total_spawned_shells() { grep -c "attached for pane" "${HOSTD_LOG}" 2> /dev/null || true; }
 
 # Every fixture pane must have been reattached (phase B) — asserted per pane, positively. "No new
 # spawns" alone is also satisfied by a client that never picked its panes back up at all.
@@ -324,7 +396,7 @@ await_projection() {
 # assertion that a settle-then-check cannot make: the defect class here is a REPLACEMENT that lands a
 # wire round trip after the panes are already up and looking right.
 hold_steady() {
-  local label="$1" want="$2" sig second spawns live
+  local label="$1" want="$2" sig second spawns total live
   for second in $(seq 1 "${WATCH_SECONDS}"); do
     sig="$(signature 2> /dev/null || true)"
     if [[ "${sig}" != "${WANT_SIG}" ]]; then
@@ -340,6 +412,16 @@ hold_steady() {
     if [[ "${spawns}" != "${want}" ]]; then
       fatal "${label}: the host had spawned ${want} shell(s) for these panes and now has ${spawns} —
     a restored pane was torn down and re-dialled ${second}s in, abandoning its PTY"
+    fi
+    # …and the count over EVERY pane id, which is a strictly stronger claim: a shell spawned for an
+    # id that is not one of the fixture's is invisible to the line above, and that is exactly what a
+    # divergent-id launch produces (phase C).
+    total="$(total_spawned_shells)"
+    if [[ "${total}" != "${want}" ]]; then
+      echo "==> every pane the host has spawned for:" >&2
+      grep -o "attached for pane [0-9A-Fa-f-]*" "${HOSTD_LOG}" | sort | uniq -c | sed 's/^/    /' >&2
+      fatal "${label}: the host has spawned ${total} shell(s) in total for ${want} pane(s) ${second}s
+    in — it was asked for a session id that is not in the layout on screen"
     fi
     # …and the LIVE count, which is a different claim from the cumulative one and fails differently:
     # a churn whose re-dial the host REFUSES (`already attached on another connection`) leaves the
@@ -383,6 +465,12 @@ echo "==> build OK: ${APP}"
 # FRESH state dir, for CORRECTNESS as much as hygiene: phase A's whole claim is that a PRISTINE host
 # takes the layout this client restored, and `adoptWorkspace` answers `rejectedStale` to a host that
 # already has one. A reused dir would silently turn phase A into phase B.
+#
+# The daemon's HOME goes with it, and that is the same argument rather than tidiness. The scrollback
+# JOURNAL lives at `<Application Support>/SlopDesk/scrollback/` — resolved off HOME — and the fixture
+# pins the pane ids, so a second run inherits the first run's transcripts and phase A's cold launch
+# replays bytes from a session it never had. It is the one input that differs between two otherwise
+# identical runs of this gate, which is exactly what a flake is made of.
 pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
@@ -393,7 +481,7 @@ if [[ -z "${WORK}" ]]; then
 fi
 HOSTD_HOME="${WORK}/hostd-home"
 HOSTD_WORKSPACE="${WORK}/hostd-workspace"
-rm -rf "${HOSTD_WORKSPACE}"
+rm -rf "${HOSTD_WORKSPACE}" "${HOSTD_HOME}"
 mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}"
 : > "${HOSTD_LOG}"
 echo "==> starting slopdesk-hostd on 127.0.0.1:${CONNECT_PORT}"
@@ -517,6 +605,49 @@ if [[ "${LIVE_PIDS_B}" != "${LIVE_PIDS_A}" ]]; then
 fi
 echo "==> phase B: the very same ${PANE_COUNT} shells (pids: ${LIVE_PIDS_B}) ✅"
 
+# ── 5b. PHASE C — a relaunch whose saved layout names panes this host has never seen ────────────
+# The one shape phases A and B cannot reach: client and host DISAGREE about which panes exist. The
+# client shows its own layout optimistically and offers it; the host already has a workspace, so the
+# offer comes back `rejectedStale` and host truth wins. The visible outcome is the same signature as
+# before — and the claim underneath it is that nothing was dialled in the meantime.
+echo "==> phase C: stopping the client"
+reap "${CLIENT_PID}" "client"
+pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
+rm -f "${SOCK}"
+await "the host to park all ${PANE_COUNT} sessions again" 60 detached_all
+cp "${DIVERGENT}" "${SEEDED_WORKSPACE}"
+echo "==> phase C: seeded a layout whose panes the host has never seen"
+
+launch_client "phase C"
+await_client
+await_projection "phase C: the client never projected host truth over its divergent layout" 80
+echo "==> phase C: the client projects HOST truth, not the ids it restored ✅"
+
+# The assertion this phase exists for, stated per divergent id so a failure names the pane. A single
+# `attached for pane <divergent id>` line is a login shell the host forked, ran and then killed for a
+# pane the user never sees.
+while read -r pane; do
+  if grep -q "attached for pane ${pane}" "${HOSTD_LOG}"; then
+    echo "==> every pane the host has spawned for:" >&2
+    grep -o "attached for pane [0-9A-Fa-f-]*" "${HOSTD_LOG}" | sort | uniq -c | sed 's/^/    /' >&2
+    fatal "phase C: the host spawned a shell for ${pane} — an id that is not in any layout on
+    screen. The client dialled a pane the document was about to replace, and that PTY is abandoned."
+  fi
+done <<< "${DIVERGENT_PANES}"
+echo "==> phase C: not one of the ${PANE_COUNT} divergent ids reached the host ✅"
+
+hold_steady "phase C" "${PANE_COUNT}"
+
+LIVE_PIDS_C="$(live_shell_pids)"
+if [[ "${LIVE_PIDS_C}" != "${LIVE_PIDS_A}" ]]; then
+  echo "--- live children of hostd ---" >&2
+  pgrep -P "${HOSTD_PID}" -l >&2 || true
+  fatal "phase C: the divergent relaunch did not keep the SAME shells.
+    phase A pids: ${LIVE_PIDS_A}
+    phase C pids: ${LIVE_PIDS_C}"
+fi
+echo "==> phase C: still the very same ${PANE_COUNT} shells (pids: ${LIVE_PIDS_C}) ✅"
+
 # ── 6. The evidence a human reads ───────────────────────────────────────────────────────────────
 # The client's own final projection, read back off the shipping control socket: the value the window
 # paints, in text. This is the artefact worth printing, and unlike a screenshot it is the same thing
@@ -540,8 +671,9 @@ echo
 echo "================================================================================"
 echo " DONE — the shipping launch path is ASSERTED above, not eyeballed."
 echo " A cold launch restored ${PANE_COUNT} panes across ${FIXTURE_TABS} tabs, the pristine host took"
-echo " that layout and gave it ${PANE_COUNT} shells, and a relaunch against the now non-pristine host"
-echo " picked the SAME ${PANE_COUNT} PTYs back up rather than respawning them."
+echo " that layout and gave it ${PANE_COUNT} shells, a relaunch against the now non-pristine host"
+echo " picked the SAME ${PANE_COUNT} PTYs back up rather than respawning them, and a relaunch whose"
+echo " saved layout named ${PANE_COUNT} panes the host has never seen put none of them on the wire."
 [[ -f "${SHOT}" ]] && echo " Desktop grab (window NOT raised — see above):  ${SHOT}"
 echo " hostd log:  ${HOSTD_LOG}"
 echo "================================================================================"

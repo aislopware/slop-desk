@@ -30,14 +30,14 @@ public extension WorkspaceStore {
     /// a mutator that compiles, runs, changes nothing and logs nothing is indistinguishable from a UI
     /// that ignored the gesture, and there is no string to grep for.
     @discardableResult
-    func stage(_ op: WorkspaceIntentOp, _ args: Data) -> Bool {
+    func stage(_ op: WorkspaceIntentOp, _ args: Data, intentID: UUID = UUID()) -> Bool {
         guard let workspaceChannel else {
             logIntentRefusal(op, "no workspace channel")
             onLayoutChangeUnavailable?()
             return false
         }
         let focusBefore = stagedFocusProbe()
-        guard workspaceChannel.send(intent: op, args: args) else {
+        guard workspaceChannel.send(intent: op, args: args, intentID: intentID) else {
             let live = workspaceChannel.isLive
             let reachable = live && workspaceMirror.topology != nil
             logIntentRefusal(op, live ? (reachable ? "refused locally" : "no topology") : "channel not live")
@@ -137,10 +137,15 @@ public extension WorkspaceStore {
     /// remembers it — the panes have no live shell to ask. Rebuilding the proposal from the tree alone
     /// defaults that map to `[:]`, so an ACCEPTED adopt would republish every pane with its project
     /// directory stripped and the next launch would start all of them in hostd's own cwd.
-    func stageAdopt(_ topology: WorkspaceTopology) {
+    ///
+    /// `intentID` is the identity the optimistic patch stands under, so the launch dial hold can ask
+    /// whether THIS proposal is still outstanding. It is the one op whose answer the client cannot
+    /// predict, and therefore the one whose panes must not open a PTY until it lands.
+    @discardableResult
+    func stageAdopt(_ topology: WorkspaceTopology, intentID: UUID = UUID()) -> Bool {
         var state = HostWorkspaceState()
         state.write(topology: topology)
-        stage(.adoptWorkspace, WorkspaceStateCodec.encodeSnapshot(state))
+        return stage(.adoptWorkspace, WorkspaceStateCodec.encodeSnapshot(state), intentID: intentID)
     }
 
     /// Offers the layout THIS CLIENT restored at launch to a host that has never had one.
@@ -165,17 +170,33 @@ public extension WorkspaceStore {
     ///
     /// A refusal reads the same as it always did: `rejectedStale` snaps the patch away, host truth
     /// stands, and only then do the restored panes go.
+    ///
+    /// The panes stay UNDIALLED across the whole round trip (``panesMayDial``). The optimistic patch
+    /// puts the restored layout back on screen the instant the offer goes out, and that layout is a
+    /// PREDICTION until the verdict lands — so opening a PTY for one of its panes is exactly the act
+    /// that cannot be taken back: the host spawns a fresh shell for any session id it does not know,
+    /// and a refusal then replaces every one of those panes with host truth.
     func runArmedLaunchAdoptIfPossible() {
         guard let topology = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
               workspaceMirror.knownEpoch != Self.seedEpoch else { return }
         pendingLaunchAdopt = nil
-        stageAdopt(topology)
+        // Claimed BEFORE the stage, and that ordering is load-bearing. Staging ANNOUNCES itself on the
+        // mirror, and the mirror's change hook re-runs the dial gate — so an id recorded afterwards
+        // would leave the gate reading "no offer outstanding" for exactly the turn in which the offer
+        // became a prediction, and every restored pane would dial inside it. `beginPending` runs
+        // before that announcement, so the id claimed here is already answerable when it fires.
+        let intentID = UUID()
+        launchAdoptIntentID = intentID
+        if !stageAdopt(topology, intentID: intentID) { launchAdoptIntentID = nil }
         // That line released the hold, so the reconcile it was holding has to happen. Staging normally
         // performs it — every mirror write announces itself — but whether a given intent reaches the
         // mirror is the channel's business, and a proposal it refuses would otherwise leave the registry
         // holding panes the document does not have: leaves with no live session behind them. Asked for
         // here instead, where the hold is known to be over. The pass is idempotent.
         reconcileTreeFromDocument()
+        // An offer that never went out (`nil` above) has no verdict to wait for, and one the loopback
+        // seam answered on this very line is already decided — both open the dial gate right here.
+        refreshPaneDialGate()
     }
 
     /// Runs an armed automation bootstrap now that there is a document to run it against. Fired from

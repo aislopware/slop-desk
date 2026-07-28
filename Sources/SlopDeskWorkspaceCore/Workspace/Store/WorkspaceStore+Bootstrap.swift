@@ -107,11 +107,16 @@ extension WorkspaceStore {
             pendingLaunchAdopt = nil
             seedWorkspaceMirror(from: shape.tree)
             reconcileTree()
+            // This launch has no restored layout on offer any more, so nothing holds the panes back:
+            // the bootstrap's own tree is minted here and adopted verbatim, ids included, so the
+            // window's panes are the ones the host will be asked for (``panesMayDial``).
+            refreshPaneDialGate()
             return
         }
         armedBootstrapEnvironment = nil
         armedBootstrapShape = nil
         pendingLaunchAdopt = nil
+        refreshPaneDialGate()
         // Nothing to fold in beside the tree: an autoconnect shape is minted here, not restored, so its
         // panes have no spawn directory to carry and the host takes its own default for each.
         stageAdopt(WorkspaceTopology(tree: shape.tree))

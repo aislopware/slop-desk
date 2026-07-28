@@ -501,12 +501,22 @@ public extension WorkspaceStore {
         // `.live` when it is attached (so the call below fires it), and a real channel reaches `.live`
         // several round trips later (so the hook does). The launch adopt rides the same two edges for
         // the same reason.
+        workspaceChannelState = client?.state ?? .idle
         client?.onStateChange = { [weak self] in
-            self?.runArmedBootstrapIfPossible()
-            self?.runArmedLaunchAdoptIfPossible()
+            guard let self else { return }
+            // Read back off the store's OWN reference rather than capturing `client`: the closure is
+            // held by the object it would capture, and that cycle would keep a dead subscription (and
+            // its box) alive for the life of the store.
+            workspaceChannelState = workspaceChannel?.state ?? .idle
+            runArmedBootstrapIfPossible()
+            runArmedLaunchAdoptIfPossible()
+            // A REFUSED or CLOSED channel is a definite answer that no document is coming, and it
+            // releases the dial hold that the `.opening` state put on (``panesMayDial``).
+            refreshPaneDialGate()
         }
         runArmedBootstrapIfPossible()
         runArmedLaunchAdoptIfPossible()
+        refreshPaneDialGate()
     }
 
     /// Opens (or re-opens) the channel for the connection that just established.

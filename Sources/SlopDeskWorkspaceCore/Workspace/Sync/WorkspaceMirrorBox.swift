@@ -145,6 +145,16 @@ public final class WorkspaceMirrorBox {
 
     public var pendingIntentCount: Int { mirror.pending.count }
 
+    /// Whether `intentID`'s optimistic patch is still standing — the intent went out and the host has
+    /// neither answered it nor superseded it.
+    ///
+    /// `false` for an id that never staged anything (an intent whose diff was empty proposes nothing),
+    /// for one already answered, and after a ``reset()``. The caller is the launch dial hold, which
+    /// has to know when the ONE proposal a client cannot predict the answer to has been decided.
+    public func isPending(_ intentID: UUID) -> Bool {
+        mirror.pending.contains { $0.intentID == intentID }
+    }
+
     // MARK: Reads (the UI's whole surface)
 
     /// The layout to render: host truth with this client's unanswered intents already applied.

@@ -125,6 +125,28 @@ public final class WorkspaceStore {
     @ObservationIgnored
     var pendingLaunchAdopt: WorkspaceTopology?
 
+    /// The intent id ``runArmedLaunchAdoptIfPossible()`` staged this launch's offer under, or `nil`
+    /// when no offer ever went out. The dial hold waits on THIS patch and nothing else.
+    @ObservationIgnored
+    var launchAdoptIntentID: UUID?
+
+    /// Whether the panes on screen may open their host channels — see ``panesMayDial``.
+    ///
+    /// STORED and observed, recomputed by ``refreshPaneDialGate()`` at each of the four points that
+    /// can move it. It has to be stored: the inputs are `@ObservationIgnored` launch state and the
+    /// channel's own state (a plain class), so a computed property reading them would never
+    /// invalidate the SwiftUI body whose connect task keys on it — the release edge would repaint
+    /// nothing and the panes would stay dark.
+    ///
+    /// Written by ``refreshPaneDialGate()`` and nowhere else; read through ``panesMayDial``.
+    var paneDialGate = true
+
+    /// The workspace channel's own state, mirrored here because ``WorkspaceChannelClient`` is a plain
+    /// class — publishing its transitions is this store's job. Kept in step by
+    /// ``attachWorkspaceChannel(_:)``'s state hook.
+    @ObservationIgnored
+    var workspaceChannelState: WorkspaceChannelClient.State = .idle
+
     /// Records (or clears) the divider preview.
     ///
     /// Bumps ``workspaceMirrorRevision`` even though nothing in the document moved: that counter is
@@ -511,6 +533,11 @@ public final class WorkspaceStore {
             refreshUnseenDoneForAllPanes()
             // …and the one place the TABLE OF LIVENESS learns of a leaf nothing local asked for.
             reconcileTreeFromDocument()
+            // …and where the launch offer's verdict arrives: an `intentResult` snaps its patch away
+            // (refused) or the frame behind it retires the patch (accepted). Either answer releases
+            // the dial hold, and it has to be AFTER the reconcile above — the panes that then dial
+            // are the ones that pass just materialized.
+            refreshPaneDialGate()
         }
         // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
         // real layout from the first instant rather than `nil` until a host frame happens to arrive.
@@ -2351,6 +2378,7 @@ public final class WorkspaceStore {
         }
         armedBootstrapEnvironment = nil
         pendingLaunchAdopt = nil
+        refreshPaneDialGate()
         if let target = Self.terminalTarget(from: env) {
             workspace = Self.singleLeafWorkspace(
                 spec: PaneSpec(kind: .terminal, title: "Terminal"), connection: target,

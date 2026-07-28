@@ -100,7 +100,10 @@ struct TerminalLeafView: View {
             // GUI/window pane keeps a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
         .background(NativePaneColor.terminalBackground)
-        .task(id: live?.id) { await connectIfNeeded() }
+        // Keyed on the pane AND on the launch dial hold, so a leaf that mounts while this client's
+        // restored layout is still unanswered runs the task, does nothing, and RE-runs on the release
+        // (the key moves off `nil` — the `autotypeTaskKey` shape).
+        .task(id: dialTaskKey) { await connectIfNeeded() }
         // The `SLOPDESK_AUTOTYPE` OUT-path proof (docs/22 §7) rides its OWN task, keyed on the pane
         // being connected rather than on this leaf appearing — see `autotypeTargetIfConnected`.
         .task(id: autotypeTargetIfConnected) { await runAutotypeIfRequested() }
@@ -496,8 +499,33 @@ struct TerminalLeafView: View {
         model.onManualSecureInputChanged = nil
     }
 
+    /// What the connect-on-appear task waits for: this pane, once its id is one the host answers for.
+    ///
+    /// `nil` while this launch's `adoptWorkspace` is outstanding. The layout on screen is then the one
+    /// read off `workspace.json`, staged optimistically — a PREDICTION — and a host that already has
+    /// a workspace is about to replace every pane in it. Dialling inside that window spawns a shell
+    /// per stale id on the host and abandons it a round trip later (``WorkspaceStore/panesMayDial``).
+    private var dialTaskKey: PaneID? {
+        Self.dialTaskKey(pane: live?.id, mayDial: store.panesMayDial)
+    }
+
+    /// The pure rule behind ``dialTaskKey``, so the property that gates every pane's first socket is
+    /// provable with no window.
+    ///
+    /// Two claims, and they are separate. It must be `nil` while the hold stands, or the pane dials
+    /// the very id the hold exists to keep off the wire. And it must MOVE on the release: `.task(id:)`
+    /// re-fires only when its key changes, so a key that is already the pane's id would be a task that
+    /// ran once, too early, and never again — a pane dark for the rest of the launch.
+    static func dialTaskKey(pane: PaneID?, mayDial: Bool) -> PaneID? {
+        guard mayDial else { return nil }
+        return pane
+    }
+
     private func connectIfNeeded() async {
         guard !staticMirror else { return }
+        // The key above already encodes the hold, and SwiftUI runs the task for the `nil` key too —
+        // so the gate is re-asserted here rather than relied upon as a scheduling accident.
+        guard store.panesMayDial else { return }
         // IDEMPOTENT: SwiftUI re-fires this `.task` on every remount — including a pane REMOUNT on a TAB switch
         // (the inactive tab's subtree is unmounted, then remounted on return). Route through the model's
         // `connectIfNeeded()`, which no-ops on a live/in-flight/supervised channel, so a tab switch never tears
