@@ -141,6 +141,40 @@ public final class WorkspaceStore {
     /// Written by ``refreshPaneDialGate()`` and nowhere else; read through ``panesMayDial``.
     var paneDialGate = true
 
+    /// How long the hold may stand with no answer of any kind before it opens anyway.
+    ///
+    /// The arm nothing else bounds: a host that ACCEPTS `channelClass 1` and then publishes no frame
+    /// leaves the subscription in `.opening` for good (``WorkspaceChannelClient/State/live(_:)`` is
+    /// published only when a frame folds), and a hold with no release is a window of panes that never
+    /// connect — strictly worse than the churn it prevents. Injectable so a test can pin the release
+    /// without spending it.
+    var paneDialHoldBackstop: Duration = .seconds(HostWorkspaceMirror.pendingTimeout)
+
+    /// The `host:port` whose OWN document is what the panes on screen came from, or `nil` while
+    /// nothing a host published has landed.
+    ///
+    /// The provenance half of ``panesMayDial``: an id may be dialled at the host that named it and
+    /// nowhere else. Stamped by ``noteFoldedDocumentProvenance()`` when a document frame folds — the
+    /// fold, not any other reason the mirror announces itself, because between committing a new
+    /// target and the re-subscribe that answers it the mirror still holds the PREVIOUS host's
+    /// document, and stamping there would file one machine's layout under the other's name.
+    @ObservationIgnored
+    var dialConfirmedHostKey: String?
+
+    /// The fold count ``noteFoldedDocumentProvenance()`` last acted on, so a repaint is told from a
+    /// frame. Goes backwards on a `reset()`, which is what makes a re-subscribe unconfirmed again.
+    @ObservationIgnored
+    var lastFoldedDocumentFrames: UInt64 = 0
+
+    /// Whether ``paneDialHoldBackstop`` has run out on the CURRENT hold episode. Cleared by a connect
+    /// to a different host (``commitConnectionTarget(_:)``), which starts a new one.
+    @ObservationIgnored
+    var paneDialHoldExpired = false
+
+    /// The armed backstop, cancelled the moment the hold releases on an answer.
+    @ObservationIgnored
+    var paneDialHoldBackstopTask: Task<Void, Never>?
+
     /// The workspace channel's own state, mirrored here because ``WorkspaceChannelClient`` is a plain
     /// class — publishing its transitions is this store's job. Kept in step by
     /// ``attachWorkspaceChannel(_:)``'s state hook.
@@ -533,6 +567,9 @@ public final class WorkspaceStore {
             refreshUnseenDoneForAllPanes()
             // …and the one place the TABLE OF LIVENESS learns of a leaf nothing local asked for.
             reconcileTreeFromDocument()
+            // …and the one place a host's own document arrives, which is what makes the ids in it
+            // dialable at that host and no other.
+            noteFoldedDocumentProvenance()
             // …and where the launch offer's verdict arrives: an `intentResult` snaps its patch away
             // (refused) or the frame behind it retires the patch (accepted). Either answer releases
             // the dial hold, and it has to be AFTER the reconcile above — the panes that then dial
@@ -4236,6 +4273,7 @@ public final class WorkspaceStore {
     /// layout — which every attached client shares — carries no host association at all. The canvas branch
     /// still writes the retired ``Workspace/connection``.
     public func commitConnectionTarget(_ target: ConnectionTarget) {
+        let previousHostKey = attachedHostKey
         committedConnectionTarget = target
         switch liveModel {
         case .canvas:
@@ -4248,6 +4286,14 @@ public final class WorkspaceStore {
             // seeded from leaves the mirror holding facts about two machines, so it stops being
             // written rather than filing one host's folders under the other's name.
             documentCacheHostKey = key == documentCacheSeedHostKey ? key : ""
+            // …and so is the LAYOUT. This is the one place that can see the document being projected
+            // belongs to a machine other than the one now being dialled, and it runs BEFORE the
+            // connection reports up (``AppConnection`` commits the target first), so the hold is in
+            // place by the time the establish fan-out asks every pane to dial.
+            if key != previousHostKey {
+                paneDialHoldExpired = false // a new host is a new hold, with its own full window
+                refreshPaneDialGate()
+            }
             guard devicePreferences.connectionByHostKey[key] != target else { return }
             mutateDevicePreferences { $0.connectionByHostKey[key] = target }
         }

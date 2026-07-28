@@ -925,7 +925,7 @@ Four ordered facts hold this together, and each exists because the one before it
    host's default pane running a PTY nobody was attached to. A refusal is unchanged: `rejectedStale`
    snaps the patch away and host truth stands.
 
-5. **No pane DIALS while that offer is unanswered** (`WorkspaceStore.panesMayDial`). Point 4 keeps
+5. **No pane DIALS an id the attached host has not confirmed** (`WorkspaceStore.panesMayDial`). Point 4 keeps
    the restored layout on screen across the round trip, which is right — and that layout is also a
    PREDICTION, because `documentIsPristine` is a fact about the host's own file that no cell carries.
    Showing a pane and opening a PTY for it are different acts, and only the first is reversible:
@@ -935,14 +935,37 @@ Four ordered facts hold this together, and each exists because the one before it
    stale id, and the refusal then replaces every one of those panes with host truth. Measured on
    hardware before the hold: three panes on screen, SIX shells.
 
-   So the dial waits for the verdict, either verdict. The hold is per-LAUNCH and keyed on the adopt's
-   own `intentID` (`WorkspaceMirrorBox.isPending`), so it is bounded by the same `pendingTimeout`
+   So the dial waits for the verdict, either verdict. The offer's own arm is keyed on the adopt's
+   `intentID` (`WorkspaceMirrorBox.isPending`), so it is bounded by the same `pendingTimeout`
    backstop every optimistic patch has, and it is released by the mirror's own change hook — an
-   `intentResult` that snaps the patch away, or the document frame behind an accepted one. It covers
-   NOTHING else: a split, a new tab and a reopened one all dial on the frame the user asked for,
-   because the client proposes those ids and its own applier has already agreed the host will take
-   them (Phase 5 ruling 1). Cost, measured on loopback: ~0.13 s on a launch that reaches its shells
-   in ~1.1 s. Gated by `scripts/check-launch-restore.sh` phase C.
+   `intentResult` that snaps the patch away, or the document frame behind an accepted one.
+
+   **The rule is PROVENANCE, not the launch.** Keying only on the launch left the identical state
+   reachable with none of the launch's markers: connect to a SECOND host inside one app run and the
+   tree on screen is host A's document, host B has published nothing, and every id in it is unknown
+   there. So the store remembers `dialConfirmedHostKey` — the `host:port` whose OWN document frame
+   folded into the mirror — and holds whenever it differs from the target now committed. Stamped on
+   the FOLD (the frame count moving), never merely on the mirror announcing itself: between
+   `commitConnectionTarget` and the re-subscribe that answers it, the mirror still holds the previous
+   host's document, and stamping there would file one machine's layout under the other's name.
+   `commitConnectionTarget` runs before the connection reports up, so the hold is in place by the
+   time the establish fan-out asks every pane to dial — and `handleConnectionEstablished` opens the
+   subscription BEFORE that fan-out, so the answer is the nearest thing in flight. Measured
+   headlessly at the second host before the rule: three panes, SIX channels.
+
+   Every arm is bounded. A subscription the host ACCEPTS and never publishes on stays `.opening`
+   forever (`.live` is published only when a frame folds), so `paneDialHoldBackstop` — one
+   `pendingTimeout` — opens the gate anyway: a hold with no release is a window of panes that never
+   connect, which is strictly worse than the churn. A refused or closed channel releases immediately;
+   an in-process loopback document, whose mirror this store seeded, is never held at all.
+
+   It covers NOTHING else: a split, a new tab and a reopened one all dial on the frame the user asked
+   for, because the client proposes those ids and its own applier has already agreed the host will
+   take them (Phase 5 ruling 1); a wifi flap back to the SAME host confirms nothing that host has not
+   already said, so the re-subscribe holds nobody. Cost, measured on loopback: ~0.13 s on a launch
+   that reaches its shells in ~1.1 s. The launch arm is gated by `scripts/check-launch-restore.sh`
+   phase C; the host-switch arm is pinned headlessly in `LaunchDialHoldTests` (no GUI gate reaches a
+   second hostd).
 
 ```
 CLIENT                                                     HOST (hostd)

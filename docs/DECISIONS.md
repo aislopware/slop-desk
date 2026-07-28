@@ -4419,3 +4419,74 @@ Green here proves the removal compiles and the unit contracts hold. It does not 
 converge — `scripts/check-multiclient.sh` (Accessibility TCC, unlocked Aqua) and
 `scripts/check-launch-restore.sh` are the only gates that reach the shipping workspace-document path,
 and neither runs under `make check`.
+
+## The dial hold is about PROVENANCE, not about the launch (2026-07-29)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §7.4 point 5. Extends "The
+launch dial hold" above, which shipped keyed on one launch's `adoptWorkspace`. Multi-client sync is
+now unconditional, which makes the divergent-id churn the difference between a feature and a
+liability: it fires precisely when a client meets a host whose document it has not seen.
+
+### 1. The launch was one instance of the rule, and keying on it left the rest reachable
+
+The hold released the moment the launch offer was answered — `pendingLaunchAdopt`/`launchAdoptIntentID`
+are per-launch facts — so a user who connects to a SECOND host inside one app run landed in the
+identical state with none of the launch's markers: the tree on screen is host A's document, host B
+has published nothing, and every pane id in it is unknown there. `HostServer` spawns a fresh PTY for
+any unknown non-zero session id (PATH B, and it must — the client mints split/new-tab/reopen ids and
+dials them ahead of the host applying the intent, Phase 5 ruling 1), so the establish fan-out spent
+one shell per stale id and B's own document then replaced the layout and abandoned them.
+
+Measured headlessly on the `LaunchDialHoldTests` rig — a real `WorkspaceChannelClient`, real
+`LivePaneSession`s, three panes settled at host A and the app pointed at host B:
+**six channels for three panes**, the same number hardware produced at launch. After the fix, three.
+
+So the rule is stated once, about provenance: *a pane may dial an id at the host that named it, and
+nowhere else.* `dialConfirmedHostKey` is the `host:port` whose own document frame last folded;
+`panesMayDial` holds while it differs from the committed target. The launch arm is unchanged and
+byte-identical — before any host frame there is no confirmed key, so a cold launch holds for the same
+reason it always did, and the nine pre-existing pins in that file are the regression proof.
+
+### 2. Stamped on the FOLD, never on the mirror merely announcing itself
+
+`WorkspaceMirrorBox.onChange` fires for optimistic patches, fast-path pushes and presence rosters as
+well as for document frames. Between `commitConnectionTarget(B)` and the re-subscribe that answers
+it, the mirror still holds host A's document — so a stamp driven by the hook would file A's layout
+under B's name and open the gate on the spot. `noteFoldedDocumentProvenance()` therefore gates on
+`documentFramesApplied` MOVING, and skips `seedEpoch` (the store's own seed is the question, not an
+answer). A `reset()` takes the count to zero, which is exactly right: the subscription that vouched
+for those entries is gone.
+
+### 3. `commitConnectionTarget` is the one place that can see it, and it already runs first
+
+`AppConnection` commits the target before `establish()`, so the hold is in place before the
+connection reports up and before `handleConnectionEstablished()` fans out. That function's two calls
+are also reordered to open the subscription BEFORE the redial. The order settles nothing on its own
+(both are asynchronous) — what settles it is the hold — but asking which panes exist before asking
+for them is the rule this whole class of bug lives in, and the previous order stated the opposite.
+
+### 4. Every arm is bounded, including the one that was not
+
+A subscription the host ACCEPTS and never publishes on stays `.opening` forever: `.live` is published
+only when a frame folds. Nothing bounded that arm, so a host that routed `channelClass 1` and then
+went quiet left `panesMayDial` false for the life of the process — a window of panes that never
+connect, which §4 of the entry above already ruled is worse than the churn. `paneDialHoldBackstop`
+(one `pendingTimeout`, 3 s) is that release: armed while a hold stands, cancelled by any answer, and
+re-armed in full at a second host rather than inheriting the first one's remainder. On expiry the
+behaviour degrades to what it was before the hold existed — bounded churn beats an unbounded hold.
+
+### 5. A reconnect to the SAME host is still not held
+
+`testAReconnectIsNotHeld` pinned exactly the claim that left the hole open, and it was right about
+its own case: after a wifi flap the panes on screen came from that host's own last frame, so their
+ids are confirmed and a second round trip would be latency for nothing. It is SPLIT, not deleted —
+`testAReconnectToTheSameHostIsNotHeld` keeps it (now committing a target, so it is no longer vacuous)
+and `testNoPaneDialsThePreviousHostsIdsAtANewHost` asserts the opposite for a different host key.
+
+### 6. What the gates can and cannot see
+
+`scripts/check-launch-restore.sh` reaches the shipping launch path and its phase C still pins the
+launch arm on hardware. It cannot reach a host switch — one hostd, one port — and neither can any
+other gate, so the host-switch arm is pinned headlessly and this entry says so rather than claiming
+coverage that does not exist. The honest residual: the second host's 2N shells are measured on the
+in-process rig, not on two real hostds.

@@ -84,6 +84,12 @@ public final class WorkspaceChannelClient {
     public let box: WorkspaceMirrorBox
     public private(set) var state: State = .idle
 
+    /// Whether this client answers out of an in-process document rather than a host.
+    ///
+    /// Read by the pane dial hold: a loopback's document IS the mirror the store seeded, so there is
+    /// no host verdict on the way and nothing to hold for.
+    public var servesLocalDocument: Bool { localDocument != nil }
+
     /// Whether this client can carry an intent right now. `false` while opening, after a refusal and
     /// after a close — the states in which ``send(intent:args:now:)`` drops on the floor.
     public var isLive: Bool {

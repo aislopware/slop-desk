@@ -85,6 +85,41 @@ final class LaunchDialHoldTests: XCTestCase {
         }
     }
 
+    /// The workspace channel's control ends, newest last. One per `open`, because an
+    /// `AsyncThrowingStream` is consumed by the run that iterates it: a re-subscribe that reused the
+    /// previous pipe would deliver to nobody, and the host-switch tests are entirely about what the
+    /// SECOND subscription sees.
+    private final class PipeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        /// The first end is minted up front, so a test can play the host before the run loop has got
+        /// as far as calling `open`.
+        private var pipes: [PipeChannel] = [PipeChannel()]
+        private var handedOut = 0
+
+        /// Hands the next subscription its own control end.
+        func open() -> PipeChannel {
+            lock.lock()
+            defer { lock.unlock() }
+            handedOut += 1
+            if handedOut > pipes.count { pipes.append(PipeChannel()) }
+            return pipes[handedOut - 1]
+        }
+
+        /// The end the newest subscription talks through.
+        var current: PipeChannel {
+            lock.lock()
+            defer { lock.unlock() }
+            return pipes[max(handedOut - 1, 0)]
+        }
+
+        /// How many subscriptions have been opened — 2 once a re-subscribe has landed.
+        var openCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return handedOut
+        }
+    }
+
     /// The workspace channel's control end, held by the test so it can play the host.
     private final class PipeChannel: MessageChannel, @unchecked Sendable {
         let channel: Channel = .control
@@ -160,13 +195,24 @@ final class LaunchDialHoldTests: XCTestCase {
     private struct Rig {
         let store: WorkspaceStore
         let dials: Dials
-        let pipe: PipeChannel
+        let pipes: PipeBox
         let client: WorkspaceChannelClient
         let restored: TreeWorkspace
         let acceptOpen: (Bool) -> Void
+
+        /// The control end of the subscription that is live now.
+        var pipe: PipeChannel { pipes.current }
     }
 
     private let hostEpoch = UUID(uuidString: "F00DF00D-BBBB-4CCC-8DDD-EEEEEEEEEEEE")!
+    /// A second machine's document identity — a different workspace, not a new version of the first.
+    private static let hostBEpoch = UUID(uuidString: "B0B0B0B0-BBBB-4CCC-8DDD-EEEEEEEEEEEE")!
+
+    /// The machine a run starts on, and the one the user then points it at. Same ports, different
+    /// address: ``DevicePreferences/hostKey(for:)`` is `host:port`, which is the only host identity
+    /// that exists before a connect.
+    private static let hostA = ConnectionTarget(host: "10.0.0.1", port: 47420, mediaPort: 47421, cursorPort: 47422)
+    private static let hostB = ConnectionTarget(host: "10.0.0.2", port: 47420, mediaPort: 47421, cursorPort: 47422)
 
     /// Three single-leaf tabs, the `WorkspaceLaunchAdoptTests` shape — one restored pane per tab, so
     /// a dial per pane is a shell per pane.
@@ -206,14 +252,19 @@ final class LaunchDialHoldTests: XCTestCase {
     ///
     /// - Parameter autoAccept: `nil` withholds the `channelOpenAck` verdict, which is the state a
     ///   cold launch spends its first round trips in.
+    /// - Parameter connectedTo: the target to commit before the channel is installed — the app shell
+    ///   stamps one from the MRU before anything dials. `nil` leaves the store with no host identity,
+    ///   which is every pre-existing case in this file.
     private func makeRig(
         restored: TreeWorkspace? = nil,
         autoAccept: Bool? = true,
+        connectedTo target: ConnectionTarget? = nil,
     ) -> Rig {
         let tree = restored ?? clientTree()
         let dials = Dials()
         let store = makeStore(tree, dials: dials)
-        let pipe = PipeChannel()
+        if let target { store.commitConnectionTarget(target) }
+        let pipes = PipeBox()
         let verdict = VerdictBox()
         if let autoAccept { verdict.set(autoAccept) }
         let client = WorkspaceChannelClient(
@@ -223,7 +274,7 @@ final class LaunchDialHoldTests: XCTestCase {
             open: {
                 WorkspaceChannelClient.Handle(
                     channelID: 4,
-                    control: pipe,
+                    control: pipes.open(),
                     awaitAccepted: { await verdict.value },
                 )
             },
@@ -232,18 +283,18 @@ final class LaunchDialHoldTests: XCTestCase {
         store.attachWorkspaceChannel(client)
         client.start()
         return Rig(
-            store: store, dials: dials, pipe: pipe, client: client, restored: tree,
+            store: store, dials: dials, pipes: pipes, client: client, restored: tree,
             acceptOpen: { verdict.set($0) },
         )
     }
 
     /// The host's first frame: its own document, under its own epoch.
-    private func hostSnapshot(_ tree: TreeWorkspace, stateNum: Int64 = 1) -> WireMessage {
+    private func hostSnapshot(_ tree: TreeWorkspace, stateNum: Int64 = 1, epoch: UUID? = nil) -> WireMessage {
         var state = HostWorkspaceState()
         state.write(topology: WorkspaceTopology(tree: tree.normalized()))
         return .workspaceEvent(
             kind: WorkspaceEventKind.snapshot.rawValue,
-            epoch: hostEpoch,
+            epoch: epoch ?? hostEpoch,
             baseStateNum: 0,
             newStateNum: stateNum,
             payload: WorkspaceStateCodec.encodeSnapshot(state),
@@ -477,19 +528,120 @@ final class LaunchDialHoldTests: XCTestCase {
         XCTAssertTrue(store.panesMayDial)
     }
 
-    /// A reconnect is not a launch. The offer is spent at the first connect, so the re-subscribe that
-    /// follows a wifi flap must not park every pane behind a second round trip.
-    func testAReconnectIsNotHeld() async throws {
-        let rig = makeRig()
+    /// A reconnect to the SAME host is not a launch. The offer is spent at the first connect and the
+    /// panes on screen came from THIS host's own last frame, so their ids are confirmed — parking
+    /// them behind a second round trip after a wifi flap would be latency for nothing.
+    func testAReconnectToTheSameHostIsNotHeld() async throws {
+        let rig = makeRig(connectedTo: Self.hostA)
         let intentID = await offerLaunchAdopt(rig, hostTree: .defaultWorkspace())
         let adopt = try XCTUnwrap(intentID)
         rig.pipe.deliver(intentResult(adopt, .applied))
         rig.pipe.deliver(hostDiff(to: rig.restored, base: 1, new: 2))
         await expect("the launch to settle") { rig.store.panesMayDial }
 
+        // A re-establish re-stamps the very same target before it reports up.
+        rig.store.commitConnectionTarget(Self.hostA)
         rig.client.stop()
         rig.client.start()
 
-        XCTAssertTrue(rig.store.panesMayDial, "the offer is spent; a new subscription holds nothing")
+        XCTAssertTrue(rig.store.panesMayDial, "the same host confirmed these ids; nothing is being waited for")
+    }
+
+    // MARK: - The same property, one host later
+
+    /// A run that has settled at host A: A refused this launch's offer, A's own layout is what is on
+    /// screen, and each of its panes holds exactly one open channel.
+    private func settledAtHostA(_ hostATree: TreeWorkspace) async throws -> Rig {
+        let rig = makeRig(connectedTo: Self.hostA)
+        let offered = await offerLaunchAdopt(rig, hostTree: hostATree)
+        let adopt = try XCTUnwrap(offered)
+        rig.pipe.deliver(intentResult(adopt, .rejectedStale))
+        await expect("host A's own panes to come up") {
+            Set(rig.dials.dialled) == Set(hostATree.allPaneIDs())
+        }
+        XCTAssertEqual(
+            rig.dials.dialled.count, hostATree.allPaneIDs().count,
+            "precondition: one channel per pane, all of them host A's",
+        )
+        return rig
+    }
+
+    /// The user points the app at a SECOND machine inside one app run.
+    ///
+    /// Every pane channel goes down with the old link (a deliberate close: the app tears the shared
+    /// connection down itself, so no per-pane reconnect campaign follows and the only thing that can
+    /// dial is the store's own fan-out); the new target is committed, which ``AppConnection`` does
+    /// BEFORE the connection reports up; and the fan-out runs the moment it does.
+    private func switchToHostB(_ rig: Rig) async {
+        for id in rig.store.tree.allPaneIDs() {
+            await (rig.store.handle(for: id) as? LivePaneSession)?.connection?.disconnect()
+        }
+        rig.store.commitConnectionTarget(Self.hostB)
+        rig.store.handleConnectionEstablished()
+    }
+
+    /// The headline, one host over. The tree on screen is host A's document; host B has published
+    /// nothing. Every pane id in that tree is an id B has never heard of, so dialling them is the
+    /// launch churn exactly — `HostServer` spawns a fresh PTY per unknown session id, and B's own
+    /// document replaces the layout a round trip later and abandons every one of them.
+    ///
+    /// RED before the fix at six channels for three panes: the hold is spent with the launch, so the
+    /// re-establish fan-out dials A's ids straight into B.
+    func testNoPaneDialsThePreviousHostsIdsAtANewHost() async throws {
+        let hostATree = clientTree(titles: ["a one", "a two", "a three"])
+        let rig = try await settledAtHostA(hostATree)
+
+        await switchToHostB(rig)
+        await megaYield()
+
+        XCTAssertFalse(
+            rig.store.panesMayDial,
+            "the layout on screen is host A's; host B has confirmed none of it",
+        )
+        XCTAssertEqual(
+            rig.dials.dialled.count, hostATree.allPaneIDs().count,
+            "no pane opened a second channel — a dial at host B under host A's id is a shell nobody attaches to",
+        )
+    }
+
+    /// …and it releases on host B's own first frame, with B's panes — never A's — dialling.
+    func testTheHostSwitchHoldReleasesOnTheNewHostsDocument() async throws {
+        let hostATree = clientTree(titles: ["a one", "a two", "a three"])
+        let hostBTree = clientTree(titles: ["b one", "b two"])
+        let rig = try await settledAtHostA(hostATree)
+
+        await switchToHostB(rig)
+        await expect("the re-subscribe to reach host B") { rig.pipes.openCount == 2 }
+        rig.pipe.deliver(hostSnapshot(hostBTree, stateNum: 9, epoch: Self.hostBEpoch))
+
+        await expect("host B's document to release the hold") { rig.store.panesMayDial }
+        await expect("host B's own panes to dial") {
+            Set(hostBTree.allPaneIDs()).isSubset(of: Set(rig.dials.dialled))
+        }
+        await megaYield()
+
+        XCTAssertEqual(
+            Set(rig.store.tree.allPaneIDs()), Set(hostBTree.allPaneIDs()),
+            "the client projects host B's truth",
+        )
+        XCTAssertEqual(
+            rig.dials.dialled.count, hostATree.allPaneIDs().count + hostBTree.allPaneIDs().count,
+            "…and every channel ever opened was named by the host it was opened at",
+        )
+    }
+
+    /// A host that ACCEPTS the workspace class and then publishes nothing must not hold the panes for
+    /// the life of the process. Nothing else bounds this arm: `.live` is published only when a frame
+    /// folds, so a subscription that never gets one sits in `.opening` forever. A hold with no
+    /// release is worse than the churn it prevents, so it degrades to dialling.
+    func testTheHostSwitchHoldReleasesOnTheBackstop() async throws {
+        let hostATree = clientTree(titles: ["a one", "a two", "a three"])
+        let rig = try await settledAtHostA(hostATree)
+        rig.store.paneDialHoldBackstop = .milliseconds(50)
+
+        await switchToHostB(rig)
+        XCTAssertFalse(rig.store.panesMayDial, "precondition: waiting on host B's first frame")
+
+        await expect("the backstop to release the hold") { rig.store.panesMayDial }
     }
 }

@@ -162,6 +162,14 @@ public final class WorkspaceMirrorBox {
 
     public var knownEpoch: UUID { mirror.knownEpoch }
     public var knownStateNum: Int64 { mirror.knownStateNum }
+
+    /// The identity of the document actually held, or `nil` when none is — which
+    /// ``knownEpoch`` cannot say, since it answers a fresh UUID for "snapshot me".
+    public var documentEpoch: UUID? { mirror.epoch }
+
+    /// How many document frames have been folded. Back to zero after a ``reset()``, so a caller can
+    /// tell a fold from every other reason ``onChange`` fires.
+    public var documentFramesApplied: UInt64 { mirror.framesApplied }
     public var roster: WorkspacePresenceRoster? { mirror.roster }
 
     public func paneLiveness(_ paneID: UUID) -> PaneLiveness? { mirror.paneLiveness(paneID) }

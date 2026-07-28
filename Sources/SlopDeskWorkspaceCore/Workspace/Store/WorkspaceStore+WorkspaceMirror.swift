@@ -581,13 +581,19 @@ public extension WorkspaceStore {
         loadCompletionSeen()
     }
 
-    /// What the store does when the app-global shared connection comes up: redial the panes that were
-    /// left disconnected, then re-open the workspace subscription.
+    /// What the store does when the app-global shared connection comes up: re-open the workspace
+    /// subscription, then redial the panes that were left disconnected.
+    ///
+    /// That order is the rule this whole class of bug lives in — ask which panes exist before asking
+    /// for them. Both calls are asynchronous underneath, so the order alone settles nothing; what
+    /// settles it is ``panesMayDial``, which holds the fan-out until the host on the other end of the
+    /// subscription has confirmed the layout on screen. Opening the subscription first is what makes
+    /// that answer the nearest thing in flight rather than a race behind three PTYs.
     ///
     /// Re-opening every time is deliberate — see ``startWorkspaceChannel()``.
     func handleConnectionEstablished() {
-        redialDisconnectedPanes()
         startWorkspaceChannel()
+        redialDisconnectedPanes()
     }
 
     /// Builds the production channel: `channelClass 1` on the app-global shared connection.

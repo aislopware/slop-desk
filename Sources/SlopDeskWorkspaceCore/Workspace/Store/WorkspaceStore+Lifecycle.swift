@@ -20,42 +20,82 @@ extension WorkspaceStore {
     /// (PATH B), so a pane that dials an id host truth does not carry gets a shell — and if the
     /// layout it belongs to is then replaced, that shell is abandoned with nobody attached.
     ///
-    /// There is exactly one window per launch where that is a live risk, and it is the one op whose
-    /// verdict this client cannot predict. `documentIsPristine` is a fact about the host's own file
-    /// that no cell carries, so `adoptWorkspace` is staged OPTIMISTICALLY: for one round trip the
-    /// window shows the layout read off `workspace.json` as if it were host truth. If the host
-    /// already has a workspace, every one of those pane ids is about to be thrown away. Measured on
-    /// hardware, one hostd and two launches with divergent ids: three panes on screen, SIX shells
-    /// spawned.
+    /// The rule is PROVENANCE: a pane may dial an id at the host that named it, and nowhere else.
+    /// Two windows in a run put a layout on screen no attached host has confirmed, and they are the
+    /// same window seen twice.
     ///
-    /// So: `false` from the moment the offer goes out until the host answers it, either way. That is
-    /// bounded by the same `pendingTimeout` backstop every optimistic patch has — a host that accepts
-    /// and dies before answering releases the hold three seconds later rather than never.
+    /// **The launch.** `documentIsPristine` is a fact about the host's own file that no cell carries,
+    /// so `adoptWorkspace` is staged OPTIMISTICALLY: for one round trip the window shows the layout
+    /// read off `workspace.json` as if it were host truth. If the host already has a workspace, every
+    /// one of those pane ids is about to be thrown away. Measured on hardware, one hostd and two
+    /// launches with divergent ids: three panes on screen, SIX shells spawned.
     ///
-    /// `true` everywhere with nothing to wait for, which is every other configuration:
-    /// - the offer is spent — accepted (these panes ARE host truth) or refused (the projection has
-    ///   already moved to host truth, and its panes are the host's own),
-    /// - it was never armed — the automation bootstrap owns its launch's layout and publishes it
-    ///   itself, and the canvas model has no document at all,
+    /// **The host switch.** Connecting to a SECOND machine inside one app run is the identical state
+    /// with none of the launch's markers: what is on screen is the PREVIOUS host's document, the new
+    /// one has published nothing, and every id in it is unknown there. Measured headlessly on the
+    /// same rig, three panes settled at one host and the app pointed at another: six channels.
+    ///
+    /// So: `false` from the moment a proposal or a new host makes the layout unconfirmed until the
+    /// attached host answers, either way. Both arms are bounded — the launch offer by the mirror's
+    /// `pendingTimeout` sweep, everything else by ``paneDialHoldBackstop`` — because a hold with no
+    /// release is a window of panes that never connect, which is strictly worse than the churn.
+    ///
+    /// `true` everywhere with nothing to wait for:
+    /// - the document on screen is the ATTACHED host's own — it named these ids, including after a
+    ///   refused offer (the projection has already moved to host truth) and across a wifi flap to the
+    ///   same machine (a re-subscribe confirms nothing that host has not already said),
+    /// - the automation bootstrap owns its launch's layout and publishes it itself, and the canvas
+    ///   model has no document at all,
     /// - there is no channel (headless, a unit test),
-    /// - the channel is REFUSED or CLOSED: a definite answer that this host serves no document.
-    ///   Holding past it would leave a window full of panes that never connect, which is strictly
-    ///   worse than the churn,
-    /// - the channel is LIVE with the offer still armed — the in-process loopback seam, whose
-    ///   document adopted the very mirror this store seeded.
+    /// - the channel is REFUSED or CLOSED: a definite answer that this host serves no document,
+    /// - the channel serves an in-process document, whose loopback adopted the very mirror this store
+    ///   seeded.
     ///
     /// Every OTHER intent that mints a pane (a split, a new tab, a reopened one) stays instant: the
     /// client proposes those ids (DECISIONS, Multi-client Phase 5 ruling 1) and its own applier has
     /// already agreed the host will take them, so their panes dial on the frame the user asked for.
     public var panesMayDial: Bool { paneDialGate }
 
+    /// The `host:port` this run is attached to now, or `""` before any target is committed (headless,
+    /// a unit test) — the same "no host on it" reading ``documentCacheHostKey`` gives the empty key.
+    var attachedHostKey: String {
+        committedConnectionTarget.map { DevicePreferences.hostKey(for: $0) } ?? ""
+    }
+
+    /// Records which host confirmed the document now on screen, on the fold that delivered it.
+    ///
+    /// Driven by the mirror's change hook, and gated on the FOLD COUNT rather than on the hook
+    /// firing: an optimistic patch, a fast-path push and a presence roster all announce themselves
+    /// through the same callback, and any of them landing after a new target is committed but before
+    /// the re-subscribe answers would stamp the previous host's layout with the new host's name.
+    ///
+    /// A `reset()` takes the count back to zero, which is exactly right — the subscription that
+    /// vouched for those entries is gone.
+    func noteFoldedDocumentProvenance() {
+        let frames = workspaceMirror.documentFramesApplied
+        guard frames != lastFoldedDocumentFrames else { return }
+        lastFoldedDocumentFrames = frames
+        // The store's own seed is not a host's answer; it is the question.
+        guard frames > 0, workspaceMirror.documentEpoch != Self.seedEpoch else { return }
+        dialConfirmedHostKey = attachedHostKey
+    }
+
     /// Recomputes the hold and, on the RELEASING edge, dials everything it was holding.
     ///
-    /// Called from the four places that can move it: the mirror's own change hook (an `intentResult`
-    /// or the frame that supersedes a patch), the channel's state changes, the offer going out, and
-    /// the automation bootstrap taking over the launch.
+    /// Called from the five places that can move it: the mirror's own change hook (an `intentResult`
+    /// or the frame that supersedes a patch), the channel's state changes, the offer going out, the
+    /// automation bootstrap taking over the launch, and a connect committing a new target.
     func refreshPaneDialGate() {
         let next = resolvedPaneDialGate()
+        // The backstop belongs to the HOLD, not to the gate's edges: it is armed for as long as one
+        // stands and cancelled the moment any answer arrives, so a hold that releases and re-engages
+        // at a second host gets its own full window rather than the remainder of the first.
+        if next {
+            paneDialHoldBackstopTask?.cancel()
+            paneDialHoldBackstopTask = nil
+        } else {
+            armPaneDialHoldBackstop()
+        }
         guard next != paneDialGate else { return }
         paneDialGate = next
         // The release is a STORE-level fan-out, not something only a mounted leaf can do. The leaf's
@@ -68,16 +108,35 @@ extension WorkspaceStore {
     /// The rule behind ``panesMayDial``. See that doc for why each arm answers the way it does.
     private func resolvedPaneDialGate() -> Bool {
         // This launch's proposal is on the wire. What is on screen is a PREDICTION until the verdict
-        // lands, so nothing in it may open a PTY.
-        if let launchAdoptIntentID { return !workspaceMirror.isPending(launchAdoptIntentID) }
-        guard pendingLaunchAdopt != nil else { return true }
-        guard workspaceChannel != nil else { return true }
+        // lands, so nothing in it may open a PTY. Bounded by the mirror's own pending sweep, which
+        // drops the patch — and with it the layout nobody confirmed.
+        if let launchAdoptIntentID, workspaceMirror.isPending(launchAdoptIntentID) { return false }
+        // Nothing is coming, so nothing is waited for.
+        guard let workspaceChannel else { return true }
+        guard armedBootstrapEnvironment == nil else { return true }
+        guard !workspaceChannel.servesLocalDocument else { return true }
         switch workspaceChannelState {
-        case .idle,
-             .opening: return false
-        case .live,
-             .refused,
+        case .refused,
              .closed: return true
+        case .idle,
+             .live,
+             .opening: break
+        }
+        // PROVENANCE: the ids on screen were named by the host this run is attached to NOW.
+        if dialConfirmedHostKey == attachedHostKey { return true }
+        return paneDialHoldExpired
+    }
+
+    /// Arms the wall clock the current hold may not outlive. Idempotent: one timer per episode.
+    private func armPaneDialHoldBackstop() {
+        guard paneDialHoldBackstopTask == nil, !paneDialHoldExpired else { return }
+        let delay = paneDialHoldBackstop
+        paneDialHoldBackstopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            paneDialHoldBackstopTask = nil
+            paneDialHoldExpired = true
+            refreshPaneDialGate()
         }
     }
 
@@ -96,10 +155,11 @@ extension WorkspaceStore {
     /// ``TreeWorkspace/detachedPaneIDs()`` (mirroring ``WorkspaceStore/reconcileTree()``'s desired-set union) so a
     /// satellite-window pane's channel redials too — otherwise it stays dead until a manual per-pane Reconnect.
     ///
-    /// Held while this launch's offer is unanswered (``panesMayDial``): the app connection coming up
-    /// is what STARTS the workspace subscription, so on a cold launch this fan-out runs before the
-    /// host has said which panes exist. Dialling here would put the restored ids on the wire a moment
-    /// before learning they are the wrong ones. ``refreshPaneDialGate()`` re-runs it on the release.
+    /// Held while the layout on screen is unconfirmed by the attached host (``panesMayDial``): the
+    /// app connection coming up is what STARTS the workspace subscription, so this fan-out runs
+    /// before that host has said which panes exist — on a cold launch, and again on every connect to
+    /// a different machine. Dialling here would put the wrong ids on the wire a moment before
+    /// learning they are the wrong ones. ``refreshPaneDialGate()`` re-runs it on the release.
     public func redialDisconnectedPanes() {
         guard panesMayDial else { return }
         for id in tree.allPaneIDs() + tree.detachedPaneIDs() {
