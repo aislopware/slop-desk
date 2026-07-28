@@ -23,24 +23,80 @@ import XCTest
 /// notice. The same discipline as `HostOutputSnifferGoldenGuardTests` reading the committed corpus
 /// out of the working tree.
 final class GuiGateLaunchContractTests: XCTestCase {
-    /// The gates that exec the app binary directly. `scripts/` sits beside `Tests/` in the package
-    /// root — walk up from this file rather than relying on a bundle resource (a script is not a
-    /// SwiftPM resource; it is a working-tree artefact).
+    /// Every script under `scripts/` that brings up `SlopDesk.app` — DISCOVERED, never listed.
     ///
-    /// `check-multiclient.sh` execs it TWICE (one instance per client), which is exactly why it
-    /// belongs here: a persistence-path launch would give the second instance zero windows and the
-    /// gate would compare one real projection against one that never mounted.
+    /// `scripts/` sits beside `Tests/` in the package root, so walk up from this file rather than
+    /// relying on a bundle resource (a script is not a SwiftPM resource; it is a working-tree
+    /// artefact).
     ///
-    /// `check-launch-restore.sh` execs it twice as well (a launch and a relaunch) and is the one gate
-    /// that sets NO `SLOPDESK_AUTOCONNECT_*` at all — which makes the flag matter more there, not
-    /// less: with zero windows its client would never restore, never dial, and never open its control
-    /// socket, and the failure would read as a timeout rather than as a launch that made no UI.
-    private static let gateScripts = [
-        "scripts/check-macos.sh",
-        "scripts/check-video.sh",
-        "scripts/check-multiclient.sh",
-        "scripts/check-launch-restore.sh",
-    ]
+    /// The daemon contract below derives its subjects this way and the derivation immediately found a
+    /// sixth daemon launch a hardcoded list had missed. The client side carried the list the whole
+    /// time, and a list only covers the gates somebody remembered to add to it: a new script that
+    /// execs the bundle binary escaped every isolation pin at once — no `CFFIXED_USER_HOME`, no
+    /// private `UserDefaults` suite, no `-ApplePersistenceIgnoreState YES` — and was free to dial the
+    /// developer's own live `slopdesk-hostd`. Deriving the set means the pins arrive with the script.
+    ///
+    /// Two ways to bring the app up and both are subjects: an exec of the bundle binary (which is
+    /// what these gates do, because LaunchServices forwards no environment) and an `open` of the
+    /// bundle (which ``testNoGateLaunchesTheAppThroughOpen`` exists to ban — it has to be able to SEE
+    /// the script to ban it).
+    ///
+    /// RED when this was first derived rather than listed: a throwaway `scripts/*.sh` that execs
+    /// `"${APP_BIN}"` bare is named by six separate assertions. Under the list it was named by none.
+    private func appLaunchingScripts() throws -> [String] {
+        let scripts = try FileManager.default
+            .contentsOfDirectory(atPath: scriptURL("scripts").path)
+            .filter { $0.hasSuffix(".sh") }
+            .sorted()
+            .map { "scripts/\($0)" }
+        XCTAssertFalse(scripts.isEmpty, "scripts/ holds no shell scripts — the walk found nothing to read")
+        let discovered = try scripts.filter {
+            try !launchCommands(of: $0, invoking: appBinaryTokens(of: $0)).isEmpty
+                || !openLaunchLines(of: $0).isEmpty
+        }
+        // A CANARY, not the subject set. Six contracts iterate this list, so a derivation that matched
+        // NOTHING would leave all six green while pinning nothing at all — the failure a list at least
+        // fails loudly at. These four are known to bring the app up.
+        for known in [
+            "scripts/check-macos.sh",
+            "scripts/check-video.sh",
+            "scripts/check-multiclient.sh",
+            "scripts/check-launch-restore.sh",
+        ] {
+            XCTAssertTrue(
+                discovered.contains(known),
+                "\(known) launches the app and the walk over scripts/ did not find it — the discovery "
+                    + "is broken, and a contract that silently reads nothing passes",
+            )
+        }
+        return discovered
+    }
+
+    /// Every shell token in `script` that denotes the app's bundle binary: the literal path inside the
+    /// bundle, plus `"${VAR}"` for any variable assigned one — the same indirection the daemon side
+    /// needs, because every gate today launches through an `APP_BIN=…` assignment and a rule that
+    /// knew only the literal would read the ASSIGNMENT and never the exec.
+    private func appBinaryTokens(of script: String) throws -> [String] {
+        let marker = "Contents/MacOS/SlopDesk"
+        var tokens = [marker]
+        for line in try codeBody(of: script).split(separator: "\n").map(String.init) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let equals = trimmed.firstIndex(of: "="), trimmed.starts(with: /[A-Z_]/) else { continue }
+            let name = String(trimmed[..<equals])
+            guard name.allSatisfy({ $0.isUppercase || $0 == "_" }) else { continue }
+            if trimmed[trimmed.index(after: equals)...].contains(marker) { tokens.append("\"${\(name)}\"") }
+        }
+        return tokens
+    }
+
+    /// The lines that hand the bundle to LaunchServices. Both the discovery signal for an
+    /// `open`-only script and the offender list ``testNoGateLaunchesTheAppThroughOpen`` reports.
+    private func openLaunchLines(of script: String) throws -> [String] {
+        try codeBody(of: script)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("open \"${APP") || $0.contains("open \"") && $0.contains("SlopDesk.app") }
+    }
 
     /// Every script under `scripts/` that stands up a HOST DAEMON — DISCOVERED, never listed.
     ///
@@ -85,32 +141,23 @@ final class GuiGateLaunchContractTests: XCTestCase {
             .joined(separator: "\n")
     }
 
-    /// The lines that actually INVOKE the binary: `"${APP_BIN}" …`. The `APP_BIN=…` assignment and
-    /// the `pkill` process patterns never carry the braces inside quotes, so they drop out, and
-    /// comments are stripped so prose about the flag can never satisfy the assertion.
-    private func launchLines(of script: String) throws -> [String] {
-        try codeBody(of: script)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .filter { $0.contains("\"${APP_BIN}\"") }
-    }
-
-    /// REVERT-TO-FAIL: drop `-ApplePersistenceIgnoreState YES` from either gate's launch and this
-    /// names the script and the line.
+    /// REVERT-TO-FAIL: drop `-ApplePersistenceIgnoreState YES` from any gate's launch and this names
+    /// the script and the launch.
     func testEveryDirectAppLaunchIgnoresPersistedState() throws {
-        for script in Self.gateScripts {
-            let lines = try launchLines(of: script)
+        for script in try appLaunchingScripts() {
+            let commands = try launchCommands(of: script, invoking: appBinaryTokens(of: script))
             XCTAssertFalse(
-                lines.isEmpty,
-                "\(script) no longer execs \"${APP_BIN}\" — either it switched to `open` (which cannot "
-                    + "forward the SLOPDESK_* automation env) or this contract lost its subject.",
+                commands.isEmpty,
+                "\(script) brings the app up without ever exec'ing the bundle binary — `open` cannot "
+                    + "forward the SLOPDESK_* automation env, so there is nothing here to isolate with.",
             )
-            for line in lines {
+            for command in commands {
                 XCTAssertTrue(
-                    line.contains("-ApplePersistenceIgnoreState YES"),
+                    command.contains("-ApplePersistenceIgnoreState YES"),
                     "\(script) execs the app binary without `-ApplePersistenceIgnoreState YES`, so the "
                         + "app launches with ZERO windows and every scene `.task` seam the gate depends "
-                        + "on never runs. Offending line: \(line.trimmingCharacters(in: .whitespaces))",
+                        + "on never runs. Offending launch: "
+                        + command.trimmingCharacters(in: .whitespacesAndNewlines),
                 )
             }
         }
@@ -128,11 +175,8 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// RED before the fix: `check-macos.sh`'s default and --renderer modes launched with
     /// `open "${APP}"` and no flag, and had no assertion that could notice either way.
     func testNoGateLaunchesTheAppThroughOpen() throws {
-        for script in Self.gateScripts {
-            let offenders = try codeBody(of: script)
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map(String.init)
-                .filter { $0.contains("open \"${APP") }
+        for script in try appLaunchingScripts() {
+            let offenders = try openLaunchLines(of: script)
             XCTAssertTrue(
                 offenders.isEmpty,
                 "\(script) launches (or raises) the app through `open`, which forwards no environment "
@@ -308,8 +352,8 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// or an argument-domain `-connection.recentTargets` — which is what `check-launch-restore.sh`
     /// must use, since running the real auto-reconnect IS its subject.
     func testNoGateLaunchCanReachTheDevelopersOwnState() throws {
-        for script in Self.gateScripts {
-            let commands = try launchCommands(of: script)
+        for script in try appLaunchingScripts() {
+            let commands = try launchCommands(of: script, invoking: appBinaryTokens(of: script))
             XCTAssertFalse(commands.isEmpty, "\(script) no longer execs the app — no launch to check")
             for command in commands {
                 let shown = command.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,8 +391,8 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// the suite), while `NSArgumentDomain` still outranks it — which is what keeps
     /// `check-launch-restore.sh`'s `-connection.recentTargets` fixture working.
     func testNoGateLaunchWritesTheDevelopersUserDefaults() throws {
-        for script in Self.gateScripts {
-            let commands = try launchCommands(of: script, invoking: ["\"${APP_BIN}\""])
+        for script in try appLaunchingScripts() {
+            let commands = try launchCommands(of: script, invoking: appBinaryTokens(of: script))
             XCTAssertFalse(commands.isEmpty, "\(script) no longer execs the app — no launch to check")
             for command in commands {
                 XCTAssertTrue(
@@ -373,7 +417,7 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// Both halves are pinned, and they are pinned as ONE routine the trap calls, so a gate cannot
     /// end up doing the delete on one exit path and the unlink on another.
     func testEveryGateRemovesTheDefaultsSuiteItCreated() throws {
-        for script in Self.gateScripts {
+        for script in try appLaunchingScripts() {
             let code = try codeBody(of: script)
             XCTAssertTrue(
                 code.contains("defaults delete \"${DEFAULTS_SUITE}\""),
@@ -410,7 +454,7 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// `-hasCompletedFirstLaunch YES` for exactly this job and it never did anything — wrong domain
     /// type, and the Swift property name instead of the key.
     func testEveryGateSeedsTheFirstLaunchFlag() throws {
-        for script in Self.gateScripts {
+        for script in try appLaunchingScripts() {
             let code = try codeBody(of: script)
             XCTAssertTrue(
                 code.contains("defaults write \"${DEFAULTS_SUITE}\" firstLaunch.completed -bool YES"),
@@ -446,7 +490,15 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// one of its own behind.
     func testNoGateLaunchesADaemonAgainstTheDevelopersContainer() throws {
         let scripts = try daemonLaunchingScripts()
-        for known in Self.gateScripts + ["scripts/soak-fanout-laggard.sh"] {
+        // A CANARY, not the subject set: five scripts known to stand a daemon up, so a walk that
+        // silently matched nothing is caught reading nothing rather than passing vacuously.
+        for known in [
+            "scripts/check-macos.sh",
+            "scripts/check-video.sh",
+            "scripts/check-multiclient.sh",
+            "scripts/check-launch-restore.sh",
+            "scripts/soak-fanout-laggard.sh",
+        ] {
             XCTAssertTrue(
                 scripts.contains(known),
                 "\(known) launches a daemon and the walk over scripts/ did not find it — the "
@@ -564,8 +616,15 @@ final class GuiGateLaunchContractTests: XCTestCase {
             // the live count right and abandons a PTY).
             "scripts/check-launch-restore.sh": "restored panes but",
         ]
-        for script in Self.gateScripts {
-            let expected = try XCTUnwrap(shellRule[script], "\(script) has no shell-count rule declared")
+        // Keyed by script rather than derived: a gate that launches the app without CONNECTING has no
+        // shell to count. The declared set is checked against the walk instead, so a rule cannot
+        // outlive the gate it names.
+        let discovered = try appLaunchingScripts()
+        for (script, expected) in shellRule.sorted(by: { $0.key < $1.key }) {
+            XCTAssertTrue(
+                discovered.contains(script),
+                "\(script) has a shell-count rule but no longer launches the app — the rule is stale",
+            )
             XCTAssertTrue(
                 try codeBody(of: script).contains(expected),
                 "\(script) no longer asserts its shell-count rule — an abandoned PTY is invisible to it",
