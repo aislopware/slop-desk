@@ -343,6 +343,34 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         )
     }
 
+    /// …and the ctl override it can retire is the same one a voter's offer retires.
+    ///
+    /// Rule 6 says the override "stands until the next CONTRIBUTING client offer", and rule 3's
+    /// amendment says a pane no voter holds is sized by its passive members — so on an iOS-only setup
+    /// the phone IS the contributing client, exactly as ``resizeContributionsForWorkspace`` publishes
+    /// it. Keying the retirement on the passivity FLAG instead of on what the fold actually does
+    /// leaves a lone phone locked out of its own pane for good: one `slopdesk-ctl resize` from an
+    /// orchestrator, and no rotation, split or font change can ever move that shell again.
+    func testALonePassiveClientsOfferRetiresTheCtlOverride() throws {
+        let pty = try makePTY()
+        let session = makeSession(pty: pty, sizePassive: true)
+        session.startRelay() // the only contributor, and it is passive
+
+        session.scheduleResize(cols: 60, rows: 20, px: 0, py: 0)
+        session.applyResolvedGrid()
+        XCTAssertEqual(pollGrid(pty, untilCols: 60, rows: 20).cols, 60, "precondition: the phone sized it")
+
+        session.resizeForControl(rows: 50, cols: 132)
+        XCTAssertEqual(pollGrid(pty, untilCols: 132, rows: 50).cols, 132, "the override applies")
+
+        // The phone rotates. It is the client the fold credits, so this is "the next client offer".
+        session.scheduleResize(cols: 44, rows: 14, px: 0, py: 0)
+        session.applyResolvedGrid()
+        let grid = pollGrid(pty, untilCols: 44, rows: 14)
+        XCTAssertEqual(grid.cols, 44, "the sole client takes its own pane back")
+        XCTAssertEqual(grid.rows, 14)
+    }
+
     /// The other direction, which is the rule the fallback must not break: a VOTER holding the pane
     /// shuts the phone out even before that voter has said how big it is.
     ///

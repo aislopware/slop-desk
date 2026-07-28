@@ -341,4 +341,39 @@ final class MuxChannelSessionObserverTests: XCTestCase {
             "and the roster still says the observer does not vote",
         )
     }
+
+    /// …nor does an observer alone on a pane retire an orchestrator's `slopdesk-ctl resize`.
+    ///
+    /// The override yields to "the next CONTRIBUTING client offer" (§8.3 rule 6), and the fallback
+    /// that lets a lone size-passive PANE member contribute deliberately stops short of a spectator.
+    /// The two rules have to agree on who counts, or watching a pane would quietly undo the size an
+    /// orchestrator set on it.
+    func testAnObserverAloneOnAPaneDoesNotRetireTheCtlOverride() async throws {
+        let session = makeSession()
+        let observerControl = makeControlChannel()
+        let joined = await session.joinSubscriber(
+            data: makeDataChannel(),
+            control: observerControl,
+            channelClass: .paneObserver,
+            sizePassive: false,
+        )
+        _ = try XCTUnwrap(joined)
+        session.removeSubscriber(MuxChannelSession.primarySubscriberID)
+
+        session.resizeForControl(rows: 50, cols: 132)
+        await waitUntil { session.resolvedGridForWorkspace.cols == 132 }
+        XCTAssertEqual(session.resolvedGridForWorkspace.cols, 132, "precondition: the override applies")
+
+        await observerControl.deliver(
+            payload: WireMessage.resize(cols: 40, rows: 12, pxWidth: 0, pxHeight: 0).encode(),
+        )
+        try await Task.sleep(for: .milliseconds(200))
+        session.applyResolvedGrid()
+
+        XCTAssertEqual(
+            session.resolvedGridForWorkspace.cols, 132,
+            "a spectator's window is not an offer the orchestrator's size yields to",
+        )
+        XCTAssertEqual(session.resolvedGridForWorkspace.rows, 50)
+    }
 }

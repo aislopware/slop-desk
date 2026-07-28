@@ -2334,7 +2334,16 @@ final class MuxChannelSession: @unchecked Sendable {
         // "The next client offer still wins" — and this is that offer. Only a CONTRIBUTING one: a
         // size-passive member's offer wins nothing over the fold either, so letting it retire an
         // orchestrator's override would hand a pocketed phone a vote by the back door.
-        if !contribution.sizePassive { ctlGridOverride = nil }
+        //
+        // CONTRIBUTING is what ``fold(_:)`` actually credits, not the passivity flag alone. A pane no
+        // voter holds is sized by its passive members, so on an iOS-only setup the phone IS the next
+        // client offer — and keying this on the flag left a lone phone locked out of its own pane for
+        // good after one `slopdesk-ctl resize`: no rotation, split or font change could move that
+        // shell again. The offer is already stored, so `contributingCountLocked()` reads 0 exactly
+        // when the fold falls through to the passive pass.
+        if Self.creditsOffer(contribution, passiveDecides: contributingCountLocked() == 0) {
+            ctlGridOverride = nil
+        }
         // A contributor-set change is still settling: this offer simply joins the fold the settle
         // will resolve. Arming the short debounce here is precisely what would make a burst of joins
         // SIGWINCH the shell once per arrival.
@@ -2466,6 +2475,17 @@ final class MuxChannelSession: @unchecked Sendable {
         resizeContributions.values.count { !$0.sizePassive }
     }
 
+    /// Whether ``fold(_:)`` credits this member's offer right now — the ONE definition of
+    /// "contributing", shared by the roster readout and the ctl-override retirement so the two can
+    /// never drift into disagreeing about who counts.
+    ///
+    /// - Parameter passiveDecides: whether the contributing set is EMPTY, i.e. the fold has fallen
+    ///   through to its size-passive pass. Observers are excluded from that pass: a spectator watches
+    ///   a grid it did not choose and never inherits the vote (docs/45 §8.4).
+    private static func creditsOffer(_ contribution: ResizeContribution, passiveDecides: Bool) -> Bool {
+        !contribution.sizePassive || (passiveDecides && !contribution.observer)
+    }
+
     /// Arms the settle when the contributing set moved BETWEEN two non-empty states — a join into a
     /// pane somebody already holds, or a leave that still leaves somebody.
     ///
@@ -2534,11 +2554,9 @@ final class MuxChannelSession: @unchecked Sendable {
         let passiveDecides = contributingCountLocked() == 0
         return resizeContributions.keys.sorted().compactMap { subscriber in
             guard let contribution = resizeContributions[subscriber] else { return nil }
-            let contributes = !contribution.sizePassive
-                || (passiveDecides && !contribution.observer)
             return ResizeAttachment(
                 subscriber: subscriber,
-                contributes: contributes,
+                contributes: Self.creditsOffer(contribution, passiveDecides: passiveDecides),
                 cols: contribution.offer?.cols ?? 0,
                 rows: contribution.offer?.rows ?? 0,
             )

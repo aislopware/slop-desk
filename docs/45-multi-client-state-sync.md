@@ -1593,7 +1593,10 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
      Every `.ack` flushes the fold, and the override's own `SIGWINCH` provokes a repaint whose ack
      lands within tens of milliseconds, so an override retired by the next apply is undone by the
      output it caused: `slopdesk-ctl resize` would be inert on any pane a client holds. A
-     CONTRIBUTING subscriber's `resize` retires it; nothing else does.
+     CONTRIBUTING subscriber's `resize` retires it; nothing else does. CONTRIBUTING means what
+     `fold(_:)` CREDITS, not the passivity flag: on the iOS-only setup rule 3's amendment covers, the
+     phone IS that subscriber, and keying the retirement on the flag left a lone phone locked out of
+     its own pane for good after one `slopdesk-ctl resize`. An OBSERVER still never retires it.
    - **Rule 3 — a pane no VOTER holds is sized by its size-passive members.** "A phone must never
      crush a Mac" is a statement about a Mac that is THERE; on an iOS-only setup every contributor is
      passive, the fold resolved to nothing, and rule 4 then kept the `openpty` default 80×24 for the
@@ -1620,6 +1623,29 @@ naming a session the host no longer has is a SPAWN. It is transient (the diff la
 unmounts, the shell is reaped, and the gate's N-panes-⇒-N-shells count is exact afterwards) and it
 does not happen with the flag off, where B holds no channel to re-dial. With a real login shell it is
 still a whole rc execution for a pane the user just closed.
+
+**The iOS half now RUNS: `bash scripts/check-ios-tests.sh`.** `check-ios.sh` type-checks the
+`#if os(iOS)` slice and executes nothing, and `swift test` compiles the macOS slice — so every iOS
+default in this document (`WorkspaceClientKind.thisPlatform`, §8.2's
+`platformDefaultFollowSessionFocus`, §8.3 rule 7's letterbox geometry) was only ever asserted against
+the WRONG branch of its own fork. The new gate builds a host-less XCTest bundle
+(`Apps/ClientApp-iOS/Tests/`) for the iOS-Simulator triple and runs it in a booted simulator. It does
+NOT use `xcodebuild test`: DVT refuses to enumerate simulator devices whenever /Library's
+CoreSimulator package is older than the installed Xcode, and installing that package needs admin
+rights an agent run does not have — `simctl` is unaffected, so the script hands the bundle to the
+simulator's own `xctest` agent instead.
+
+**Rule 3's amendment is host-side only, and the client can defeat it.** `TerminalLetterboxContainer`
+frames the surface at the HOST's resolved grid whenever one is published — deliberately, so a phone
+cannot reflow a Mac's pane to its own window. But a pane no VOTER holds is sized by its size-passive
+members, so on an iOS-only setup the phone's offer becomes a pure ECHO of the grid it was just given,
+and the fold has a fixed point: whatever the roster published first is what that shell keeps, and no
+rotation, split or font change can move it. The roster already carries the discriminator —
+`WorkspaceRosterPane.Attachment.contributes` is `true` for a lone phone, and `TerminalGridReadout`
+already reads it to drop the attribution — so the container needs the same gate: full-bleed when THIS
+device is the one sizing the pane, letterbox only when somebody else is. Not yet done: an iOS-only
+pane observed on the Simulator does sit at the `openpty` default 80×24, but the Simulator's terminal
+surface renders no PTY bytes at all there, so that run cannot separate this loop from the renderer.
 
 **Still owed, and honestly owed:** the laggard-eviction threshold is a policy invention calibrated
 below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and a unit test cannot.

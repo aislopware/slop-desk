@@ -106,3 +106,41 @@ targets:
         # Best-effort builds run unsigned for an iOS Simulator destination:
         #   xcodebuild build -destination 'generic/platform=iOS Simulator' \
         #     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+  # The iOS-triple XCTest bundle — the only place a test can OBSERVE an `#if os(iOS)` branch.
+  # `swift test` compiles the macOS slice, so every iOS default (`WorkspaceClientKind.thisPlatform`,
+  # `DevicePreferences.platformDefaultFollowSessionFocus`, the letterbox's phone-shaped geometry) is
+  # asserted against the WRONG branch there. A HOST-LESS logic bundle on purpose: it needs no app, no
+  # window server and no libghostty, so `scripts/check-ios-tests.sh` can load it straight into the
+  # simulator's `xctest` agent.
+  ClientApp-iOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      # The `makeSession` seam's test double, SHARED with `SlopDeskWorkspaceCoreTests` rather than
+      # copied: a second `FakePaneSession` would drift from `PaneSessionHandle` and the iOS suite
+      # would start proving things about a conformance the store no longer has.
+      - path: ../../Tests/SlopDeskWorkspaceCoreTests/Workspace/Support/FakePaneSession.swift
+    dependencies:
+      - package: SlopDesk
+        product: SlopDeskClientUI
+      - package: SlopDesk
+        product: SlopDeskWorkspaceCore
+      - package: SlopDesk
+        product: SlopDeskTerminal
+      - package: SlopDesk
+        product: SlopDeskProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.ios.tests
+        PRODUCT_NAME: ClientApp-iOSTests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "NO"
+        SWIFT_ENABLE_TESTABILITY: YES
+        CODE_SIGN_STYLE: Automatic
+    scheme:
+      testTargets:
+        - ClientApp-iOSTests
