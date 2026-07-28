@@ -1,6 +1,7 @@
 #if os(macOS)
 import CoreGraphics
 import Foundation
+import SlopDeskVideoProtocol
 
 // A daemon crash / SIGKILL leaves VD-parked windows stranded: the clean-shutdown drain restores
 // them, but nothing else recovers an unclean exit. ``WindowParkingManager`` persists the parked set
@@ -68,13 +69,19 @@ public struct WindowParkingSnapshot: Codable, Equatable, Sendable {
     }
 
     /// The default sidecar location under Application Support:
-    /// `<AppSupport>/SlopDesk/parked-windows.json` (beside `EnvBridge`'s `video-prefs.json`).
+    /// `<AppSupport>/SlopDesk/parked-windows.json` (beside `EnvBridge`'s `video-prefs.json`), moved
+    /// wholesale by ``SlopDeskAppSupport/directoryEnvKey``.
     /// `nil` only if the OS won't vend an Application-Support URL (never on macOS).
-    public static func defaultSidecarURL(fileManager: FileManager = .default) -> URL? {
-        guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        return base.appendingPathComponent("SlopDesk", isDirectory: true)
+    ///
+    /// The override matters more here than for a prefs file, because this path is WRITTEN and
+    /// DELETED: an automation daemon that resolves the real one reads the developer's crash journal
+    /// at launch and AX-moves the windows it names, then unlinks the file the moment its own parked
+    /// set goes empty.
+    public static func defaultSidecarURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+    ) -> URL? {
+        SlopDeskAppSupport.directory(environment: environment, fileManager: fileManager)?
             .appendingPathComponent("parked-windows.json", isDirectory: false)
     }
 }

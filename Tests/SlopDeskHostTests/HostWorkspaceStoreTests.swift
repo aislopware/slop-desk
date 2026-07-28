@@ -166,4 +166,32 @@ final class HostWorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(url.lastPathComponent, "workspace-state.json")
         XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
     }
+
+    /// The container variable covers this file too, so a daemon an automation run starts needs no
+    /// per-file knowledge to be safe. `HOME` never covered it: it moves neither Application Support
+    /// nor `NSHomeDirectory()`.
+    func testTheContainerOverrideMovesTheDocument() async throws {
+        let store = try XCTUnwrap(HostWorkspaceStore.make(
+            environment: [
+                "HOME": "/tmp/not-a-container",
+                "SLOPDESK_APP_SUPPORT_DIR": directory.path,
+            ],
+            hostDisplayName: "mac-studio",
+        ))
+        let url = await store.fileURLForTesting
+        XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
+    }
+
+    /// …and the per-file variable still beats it.
+    func testTheStateDirOverrideBeatsTheContainer() async throws {
+        let store = try XCTUnwrap(HostWorkspaceStore.make(
+            environment: [
+                "SLOPDESK_APP_SUPPORT_DIR": "/tmp/slopdesk-container-that-loses",
+                "SLOPDESK_WORKSPACE_STATE_DIR": directory.path,
+            ],
+            hostDisplayName: "mac-studio",
+        ))
+        let url = await store.fileURLForTesting
+        XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
+    }
 }

@@ -135,7 +135,9 @@ final class ConnectionPresenterTests: XCTestCase {
     func testRecentTargetsRoundTripThroughDefaultsAndSkipFailures() async throws {
         let suiteName = "slopdesk-test-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // The domain AND the file, at process exit: emptying alone leaves a plist in
+        // ~/Library/Preferences, and removing one mid-process lets cfprefsd write it back.
+        SettingsKey.removeSuiteAtExit(named: suiteName)
 
         // A FAILED connect (throwing registry) must not enter the MRU.
         let failing = ConnectionRegistry { _, _ in throw SlopDeskTransportError.timedOut("test") }

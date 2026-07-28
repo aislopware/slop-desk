@@ -38,8 +38,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        let hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostd.environment = hostEnv
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
@@ -148,8 +147,7 @@ final class SubprocessE2ETests: XCTestCase {
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
         hostd.currentDirectoryURL = daemonCwd // the daemon runs from the "project"
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        let hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostd.environment = hostEnv
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
@@ -234,9 +232,10 @@ final class SubprocessE2ETests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: journalDir) }
         let sandboxHome = try makeSandboxHome()
         defer { try? FileManager.default.removeItem(at: sandboxHome) }
-        var hostEnv = ProcessInfo.processInfo.environment
+        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
+        // This test's SUBJECT is a journal that outlives the daemon, so its two hostds share one
+        // journal dir OUTSIDE either sandbox home. The per-file override wins over the container.
         hostEnv["SLOPDESK_SCROLLBACK_DIR"] = journalDir.path
-        hostEnv["HOME"] = sandboxHome.path
 
         let sessionID = UUID()
         let marker = "RESTART_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
@@ -371,8 +370,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        let hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostd.environment = hostEnv
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
@@ -477,8 +475,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostEnv["SLOPDESK_PANE_FANOUT"] = "1"
         hostd.environment = hostEnv
         let hostdErr = Pipe()
@@ -585,8 +582,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostEnv["SLOPDESK_PANE_FANOUT"] = nil // the shipping default
         hostd.environment = hostEnv
         let hostdErr = Pipe()
@@ -676,8 +672,7 @@ final class SubprocessE2ETests: XCTestCase {
         let hostd = Process()
         hostd.executableURL = hostdURL
         hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-        var hostEnv = ProcessInfo.processInfo.environment
-        hostEnv["HOME"] = sandboxHome.path
+        var hostEnv = try sandboxHostEnvironment(home: sandboxHome)
         hostEnv["SLOPDESK_PANE_FANOUT"] = "1"
         hostd.environment = hostEnv
         let hostdErr = Pipe()
@@ -810,6 +805,33 @@ final class SubprocessE2ETests: XCTestCase {
         return home
     }
 
+    /// The environment EVERY `slopdesk-hostd` spawn in this file runs with: the process environment,
+    /// a sandbox `HOME`, and a container of its own — placed INSIDE that home so each test's existing
+    /// `defer { removeItem(at: sandboxHome) }` takes the whole thing away.
+    ///
+    /// `HOME` on its own was never isolation. It does not move Application Support and does not move
+    /// `NSHomeDirectory()` (Core Foundation reads the account record unless `CFFIXED_USER_HOME` is
+    /// set), so these spawns resolved the DEVELOPER's `~/Library/Application Support/SlopDesk/` —
+    /// wrote their PTY transcripts into it, and, because `ScrollbackJournalStore.sweep` runs on
+    /// hostd's first loop iteration and keeps only the newest 256, deleted the developer's oldest
+    /// journals to make room. Measured on this host: one `swift test` left 9 of its own transcripts
+    /// there and removed 6 of theirs.
+    ///
+    /// The full set, not just the journals: the same daemon writes `workspace-state.json` and
+    /// resolves `~/Downloads` as its file-drop directory.
+    private func sandboxHostEnvironment(home: URL) throws -> [String: String] {
+        let container = home
+            .appendingPathComponent("Library/Application Support/SlopDesk", isDirectory: true)
+        try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
+        var env = ProcessInfo.processInfo.environment
+        env["HOME"] = home.path
+        env["SLOPDESK_APP_SUPPORT_DIR"] = container.path
+        env["SLOPDESK_SCROLLBACK_DIR"] = container.appendingPathComponent("scrollback").path
+        env["SLOPDESK_WORKSPACE_STATE_DIR"] = container.path
+        env["SLOPDESK_FILE_DROP_DIR"] = container.appendingPathComponent("drop").path
+        return env
+    }
+
     /// Reads hostd stderr until a "listening on …:<port>" line; returns the port plus the
     /// banner text so far (callers pin the `shell=` isolation on it).
     private func awaitBoundPort(
@@ -867,6 +889,62 @@ final class SubprocessE2ETests: XCTestCase {
         var string: String { lock.lock()
             defer { lock.unlock() }
             return String(bytes: data, encoding: .utf8) ?? ""
+        }
+    }
+}
+
+/// Every real-daemon spawn in `SubprocessE2ETests` must go through `sandboxHostEnvironment`.
+///
+/// This is a text contract over a sibling source file, and it is deliberate: the failure it prevents
+/// is INVISIBLE from inside the suite. A `slopdesk-hostd` given only a sandbox `HOME` passes every
+/// assertion in this file while journaling into the developer's real
+/// `~/Library/Application Support/SlopDesk/scrollback/` and sweeping it down to `keepNewest: 256` on
+/// the way. Six of the seven spawns here did exactly that, and one `swift test` cost the developer
+/// six transcripts — nothing went red, because nothing was looking.
+final class SubprocessE2EIsolationContractTests: XCTestCase {
+    /// The suite's own source, comments stripped — the prose above `sandboxHostEnvironment` explains
+    /// what a bare `ProcessInfo.processInfo.environment` costs, and must not satisfy the ban on one.
+    private func codeBody() throws -> String {
+        try String(contentsOf: URL(fileURLWithPath: #filePath), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// REVERT-TO-FAIL: build a spawn's env from `ProcessInfo` again and this names the file.
+    ///
+    /// Counted rather than searched, because the helper itself needs one — a rule of "the string must
+    /// not appear" would have to exempt the helper, and an exemption is a hole shaped exactly like
+    /// the next offender. The needle is assembled at runtime for the same reason the fixtures assemble
+    /// their secrets: written out whole it would appear in this file and count itself.
+    func testNoSpawnBuildsItsEnvironmentWithoutTheSandboxContainer() throws {
+        let needle = ["ProcessInfo", "processInfo", "environment"].joined(separator: ".")
+        let occurrences = try codeBody().components(separatedBy: needle).count - 1
+        XCTAssertEqual(
+            occurrences, 1,
+            "SubprocessE2ETests builds a subprocess environment from `ProcessInfo` somewhere other "
+                + "than `sandboxHostEnvironment(home:)`. A hostd spawned with only a sandbox HOME "
+                + "writes its scrollback journals into the DEVELOPER's Application Support and sweeps "
+                + "theirs to stay under keepNewest: 256 — and every assertion in this file still passes.",
+        )
+    }
+
+    /// …and the helper has to still set the whole set, not just the journals.
+    func testTheSandboxEnvironmentCoversEveryContainerPath() throws {
+        let code = try codeBody()
+        for variable in [
+            "SLOPDESK_APP_SUPPORT_DIR",
+            "SLOPDESK_SCROLLBACK_DIR",
+            "SLOPDESK_WORKSPACE_STATE_DIR",
+            "SLOPDESK_FILE_DROP_DIR",
+        ] {
+            XCTAssertTrue(
+                code.contains("env[\"\(variable)\"]"),
+                "sandboxHostEnvironment no longer sets \(variable), so a spawned daemon reaches that "
+                    + "path in the developer's own container",
+            )
         }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskTransport
+import SlopDeskVideoProtocol
 
 // MARK: - ScrollbackJournalStore (per-session disk journal — history survives the daemon)
 
@@ -100,7 +101,13 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     ///
     /// Cap: `SLOPDESK_SCROLLBACK_BYTES` (same env the ring reads). Distill: `SLOPDESK_SCROLLBACK_DISTILL`.
     /// Location: `<Application Support>/SlopDesk/scrollback/`, overridable via
-    /// `SLOPDESK_SCROLLBACK_DIR` (E2E/tests point it at a temp dir).
+    /// `SLOPDESK_SCROLLBACK_DIR` (E2E/tests point it at a temp dir) — or wholesale by
+    /// ``SlopDeskAppSupport/directoryEnvKey``, which moves the container this sits inside.
+    ///
+    /// One of the two is REQUIRED of any daemon an automation run starts, and `HOME` is neither:
+    /// ``ScrollbackJournalStore/sweep(maxAge:keepNewest:)`` unlinks everything past the newest 256
+    /// in whatever directory it resolves, and its live-writer exemption can only see writers held by
+    /// its OWN process.
     public static func makeFromEnvironment(
         environment env: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
@@ -112,11 +119,9 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         if let override = env["SLOPDESK_SCROLLBACK_DIR"], !override.isEmpty {
             dir = URL(fileURLWithPath: override, isDirectory: true)
         } else {
-            guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            guard let base = SlopDeskAppSupport.directory(environment: env, fileManager: fileManager)
             else { return nil }
-            dir = base
-                .appendingPathComponent("SlopDesk", isDirectory: true)
-                .appendingPathComponent("scrollback", isDirectory: true)
+            dir = base.appendingPathComponent("scrollback", isDirectory: true)
         }
         let cap: Int =
             if let raw = env["SLOPDESK_SCROLLBACK_BYTES"], let parsed = Int(raw), parsed >= 0 {

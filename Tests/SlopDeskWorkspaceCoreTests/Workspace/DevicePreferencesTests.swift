@@ -138,6 +138,9 @@ final class DevicePreferencesTests: XCTestCase {
 final class LaunchConnectionSeedTests: XCTestCase {
     private func scratchDefaults() throws -> UserDefaults {
         let suite = "slopdesk-launch-seed-\(UUID().uuidString)"
+        // Removed at process exit, domain and file both: this helper had left 157 plists in the
+        // developer's ~/Library/Preferences by the time anybody counted.
+        SettingsKey.removeSuiteAtExit(named: suite)
         return try XCTUnwrap(UserDefaults(suiteName: suite))
     }
 

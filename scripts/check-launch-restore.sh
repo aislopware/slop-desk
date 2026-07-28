@@ -55,11 +55,14 @@
 #       argv pairs into `NSArgumentDomain`, which outranks the persistent domain, and an old-style
 #       plist `<hex>` value arrives as `Data` — exactly what `AppConnection.loadRecentTargets` reads.
 #       This is load-bearing for DETERMINISM, not convenience: `CFFIXED_USER_HOME` does NOT redirect
-#       UserDefaults (cfprefsd resolves the real home), so the persistent MRU is shared with the
-#       developer's own app and with the other three gates, which have each left a loopback entry in
-#       it (47420, 47421, 47422). Without the override this gate would dial whichever port ran last.
-#     - `-hasCompletedFirstLaunch YES` is the same kind of fixture: a user with a saved layout AND a
-#       saved host has by definition finished the first-launch sheet.
+#       UserDefaults (cfprefsd resolves the real home), so without an override this gate would dial
+#       whatever the persistent MRU happened to hold. `SLOPDESK_DEFAULTS_SUITE` now empties that MRU
+#       as well, and the argument domain still outranks a suite — verified with a real bundled app:
+#       a key written to the bundle-id domain reads back nil through a suite, while a `-key value`
+#       argv pair still arrives. So the fixture is the ONLY MRU this launch can see.
+#     - `firstLaunch.completed`, seeded into the run's own defaults suite, is the same kind of
+#       fixture: a user with a saved layout AND a saved host has by definition finished the
+#       first-launch sheet.
 #   No `SLOPDESK_AUTOCONNECT_*` is set anywhere, so `hasAutomationEnvironment()` is FALSE and the app
 #   runs `WorkspacePersistence.launchTree` + `connection.connectIfSavedTarget()` — the daily-driver
 #   pair. That is also self-proving: under the automation branch the restored tree is replaced by a
@@ -71,10 +74,11 @@
 # unreadable would otherwise show up here as a mystery 1-pane default; instead it goes red in
 # `swift test`, where it can be read in seconds.
 #
-# SIDE EFFECT, stated rather than hidden: a successful connect pushes `127.0.0.1:47423` onto the
-# developer's real `connection.recentTargets` (`AppConnection.recordRecentTarget` writes the
-# persistent domain). The other three gates already do this with their own ports. It cannot affect
-# THIS gate's reads — the argument domain outranks it — and it is why the override exists.
+# NO SIDE EFFECT on the developer's MRU. `AppConnection.recordRecentTarget` writes the persistent
+# domain on every successful connect, and for as long as that domain was the developer's own, this
+# gate and the other three pushed 47420 / 47421 / 47422 / 47423 into their recent-hosts menu — five
+# slots, so the host they actually use was one run from eviction. The write now lands in
+# `SLOPDESK_DEFAULTS_SUITE`, which the cleanup trap removes.
 # Clipboard sync runs on this path (automation skips it): host and client are the same machine over
 # loopback, so both ends read one pasteboard and the sync is a no-op on the developer's clipboard.
 #
@@ -113,6 +117,32 @@ SOCK="/tmp/slopdesk-lr-$$.sock"
 CONTAINER="${WORK}/client-home"
 SEEDED_WORKSPACE="${CONTAINER}/Library/Application Support/SlopDesk/workspace.json"
 
+# The daemon's throwaway `<Application Support>/SlopDesk`, and the client's throwaway `UserDefaults`
+# suite. Both fresh per run; the suite is removed by the cleanup trap.
+#
+# The container is DETERMINISM here, not just hygiene, and this gate is the one that proves it. The
+# fixture pins its three pane ids, the journal file is named after the pane id, and the journal
+# directory resolved to the developer's real one — so every run of this gate wrote
+# `11111111-…​.scrollback` / `2222…` / `3333…` into `~/Library/Application Support/SlopDesk/scrollback/`
+# and the NEXT run's phase-A cold launch replayed them. Confirmed on this host: all three were sitting
+# there, 1286 / 3569 / 2304 bytes, from earlier runs. The gate's own header claimed HOME prevented
+# exactly this; HOME does not move Application Support, and never did.
+HOSTD_STATE="${WORK}/hostd-state"
+DEFAULTS_SUITE="slopdesk.gate.launchrestore.$$"
+
+# Takes the run's suite away COMPLETELY — the domain AND the file it lives in. `defaults delete`
+# empties the domain and leaves a 42-byte plist behind, so a gate that stops there costs the
+# developer one file per run. That is not a hypothetical shape: the XCTest side of the same mistake
+# put 55,003 `slopdesk.tests.pid*.plist` files in this machine's ~/Library/Preferences.
+#
+# `${HOME}` here is the DEVELOPER's, deliberately. cfprefsd resolves the real home whatever
+# `CFFIXED_USER_HOME` says — which is the entire reason a suite is needed — so the run's plist is in
+# their Preferences directory and nowhere else, and this shell is the one that still knows the path.
+remove_defaults_suite() {
+  defaults delete "${DEFAULTS_SUITE}" 2> /dev/null || true
+  rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist"
+}
+
 # The watch window each phase holds the invariant for. A churn on this path is ONE TURN wide (a host
 # frame lands, the projection drives the registry, the adopt lands a turn later), so it resolves in
 # well under a second — but it is triggered by a wire round trip, and the point of watching rather
@@ -144,6 +174,8 @@ cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
   reap "${HOSTD_PID}" slopdesk-hostd
   rm -f "${SOCK}"
+  # The client is killed, so its own `atexit` suite cleanup never runs — this is the one that does.
+  remove_defaults_suite
 }
 # INT/TERM as well as EXIT: a bash EXIT trap does not run for an untrapped signal, so a Ctrl-C would
 # otherwise strand the daemon and the app instance.
@@ -179,6 +211,24 @@ await() {
     sleep 0.5
   done
   fatal "timed out waiting for ${what}"
+}
+
+# The client is gone — this says HOW, which is otherwise unknowable from outside it. A client that
+# exits cleanly writes no crash report and no stderr, so "the client died" alone cannot be told apart
+# from a crash or from something else killing it, and those three want three different investigations.
+#
+# `wait` answers for an already-reaped background job because bash keeps its status; it MUST run in
+# this shell rather than inside a `$(…)`, because a subshell has no job table and would report only
+# "not a child of this shell". So it writes a global and the callers interpolate that.
+CLIENT_EXIT=""
+note_client_exit() {
+  local status=0
+  wait "${CLIENT_PID}" 2> /dev/null || status=$?
+  if [[ "${status}" -gt 128 ]]; then
+    CLIENT_EXIT="killed by signal $((status - 128))"
+  else
+    CLIENT_EXIT="exited with status ${status}"
+  fi
 }
 
 # ── 0. What the fixture says the launch must restore ────────────────────────────────────────────
@@ -327,7 +377,33 @@ spawned_shells() {
   done <<< "${FIXTURE_PANES}"
   echo "${total}"
 }
-spawned_shells_are() { [[ "$(spawned_shells)" == "$1" ]]; }
+
+# EVERY fixture pane spawned exactly ONE shell — not "the panes spawned three between them".
+#
+# The distinction is the whole claim, and the sum alone does not make it. Three over three panes is
+# equally satisfied by 2 + 1 + 0: one pane torn down and re-dialled with its first PTY abandoned,
+# while another never got a shell at all. That is precisely the churn this gate exists to catch,
+# passing the gate's own spawn check — and it then surfaces downstream as the uninterpretable
+# "3 pane(s) in the layout but 2 live shell(s)", with nothing in the output saying which pane got two
+# and which got none. Proven against a hand-built log: the old sum check answered 3 and accepted it.
+one_shell_per_pane() {
+  local pane
+  while read -r pane; do
+    [[ "$(grep -c "attached for pane ${pane}" "${HOSTD_LOG}" 2> /dev/null || true)" == "1" ]] ||
+      return 1
+  done <<< "${FIXTURE_PANES}"
+  return 0
+}
+
+# The per-pane breakdown, which is the only form of this number worth printing on a failure: the sum
+# says a count is wrong, the breakdown says which pane it is wrong for.
+dump_spawns_per_pane() {
+  echo "==> shells the host spawned, per restored pane:" >&2
+  local pane
+  while read -r pane; do
+    echo "    ${pane}: $(grep -c "attached for pane ${pane}" "${HOSTD_LOG}" 2> /dev/null || true)" >&2
+  done <<< "${FIXTURE_PANES}"
+}
 
 # How many shells the host has spawned for ANY pane. Distinct from `spawned_shells` above, and phase
 # C is the reason: a client dialling ids the host has never seen spawns a PTY per id, and every one
@@ -402,19 +478,20 @@ autosaved_host_truth() {
 # apart from a client that never connected. Proven by the revert-to-fail run: with the launch-adopt
 # hold removed, pane 3333… was attached twice and this is the check that saw it.
 await_spawns() {
-  local want="$1" tries="$2" pane
+  local tries="$1"
   for _ in $(seq 1 "${tries}"); do
-    if spawned_shells_are "${want}"; then return 0; fi
-    kill -0 "${CLIENT_PID}" 2> /dev/null || fatal "the client died before its panes had shells"
+    if one_shell_per_pane; then return 0; fi
+    kill -0 "${CLIENT_PID}" 2> /dev/null || {
+      note_client_exit
+      fatal "the client died before its panes had shells — it ${CLIENT_EXIT}"
+    }
     sleep 0.5
   done
-  echo "==> shells the host spawned, per restored pane:" >&2
-  while read -r pane; do
-    echo "    ${pane}: $(grep -c "attached for pane ${pane}" "${HOSTD_LOG}" 2> /dev/null || true)" >&2
-  done <<< "${FIXTURE_PANES}"
-  fatal "the host must spawn exactly ${want} shell(s), one per restored pane; it spawned
-    $(spawned_shells). More than one for a pane means that pane was torn down and re-dialled — the
-    first PTY left running on the host with nobody attached."
+  dump_spawns_per_pane
+  fatal "the host must spawn exactly ONE shell for EACH restored pane; it spawned
+    $(spawned_shells) across ${PANE_COUNT} pane(s), unevenly. More than one for a pane means that
+    pane was torn down and re-dialled — the first PTY left running on the host with nobody attached;
+    none for a pane means that pane is on screen with no terminal behind it."
 }
 
 # Waits for the projection, and on timeout says WHAT it saw instead. A bare `await` here would report
@@ -425,7 +502,10 @@ await_projection() {
   local what="$1" tries="$2"
   for _ in $(seq 1 "${tries}"); do
     if projects_the_restored_layout; then return 0; fi
-    kill -0 "${CLIENT_PID}" 2> /dev/null || fatal "${what}: the client died before it projected anything"
+    kill -0 "${CLIENT_PID}" 2> /dev/null || {
+      note_client_exit
+      fatal "${what}: the client died before it projected anything — it ${CLIENT_EXIT}"
+    }
     sleep 0.5
   done
   echo "==> the client projects:" >&2
@@ -439,9 +519,24 @@ await_projection() {
 # assertion that a settle-then-check cannot make: the defect class here is a REPLACEMENT that lands a
 # wire round trip after the panes are already up and looking right.
 hold_steady() {
-  local label="$1" want="$2" sig second spawns total live
+  local label="$1" want="$2" sig second spawns total live census
   for second in $(seq 1 "${WATCH_SECONDS}"); do
     sig="$(signature 2> /dev/null || true)"
+    # A read that FAILED is a different fact from a projection that CHANGED, and the two are not
+    # distinguishable downstream: `signature` yields the empty string when either CLI call errors or
+    # when fewer than two JSON documents come back, so an unanswered socket takes the branch below
+    # and prints "the projection left the restored layout <n>s in" above an EMPTY list of panes. That
+    # is the wrong sentence for that state, and it is unfalsifiable — the one message a human cannot
+    # act on. Named for what it is instead. Still FATAL, and still on the first sample: the client is
+    # supposed to answer, and a gate that waits out its own subject proves nothing.
+    if [[ -z "${sig}" ]]; then
+      kill -0 "${CLIENT_PID}" 2> /dev/null || {
+        note_client_exit
+        fatal "${label}: the client died ${second}s in — it ${CLIENT_EXIT}"
+      }
+      fatal "${label}: the client is alive but stopped answering its control socket ${SOCK}
+    ${second}s in. Nothing is known about what it projects — this is NOT a projection that moved."
+    fi
     if [[ "${sig}" != "${WANT_SIG}" ]]; then
       echo "==> at second ${second} the client projects:" >&2
       awk '{ print "    " $0 }' <<< "${sig}" >&2
@@ -452,9 +547,10 @@ hold_steady() {
     # Read ONCE per sample: interpolating the helper twice into one message can print two different
     # numbers for one observation, which reads as a gate that cannot count.
     spawns="$(spawned_shells)"
-    if [[ "${spawns}" != "${want}" ]]; then
-      fatal "${label}: the host had spawned ${want} shell(s) for these panes and now has ${spawns} —
-    a restored pane was torn down and re-dialled ${second}s in, abandoning its PTY"
+    if [[ "${spawns}" != "${want}" ]] || ! one_shell_per_pane; then
+      dump_spawns_per_pane
+      fatal "${label}: the host had one shell per restored pane and now has ${spawns} across
+    ${want} pane(s) — a restored pane was torn down and re-dialled ${second}s in, abandoning its PTY"
     fi
     # …and the count over EVERY pane id, which is a strictly stronger claim: a shell spawned for an
     # id that is not one of the fixture's is invisible to the line above, and that is exactly what a
@@ -470,20 +566,40 @@ hold_steady() {
     # a churn whose re-dial the host REFUSES (`already attached on another connection`) leaves the
     # spawn count untouched and the panes DEAD. The revert-to-fail run hit exactly that on its first
     # pass — three ✅ lines, then zero live shells.
-    live="$(wc -w <<< "$(live_shell_pids)" | tr -d ' ')"
+    # Sampled ONCE and reported from that one sample, for the reason stated on `dump_children`.
+    census="$(hostd_children)"
+    live="$(wc -w <<< "$(pty_pids_of "${census}")" | tr -d ' ')"
     if [[ "${live}" != "${want}" ]]; then
-      echo "--- live children of hostd ---" >&2
-      pgrep -P "${HOSTD_PID}" -l >&2 || true
+      dump_children "${census}"
       fatal "${label}: ${want} pane(s) in the layout but ${live} live shell(s) ${second}s in — the
     panes are still on screen and their terminals are dead"
     fi
-    kill -0 "${CLIENT_PID}" 2> /dev/null || fatal "${label}: the client died ${second}s in"
+    kill -0 "${CLIENT_PID}" 2> /dev/null || {
+      note_client_exit
+      fatal "${label}: the client died ${second}s in — it ${CLIENT_EXIT}"
+    }
     sleep 1
   done
   echo "==> ${label}: layout, spawn count and live shells held for ${WATCH_SECONDS}s ✅"
 }
 
-# The host's live PTY children. hostd forks nothing but PTYs, so its child set IS the shell set.
+# ONE census of hostd's live children, as `<pid> pty` / `<pid> helper` lines.
+#
+# A BARE CHILD COUNT IS WRONG HERE, and it is what made this gate flaky. hostd forks non-PTY helpers
+# as well as shells: `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs
+# `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a `--norcs` zsh.
+# Each is a child of hostd for as long as it lives, and one of them fires REPEATEDLY inside the watch
+# window: `${WORK}` is under this repo, so the daemon's HOME is too, so a restored pane's project key
+# resolves to slop-desk itself — and this gate appends to `hostd.log` and `client.log` inside that
+# same repo while it watches, which is an FSEvents burst, which arms `RepoStatusWatcher`'s debounced
+# `git` probe. Measured on a clean tree: 6 of 8 runs green, and both reds were `4 live shell(s)` for
+# 3 panes. Under a `date > .work/…` loop at 0.8s — the same stimulus, held down — 0 of 3.
+#
+# The discriminator is what `PTYProcess` does and `Foundation.Process` does not: the shell is forked
+# with `login_tty(slave)`, i.e. `setsid()`, so it is a SESSION LEADER — `getsid(pid) == pid`. A
+# `Process()` child is given its own process GROUP but stays in hostd's session, so it is not.
+# Demonstrated with two children of one parent that are the SAME binary (`/bin/sleep`), one spawned
+# and one `forkpty`'d: `pgrep -P` counts 2, this counts 1 pty + 1 helper.
 #
 # `|| true` around `pgrep` is load-bearing, not defensive noise. `pgrep` exits 1 when it matches
 # NOTHING, and under `set -euo pipefail` that non-zero propagates out of the command substitution and
@@ -491,7 +607,34 @@ hold_steady() {
 # shells at all") would end the run with exit 1 and NOT ONE LINE saying why. Found by running the
 # gate against a deliberately reverted launch-adopt hold: phase A ended with zero live children, and
 # the gate died silently one line after printing a ✅.
-live_shell_pids() { { pgrep -P "${HOSTD_PID}" || true; } | sort -n | tr '\n' ' '; }
+hostd_children() {
+  { pgrep -P "${HOSTD_PID}" || true; } | python3 -c '
+import os, sys
+for line in sys.stdin:
+    pid = int(line)
+    try:
+        leader = os.getsid(pid) == pid
+    except OSError:
+        continue  # exited between the pgrep and the getsid — not live
+    print(pid, "pty" if leader else "helper")
+'
+}
+
+# The shells out of ONE census sample: pid-sorted, space-joined.
+pty_pids_of() { awk '$2 == "pty" { print $1 }' <<< "$1" | sort -n | tr '\n' ' '; }
+
+# What a census sample SAW — helpers included, labelled, named. Takes the SAMPLE, never a fresh read:
+# the helper that inflates the count lives for tens of milliseconds, so the old dump re-`pgrep`ed
+# after it had exited and printed three children under a message announcing four. Three separate
+# reds printed that self-contradiction and none of them named the culprit.
+dump_children() {
+  echo "--- the children of hostd this census read (pty = a shell, helper = git/lsof/infocmp/…) ---" >&2
+  local pid kind
+  while read -r pid kind; do
+    [[ -n "${pid}" ]] || continue
+    echo "    ${pid} ${kind} $(ps -o command= -p "${pid}" 2> /dev/null || true)" >&2
+  done <<< "$1"
+}
 
 # ── 1. Build ────────────────────────────────────────────────────────────────────────────────────
 echo "==> building slopdesk-hostd + the slopdesk client CLI"
@@ -509,11 +652,15 @@ echo "==> build OK: ${APP}"
 # takes the layout this client restored, and `adoptWorkspace` answers `rejectedStale` to a host that
 # already has one. A reused dir would silently turn phase A into phase B.
 #
-# The daemon's HOME goes with it, and that is the same argument rather than tidiness. The scrollback
-# JOURNAL lives at `<Application Support>/SlopDesk/scrollback/` — resolved off HOME — and the fixture
-# pins the pane ids, so a second run inherits the first run's transcripts and phase A's cold launch
-# replays bytes from a session it never had. It is the one input that differs between two otherwise
-# identical runs of this gate, which is exactly what a flake is made of.
+# The daemon's CONTAINER goes with it, and that is the same argument rather than tidiness. The
+# scrollback JOURNAL lives at `<Application Support>/SlopDesk/scrollback/` and the fixture pins the
+# pane ids, so a second run inherits the first run's transcripts and phase A's cold launch replays
+# bytes from a session it never had. It is the one input that differs between two otherwise identical
+# runs of this gate, which is exactly what a flake is made of.
+#
+# `SLOPDESK_APP_SUPPORT_DIR` is what moves it. HOME does not: it moves neither Application Support nor
+# `NSHomeDirectory()`, so for as long as this gate relied on HOME the fixture's three journals were
+# accumulating in the developer's real directory and being replayed back on the next run.
 pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
@@ -524,11 +671,14 @@ if [[ -z "${WORK}" ]]; then
 fi
 HOSTD_HOME="${WORK}/hostd-home"
 HOSTD_WORKSPACE="${WORK}/hostd-workspace"
-rm -rf "${HOSTD_WORKSPACE}" "${HOSTD_HOME}"
-mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}"
+rm -rf "${HOSTD_WORKSPACE}" "${HOSTD_HOME}" "${HOSTD_STATE}"
+mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}" "${HOSTD_STATE}/scrollback" "${HOSTD_STATE}/drop"
 : > "${HOSTD_LOG}"
 echo "==> starting slopdesk-hostd on 127.0.0.1:${CONNECT_PORT}"
-HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+HOME="${HOSTD_HOME}" SLOPDESK_APP_SUPPORT_DIR="${HOSTD_STATE}" \
+  SLOPDESK_SCROLLBACK_DIR="${HOSTD_STATE}/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${HOSTD_STATE}/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
   "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
   --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
 HOSTD_PID=$!
@@ -559,20 +709,34 @@ MRU_HEX="$(printf '%s' "${MRU_JSON}" | xxd -p | tr -d '\n')"
 # `-ApplePersistenceIgnoreState YES` is load-bearing exactly as in the other gates: without it AppKit
 # comes up on its persistence path with ZERO windows, no scene mounts, and every `.task` seam this
 # gate depends on silently never runs.
+# The third fixture, and the one that has to live in the SUITE rather than in argv. A returning user
+# has finished the first-launch sheet, and this gate is the only one with no `SLOPDESK_AUTOCONNECT_*`
+# — so `hasAutomationEnvironment()` is false and `FirstLaunchModel.shouldPresent` would open the
+# guided sheet over the window on an empty domain. `firstLaunch.completed` is a `Defaults` Bool, and
+# an argv `-key YES` pair arrives as the STRING "YES", which a typed Bool read does not accept; that
+# is why the old `-hasCompletedFirstLaunch YES` argv pair never did anything (it also spelled the
+# Swift property name rather than the key, `firstLaunch.completed`). `defaults write -bool` writes it
+# with the right name and the right type. The delete first, in case a killed run left the suite behind.
+remove_defaults_suite
+defaults write "${DEFAULTS_SUITE}" firstLaunch.completed -bool YES
+
 launch_client() {
   local phase="$1"
   CFFIXED_USER_HOME="${CONTAINER}" HOME="${CONTAINER}" \
+    SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
     SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES \
-    -connection.recentTargets "<${MRU_HEX}>" \
-    -hasCompletedFirstLaunch YES >> "${WORK}/client.log" 2>&1 &
+    -connection.recentTargets "<${MRU_HEX}>" >> "${WORK}/client.log" 2>&1 &
   CLIENT_PID=$!
   echo "==> ${phase}: launched the client (pid ${CLIENT_PID}) with NO autoconnect env"
 }
 
 await_client() {
   for _ in $(seq 1 60); do
-    kill -0 "${CLIENT_PID}" 2> /dev/null || fatal "the client (pid ${CLIENT_PID}) died during launch"
+    kill -0 "${CLIENT_PID}" 2> /dev/null || {
+      note_client_exit
+      fatal "the client (pid ${CLIENT_PID}) died during launch — it ${CLIENT_EXIT}"
+    }
     if "${CLI}" --socket "${SOCK}" windows --json > /dev/null 2>&1; then
       echo "==> client answering on ${SOCK} ✅"
       return 0
@@ -593,16 +757,16 @@ await_client
 await_projection "phase A: the client never projected the layout it restored from disk" 80
 echo "==> phase A: the client projects the layout it restored from disk ✅"
 
-await_spawns "${PANE_COUNT}" 80
-echo "==> phase A: the host spawned ${PANE_COUNT} shells, one per restored pane ✅"
+await_spawns 80
+echo "==> phase A: the host spawned exactly one shell for each of the ${PANE_COUNT} restored panes ✅"
 
 hold_steady "phase A" "${PANE_COUNT}"
 
-LIVE_PIDS_A="$(live_shell_pids)"
+CENSUS_A="$(hostd_children)"
+LIVE_PIDS_A="$(pty_pids_of "${CENSUS_A}")"
 LIVE_COUNT_A="$(wc -w <<< "${LIVE_PIDS_A}" | tr -d ' ')"
 if [[ "${LIVE_COUNT_A}" != "${PANE_COUNT}" ]]; then
-  echo "--- live children of hostd ---" >&2
-  pgrep -P "${HOSTD_PID}" -l >&2 || true
+  dump_children "${CENSUS_A}"
   fatal "phase A: ${PANE_COUNT} restored panes but ${LIVE_COUNT_A} live shell(s) on the host"
 fi
 echo "==> phase A: ${LIVE_COUNT_A} live shells for ${PANE_COUNT} panes (pids: ${LIVE_PIDS_A}) ✅"
@@ -656,10 +820,10 @@ echo "==> phase B: all ${PANE_COUNT} sessions reattached ✅"
 # abandoned three running agents.
 hold_steady "phase B" "${PANE_COUNT}"
 
-LIVE_PIDS_B="$(live_shell_pids)"
+CENSUS_B="$(hostd_children)"
+LIVE_PIDS_B="$(pty_pids_of "${CENSUS_B}")"
 if [[ "${LIVE_PIDS_B}" != "${LIVE_PIDS_A}" ]]; then
-  echo "--- live children of hostd ---" >&2
-  pgrep -P "${HOSTD_PID}" -l >&2 || true
+  dump_children "${CENSUS_B}"
   fatal "phase B: the relaunch did not keep the SAME shells.
     phase A pids: ${LIVE_PIDS_A}
     phase B pids: ${LIVE_PIDS_B}"
@@ -707,10 +871,10 @@ hold_steady "phase C" "${PANE_COUNT}"
 await "the client to autosave host truth over the divergent layout" 80 autosaved_host_truth
 echo "==> phase C: the autosaved layout is now HOST truth — the ${PANE_COUNT} divergent ids are gone ✅"
 
-LIVE_PIDS_C="$(live_shell_pids)"
+CENSUS_C="$(hostd_children)"
+LIVE_PIDS_C="$(pty_pids_of "${CENSUS_C}")"
 if [[ "${LIVE_PIDS_C}" != "${LIVE_PIDS_A}" ]]; then
-  echo "--- live children of hostd ---" >&2
-  pgrep -P "${HOSTD_PID}" -l >&2 || true
+  dump_children "${CENSUS_C}"
   fatal "phase C: the divergent relaunch did not keep the SAME shells.
     phase A pids: ${LIVE_PIDS_A}
     phase C pids: ${LIVE_PIDS_C}"

@@ -141,21 +141,41 @@ final class LaunchRestoreGateContractTests: XCTestCase {
 
     /// The MRU has to arrive through the ARGUMENT DOMAIN, and that is a determinism requirement
     /// rather than a stylistic one. `CFFIXED_USER_HOME` does not redirect `UserDefaults` (cfprefsd
-    /// resolves the real home), so the persistent MRU is shared with the developer's own app and with
-    /// the other three gates — each of which leaves its loopback port in it on every successful run.
-    /// Reading whatever is persisted would make this gate dial whichever gate ran last.
+    /// resolves the real home). `SLOPDESK_DEFAULTS_SUITE` now empties the persistent MRU this launch
+    /// can see, and the argument domain outranks a suite exactly as it outranks a bundle domain — so
+    /// the fixture stays the only host this client can dial, whichever gate ran last.
     func testTheSavedHostArrivesThroughTheArgumentDomain() throws {
         let code = try codeBody(of: Self.gateScript)
         XCTAssertTrue(
             code.contains("-connection.recentTargets \"<${MRU_HEX}>\""),
-            "check-launch-restore.sh no longer overrides the MRU in the argument domain. The "
-                + "persistent domain is SHARED with the developer's app and with the other gates "
-                + "(47420/47421/47422 are all in it), so the client would dial whichever ran last.",
+            "check-launch-restore.sh no longer overrides the MRU in the argument domain, so the "
+                + "client dials whatever the persistent domain happens to hold.",
         )
+    }
+
+    /// The first-launch flag is the fixture the argument domain CANNOT carry.
+    ///
+    /// This gate sets no `SLOPDESK_AUTOCONNECT_*` — that is its whole point — so
+    /// `FirstLaunchModel.shouldPresent` is `!hasCompleted`, and on an empty domain the guided sheet
+    /// opens over the window. It has to be a typed `defaults write -bool` into the run's suite:
+    /// `firstLaunch.completed` is read through a `Defaults.Key<Bool>`, and Cocoa parses an argv
+    /// `-key YES` pair into `NSArgumentDomain` as the STRING "YES", which a Bool read rejects.
+    ///
+    /// RED before the fix: the gate carried `-hasCompletedFirstLaunch YES`, which is the Swift
+    /// property name rather than the key AND the wrong domain type — two independent reasons it
+    /// suppressed nothing. It went unnoticed because the shared persistent domain was the
+    /// developer's, and they had dismissed the sheet long ago.
+    func testTheFirstLaunchFlagIsSeededWithTheRightKeyAndType() throws {
+        let code = try codeBody(of: Self.gateScript)
         XCTAssertTrue(
-            code.contains("-hasCompletedFirstLaunch YES"),
-            "check-launch-restore.sh no longer pins the first-launch flag, so whether the guided sheet "
-                + "presents depends on the developer's own defaults",
+            code.contains("defaults write \"${DEFAULTS_SUITE}\" firstLaunch.completed -bool YES"),
+            "check-launch-restore.sh no longer pins the first-launch flag, so the returning user it "
+                + "claims to launch as reads as a fresh install and gets the welcome sheet",
+        )
+        XCTAssertFalse(
+            code.contains("-hasCompletedFirstLaunch"),
+            "check-launch-restore.sh is back to the argv spelling, which names the Swift property "
+                + "instead of the `firstLaunch.completed` key and delivers a String where a Bool is read",
         )
     }
 
@@ -262,6 +282,117 @@ final class LaunchRestoreGateContractTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(
             watch, 30,
             "the watch window is the only thing standing between this gate and a race it cannot see",
+        )
+    }
+
+    /// The gates that count how many shells the host is running.
+    ///
+    /// A child of hostd is not the same thing as a shell, which is what makes this rule necessary:
+    /// hostd forks helpers too. `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe`
+    /// runs `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a
+    /// `--norcs` zsh. Each is a child for as long as it lives, and `${WORK}` sits under this repo —
+    /// so a pane's project key resolves to slop-desk and every line a gate appends to its own log
+    /// arms `RepoStatusWatcher`'s debounced `git` probe, INSIDE the watch window.
+    private static let shellCensusGates = [
+        "scripts/check-launch-restore.sh",
+        "scripts/check-multiclient.sh",
+    ]
+
+    /// A shell census must count PTYs, not children — and there must be exactly ONE place that
+    /// enumerates hostd's children, so a second one cannot be added without meeting this rule.
+    ///
+    /// RED before the fix: `check-launch-restore.sh` was green 6 runs of 8 on a clean tree, and both
+    /// reds read `4 live shell(s)` for 3 panes with a diagnostic dump — re-read one line later, after
+    /// the helper had exited — listing exactly 3. Under the same stimulus held down (a `date >`
+    /// into `.work/` every 0.8 s, which is an FSEvents burst in the watched repo) it was 0 of 3. A
+    /// gate that is green half the time and cites a number nothing can corroborate is worse than a
+    /// red one, because a single sweep launders a false report.
+    ///
+    /// The occurrence COUNT is what makes this catch a new site rather than restate the old one: any
+    /// fresh `pgrep -P` — a second census, a diagnostic dump, a wait loop — pushes it past one and
+    /// names the script. Routing it through the existing `hostd_children` keeps it at one.
+    func testEveryShellCensusCountsPTYsRatherThanChildren() throws {
+        for script in Self.shellCensusGates {
+            let lines = try codeBody(of: script)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { $0.contains("pgrep -P") }
+            XCTAssertEqual(
+                lines.count, 1,
+                "\(script) enumerates hostd's children in \(lines.count) place(s); there must be "
+                    + "exactly one, so the PTY discriminator cannot be bypassed. hostd forks git / "
+                    + "lsof / infocmp as well as shells, and counting those is a flake nothing can "
+                    + "settle out. Offending line(s): "
+                    + lines.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ⏎ "),
+            )
+            XCTAssertTrue(
+                try codeBody(of: script).contains("os.getsid(pid) == pid"),
+                "\(script) counts hostd's children without asking which of them are PTYs. A shell is "
+                    + "forked with `login_tty` — `setsid()` — so it is a SESSION LEADER; a "
+                    + "`Foundation.Process` helper gets its own process GROUP but stays in hostd's "
+                    + "session. Filter on `os.getsid(pid) == pid`.",
+            )
+        }
+    }
+
+    /// The census sample and the message that reports it must be the SAME read.
+    ///
+    /// The helper that inflates the count lives for tens of milliseconds, so a dump that re-reads
+    /// prints a different set of children than the count was made from — three reds in a row printed
+    /// "4 live shell(s)" above a list of three, and not one of them named the culprit. The gate's own
+    /// `hold_steady` already states this rule for the spawn counts ("Read ONCE per sample"); the
+    /// child census is the one place that broke it.
+    func testTheShellCensusReportsTheSampleItCounted() throws {
+        for script in Self.shellCensusGates {
+            let code = try codeBody(of: script)
+            XCTAssertFalse(
+                code.contains("pgrep -P \"${HOSTD_PID}\" -l"),
+                "\(script) dumps a FRESH `pgrep -P` when the census goes red, so the list it prints is "
+                    + "not the list it counted. Print the sample that failed.",
+            )
+        }
+    }
+
+    /// "One shell per restored pane" has to be checked PER PANE, not as a sum over them.
+    ///
+    /// A total of three across three panes is equally satisfied by 2 + 1 + 0 — one pane torn down and
+    /// re-dialled with its first PTY abandoned, another with no shell at all. That is the exact churn
+    /// this gate exists to catch, and the sum check passed it; it then reappeared downstream as
+    /// "3 pane(s) in the layout but 2 live shell(s)", a sentence with no cause in it. Proven against a
+    /// hand-built log: `spawned_shells` answered 3 and `spawned_shells_are 3` returned true.
+    func testTheSpawnCheckIsPerPaneRatherThanASum() throws {
+        let code = try codeBody(of: Self.gateScript)
+        XCTAssertTrue(
+            code.contains("one_shell_per_pane"),
+            "check-launch-restore.sh no longer checks the spawn count PER PANE, so a pane that was "
+                + "re-dialled and a pane that never got a shell cancel out in the total",
+        )
+        XCTAssertTrue(
+            code.contains("dump_spawns_per_pane"),
+            "check-launch-restore.sh no longer prints the per-pane spawn breakdown, which is the only "
+                + "form of this number that names the pane at fault",
+        )
+    }
+
+    /// A socket read that FAILED must not be reported as a projection that CHANGED.
+    ///
+    /// `signature()` yields the empty string when either CLI call errors or when fewer than two JSON
+    /// documents come back, so without a guard an unanswered control socket falls into the
+    /// projection branch and `hold_steady` prints "the projection left the restored layout <n>s in"
+    /// above an EMPTY pane list. That is the wrong sentence for that state and it is unfalsifiable:
+    /// nothing about the layout was observed. A red run reporting it sends the reader looking for a
+    /// layout bug that the evidence cannot support either way.
+    func testAnUnreadableControlSocketIsNotReportedAsAProjectionChange() throws {
+        let code = try codeBody(of: Self.gateScript)
+        XCTAssertTrue(
+            code.contains(#"if [[ -z "${sig}" ]]; then"#),
+            "check-launch-restore.sh no longer separates an unreadable control socket from a "
+                + "projection that moved, so a failed read prints `the projection left the restored "
+                + "layout` over an empty list of panes",
+        )
+        XCTAssertTrue(
+            code.contains("stopped answering its control socket"),
+            "check-launch-restore.sh lost the message that names an unanswered control socket",
         )
     }
 

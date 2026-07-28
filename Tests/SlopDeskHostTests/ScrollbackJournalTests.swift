@@ -774,6 +774,42 @@ final class ScrollbackJournalTests: XCTestCase {
         )
         XCTAssertEqual(store?.byteCap, 12345, "default-ON with the ring's byte-cap env honored")
     }
+
+    // MARK: - Location (what an automation daemon must be able to move)
+
+    /// `HOME` is not a container. It does not move Application Support and it does not move
+    /// `NSHomeDirectory()` — Core Foundation reads the account record unless `CFFIXED_USER_HOME` is
+    /// set. Four gates isolated their `slopdesk-hostd` with `HOME` alone and this is where their
+    /// journals actually went; `sweep(maxAge:keepNewest:)` then unlinked the developer's oldest ones
+    /// to stay under `keepNewest`.
+    ///
+    /// `SLOPDESK_APP_SUPPORT_DIR` is the variable that moves it without touching the daemon's idea
+    /// of home — which matters, because a hostd's home is the cwd its panes default to and the
+    /// volume its vitals measure.
+    func testTheContainerOverrideMovesTheJournalDirectory() throws {
+        let store = try XCTUnwrap(ScrollbackJournalStore.makeFromEnvironment(
+            environment: [
+                "HOME": "/tmp/not-a-container",
+                "SLOPDESK_APP_SUPPORT_DIR": tempDir.path,
+            ],
+        ))
+        XCTAssertEqual(
+            store.directory.standardizedFileURL,
+            tempDir.appendingPathComponent("scrollback", isDirectory: true).standardizedFileURL,
+        )
+    }
+
+    /// The per-file variable still wins, so a test that wants ONLY the journals redirected — every
+    /// caller in this file — keeps working unchanged.
+    func testTheJournalSpecificOverrideBeatsTheContainer() throws {
+        let store = try XCTUnwrap(ScrollbackJournalStore.makeFromEnvironment(
+            environment: [
+                "SLOPDESK_APP_SUPPORT_DIR": "/tmp/slopdesk-container-that-loses",
+                "SLOPDESK_SCROLLBACK_DIR": tempDir.path,
+            ],
+        ))
+        XCTAssertEqual(store.directory.standardizedFileURL, tempDir.standardizedFileURL)
+    }
 }
 
 /// The `MuxChannelSession` half: the journal hook sits on the PTY chunk path, and the restored

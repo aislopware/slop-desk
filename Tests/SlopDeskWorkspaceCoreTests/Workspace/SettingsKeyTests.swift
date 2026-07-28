@@ -558,4 +558,82 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(AutoHideTabsPanelMode.always.rawValue, "always")
         XCTAssertEqual(AutoHideTabsPanelMode.auto.rawValue, "auto")
     }
+
+    // MARK: - Which `UserDefaults` suite the process binds
+
+    /// The app writes `.standard` — the domain the developer's own settings live in.
+    func testTheShippingAppBindsTheStandardDomain() {
+        XCTAssertNil(SettingsKey.suiteName(testProcessSuite: nil, environment: [:]))
+    }
+
+    /// A GUI gate names a throwaway suite, because `CFFIXED_USER_HOME` does not move `UserDefaults`:
+    /// cfprefsd resolves the real home whatever the environment says, so without this every gate
+    /// that connects writes its loopback port into the developer's `connection.recentTargets` — a
+    /// five-entry MRU, three of whose slots were gate ports when this was measured.
+    func testAnAutomationRunCanNameItsOwnSuite() {
+        XCTAssertEqual(
+            SettingsKey.suiteName(
+                testProcessSuite: nil,
+                environment: [SettingsKey.defaultsSuiteEnvKey: "slopdesk.gate.pid42"],
+            ),
+            "slopdesk.gate.pid42",
+        )
+    }
+
+    /// An empty value is unset. `FOO="${BAR}"` with `BAR` unset is how a shell delivers one, and
+    /// `UserDefaults(suiteName: "")` is not a store anyone meant to name.
+    func testAnEmptySuiteNameIsUnset() {
+        XCTAssertNil(
+            SettingsKey.suiteName(
+                testProcessSuite: nil,
+                environment: [SettingsKey.defaultsSuiteEnvKey: ""],
+            ),
+        )
+    }
+
+    /// EMPTYING a suite is not REMOVING it, and the difference is measured in files.
+    ///
+    /// `removePersistentDomain` clears every key and leaves the plist: a 58-byte
+    /// `~/Library/Preferences/<suite>.plist` survives it. That is why this machine's Preferences
+    /// directory holds 55,003 `slopdesk.tests.pid*.plist` files — one per xctest process that has
+    /// ever run here, each emptied by ``SettingsKey/store``'s `atexit` hook and none of them gone.
+    /// A per-run suite that outlives its run is the same leak the GUI gates have, one directory over.
+    ///
+    /// `synchronize()` between the two is load-bearing rather than superstition: the emptying is
+    /// written back lazily, so unlinking first lets cfprefsd re-create the file after this process
+    /// has exited — observed on a probe that skipped it.
+    func testRemovingASuiteTakesItsPlistWithIt() throws {
+        let name = "slopdesk.suite-removal.\(UUID().uuidString)"
+        let path = NSHomeDirectory() + "/Library/Preferences/\(name).plist"
+        // The probe must not leak either, and an unlink here would not hold: cfprefsd re-creates a
+        // plist removed mid-process, which is why ``SettingsKey/removeSuiteAtExit(named:)`` exists.
+        SettingsKey.removeSuiteAtExit(named: name)
+        let suite = try XCTUnwrap(UserDefaults(suiteName: name))
+        suite.set(true, forKey: "probe")
+        suite.synchronize()
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: path),
+            "a written suite has a plist — without one there is nothing for this test to remove",
+        )
+        SettingsKey.removeSuite(named: name)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: path),
+            "removeSuite left \(path) behind. Emptied is not removed: every run of the test suite "
+                + "then costs the developer one more file in ~/Library/Preferences, forever.",
+        )
+    }
+
+    /// XCTest's per-pid suite OUTRANKS the environment. `swift test --parallel` runs many xctest
+    /// processes; if an exported `SLOPDESK_DEFAULTS_SUITE` in a developer's shell could win, they
+    /// would all share one domain again and a flag flipped in one worker would race a read in
+    /// another — the exact failure the per-pid suite exists to prevent.
+    func testTheTestSuiteOutranksTheEnvironment() {
+        XCTAssertEqual(
+            SettingsKey.suiteName(
+                testProcessSuite: "slopdesk.tests.pid7",
+                environment: [SettingsKey.defaultsSuiteEnvKey: "slopdesk.gate.pid42"],
+            ),
+            "slopdesk.tests.pid7",
+        )
+    }
 }

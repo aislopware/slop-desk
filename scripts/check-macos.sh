@@ -73,6 +73,33 @@ SOCK="/tmp/slopdesk-macos-$$.sock"
 # wrote `device-prefs.json` + `video-prefs.json` into it.
 CLIENT_HOME="${WORK}/client-home"
 
+# The `UserDefaults` suite this run writes into, keyed by pid and removed by the cleanup trap.
+#
+# `CFFIXED_USER_HOME` moves Application Support and NOT `UserDefaults` — cfprefsd resolves the real
+# home whatever the environment says (probed: a suite write under `CFFIXED_USER_HOME=/private/tmp/…`
+# still landed in the real `~/Library/Preferences`). So without this, `AppConnection` records
+# `127.0.0.1:${CONNECT_PORT}` in the DEVELOPER's `connection.recentTargets` on every --connect run.
+# That list is their recent-hosts menu and it holds five entries: measured before this existed, three
+# of the five were gate ports and the host they actually use had been pushed to the last slot.
+#
+# The suite isolates reads too — `SettingsKey.store` bound to a suite cannot see this bundle's own
+# persistent domain — which is a stronger guarantee than `SLOPDESK_SKIP_AUTO_RECONNECT=1` alone: the
+# MRU `connectIfSavedTarget()` reads is now EMPTY rather than merely unread.
+DEFAULTS_SUITE="slopdesk.gate.macos.$$"
+
+# Takes the run's suite away COMPLETELY — the domain AND the file it lives in. `defaults delete`
+# empties the domain and leaves a 42-byte plist behind, so a gate that stops there costs the
+# developer one file per run. That is not a hypothetical shape: the XCTest side of the same mistake
+# put 55,003 `slopdesk.tests.pid*.plist` files in this machine's ~/Library/Preferences.
+#
+# `${HOME}` here is the DEVELOPER's, deliberately. cfprefsd resolves the real home whatever
+# `CFFIXED_USER_HOME` says — which is the entire reason a suite is needed — so the run's plist is in
+# their Preferences directory and nowhere else, and this shell is the one that still knows the path.
+remove_defaults_suite() {
+  defaults delete "${DEFAULTS_SUITE}" 2> /dev/null || true
+  rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist"
+}
+
 WITH_RENDERER=0
 CONNECT=0
 case "${1:-}" in
@@ -102,6 +129,10 @@ HOSTD_PID=""
 cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
   rm -f "${SOCK}"
+  # The app is killed, so its own `atexit` suite cleanup never runs — this is the one that does.
+  # Left undone it is a per-run plist in the developer's ~/Library/Preferences, which is exactly how
+  # this machine came to hold 55,003 `slopdesk.tests.pid*.plist` files.
+  remove_defaults_suite
   [[ -n "${HOSTD_PID}" ]] && kill "${HOSTD_PID}" 2> /dev/null || true
   if [[ "${WITH_RENDERER}" == "1" ]]; then
     echo "==> restoring committed placeholder project.yml"
@@ -153,11 +184,27 @@ if [[ "${CONNECT}" == "1" ]]; then
   sleep 0.5
   # Isolation: --port stays FIRST so the pkill pattern above keeps matching. The default spawn
   # is the developer's REAL login zsh — the ShellIntegration shim points its HISTFILE at the
-  # real ~/.zsh_history, so the AUTOTYPE proof command would be appended there on every run
-  # (and scrollback journals would land in the real Application Support dir). A plain sh
-  # computes the $((6*7)) proof just as well, and the throwaway HOME sandboxes both files.
+  # real ~/.zsh_history, so the AUTOTYPE proof command would be appended there on every run.
+  # A plain sh computes the $((6*7)) proof just as well, and the throwaway HOME sandboxes the
+  # history file.
+  #
+  # HOME sandboxes the history file and NOTHING ELSE. It does not move Application Support; it does
+  # not even move `NSHomeDirectory()` — Core Foundation reads the account record unless
+  # `CFFIXED_USER_HOME` is set. So `SLOPDESK_APP_SUPPORT_DIR` is what actually gives this daemon a
+  # container of its own, and it is not optional: `ScrollbackJournalStore.sweep` runs on hostd's
+  # FIRST loop iteration and unlinks everything past the newest 256 journals in whatever directory it
+  # resolved. Measured on this host before this line existed: one run of this gate unlinked 5 of the
+  # developer's journals and left one of its own behind. The live-writer exemption is no protection
+  # either — it consults the SWEEPING process's own map, so a file the developer's live hostd holds
+  # an open fd on is unlinked underneath it.
+  #
+  # `CFFIXED_USER_HOME` is the wrong tool here even though it would work: it also relocates the
+  # daemon's home, which is the cwd its panes default to and the volume its vitals measure. Pointing
+  # a hostd at one made check-launch-restore.sh flake three runs in five.
   HOSTD_HOME="${WORK}/hostd-home"
-  mkdir -p "${HOSTD_HOME}"
+  HOSTD_STATE="${WORK}/hostd-state"
+  rm -rf "${HOSTD_STATE}"
+  mkdir -p "${HOSTD_HOME}" "${HOSTD_STATE}/scrollback" "${HOSTD_STATE}/drop"
   # The client MUTATES the host's workspace document (docs/45), so the daemon must never be pointed
   # at the developer's real `workspace-state.json` — an automation run would reshape the layout they
   # are actually working in. FRESH per run, and empty: `adoptWorkspace` answers `rejectedStale`
@@ -174,7 +221,10 @@ if [[ "${CONNECT}" == "1" ]]; then
     echo "==> FAIL: SLOPDESK_WORKSPACE_STATE_DIR would be empty — refusing to launch hostd" >&2
     exit 1
   fi
-  HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+  HOME="${HOSTD_HOME}" SLOPDESK_APP_SUPPORT_DIR="${HOSTD_STATE}" \
+    SLOPDESK_SCROLLBACK_DIR="${HOSTD_STATE}/scrollback" \
+    SLOPDESK_FILE_DROP_DIR="${HOSTD_STATE}/drop" \
+    SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
     "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
     --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
   HOSTD_PID=$!
@@ -216,34 +266,48 @@ fi
 #   windows every time. `GuiGateLaunchContractTests` pins the flag onto every `"${APP_BIN}"` line in
 #   this file, and pins that no gate launches the app through `open` at all.)
 #
-#   ISOLATION. Two vars, on EVERY launch, because a direct exec is a SECOND instance — it starts even
-#   while the developer's own SlopDesk is running, which `open` would not.
+#   ISOLATION. Three vars, on EVERY launch, because a direct exec is a SECOND instance — it starts
+#   even while the developer's own SlopDesk is running, which `open` would not.
 #     `CFFIXED_USER_HOME` / `HOME` — the throwaway container above. It redirects `NSHomeDirectory()`
 #     and Application Support, so nothing this run autosaves can land on the developer's files.
-#     `SLOPDESK_SKIP_AUTO_RECONNECT=1` — because `CFFIXED_USER_HOME` does NOT redirect `UserDefaults`
-#     (cfprefsd resolves the real home), so `connection.recentTargets` is the DEVELOPER's MRU and
-#     `connectIfSavedTarget()` — the scene task that runs precisely when `isAutomation` is false —
-#     dials whatever host is at the top of it. That host is their live `slopdesk-hostd`, which OWNS
-#     the workspace layout (docs/45): an automation instance connecting to it reshapes the layout
-#     they are working in, and no client-side file isolation protects against that. HW-observed
-#     2026-07-28: a decoy listener on the MRU entry took 17 bytes from a default-mode launch, and 0
-#     with this flag set. It is inert under --connect (the automation branch calls `connect()`
-#     explicitly and skips the auto-reconnect task), and set there anyway so the rule holds for every
-#     launch in this file rather than for the two that happen to need it today.
+#     `SLOPDESK_DEFAULTS_SUITE` — the throwaway `UserDefaults` suite (see its definition above), the
+#     half `CFFIXED_USER_HOME` cannot reach. It isolates BOTH directions, so the MRU this instance
+#     reads is EMPTY and the MRU it writes is its own.
+#     `SLOPDESK_SKIP_AUTO_RECONNECT=1` — kept, and now the second lock on the same door. It was the
+#     only one: `connection.recentTargets` was the DEVELOPER's, and `connectIfSavedTarget()` — the
+#     scene task that runs precisely when `isAutomation` is false — dials whatever host is at the top
+#     of it. That host is their live `slopdesk-hostd`, which OWNS the workspace layout (docs/45): an
+#     automation instance connecting to it reshapes the layout they are working in, and no
+#     client-side file isolation protects against that. HW-observed 2026-07-28: a decoy listener on
+#     the MRU entry took 17 bytes from a default-mode launch, and 0 with this flag set. It is inert
+#     under --connect (the automation branch calls `connect()` explicitly and skips the auto-reconnect
+#     task), and set there anyway so the rule holds for every launch in this file rather than for the
+#     two that happen to need it today.
 #
 # Stderr is kept: the SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there (step 4g).
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
 rm -rf "${CLIENT_HOME}"
 mkdir -p "${CLIENT_HOME}"
+# The suite starts EMPTY, and an empty defaults domain is a FRESH INSTALL:
+# `FirstLaunchModel.shouldPresent` is true whenever `firstLaunch.completed` is unset and no
+# `SLOPDESK_AUTOCONNECT_*` makes `hasAutomationEnvironment()` true — which is the default and
+# --renderer modes exactly. The guided sheet would then open over the window this gate screenshots.
+# Seeded rather than asserted: the subject here is the rendered workspace, not the welcome sheet.
+# (Before the suite existed this was covered by accident, because the domain was the developer's own
+# and they had long since dismissed it.) The delete first, in case a killed run left the suite behind.
+remove_defaults_suite
+defaults write "${DEFAULTS_SUITE}" firstLaunch.completed -bool YES
 APP_LOG="${WORK}/app-stderr.log"
 if [[ "${CONNECT}" == "1" ]]; then
   CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" SLOPDESK_SKIP_AUTO_RECONNECT=1 \
+    SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
     SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
     SLOPDESK_AUTOTYPE="${AUTOTYPE}" SLOPDESK_ECHO_PROBE=1 SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 else
   CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" SLOPDESK_SKIP_AUTO_RECONNECT=1 \
+    SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
     SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 fi

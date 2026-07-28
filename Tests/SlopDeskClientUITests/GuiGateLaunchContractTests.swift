@@ -42,6 +42,29 @@ final class GuiGateLaunchContractTests: XCTestCase {
         "scripts/check-launch-restore.sh",
     ]
 
+    /// Every script under `scripts/` that stands up a HOST DAEMON — DISCOVERED, never listed.
+    ///
+    /// A hardcoded list is the exact shape of the defect this file exists for. The daemon-side
+    /// isolation rule was written into `check-macos.sh`'s comments; the three gates that look like
+    /// `check-macos.sh` copied it, and the two that do not — `soak-fanout-laggard.sh`, which looks
+    /// like a soak, and `video-input-test.sh`, which looks like a manual harness — went without for
+    /// months. A list has to be edited by the same person who forgot the rule. A directory does not:
+    /// the moment a new `scripts/*.sh` execs `slopdesk-hostd` or `slopdesk-videohostd`, this contract
+    /// picks it up and demands the isolation, whether or not anybody thought to say so.
+    ///
+    /// RED when this was first derived rather than listed: it found `scripts/video-input-test.sh`,
+    /// a sixth daemon launch nobody had counted, running `slopdesk-videohostd` with no container at
+    /// all.
+    private func daemonLaunchingScripts() throws -> [String] {
+        let scripts = try FileManager.default
+            .contentsOfDirectory(atPath: scriptURL("scripts").path)
+            .filter { $0.hasSuffix(".sh") }
+            .sorted()
+            .map { "scripts/\($0)" }
+        XCTAssertFalse(scripts.isEmpty, "scripts/ holds no shell scripts — the walk found nothing to read")
+        return try scripts.filter { try !launchCommands(of: $0, invoking: daemonBinaryTokens(of: $0)).isEmpty }
+    }
+
     private func scriptURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // SlopDeskClientUITests
@@ -309,6 +332,169 @@ final class GuiGateLaunchContractTests: XCTestCase {
         }
     }
 
+    /// An automation run must not be able to WRITE the developer's `UserDefaults` either.
+    ///
+    /// `CFFIXED_USER_HOME` moves Application Support; it does NOT move `UserDefaults` — cfprefsd
+    /// resolves the real home whatever the environment says (probed on this host: a
+    /// `UserDefaults(suiteName:)` write under `CFFIXED_USER_HOME=/private/tmp/…` still landed in
+    /// `~/Library/Preferences`). So every gate that connects has been pushing its own loopback port
+    /// onto `connection.recentTargets` in the developer's real domain, where it shows up as the
+    /// gate's "recent hosts" menu and — the MRU is capped at five — evicts the host they actually use.
+    ///
+    /// `SLOPDESK_DEFAULTS_SUITE` binds ``SettingsKey/store`` to a throwaway suite instead. It isolates
+    /// BOTH directions: a suite-backed `UserDefaults` cannot see the app's own persistent domain
+    /// (probed with a real bundled app: a key written to the bundle-id domain read back `nil` through
+    /// the suite), while `NSArgumentDomain` still outranks it — which is what keeps
+    /// `check-launch-restore.sh`'s `-connection.recentTargets` fixture working.
+    func testNoGateLaunchWritesTheDevelopersUserDefaults() throws {
+        for script in Self.gateScripts {
+            let commands = try launchCommands(of: script, invoking: ["\"${APP_BIN}\""])
+            XCTAssertFalse(commands.isEmpty, "\(script) no longer execs the app — no launch to check")
+            for command in commands {
+                XCTAssertTrue(
+                    command.contains("SLOPDESK_DEFAULTS_SUITE="),
+                    "\(script) execs the app without SLOPDESK_DEFAULTS_SUITE, so `SettingsKey.store` is "
+                        + "the DEVELOPER's own `UserDefaults` domain and this run's connect pushes its "
+                        + "loopback port onto their recent-hosts MRU. Offending launch: "
+                        + command.trimmingCharacters(in: .whitespacesAndNewlines),
+                )
+            }
+        }
+    }
+
+    /// …and it has to take the suite away again on the way out — the DOMAIN and the FILE.
+    ///
+    /// `defaults delete` empties the domain and leaves the plist: measured, 42 bytes of it, per run.
+    /// The scale of that is on this machine already — `~/Library/Preferences` holds 55,003
+    /// `slopdesk.tests.pid*.plist` files, one per xctest process ever run here, every one emptied by
+    /// `SettingsKey`'s `atexit` hook and none of them removed. A gate leaks the same way and cannot
+    /// even rely on that hook: the app is `pkill`ed, so nothing inside it runs at exit.
+    ///
+    /// Both halves are pinned, and they are pinned as ONE routine the trap calls, so a gate cannot
+    /// end up doing the delete on one exit path and the unlink on another.
+    func testEveryGateRemovesTheDefaultsSuiteItCreated() throws {
+        for script in Self.gateScripts {
+            let code = try codeBody(of: script)
+            XCTAssertTrue(
+                code.contains("defaults delete \"${DEFAULTS_SUITE}\""),
+                "\(script) never removes the `UserDefaults` suite it binds, so every run leaves a plist "
+                    + "in the developer's ~/Library/Preferences",
+            )
+            XCTAssertTrue(
+                code.contains(#"rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist""#),
+                "\(script) empties its suite without unlinking the plist, which is a 42-byte file per "
+                    + "run in the developer's ~/Library/Preferences. `defaults delete` does not remove "
+                    + "the file; only `rm -f` does, and `${HOME}` is the right home because cfprefsd "
+                    + "writes the real one whatever CFFIXED_USER_HOME says.",
+            )
+            XCTAssertTrue(
+                code.contains("  remove_defaults_suite"),
+                "\(script)'s cleanup trap no longer calls `remove_defaults_suite`, so an exit path can "
+                    + "leave the run's suite — or half of it — behind",
+            )
+        }
+    }
+
+    /// A private suite starts EMPTY, and an empty defaults domain is a FRESH INSTALL.
+    ///
+    /// `FirstLaunchModel.shouldPresent(hasCompleted:automationActive:)` is `!hasCompleted &&
+    /// !automationActive`, so the guided welcome sheet opens over the window in every mode that sets
+    /// no `SLOPDESK_AUTOCONNECT_*` — `check-macos.sh`'s default and --renderer modes, and the whole of
+    /// `check-launch-restore.sh`, whose entire premise is a RETURNING user. While the gates shared the
+    /// developer's own domain this was covered by accident: they had dismissed the sheet long ago.
+    /// Isolating the domain takes that accident away, so the flag is seeded explicitly.
+    ///
+    /// It must be a real `defaults write -bool`, not an argv pair. `firstLaunch.completed` is read
+    /// through a typed `Defaults.Key<Bool>`; Cocoa parses `-key YES` into `NSArgumentDomain` as the
+    /// STRING "YES", which a Bool read does not accept. `check-launch-restore.sh` carried
+    /// `-hasCompletedFirstLaunch YES` for exactly this job and it never did anything — wrong domain
+    /// type, and the Swift property name instead of the key.
+    func testEveryGateSeedsTheFirstLaunchFlag() throws {
+        for script in Self.gateScripts {
+            let code = try codeBody(of: script)
+            XCTAssertTrue(
+                code.contains("defaults write \"${DEFAULTS_SUITE}\" firstLaunch.completed -bool YES"),
+                "\(script) launches the app against an unseeded defaults suite, so the app reads it as a "
+                    + "fresh install and the guided first-launch sheet can open over the window the gate "
+                    + "is asserting on",
+            )
+            XCTAssertFalse(
+                code.contains("-hasCompletedFirstLaunch"),
+                "\(script) still passes `-hasCompletedFirstLaunch` in the argument domain. That is the "
+                    + "Swift property name, not the key (`firstLaunch.completed`), and an argv value "
+                    + "arrives as a String where a typed Bool is read — it suppresses nothing.",
+            )
+        }
+    }
+
+    /// The same rule for the DAEMONS, which have no `CFFIXED_USER_HOME` at all.
+    ///
+    /// `HOME` alone does not move Application Support — it does not even move `NSHomeDirectory()`
+    /// (probed on this host: `HOME=/private/tmp/fakehome` still resolves
+    /// `/Users/<me>/Library/Application Support`). Only `CFFIXED_USER_HOME` does, and pointing a
+    /// `slopdesk-hostd` at one made `check-launch-restore.sh` flake 3 runs in 5, so the daemons are
+    /// isolated by the per-path variables the product already reads instead.
+    ///
+    /// The set is required UNIFORMLY on both daemons rather than per-binary. `slopdesk-videohostd`
+    /// reads none of the three terminal-side ones today, and requiring them anyway is the point: the
+    /// rule stays "every daemon launch carries the set", not "carries whichever member of the set
+    /// that daemon happened to read the last time somebody checked".
+    ///
+    /// RED before the fix: none of the five gates set `SLOPDESK_SCROLLBACK_DIR`, so every one of them
+    /// swept and wrote the developer's own `~/Library/Application Support/SlopDesk/scrollback/`.
+    /// Measured on this host: ONE `check-macos.sh --connect` unlinked 5 of their journals and left
+    /// one of its own behind.
+    func testNoGateLaunchesADaemonAgainstTheDevelopersContainer() throws {
+        let scripts = try daemonLaunchingScripts()
+        for known in Self.gateScripts + ["scripts/soak-fanout-laggard.sh"] {
+            XCTAssertTrue(
+                scripts.contains(known),
+                "\(known) launches a daemon and the walk over scripts/ did not find it — the "
+                    + "discovery is broken, and a contract that silently reads nothing passes",
+            )
+        }
+        for script in scripts {
+            let commands = try launchCommands(of: script, invoking: daemonBinaryTokens(of: script))
+            for command in commands {
+                let shown = command.trimmingCharacters(in: .whitespacesAndNewlines)
+                for variable in [
+                    "SLOPDESK_APP_SUPPORT_DIR=", // the whole <App Support>/SlopDesk container
+                    "SLOPDESK_SCROLLBACK_DIR=", // the journals — the sweep DELETES in this one
+                    "SLOPDESK_WORKSPACE_STATE_DIR=", // workspace-state.json (docs/45 host truth)
+                    "SLOPDESK_FILE_DROP_DIR=", // the PATH-4 drop dir, else ~/Downloads
+                ] {
+                    XCTAssertTrue(
+                        command.contains(variable),
+                        "\(script) launches a host daemon with no \(variable) — it lands on the "
+                            + "DEVELOPER's own state. Offending launch: \(shown)",
+                    )
+                }
+            }
+        }
+    }
+
+    /// Every shell token in `script` that denotes a host-daemon binary: the literal build-product
+    /// paths, plus `"${VAR}"` for any variable assigned one.
+    ///
+    /// The indirection is not cosmetic — `soak-fanout-laggard.sh` and `check-video.sh` both launch
+    /// through a `HOSTD=…` variable, so a contract that grepped for the literal binary name would
+    /// find the ASSIGNMENT, call it a launch, and never read the exec at all.
+    private func daemonBinaryTokens(of script: String) throws -> [String] {
+        let names = ["slopdesk-hostd", "slopdesk-videohostd"]
+        // debug AND release: `video-input-test.sh` runs the release build, and a rule that only knows
+        // one configuration is a rule with a documented way around it.
+        var tokens = names.flatMap { [".build/debug/\($0)", ".build/release/\($0)"] }
+        for line in try codeBody(of: script).split(separator: "\n").map(String.init) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let equals = trimmed.firstIndex(of: "="), trimmed.starts(with: /[A-Z_]/) else { continue }
+            let name = String(trimmed[..<equals])
+            guard name.allSatisfy({ $0.isUppercase || $0 == "_" }) else { continue }
+            let value = String(trimmed[trimmed.index(after: equals)...])
+            if names.contains(where: value.contains) { tokens.append("\"${\(name)}\"") }
+        }
+        return tokens
+    }
+
     /// Every WHOLE shell command that execs the app: the `"${APP_BIN}"` line plus its backslash
     /// continuations BOTH ways. The env assignments sit above that line and the `-key value`
     /// argument-domain fixtures sit below it, so a rule read off the exec line alone misses either
@@ -318,12 +504,31 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// from two branches whose exec lines are character-for-character identical, so a lookup by string
     /// resolves both to the first one — and the second branch, which is the one with no autoconnect
     /// env and therefore the one that needs the rule most, would never be read at all.
-    private func launchCommands(of script: String) throws -> [String] {
+    ///
+    /// `invoking` generalises the same walk to the daemons: a token list rather than one literal,
+    /// because a gate may launch through `"${HOSTD}"` as readily as through the build-product path.
+    /// Lines that merely NAME a binary — the `HOSTD=…` assignment, the `pkill -f` that frees the
+    /// port, the `swift build --product` that produces it, the `[[ ! -x` existence check — are not
+    /// launches and are dropped, or every gate would be asked to put a container on its own cleanup.
+    private func launchCommands(
+        of script: String,
+        invoking tokens: [String] = ["\"${APP_BIN}\""],
+    ) throws -> [String] {
         let lines = try codeBody(of: script)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
+        let notALaunch = ["pkill", "swift build", "! -x", "-x ${", "await ", "grep "]
         var commands: [String] = []
-        for (index, line) in lines.enumerated() where line.contains("\"${APP_BIN}\"") {
+        for (index, line) in lines.enumerated() {
+            guard tokens.contains(where: line.contains) else { continue }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if notALaunch.contains(where: trimmed.contains) { continue }
+            // `HOSTD="${ROOT}/.build/debug/slopdesk-hostd"` names the binary and launches nothing.
+            if let equals = trimmed.firstIndex(of: "="),
+               trimmed[..<equals].allSatisfy({ $0.isUppercase || $0 == "_" }),
+               !trimmed[..<equals].isEmpty,
+               !trimmed.contains("$(")
+            { continue }
             var start = index
             while start > 0, lines[start - 1].hasSuffix("\\") { start -= 1 }
             var end = index

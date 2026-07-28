@@ -81,8 +81,26 @@ fi
 
 echo "== fan-out laggard soak: SLOPDESK_SUB_LAG_BYTES=${THRESH} =="
 
-mkdir -p "${WORK}/home"
-HOME="${WORK}/home" SLOPDESK_PANE_FANOUT=1 SLOPDESK_SUB_LAG_BYTES="${THRESH}" \
+# The daemon's container. `${WORK}` is a mktemp dir the cleanup trap removes, so everything this soak
+# writes goes with it.
+#
+# HOME is not the container and never was: it moves neither Application Support nor
+# `NSHomeDirectory()` (Core Foundation reads the account record unless `CFFIXED_USER_HOME` is set).
+# This soak pushes MEGABYTES through several sessions by design, and without the redirect all of it
+# was journaled into the developer's own `~/Library/Application Support/SlopDesk/scrollback/` — where
+# `ScrollbackJournalStore.sweep` then unlinked their oldest transcripts to hold the directory at 256.
+# The same daemon also wrote their `workspace-state.json` and resolved their `~/Downloads` as its
+# file-drop directory.
+#
+# `GuiGateLaunchContractTests` pins this set onto every daemon launch in every gate, this one
+# included. It is here because it was not: the rule lived in check-macos.sh's comments, the three
+# gates that look like check-macos.sh copied it, and the one that looks like a soak did not.
+mkdir -p "${WORK}/home" "${WORK}/state/scrollback" "${WORK}/state/drop"
+HOME="${WORK}/home" SLOPDESK_APP_SUPPORT_DIR="${WORK}/state" \
+  SLOPDESK_SCROLLBACK_DIR="${WORK}/state/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${WORK}/state/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${WORK}/state" \
+  SLOPDESK_PANE_FANOUT=1 SLOPDESK_SUB_LAG_BYTES="${THRESH}" \
   "${HOSTD}" --port 0 --shell /bin/sh > "${WORK}/hostd.out" 2> "${WORK}/hostd.err" &
 HOSTD_PID=$!
 echo "${HOSTD_PID}" >> "${PIDFILE}"

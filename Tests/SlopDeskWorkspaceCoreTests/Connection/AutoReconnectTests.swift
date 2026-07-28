@@ -21,6 +21,10 @@ final class AutoReconnectTests: XCTestCase {
     private func defaultsWithSaved(_ target: ConnectionTarget) throws -> UserDefaults {
         let suiteName = "AutoReconnectTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName), "UserDefaults suite init failed")
+        // A written suite is a FILE in the developer's ~/Library/Preferences, and emptying the
+        // domain does not remove it. Queued for process EXIT: cfprefsd re-creates a plist unlinked
+        // while the process still runs.
+        SettingsKey.removeSuiteAtExit(named: suiteName)
         // Encode exactly as `AppConnection.recordRecentTarget` does.
         let list = [target]
         if let data = try? JSONEncoder().encode(list) {
@@ -60,6 +64,7 @@ final class AutoReconnectTests: XCTestCase {
     func testConnectIfSavedTargetWithNoSavedTargetIsNoOp() async throws {
         let suiteName = "AutoReconnectTests.empty.\(UUID().uuidString)"
         let emptyDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName), "UserDefaults suite init failed")
+        SettingsKey.removeSuiteAtExit(named: suiteName)
         let c = AppConnection(registry: failingRegistry(), defaults: emptyDefaults)
 
         await c.connectIfSavedTarget()

@@ -119,13 +119,18 @@ public enum EnvBridge {
         }
     }
 
-    /// The default sidecar location under Application Support: `<AppSupport>/SlopDesk/video-prefs.json`.
+    /// The default sidecar location under Application Support: `<AppSupport>/SlopDesk/video-prefs.json`,
+    /// moved wholesale by ``SlopDeskAppSupport/directoryEnvKey``.
     /// `nil` only if the OS won't vend an Application-Support URL (never on macOS).
-    public static func defaultSidecarURL(fileManager: FileManager = .default) -> URL? {
-        guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        return base.appendingPathComponent("SlopDesk", isDirectory: true)
+    ///
+    /// Both host daemons fold this file into ``EnvConfig/overlay`` at launch, so an automation run
+    /// that resolves the real one inherits the developer's video/agent tuning as a silent overlay —
+    /// the gate then measures a configuration nobody wrote down.
+    public static func defaultSidecarURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+    ) -> URL? {
+        SlopDeskAppSupport.directory(environment: environment, fileManager: fileManager)?
             .appendingPathComponent("video-prefs.json", isDirectory: false)
     }
 

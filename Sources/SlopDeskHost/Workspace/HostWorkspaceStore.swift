@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 
 /// The workspace document's home on disk, and the DEFAULT document for a host that has none.
@@ -42,6 +43,8 @@ public actor HostWorkspaceStore {
     /// `SLOPDESK_WORKSPACE_STATE_DIR` overrides the location — the same escape hatch
     /// `SLOPDESK_SCROLLBACK_DIR` gives the journals, and what makes an end-to-end test able to run
     /// against a real store without touching the developer's own workspace.
+    /// ``SlopDeskAppSupport/directoryEnvKey`` moves the container it sits inside, and covers this
+    /// file too when the specific variable is not set.
     @preconcurrency
     public static func make(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -53,9 +56,9 @@ public actor HostWorkspaceStore {
         if let override = environment["SLOPDESK_WORKSPACE_STATE_DIR"], !override.isEmpty {
             directory = URL(fileURLWithPath: override, isDirectory: true)
         } else {
-            guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            guard let base = SlopDeskAppSupport.directory(environment: environment, fileManager: fileManager)
             else { return nil }
-            directory = base.appendingPathComponent("SlopDesk", isDirectory: true)
+            directory = base
         }
         return HostWorkspaceStore(
             fileURL: directory.appendingPathComponent("workspace-state.json"),

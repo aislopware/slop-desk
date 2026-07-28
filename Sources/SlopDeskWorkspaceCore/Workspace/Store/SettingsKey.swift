@@ -22,19 +22,119 @@ public enum SettingsKey {
     /// read in another, and a crashed run's mutations persist into the next run. Tests must mutate
     /// global flags via `SettingsKey.store` — a write to `UserDefaults.standard` is invisible to the
     /// keys in a test process.
+    ///
+    /// `SLOPDESK_DEFAULTS_SUITE` names a suite for the SHIPPING app, and exists for one reason: the
+    /// GUI gates exec this bundle's binary directly, and `CFFIXED_USER_HOME` — which moves their
+    /// Application Support container — does NOT move `UserDefaults`. cfprefsd resolves the real home
+    /// whatever the environment says, so every gate that connects has been writing its own loopback
+    /// port into the developer's `connection.recentTargets`, five entries deep, evicting the host
+    /// they actually use. A suite isolates BOTH directions: a suite-backed `UserDefaults` cannot see
+    /// this bundle's own persistent domain, and `NSArgumentDomain` still outranks it — which is what
+    /// keeps `check-launch-restore.sh`'s `-connection.recentTargets` fixture driving the real
+    /// auto-reconnect. The XCTest suite wins over it, so an exported variable in a developer's shell
+    /// cannot collapse `swift test --parallel` back onto one shared domain.
     /// `nonisolated(unsafe)`: `UserDefaults` is documented thread-safe; it just lacks a `Sendable` mark.
     public nonisolated(unsafe) static let store: UserDefaults = {
-        guard let name = testProcessSuiteName, let suite = UserDefaults(suiteName: name) else {
+        installSuiteRemovalHook() // as early as this process ever gets — see the LIFO note there
+        guard let name = resolvedSuiteName, let suite = UserDefaults(suiteName: name) else {
             return .standard
         }
-        suite.removePersistentDomain(forName: name) // pid reuse: always start from a clean slate
-        atexit { // best-effort cleanup so ~/Library/Preferences doesn't accumulate per-run plists
-            if let name = testProcessSuiteName {
-                UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
-            }
+        // The XCTest suite is anonymous — nobody outside this process knows its name, so nothing else
+        // can clean it and a reused pid would inherit the last run's mutations. It wipes itself.
+        //
+        // An env-named suite is the opposite: whoever set `SLOPDESK_DEFAULTS_SUITE` owns its lifetime
+        // and SEEDS it. `check-launch-restore.sh` drives the returning-user launch path, and a
+        // returning user is precisely someone whose defaults are not empty — wiping here would erase
+        // the fixture and turn every run of that gate into a fresh install.
+        if testProcessSuiteName != nil {
+            suite.removePersistentDomain(forName: name)
+            removeSuiteAtExit(named: name)
         }
         return suite
     }()
+
+    /// Queues a throwaway suite for removal when this process EXITS, and takes it away then.
+    ///
+    /// Removing one mid-process does NOT stick. cfprefsd is a separate daemon and keeps the domain
+    /// for as long as a live `UserDefaults` still registers it, so it re-creates the plist on its
+    /// next flush — measured, with a test that removed its own suite, asserted the file gone (it
+    /// was), and still left it in `~/Library/Preferences` at the end of the run. Process exit is the
+    /// one moment nothing can write it back.
+    ///
+    /// The caller is any test that builds its own `UserDefaults(suiteName:)` and writes to it. There
+    /// is no shipping caller other than ``store`` itself: an app that names a suite through
+    /// `SLOPDESK_DEFAULTS_SUITE` is one an automation run `pkill`s, so nothing inside it runs at
+    /// exit and the gate's own trap removes it from the shell.
+    static func removeSuiteAtExit(named name: String) {
+        installSuiteRemovalHook()
+        suiteRemovalLock.lock()
+        defer { suiteRemovalLock.unlock() }
+        guard !pendingSuiteRemovals.contains(name) else { return }
+        pendingSuiteRemovals.append(name)
+    }
+
+    /// `atexit` is LIFO, so the sweep has to be registered EARLY to run LATE — after whatever
+    /// CoreFoundation registers on its own way out, whose flush otherwise re-creates every file the
+    /// sweep just unlinked. ``store`` calls this first thing, which in a test process is the first
+    /// settings read; a caller that beats it there installs the hook itself.
+    private static func installSuiteRemovalHook() {
+        suiteRemovalLock.lock()
+        defer { suiteRemovalLock.unlock() }
+        guard !suiteRemovalHookInstalled else { return }
+        suiteRemovalHookInstalled = true
+        atexit {
+            suiteRemovalLock.lock()
+            let names = pendingSuiteRemovals
+            suiteRemovalLock.unlock()
+            for name in names { Self.removeSuite(named: name) }
+        }
+    }
+
+    /// Takes a throwaway suite away COMPLETELY — the domain AND the file it lives in.
+    ///
+    /// `removePersistentDomain` empties the domain and leaves a 58-byte plist behind. That is what
+    /// put 55,003 `slopdesk.tests.pid*.plist` files in this machine's `~/Library/Preferences`: one
+    /// per xctest process ever run here, every one of them emptied and none of them removed. A GUI
+    /// gate's per-run suite leaks the same way, and its cleanup trap calls the shell equivalent of
+    /// this.
+    ///
+    /// `synchronize()` between the emptying and the unlink is load-bearing. The emptying is written
+    /// back lazily, so unlinking first lets cfprefsd re-create the file after the process is gone.
+    ///
+    /// The path is `NSHomeDirectory()`-relative, which is where cfprefsd puts it for THIS process.
+    /// Under `CFFIXED_USER_HOME` the two disagree — every home API reports the fixed home while
+    /// cfprefsd keeps writing the real one — so an app a gate launches cannot clean up after itself
+    /// and the gate's trap does it from a shell that still has the real `HOME`.
+    static func removeSuite(named name: String) {
+        let suite = UserDefaults(suiteName: name)
+        suite?.removePersistentDomain(forName: name)
+        suite?.synchronize()
+        // cfprefsd is a SEPARATE process and keeps the domain cached after this one empties it; an
+        // unlink alone races its idle flush and the file comes back. This is what makes it let go.
+        CFPreferencesAppSynchronize(name as CFString)
+        try? FileManager.default.removeItem(
+            atPath: NSHomeDirectory() + "/Library/Preferences/\(name).plist",
+        )
+    }
+
+    /// Which suite ``store`` binds, given the two things that can ask for one. `nil` = `.standard`.
+    ///
+    /// Pure, so the precedence can be pinned without a second process: the XCTest per-pid suite
+    /// FIRST (a stray `SLOPDESK_DEFAULTS_SUITE` in the environment must never put parallel xctest
+    /// workers back on one domain), then the environment, then nothing. An empty environment value
+    /// is unset — `FOO="${BAR}"` with `BAR` unset is how a shell delivers one by accident, and
+    /// `UserDefaults(suiteName: "")` is not a store anybody meant to name.
+    static func suiteName(
+        testProcessSuite: String?,
+        environment: [String: String],
+    ) -> String? {
+        if let testProcessSuite { return testProcessSuite }
+        guard let named = environment[defaultsSuiteEnvKey], !named.isEmpty else { return nil }
+        return named
+    }
+
+    /// The environment variable an automation run sets to keep its writes off the developer's domain.
+    public static let defaultsSuiteEnvKey = "SLOPDESK_DEFAULTS_SUITE"
 
     // General / launch
     /// The `On Launch` general setting — restore the last session vs open a fresh window.
@@ -819,12 +919,27 @@ public enum SettingsKey {
     }
 }
 
+/// The suites ``SettingsKey/removeSuiteAtExit(named:)`` takes away on the way out, and the lock over
+/// them. File-scope for the same reason as everything else here: the `atexit` hook is a
+/// non-capturing C function pointer and can reach nothing but a global.
+/// `nonisolated(unsafe)`: every access goes through `suiteRemovalLock`.
+private nonisolated(unsafe) var pendingSuiteRemovals: [String] = []
+private nonisolated(unsafe) var suiteRemovalHookInstalled = false
+private let suiteRemovalLock = NSLock()
+
 /// Non-nil exactly when running under XCTest — file-scope (not a `SettingsKey` member) so the
 /// non-capturing `atexit` C hook inside ``SettingsKey/store`` can reference it as a global.
 private let testProcessSuiteName: String? =
     NSClassFromString("XCTestCase") == nil
         ? nil
         : "slopdesk.tests.pid\(ProcessInfo.processInfo.processIdentifier)"
+
+/// The suite ``SettingsKey/store`` actually binds. Same file-scope reason as above: the `atexit`
+/// hook is a non-capturing C function pointer and can only reach a global.
+private let resolvedSuiteName: String? = SettingsKey.suiteName(
+    testProcessSuite: testProcessSuiteName,
+    environment: ProcessInfo.processInfo.environment,
+)
 
 private extension Defaults.Key {
     /// Builds every SlopDesk global-flag key against ``SettingsKey/store`` (`.standard` in the app;

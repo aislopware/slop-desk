@@ -72,6 +72,31 @@ CONNECT_PORT=47422 # 47420 is check-macos.sh, 47421 is check-video.sh
 SOCK_A="/tmp/slopdesk-mc-$$-a.sock"
 SOCK_B="/tmp/slopdesk-mc-$$-b.sock"
 
+# The daemon's throwaway `<Application Support>/SlopDesk`, and the throwaway `UserDefaults` suite the
+# two client instances share. Fresh per run; the suite is removed by the cleanup trap.
+#
+# HOME covers neither. It does not move Application Support and does not move `NSHomeDirectory()` —
+# Core Foundation reads the account record unless `CFFIXED_USER_HOME` is set — so a hostd given HOME
+# alone still sweeps the developer's scrollback journals (`keepNewest: 256`, on its first loop
+# iteration) and still resolves `~/Downloads` as its file-drop directory. `CFFIXED_USER_HOME` would
+# fix the paths and break the daemon: it also relocates the home its panes take their default cwd
+# from, and pointing a hostd at one made check-launch-restore.sh flake three runs in five.
+HOSTD_STATE="${WORK}/hostd-state"
+DEFAULTS_SUITE="slopdesk.gate.multiclient.$$"
+
+# Takes the run's suite away COMPLETELY — the domain AND the file it lives in. `defaults delete`
+# empties the domain and leaves a 42-byte plist behind, so a gate that stops there costs the
+# developer one file per run. That is not a hypothetical shape: the XCTest side of the same mistake
+# put 55,003 `slopdesk.tests.pid*.plist` files in this machine's ~/Library/Preferences.
+#
+# `${HOME}` here is the DEVELOPER's, deliberately. cfprefsd resolves the real home whatever
+# `CFFIXED_USER_HOME` says — which is the entire reason a suite is needed — so the run's plist is in
+# their Preferences directory and nowhere else, and this shell is the one that still knows the path.
+remove_defaults_suite() {
+  defaults delete "${DEFAULTS_SUITE}" 2> /dev/null || true
+  rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist"
+}
+
 # `SLOPDESK_PANE_FANOUT` is `== "1"`, default-OFF, and stays that way. With it unset the two clients
 # CANNOT hold one pane's PTY — which is fine, because LAYOUT convergence is the Phase 5b claim. Step
 # 7b is the separate assertion for the flag-ON shape, and it is skipped when the flag is unset.
@@ -103,6 +128,9 @@ cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
   reap "${HOSTD_PID}" slopdesk-hostd
   rm -f "${SOCK_A}" "${SOCK_B}"
+  # Both instances are killed, so neither runs its own `atexit` suite cleanup — this is the one that
+  # does. Left undone it is a per-run plist in the developer's ~/Library/Preferences.
+  remove_defaults_suite
 }
 # INT/TERM as well as EXIT: a bash EXIT trap does not run for an untrapped signal, so a Ctrl-C would
 # otherwise strand the daemon and both app instances.
@@ -230,7 +258,8 @@ echo "==> build OK: ${APP}"
 # FRESH state dir per run, for correctness as much as hygiene: `adoptWorkspace` answers
 # `rejectedStale` against a host that already has a workspace, so a reused dir would leave client A's
 # adopt refused too and the gate would be proving something else entirely. The throwaway HOME keeps
-# the spawned shells out of the developer's real history / Application Support.
+# the spawned shells out of the developer's real shell history — and ONLY that; the container above
+# is what keeps this daemon out of their Application Support.
 pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK_A}" "${SOCK_B}"
@@ -241,10 +270,13 @@ if [[ -z "${WORK}" ]]; then
 fi
 HOSTD_HOME="${WORK}/hostd-home"
 HOSTD_WORKSPACE="${WORK}/hostd-workspace"
-rm -rf "${HOSTD_WORKSPACE}"
-mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}"
+rm -rf "${HOSTD_WORKSPACE}" "${HOSTD_STATE}"
+mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}" "${HOSTD_STATE}/scrollback" "${HOSTD_STATE}/drop"
 echo "==> starting slopdesk-hostd on 127.0.0.1:${CONNECT_PORT}"
-HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+HOME="${HOSTD_HOME}" SLOPDESK_APP_SUPPORT_DIR="${HOSTD_STATE}" \
+  SLOPDESK_SCROLLBACK_DIR="${HOSTD_STATE}/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${HOSTD_STATE}/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
   SLOPDESK_PANE_FANOUT="${FANOUT}" \
   "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
   --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
@@ -261,15 +293,27 @@ echo "==> hostd up (pid ${HOSTD_PID})"
 #     the two do not share `workspace-cache.json` / `device-prefs.json`. It does NOT redirect
 #     `UserDefaults` — both instances read one Defaults domain, which is why nothing here depends on
 #     a per-instance default.
+#   - `SLOPDESK_DEFAULTS_SUITE` makes that one domain a THROWAWAY one rather than the developer's.
+#     Shared between the two instances on purpose: the pair are meant to agree, and the thing being
+#     kept out is the developer's own `connection.recentTargets`, which both would otherwise write
+#     `127.0.0.1:47422` into on connect.
 #   - `SLOPDESK_CLIENT_SOCKET` is how step 5 onwards addresses each instance INDEPENDENTLY.
 #   - `-ApplePersistenceIgnoreState YES` is load-bearing exactly as in check-macos.sh /
 #     check-video.sh: without it AppKit comes up with ZERO windows and every scene `.task` — the
 #     auto-connect, the workspace channel — silently never runs.
+# An empty defaults domain is a FRESH INSTALL. The autoconnect env makes
+# `hasAutomationEnvironment()` true, so `FirstLaunchModel.shouldPresent` is false here whatever the
+# flag says — seeded anyway, so no gate depends on which env var happens to suppress the welcome
+# sheet today. The delete first, in case a killed run left the suite behind.
+remove_defaults_suite
+defaults write "${DEFAULTS_SUITE}" firstLaunch.completed -bool YES
+
 launch_client() {
   local name="$1" socket="$2" container="${WORK}/client-$1"
   rm -rf "${container}"
   mkdir -p "${container}"
   CFFIXED_USER_HOME="${container}" HOME="${container}" \
+    SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
     SLOPDESK_CLIENT_SOCKET="${socket}" \
     SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
     SLOPDESK_PANE_FANOUT="${FANOUT}" \
@@ -363,8 +407,21 @@ converge "after A closes that tab" 1 2
 # The layout says two panes; the host must be running exactly two shells. Counted as LIVE children
 # of the daemon rather than as log lines: the cumulative `shell … attached` count also includes the
 # pane B minted at launch and the pane the closed tab took with it, both of which were reaped — a
-# leak is a shell that is still THERE. hostd forks nothing but PTYs, so its child set IS the shell
-# set; if that ever stops being true this goes red and somebody looks.
+# leak is a shell that is still THERE.
+#
+# A BARE CHILD COUNT IS WRONG, and the same count in check-launch-restore.sh made that gate flaky
+# (2 of 8 runs red on a clean tree, 3 of 3 under an FSEvents burst). hostd forks non-PTY helpers as
+# well as shells — `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs
+# `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a `--norcs` zsh —
+# and each is a child of hostd for as long as it lives. `${WORK}` is under this repo, so the
+# daemon's HOME is too, so a pane's project key resolves to slop-desk itself and every write this
+# gate makes to its own logs arms `RepoStatusWatcher`'s debounced `git` probe. A settle cannot help:
+# the helper is TRANSIENT, so a count that catches one is red for a reason no amount of waiting
+# addresses, and the next read shows the right number under a message announcing the wrong one.
+#
+# The discriminator is what `PTYProcess` does and `Foundation.Process` does not: the shell is forked
+# with `login_tty(slave)`, i.e. `setsid()`, so it is a SESSION LEADER — `getsid(pid) == pid`. A
+# `Process()` child is given its own process GROUP but stays in hostd's session, so it is not.
 #
 # REACHED, then HELD — never a single read the instant `converge` returns. The settle covers ONE
 # thing: the host kills a reaped pane's PTY child before it broadcasts the diff `converge` waits on,
@@ -374,24 +431,51 @@ converge "after A closes that tab" 1 2
 # a shell that appears LATE must not slip in behind the assertion.
 LIVE_SHELL_SETTLE=8 # ×0.5 s
 LIVE_SHELL_HOLD=6   # ×1 s
-live_shells() { { pgrep -P "${HOSTD_PID}" || true; } | grep -c . || true; }
+# ONE census of hostd's live children, as `<pid> pty` / `<pid> helper` lines (see above).
+#
+# `|| true` around `pgrep`: it exits 1 when it matches NOTHING, and under `set -euo pipefail` that
+# would kill the script on the one observation worth printing — "the host has no shells at all".
+hostd_children() {
+  { pgrep -P "${HOSTD_PID}" || true; } | python3 -c '
+import os, sys
+for line in sys.stdin:
+    pid = int(line)
+    try:
+        leader = os.getsid(pid) == pid
+    except OSError:
+        continue  # exited between the pgrep and the getsid — not live
+    print(pid, "pty" if leader else "helper")
+'
+}
+shells_in() { awk '$2 == "pty"' <<< "$1" | grep -c . || true; }
+live_shells() { shells_in "$(hostd_children)"; }
 FINAL_SIG="$(signature "${SOCK_A}" 2> /dev/null || true)"
 PANE_COUNT="$(count_of pane "${FINAL_SIG}")"
+# Takes the SAMPLE that went red, never a fresh read: a helper lives for tens of milliseconds, so a
+# re-read prints a different set of children than the one the count was made from.
 shell_census_failed() {
-  echo "--- live children of hostd ---" >&2
-  pgrep -P "${HOSTD_PID}" -l >&2 || true
-  fatal "the layout has ${PANE_COUNT} pane(s) but the host is running $(live_shells) shell(s) $1"
+  echo "--- the children of hostd this census read (pty = a shell, helper = git/lsof/infocmp/…) ---" >&2
+  local pid kind
+  while read -r pid kind; do
+    [[ -n "${pid}" ]] || continue
+    echo "    ${pid} ${kind} $(ps -o command= -p "${pid}" 2> /dev/null || true)" >&2
+  done <<< "$2"
+  fatal "the layout has ${PANE_COUNT} pane(s) but the host is running $(shells_in "$2") shell(s) $1"
 }
 for _ in $(seq 1 "${LIVE_SHELL_SETTLE}"); do
   [[ "$(live_shells)" != "${PANE_COUNT}" ]] || break
   sleep 0.5
 done
-[[ "$(live_shells)" == "${PANE_COUNT}" ]] ||
-  shell_census_failed "and stayed there for $((LIVE_SHELL_SETTLE / 2))s — that is a leak, not a churn"
+CENSUS="$(hostd_children)"
+[[ "$(shells_in "${CENSUS}")" == "${PANE_COUNT}" ]] ||
+  shell_census_failed "and stayed there for $((LIVE_SHELL_SETTLE / 2))s — that is a leak, not a churn" \
+    "${CENSUS}"
 for second in $(seq 1 "${LIVE_SHELL_HOLD}"); do
   sleep 1
-  [[ "$(live_shells)" == "${PANE_COUNT}" ]] ||
-    shell_census_failed "${second}s after the counts matched — a pane was re-dialled behind the check"
+  CENSUS="$(hostd_children)"
+  [[ "$(shells_in "${CENSUS}")" == "${PANE_COUNT}" ]] ||
+    shell_census_failed "${second}s after the counts matched — a pane was re-dialled behind the check" \
+      "${CENSUS}"
 done
 echo "==> ${PANE_COUNT} pane(s) in the layout, ${PANE_COUNT} live shell(s) on the host, held ${LIVE_SHELL_HOLD}s ✅"
 

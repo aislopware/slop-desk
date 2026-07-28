@@ -24,9 +24,11 @@
 #
 # It runs TWO daemons: slopdesk-videohostd for the pixels, and slopdesk-hostd because the detached
 # .desktop pane is an object in the HOST's workspace document (docs/45) — the client asks for it with
-# an intent and has nowhere to send one without a terminal daemon. Both get a throwaway HOME and the
-# hostd a throwaway SLOPDESK_WORKSPACE_STATE_DIR, so an automation run can never reshape the
-# developer's real layout.
+# an intent and has nowhere to send one without a terminal daemon. Both get a throwaway
+# `SLOPDESK_APP_SUPPORT_DIR` container and the hostd a throwaway SLOPDESK_WORKSPACE_STATE_DIR, so an
+# automation run can never reshape the developer's real layout — nor sweep their scrollback journals,
+# nor read and then UNLINK the `parked-windows.json` crash journal their own videohostd owns. HOME
+# alone did none of that: it does not move Application Support and does not move `NSHomeDirectory()`.
 #
 # USAGE:
 #   bash scripts/check-video.sh [--window-title SUBSTR]   # default: first Finder window
@@ -48,6 +50,26 @@ MEDIA_PORT=9000
 CURSOR_PORT=9001
 CONNECT_PORT=47421 # the TERMINAL daemon that owns the workspace document (47420 is check-macos.sh)
 
+# The throwaway `<Application Support>/SlopDesk` both daemons resolve, and the throwaway
+# `UserDefaults` suite the client app writes. Fresh per run; the suite is removed by the cleanup trap.
+# See check-macos.sh for the full argument — the short version is that neither HOME nor
+# `CFFIXED_USER_HOME` covers what these two need covered.
+DAEMON_STATE="${WORK}/daemon-state"
+DEFAULTS_SUITE="slopdesk.gate.video.$$"
+
+# Takes the run's suite away COMPLETELY — the domain AND the file it lives in. `defaults delete`
+# empties the domain and leaves a 42-byte plist behind, so a gate that stops there costs the
+# developer one file per run. That is not a hypothetical shape: the XCTest side of the same mistake
+# put 55,003 `slopdesk.tests.pid*.plist` files in this machine's ~/Library/Preferences.
+#
+# `${HOME}` here is the DEVELOPER's, deliberately. cfprefsd resolves the real home whatever
+# `CFFIXED_USER_HOME` says — which is the entire reason a suite is needed — so the run's plist is in
+# their Preferences directory and nowhere else, and this shell is the one that still knows the path.
+remove_defaults_suite() {
+  defaults delete "${DEFAULTS_SUITE}" 2> /dev/null || true
+  rm -f "${HOME}/Library/Preferences/${DEFAULTS_SUITE}.plist"
+}
+
 TITLE_NEEDLE="Finder"
 case "${1:-}" in
   --window-title) TITLE_NEEDLE="${2:?--window-title needs a value}" ;;
@@ -59,6 +81,11 @@ case "${1:-}" in
 esac
 
 mkdir -p "${WORK}"
+# Before ANY daemon runs, including the `--list` enumeration below: `slopdesk-videohostd` folds
+# `video-prefs.json` into `EnvConfig.overlay` on its very first line of `main`, so even the listing
+# pass would otherwise read the developer's tuning and measure a configuration nobody wrote down.
+rm -rf "${DAEMON_STATE}"
+mkdir -p "${DAEMON_STATE}/scrollback" "${DAEMON_STATE}/drop"
 HOSTD_PID=""
 TERMD_PID=""
 APP_PROC_PAT="video-verify/DD.*MacOS/SlopDesk"
@@ -93,6 +120,8 @@ cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
   reap "${HOSTD_PID}" slopdesk-videohostd
   reap "${TERMD_PID}" slopdesk-hostd
+  # The app is killed, so its own `atexit` suite cleanup never runs — this is the one that does.
+  remove_defaults_suite
 }
 # INT/TERM as well as EXIT: a bash EXIT trap does NOT run when the shell is killed by an untrapped
 # signal, so a Ctrl-C or a harness timeout would otherwise strand both daemons — the very state the
@@ -116,7 +145,11 @@ echo "==> build OK"
 
 # ── 2. Resolve a shareable window to serve ─────────────────────────────────────────────────────
 echo "==> enumerating shareable windows (needs Screen-Recording TCC + a GUI session)"
-LISTING="$("${HOSTD}" --list 2>&1)"
+LISTING="$(SLOPDESK_APP_SUPPORT_DIR="${DAEMON_STATE}" \
+  SLOPDESK_SCROLLBACK_DIR="${DAEMON_STATE}/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${DAEMON_STATE}/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${DAEMON_STATE}" \
+  "${HOSTD}" --list 2>&1)"
 if [[ -n "${2:-}" || "${1:-}" == "--window-title" ]]; then
   # Explicit title requested.
   WID="$(echo "${LISTING}" | grep -i "${TITLE_NEEDLE}" | grep -oE 'id=[0-9]+' | head -1 | cut -d= -f2 || true)"
@@ -157,7 +190,15 @@ echo "==> serving window id=${WID} (${WTITLE}) on media:${MEDIA_PORT} cursor:${C
 
 # ── 3. Start the host ──────────────────────────────────────────────────────────────────────────
 pkill -f "slopdesk-videohostd --window-id ${WID}" 2> /dev/null || true
-SLOPDESK_VIDEO_DEBUG=1 "${HOSTD}" --window-id "${WID}" --media-port "${MEDIA_PORT}" --cursor-port "${CURSOR_PORT}" > "${HOSTLOG}" 2>&1 &
+# The container is not hygiene for THIS daemon, it is damage control: `parked-windows.json` is a
+# crash journal it READS at launch (AX-moving the windows it names back off a dead virtual display)
+# and UNLINKS the moment its own parked set goes empty. Pointed at the real one, an automation run
+# would restore — then destroy — the record belonging to the developer's own videohostd.
+SLOPDESK_VIDEO_DEBUG=1 SLOPDESK_APP_SUPPORT_DIR="${DAEMON_STATE}" \
+  SLOPDESK_SCROLLBACK_DIR="${DAEMON_STATE}/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${DAEMON_STATE}/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${DAEMON_STATE}" \
+  "${HOSTD}" --window-id "${WID}" --media-port "${MEDIA_PORT}" --cursor-port "${CURSOR_PORT}" > "${HOSTLOG}" 2>&1 &
 HOSTD_PID=$!
 sleep 1
 if ! kill -0 "${HOSTD_PID}" 2> /dev/null; then
@@ -194,7 +235,10 @@ if [[ -z "${HOSTD_WORKSPACE}" ]]; then
   echo "==> FAIL: SLOPDESK_WORKSPACE_STATE_DIR would be empty — refusing to launch hostd" >&2
   exit 1
 fi
-HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+HOME="${HOSTD_HOME}" SLOPDESK_APP_SUPPORT_DIR="${DAEMON_STATE}" \
+  SLOPDESK_SCROLLBACK_DIR="${DAEMON_STATE}/scrollback" \
+  SLOPDESK_FILE_DROP_DIR="${DAEMON_STATE}/drop" \
+  SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
   "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
   --port "${CONNECT_PORT}" --shell /bin/sh > "${TERMLOG}" 2>&1 &
 TERMD_PID=$!
@@ -221,12 +265,22 @@ echo "==> hostd up (pid ${TERMD_PID})"
 # UNCONDITIONALLY in the App's `init()`, and it writes the `video-prefs.json` sidecar that
 # `slopdesk-hostd` folds into `EnvConfig.overlay` at ITS launch. Without the redirect this gate
 # rewrites a file that changes how the developer's own daemon comes up next time.
+# `SLOPDESK_DEFAULTS_SUITE` is the half `CFFIXED_USER_HOME` cannot reach: cfprefsd resolves the real
+# home whatever the environment says, so the app's `UserDefaults` needs its own throwaway suite or
+# this run's connect lands in the developer's recent-hosts MRU.
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 CLIENT_HOME="${WORK}/client-home"
 rm -rf "${CLIENT_HOME}"
 mkdir -p "${CLIENT_HOME}"
+# An empty defaults domain is a FRESH INSTALL. The video autoconnect env makes
+# `hasAutomationEnvironment()` true, so `FirstLaunchModel.shouldPresent` is false here whatever the
+# flag says — seeded anyway, so no gate's screenshot depends on which env var happens to suppress the
+# welcome sheet today. The delete first, in case a killed run left the suite behind.
+remove_defaults_suite
+defaults write "${DEFAULTS_SUITE}" firstLaunch.completed -bool YES
 CLIENTLOG="${WORK}/client.log"
 CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" \
+  SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
   SLOPDESK_VIDEO_DEBUG=1 \
   SLOPDESK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
   SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT="${MEDIA_PORT}" \
