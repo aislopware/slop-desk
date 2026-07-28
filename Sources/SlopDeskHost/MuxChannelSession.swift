@@ -130,6 +130,18 @@ final class MuxChannelSession: @unchecked Sendable {
         /// set, so no member's tail can be dropped by another member's progress.
         var lastAckedSeq: Int64 = 0
 
+        /// The highest seq this member's OUTBOX SENDER has handed to the wire (or died trying).
+        ///
+        /// Distinct from ``lastAckedSeq`` — which is the peer's confirmation, an RTT later — because
+        /// the producer bound is about what the HOST is still holding, not about what the client has
+        /// rendered. The MAX across the set is the fastest member's delivery frontier, and
+        /// ``MuxChannelSession/fanoutBacklog()`` turns it into the pause signal that replaces the
+        /// out-FIFO's accounting once the drain stops sending inline.
+        ///
+        /// Meaningful only while ``dataSendTask`` exists: an inline-delivered member has no outbox
+        /// and never advances this.
+        var lastSentSeq: Int64 = 0
+
         init(
             id: MuxSubscriberID,
             channelClass: MuxChannelClass,
@@ -3562,11 +3574,10 @@ final class MuxChannelSession: @unchecked Sendable {
         subscribersLock.unlock()
         replayLock.lock()
         replay.ack(upTo: floor)
+        replayLock.unlock()
         // An ack releases retained entries → retained bytes drop → the replay-pause may clear, resuming
         // the read loop (if the bounded queue is also below bound). This is the drain side of the cap.
-        let shouldPause = replay.shouldPauseDrain
-        replayLock.unlock()
-        outputGate?.setReplayPause(shouldPause)
+        applyBackpressureSourcesLocked()
         backpressureApplyLock.unlock()
         // A HEALTHY member's ack is the other half of the laggard check: it recomputes the min, so
         // it is the moment the gap between fastest and slowest is freshest.
@@ -3597,11 +3608,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// applyLock → gate; nothing takes either in the reverse direction.
     private func updateReplayBackpressure() {
         backpressureApplyLock.lock()
+        applyBackpressureSourcesLocked()
+        backpressureApplyLock.unlock()
+    }
+
+    /// Reads BOTH derived pause sources fresh and applies them to the gate. Caller holds
+    /// `backpressureApplyLock` — that is what makes the [read fresh truth → apply] pair atomic
+    /// against every other producer of these signals (see ``updateReplayBackpressure()``).
+    ///
+    /// The gate OR-composes them under its own lock, so the order of the two calls is immaterial;
+    /// what matters is that neither is ever computed in one critical section and applied in another.
+    private func applyBackpressureSourcesLocked() {
         replayLock.lock()
         let shouldPause = replay.shouldPauseDrain
         replayLock.unlock()
         outputGate?.setReplayPause(shouldPause)
-        backpressureApplyLock.unlock()
+        outputGate?.setFanoutBacklog(fanoutBacklog())
     }
 
     // MARK: - Exit ordering: EOF latch
@@ -4052,8 +4074,20 @@ extension MuxChannelSession {
     /// is the whole point: a stalled reader delays nobody else's frames and the session drain stays
     /// free to keep sequencing (and to keep noticing that this member has fallen too far behind).
     private func startDataSender(for sub: Subscriber) {
+        // Read BEFORE `subscribersLock` — it is this file's innermost lock and never nests outward.
+        let head = replayHighestSeqLocked()
         subscribersLock.lock()
         let alreadyRunning = sub.dataSendTask != nil || sub.retired
+        // The transition from inline delivery to an outbox seeds the member's frontier at the HEAD:
+        // everything through it has already reached this member — inline, for an incumbent the drain
+        // was sending to directly; in the state transfer, for a joiner. A zero here would read as
+        // "has shipped nothing", and every join would pause the read loop until the incumbent's
+        // sender re-shipped a history it had already delivered.
+        //
+        // A joiner's seed also claims whatever the drain fanned into its outbox WHILE its snapshot
+        // was on the wire. That optimism is bounded and self-correcting: the next capacity's worth
+        // of frames re-derives the true backlog, so it costs one gate bound once, at join.
+        if !alreadyRunning { sub.lastSentSeq = head }
         subscribersLock.unlock()
         guard !alreadyRunning else { return }
         let (wakeups, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -4069,6 +4103,7 @@ extension MuxChannelSession {
                 while let batch = self?.takeDataBatch(for: sub) {
                     for message in batch {
                         try? await data.send(message)
+                        if case let .output(seq, _) = message { self?.noteSent(seq, by: sub) }
                         if case .exit = message { self?.markExitDelivered(sub) }
                     }
                 }
@@ -4114,6 +4149,44 @@ extension MuxChannelSession {
         subscribersLock.lock()
         sub.exitDelivered = true
         subscribersLock.unlock()
+    }
+
+    /// Records that `sub`'s outbox sender put `seq` on the wire (or died trying — a failed send
+    /// still retires the member, and a frontier frozen by a dead channel would pin the producer),
+    /// then recomputes the producer bound.
+    ///
+    /// Per MESSAGE, not per batch: once the fan-out backlog has paused the read loop there is no
+    /// producer left to recompute anything, so a sender's own progress is the ONLY thing that can
+    /// resume it. Batch-granular updates would leave the pane paused waiting for the very PTY byte
+    /// the pause is preventing.
+    private func noteSent(_ seq: Int64, by sub: Subscriber) {
+        subscribersLock.lock()
+        if seq > sub.lastSentSeq { sub.lastSentSeq = seq }
+        subscribersLock.unlock()
+        updateReplayBackpressure()
+    }
+
+    /// Bytes sequenced that not even the FASTEST member has handed to the wire — the producer bound
+    /// for a drain that no longer sends inline.
+    ///
+    /// `0` unless somebody is delivered from an OUTBOX: a pane on the inline path is already bounded
+    /// by the out-FIFO's own accounting (the drain parks IN the send, so the bytes stay `outstanding`),
+    /// and an EMPTY set is the detached budget's business, not this source's. That is what keeps the
+    /// `SLOPDESK_PANE_FANOUT`-off path and the whole detach/reattach sequence byte-identical.
+    ///
+    /// The frontier is a MAX, which is the entire difference between this and "the slowest member":
+    /// one parked phone can never assert the pause while a Studio is still consuming. Its cost is
+    /// bounded by ``subscriberLagBytes`` eviction instead.
+    private func fanoutBacklog() -> Int {
+        subscribersLock.lock()
+        let frontier = subscribers.values
+            .compactMap { $0.dataSendTask == nil ? nil : $0.lastSentSeq }
+            .max()
+        subscribersLock.unlock()
+        guard let frontier else { return 0 }
+        replayLock.lock()
+        defer { replayLock.unlock() }
+        return replay.retainedBytes(above: frontier)
     }
 
     /// Sizes the bounded output queue for the CURRENT population.
@@ -4405,6 +4478,10 @@ extension MuxChannelSession {
 
     /// Recomputes the retention floor over the CURRENT set and releases the ReplayBuffer to it.
     /// Called when membership changes (a departure can only ever RAISE the floor).
+    ///
+    /// The gate is re-applied UNCONDITIONALLY, floor or no floor: a departure also changes the
+    /// fan-out frontier, and the member that just left may have been the fastest one holding the
+    /// producer open — or the last one, whose exit must clear the source entirely.
     private func releaseRetentionToMinimum() {
         backpressureApplyLock.lock()
         subscribersLock.lock()
@@ -4413,10 +4490,9 @@ extension MuxChannelSession {
         if let floor {
             replayLock.lock()
             replay.ack(upTo: floor)
-            let shouldPause = replay.shouldPauseDrain
             replayLock.unlock()
-            outputGate?.setReplayPause(shouldPause)
         }
+        applyBackpressureSourcesLocked()
         backpressureApplyLock.unlock()
     }
 }

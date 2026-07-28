@@ -168,6 +168,52 @@ final class PausableQueueGateTests: XCTestCase {
         XCTAssertEqual(gate.outstanding, 0)
     }
 
+    /// The FAN-OUT source pauses the loop independent of the other two: under fan-out the drain
+    /// dequeues the instant it hands a frame to the member outboxes, so `outstanding` sits near zero
+    /// and only "bytes the fastest member has not shipped" can bound the producer.
+    func testFanoutBacklogSourceAlonePausesAndResumes() {
+        let rec = PauseRecorder()
+        let gate = PausableQueueGate(capacity: 1000) { rec.apply($0) }
+        gate.enqueue(10)
+        gate.dequeue(10) // the fan-out drain's shape: enqueued and immediately accounted as sent
+        XCTAssertFalse(rec.isPaused)
+        gate.setFanoutBacklog(1000) // nobody has shipped a capacity's worth
+        XCTAssertTrue(rec.isPaused, "the fan-out source pauses the read loop independent of the queue")
+        gate.setFanoutBacklog(999)
+        XCTAssertFalse(rec.isPaused, "the fastest member shipped back under the bound → resume")
+        gate.setFanoutBacklog(-5)
+        XCTAssertFalse(rec.isPaused, "a negative backlog clamps to zero rather than wrapping the compare")
+    }
+
+    /// Three-way OR: the loop resumes only when EVERY source clears, and the fan-out source holds it
+    /// paused on its own after the other two have.
+    func testFanoutBacklogKeepsLoopPausedAfterTheOtherSourcesClear() {
+        let rec = PauseRecorder()
+        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
+        gate.enqueue(120)
+        gate.setReplayPause(true)
+        gate.setFanoutBacklog(150)
+        XCTAssertTrue(rec.isPaused)
+        gate.dequeue(120)
+        gate.setReplayPause(false)
+        XCTAssertTrue(rec.isPaused, "queue and replay cleared but nobody has shipped → remain paused")
+        gate.setFanoutBacklog(0)
+        XCTAssertFalse(rec.isPaused, "all three sources clear → resume")
+    }
+
+    /// The re-size applies to the fan-out source from the SAME constant: `detach()` raising the bound
+    /// to the "output while away" budget must release a fan-out pause exactly as it releases a queue one.
+    func testSetCapacityAppliesToTheFanoutSourceToo() {
+        let rec = PauseRecorder()
+        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
+        gate.setFanoutBacklog(150)
+        XCTAssertTrue(rec.isPaused)
+        gate.setCapacity(200)
+        XCTAssertFalse(rec.isPaused, "raising the bound above the backlog resumes")
+        gate.setCapacity(100)
+        XCTAssertTrue(rec.isPaused, "shrinking it back under the backlog re-pauses")
+    }
+
     /// Symmetric: replay clears first but the queue is still full → stay paused until the queue drains.
     func testQueueKeepsLoopPausedAfterReplayClears() {
         let rec = PauseRecorder()

@@ -30,9 +30,23 @@ final class PausableQueueGate: @unchecked Sendable {
     /// gate (deep-hunt R5 rank 2). The bounded queue (``policy``) bounds enqueued-not-yet-SENT bytes;
     /// the replay buffer bounds SENT-but-not-yet-ACKED retained bytes — a wire-consuming-but-not-acking
     /// client grows the latter unbounded while the former stays empty. The read loop must PAUSE if
-    /// EITHER source asserts, and RESUME only when BOTH clear. The two are OR-composed here under the
-    /// SAME lock so they can never fight (a lost-wakeup like FIX #3, but across the two sources).
+    /// ANY source asserts, and RESUME only when ALL clear. They are OR-composed here under the SAME
+    /// lock so they can never fight (a lost-wakeup like FIX #3, but across sources).
     private var replayPause = false
+    /// THIRD, independent pause source: bytes sequenced that not even the FASTEST subscriber has put
+    /// on the wire yet (docs/45 §8.6).
+    ///
+    /// ``policy`` bounds enqueued-not-yet-sent bytes for a drain that sends INLINE. Once a pane fans
+    /// out, the drain hands each frame to per-member outboxes and dequeues immediately — it must, or
+    /// one parked member would give every other head-of-line — so `policy.outstanding` returns to
+    /// zero on every frame and that source can never assert again, for the whole life of the pane.
+    /// This restores the same bound from the other end: `outstanding` is measured as "bytes nobody
+    /// has shipped", so ONE laggard never pauses the loop (the fast member's frontier keeps it
+    /// clear, and ``MuxChannelSession/subscriberLagBytes`` deals with the laggard) while a pane
+    /// whose only remaining member has stopped consuming backpressures the shell exactly as the
+    /// inline path always did. Compared against ``BoundedQueuePolicy/capacity`` so the attached ↔
+    /// detached re-size applies to both sources from ONE constant.
+    private var fanoutBacklog = 0
     /// The last value handed to ``setPaused``; the action fires only on a CHANGE, so neither source can
     /// spuriously resume the loop while the other still wants it paused. Starts `false` (loop runs).
     private var applied = false
@@ -45,11 +59,12 @@ final class PausableQueueGate: @unchecked Sendable {
         self.setPaused = setPaused
     }
 
-    /// Recomputes the combined pause state (`queue full` OR `replay over cap`) and applies it iff it
-    /// changed. MUST be called with `lock` held — the apply runs under the lock by design (FIX #3), so
-    /// the pause state is always a consistent function of BOTH sources' current accounting.
+    /// Recomputes the combined pause state (`queue full` OR `replay over cap` OR `nobody has shipped a
+    /// capacity's worth`) and applies it iff it changed. MUST be called with `lock` held — the apply
+    /// runs under the lock by design (FIX #3), so the pause state is always a consistent function of
+    /// EVERY source's current accounting.
     private func applyLocked() {
-        let want = policy.isFull || replayPause
+        let want = policy.isFull || replayPause || fanoutBacklog >= policy.capacity
         if want != applied { applied = want
             setPaused(want)
         }
@@ -79,6 +94,16 @@ final class PausableQueueGate: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         replayPause = pause
+        applyLocked()
+    }
+
+    /// Sets the FAN-OUT pause source: bytes sequenced that the fastest member has not shipped. `0`
+    /// (an inline drain, or an empty subscriber set) makes this source inert, so a pane that never
+    /// fanned out is accounted exactly as it always was.
+    func setFanoutBacklog(_ bytes: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        fanoutBacklog = max(0, bytes)
         applyLocked()
     }
 

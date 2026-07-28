@@ -3174,7 +3174,7 @@ the bytes were EMITTED for — persist it beside the journal and render the rest
 - ✅ **Conflict rule, one sentence:** *the last write to a given `(kindTag, objectID, field)` key wins, ordered by arrival at the single `HostWorkspaceDocument` actor* — no merge, no timestamps, no vector clocks. Figma's model. Anti-flicker: while a local change is unacknowledged, conflicting server values are held back rather than applied-then-corrected.
 - ✅ **State plane vs byte plane:** data arriving on a pane channel the state plane has already retired is **DROPPED** — not applied, not an error. A pane surface is torn down only after its own `channelClose`, never on a state-plane edge alone. The untrusted-input idiom applied to our own host.
 - ✅ **Hard sequencing gate before fan-out:** `closePane`/`closeTab` reap **unconditionally** and `channelClose` **every** subscriber; only `detach` is refcounted. A refcount-aware close would leave a shell running with no UI anywhere and no document entry.
-- ✅ **`SLOPDESK_SUB_LAG_BYTES` (default 32 MiB) evicts a laggard rather than letting it stall the pane**, deliberately below the real 64 MiB offline gate; `ReplayBuffer` retention releases at `min(lastAckedSeq)`; **the PTY drain pauses only when the LAST subscriber is gone**, preserving today's detached-budget behaviour exactly. Eviction is affordable precisely because the 2026-07-25 snapshot-replay work made a cold reattach cost one screen, not a history.
+- ✅ **`SLOPDESK_SUB_LAG_BYTES` (default 32 MiB) evicts a laggard rather than letting it stall the pane**, deliberately below the real 64 MiB offline gate; `ReplayBuffer` retention releases at `min(lastAckedSeq)`; **the PTY drain pauses only when the LAST subscriber is gone**, preserving today's detached-budget behaviour exactly. Eviction is affordable precisely because the 2026-07-25 snapshot-replay work made a cold reattach cost one screen, not a history. **Amended 2026-07-28** ("The fan-out laggard soak", below): the drain also pauses when the FASTEST member stops consuming — "the last subscriber is gone" is not the same statement as "nobody is consuming", and a pane that shrank back to one member had no producer bound at all.
 
 ### 6. Doc corrections made in this pass
 
@@ -4011,3 +4011,78 @@ the gate reset only `SLOPDESK_WORKSPACE_STATE_DIR`. With the fixture pinning the
 inherited run N's transcripts and phase A's "cold launch against a pristine host" replayed bytes from
 a session it never had. That is the one input that differed between two otherwise identical runs, and
 one of them went red. Wiping it is the gate keeping the promise its own comment already made.
+
+## The fan-out laggard soak: the producer bound does not survive a shrink (2026-07-28)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §8.6, §10 open question 2.
+`SLOPDESK_SUB_LAG_BYTES` and `min(lastAckedSeq)` retention shipped with the fan-out but had never
+been watched under a real slow subscriber. `scripts/soak-fanout-laggard.sh` is that soak: a real
+`slopdesk-hostd`, real `slopdesk-client`s, a real PTY, and a laggard frozen with `SIGSTOP` — which
+stops it reading its socket and acking in the same instant, the way a backgrounded phone stops.
+
+### 1. What the soak confirmed, with numbers
+
+At the shipped `SLOPDESK_SUB_LAG_BYTES = 32 MiB`: retention held **8.4 MB / 113,359 lines** for the
+frozen laggard and it received every one of them, in order, exactly once, on resume. The fast member
+took **134.2 MB / 1,813,753 lines** — contiguous, no duplicates — *while* the laggard was frozen, so
+neither the drain nor the read loop is serialised behind a parked member. Eviction fired on the
+laggard and only the laggard (`pane subscriber 1: evicted`), the shell survived it, and the evicted
+client reconnected to a rendered screen. Every property docs/45 §8.6 claims, on the shipped binaries.
+
+**What it cannot settle is the CONSTANT.** On loopback the entire 134 MB moves in ~20 s, so 32 MiB of
+lag accumulates far faster than any human-scale "my phone was asleep" interval. 32 MiB remains an
+unvalidated first guess pending a cellular link; the soak validates the machinery around it.
+
+### 2. What it broke: "the last subscriber is gone" ≠ "nobody is consuming"
+
+The producer bound is `PausableQueueGate`, and it counts **enqueued-not-yet-sent** bytes. On the
+inline path that is exact: the drain parks *inside* `MuxSubChannel.send`, the out-FIFO fills to
+`hostQueueCapacityBytes` (64 KiB), the read loop stops, and the kernel PTY buffer backpressures the
+shell. Under fan-out the drain must hand each frame to per-member outboxes and dequeue immediately —
+a serial `for sub in subscribers { await sub.data.send(…) }` would give every member head-of-line
+over every other — so `outstanding` returns to zero on every frame and **that source can never assert
+again, for the rest of the pane's life**. `fanoutActive` is cleared only by `rebindRelay`, which runs
+off a set that has EMPTIED; a pane that shrinks from two members to one while LIVE keeps the fan-out
+shape forever. And eviction cannot cover the gap, because it never takes a pane to zero members.
+
+Measured as an A/B inside one hostd — a control pane that never fanned out, a test pane that fanned
+out and then lost its second client, both frozen at the same instant, both asked for 44.4 MB: the
+control's shell blocked after 64 KiB and was **still blocked minutes later**, while the test pane
+delivered **44,400,067 bytes** into host RAM with nobody reading. Same process, same shell, same
+generator. Two clients ago is enough to lose the bound permanently, and the laggard eviction this
+work exists for is one of the ways a pane gets there.
+
+### 3. The bound is re-derived from the FASTEST member, not restored by un-latching the flag
+
+Flipping `fanoutActive` back on a live shrink is the obvious fix and it is wrong: the surviving
+member's outbox sender may be mid-batch, so the drain resuming inline sends would interleave with it
+and deliver frames out of order. Quiescing the sender first is worse — it is parked on a credit
+window, and cancelling it drops the batch, which is byte loss.
+
+So the gate gains a THIRD pause source, OR-composed with the other two under its one lock: bytes
+sequenced that not even the fastest member has put on the wire, `retainedBytes(above:
+max(lastSentSeq))`, against the same `BoundedQueuePolicy.capacity` so the attached ↔ detached re-size
+still comes from one constant. The frontier is a **MAX**, which is the whole difference between this
+and "the slowest member": one parked phone can never assert the pause while a Studio is still
+draining — that member's cost stays `SLOPDESK_SUB_LAG_BYTES`'s problem. A pane nobody is draining
+pauses exactly where the inline path always did.
+
+`lastSentSeq` is advanced per MESSAGE, not per batch, and that is load-bearing: once this source has
+paused the read loop there is no producer left to recompute anything, so a sender's own progress is
+the only thing that can resume it. Batch granularity would leave the pane waiting for the very PTY
+byte the pause is preventing.
+
+### 4. Inert wherever it must be
+
+The source keys on a member having an outbox SENDER, not on a flag or a member count. Nothing calls
+`startDataSender` outside the two fan-out paths, so with `SLOPDESK_PANE_FANOUT` unset the frontier is
+empty, the backlog is 0, and the shipping default is byte-identical. `rebindRelay` builds its
+returning member without a sender, so the whole detach/reattach sequence — including a cold reattach
+still pushing a 64 MiB detached backlog — is untouched. `detach()` empties the set and already
+recomputes, so the detached "output while away" budget is not clipped by a stale frontier.
+
+The transition from inline delivery to an outbox seeds the member's frontier at the HEAD: everything
+through it has already reached that member, and a zero would read as "has shipped nothing" and pause
+the read loop on every join. A joiner's seed also claims what the drain fanned into its outbox while
+its snapshot was on the wire; that optimism is bounded by one gate capacity and self-corrects on the
+next frames, which is cheaper than threading an exact watermark through the join.

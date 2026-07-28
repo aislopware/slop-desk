@@ -1211,7 +1211,15 @@ inside the existing render diff.
     With N subscribers, eviction **replaces** buffering for the laggard; the gate's pause-the-PTY
     semantics are reserved for the case where they still mean what they always meant.
   - **The PTY drain pauses only when the LAST subscriber is gone** — preserving today's
-    detached-budget behaviour exactly.
+    detached-budget behaviour exactly. **Amended by the soak** (`scripts/soak-fanout-laggard.sh`):
+    "the last subscriber is gone" is not the same statement as "nobody is consuming". A pane that
+    fanned out keeps delivering from per-member outboxes for the rest of its life — including after
+    it shrinks back to ONE member — so `PausableQueueGate`'s enqueued-not-yet-sent accounting, which
+    the fan-out drain releases at hand-off, can never assert again, and eviction cannot fire either
+    (it never takes a pane to zero members). The producer bound is therefore re-derived from the
+    **FASTEST member's delivery frontier**: `retainedBytes(above: max(lastSentSeq))` at the same
+    `hostQueueCapacityBytes`. One laggard still never pauses the loop; a pane nobody is draining
+    does, exactly as the inline path always did.
   - An evicted client reconnects cold and gets `composeSnapshotReplay`'s render-once state transfer.
     **This is precisely why the 2026-07-25 PATH-B work makes multi-attach affordable: eviction costs
     one screen, not a history.**
@@ -1645,6 +1653,14 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
    default-ON client against a default-OFF host is answered `.refused`, holds `topology == nil`, and
    renders a blank window with no error.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
+   **The MECHANISM is now soaked** (`scripts/soak-fanout-laggard.sh`, real `slopdesk-hostd` + two
+   `slopdesk-client`s, the laggard frozen with `SIGSTOP` so it stops reading AND stops acking in the
+   same instant). At the shipped 32 MiB: retention held 8.4 MB for the laggard and it received every
+   line exactly once on resume; the fast member took 134.2 MB, contiguous and duplicate-free, while
+   the laggard was frozen; eviction fired on the laggard and only the laggard, and the shell
+   survived it. What that CANNOT settle is the constant — on loopback the whole 134 MB moves in
+   ~20 s, so the threshold is crossed long before any human-scale "my phone was asleep" interval.
+   32 MiB stands as an unvalidated guess pending a real cellular link.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.
 4. ~~Does anything read `followSessionFocus`?~~ **SETTLED** (DECISIONS, Multi-client Phase 5b — "the

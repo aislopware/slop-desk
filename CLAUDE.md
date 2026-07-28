@@ -30,6 +30,7 @@ Clean checkout builds with no prerequisite (no Rust/FFI). Headless `swift build`
 | `bash scripts/herdr-sync.sh` | After `SlopDeskAgentDetect` engine/manifest changes, or to sync herdr upstream — builds the REAL herdr binary and diffs both engines on ~10k screens (`scripts/herdr-differential.py`); pin = `scripts/herdr.pin` |
 | `scripts/check-macos.sh`, `check-video.sh` | GUI proof; needs unlocked Aqua + Screen Recording TCC (not over SSH) |
 | `scripts/check-multiclient.sh` | After workspace-document / intent / projection changes — TWO app instances on one hostd, a real menu gesture on one, `slopdesk --socket` reads the OTHER's projection. Also needs **Accessibility** TCC (it drives a menu). `SLOPDESK_PANE_FANOUT=1` adds the fan-out assertion |
+| `bash scripts/soak-fanout-laggard.sh` | After fan-out / subscriber-set / out-FIFO / queue-gate / ReplayBuffer-retention changes — real hostd + clients + PTY, laggard frozen with `SIGSTOP`. Asserts retention loses nothing, eviction takes the LAGGARD not the session, the fast member is never head-of-lined, and a pane that shrank back to one member still backpressures the PTY. ~80 s, no GUI/TCC. `SLOPDESK_SUB_LAG_BYTES` picks the threshold (default 4 MiB for speed; set `33554432` to soak the shipped one) |
 
 **CI:** lint jobs gate merges. Hosted runners lack Xcode 26.5 → `swift build`/`swift test`/golden are **not** enforced on CI — run `make check` locally.
 
