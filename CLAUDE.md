@@ -26,7 +26,9 @@ Clean checkout builds with no prerequisite (no Rust/FFI). Headless `swift build`
 | Extra | When |
 |-------|------|
 | `.build/release/slopdesk-loopback-validate` (`--smoke` / `--frames N`) | After FEC / packetizer / reassembler changes — real VT encode→decode, no GUI |
-| `bash scripts/check-ios.sh` | After `#if os(iOS)` / UIKit changes (`swift build` skips iOS) |
+| `bash scripts/check-ios.sh` | After `#if os(iOS)` / UIKit changes — TYPE-CHECKS the iOS slice (`swift build` skips iOS). Runs **zero** tests |
+| `bash scripts/check-ios-tests.sh` | The ONLY thing that EXECUTES an iOS test — `Apps/ClientApp-iOS/Tests` as a host-less bundle in a booted simulator, on the iOS triple. `swift test` compiles the **macOS** side of every `#if os(iOS)` fork, so an iOS default asserted there is asserted about the wrong branch. Run it after touching anything forked on platform |
+| `bash scripts/check-launch-restore.sh` | The ONLY gate that reaches the SHIPPING launch path — restore `workspace.json` → offer it → `connectIfSavedTarget()`. Every other GUI gate sets `SLOPDESK_AUTOCONNECT_*`, so `hasAutomationEnvironment()` is true and the app takes the automation branch instead (persistence nil, the layout replaced by one synthetic pane). Run it after `WorkspaceStore` restore / autosave, `connectIfSavedTarget()`, or `runArmedLaunchAdoptIfPossible` changes |
 | `bash scripts/herdr-sync.sh` | After `SlopDeskAgentDetect` engine/manifest changes, or to sync herdr upstream — builds the REAL herdr binary and diffs both engines on ~10k screens (`scripts/herdr-differential.py`); pin = `scripts/herdr.pin` |
 | `scripts/check-macos.sh`, `check-video.sh` | GUI proof; needs unlocked Aqua + Screen Recording TCC (not over SSH) |
 | `scripts/check-multiclient.sh` | After workspace-document / intent / projection changes — TWO app instances on one hostd, a real menu gesture on one, `slopdesk --socket` reads the OTHER's projection. Also needs **Accessibility** TCC (it drives a menu). `SLOPDESK_PANE_FANOUT=1` adds the fan-out assertion |

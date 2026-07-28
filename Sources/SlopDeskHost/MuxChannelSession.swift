@@ -786,6 +786,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// construction the newest state. OUTERMOST — taken only by `applyResolvedGrid`, always before
     /// `resizeLock`, so the order is one-directional and cannot invert.
     private let resizeWriteLock = NSLock()
+    /// Regression seam: a stall the writer runs INSIDE `resizeWriteLock`, between resolving the grid
+    /// and reading the live `TIOCGWINSZ`.
+    ///
+    /// `nil` outside `MuxChannelSessionResizeFoldTests`, where it is what makes the total order
+    /// OBSERVABLE. Park one applier here and a second one either waits for the lock — and therefore
+    /// resolves AFTER this write — or walks past it and has its newer resolution overwritten when
+    /// this one resumes. Without the stall the interleaving belongs to the scheduler, and a green run
+    /// says only that the machine happened to resume two threads in the order the state wanted.
+    var resizeApplyStallForTesting: (@Sendable () -> Void)?
     /// Every subscriber's standing offer. The fold's input, and the ONLY input: presence is
     /// 100 ms-throttled, per-connection, newest-clock-wins NETWORK state, and folding it would let a
     /// WireGuard flap reflow a terminal.
@@ -2406,6 +2415,7 @@ final class MuxChannelSession: @unchecked Sendable {
         }
         resolvedGrid = grid
         resizeLock.unlock()
+        resizeApplyStallForTesting?()
 
         if let live = pty.currentWindowSizeWithPixels(),
            live.cols == grid.cols, live.rows == grid.rows,

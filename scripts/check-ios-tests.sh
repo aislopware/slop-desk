@@ -127,16 +127,49 @@ set +e
 xcrun simctl spawn "${UDID}" "${XCTEST_AGENT}" -XCTest All "${BUNDLE}" > "${OUT}" 2>&1
 STATUS=$?
 set -e
-# The agent's own exit code is the primary verdict; the summary line is a second, independent one.
-# A bundle that fails to LOAD exits non-zero having run nothing, which "0 failures" would not catch.
 grep -vE 'Install Started|Authorization is required to install' "${OUT}" || true
+# The agent's own exit code is the primary verdict. A bundle that fails to LOAD exits non-zero having
+# run nothing, which "0 failures" would not catch.
 if [[ "${STATUS}" != "0" ]]; then
   echo "==> FAIL: xctest exited ${STATUS}" >&2
   exit 1
 fi
+
+# ── 4. …and it ran the tests that are IN the bundle ─────────────────────────────────────────
+# The COUNT is the verdict, not the summary line. XCTest prints
+#
+#     Test Suite 'All tests' passed
+#      Executed 0 tests, with 0 failures
+#
+# for an EMPTY bundle and exits 0, so "the summary says passed" is satisfied by a run that asserted
+# nothing at all — the reading a gate must never accept. Empty `Apps/ClientApp-iOS/Tests/` (a refactor
+# that keeps the directory so xcodegen still resolves the target) and every other check here stays
+# green while the whole iOS platform-fork slice — `platformDefaultFollowSessionFocus`,
+# `WorkspaceClientKind.thisPlatform`, the letterbox geometry — goes unasserted.
+#
+# So the number the agent reports is compared against the number of `func test…` the committed sources
+# declare. Derived rather than hardcoded, because a hardcoded number is a second thing to keep in step
+# and the day it drifted this gate would fail on an honest new test.
+DECLARED="$(grep -rhoE '(^|[[:space:]])func test[A-Za-z0-9_]*\(' "${REPO_ROOT}/Apps/ClientApp-iOS/Tests" |
+  grep -c . || true)"
+if [[ "${DECLARED}" == "0" ]]; then
+  echo "==> FAIL: Apps/ClientApp-iOS/Tests declares no tests — this gate would assert nothing" >&2
+  exit 1
+fi
+# The LAST summary is the whole-run one ('All tests'); per-suite lines print the same shape above it.
+EXECUTED="$(grep -oE 'Executed [0-9]+ tests?,' "${OUT}" | tail -1 | grep -oE '[0-9]+' || true)"
+if [[ -z "${EXECUTED}" ]]; then
+  echo "==> FAIL: xctest printed no 'Executed N tests' summary — it failed to load the bundle" >&2
+  exit 1
+fi
+if [[ "${EXECUTED}" != "${DECLARED}" ]]; then
+  echo "==> FAIL: Apps/ClientApp-iOS/Tests declares ${DECLARED} test(s), but the simulator executed" >&2
+  echo "    ${EXECUTED}. A test that does not RUN on the iOS triple is a fork branch nobody asserts." >&2
+  exit 1
+fi
 if ! grep -q "Test Suite 'All tests' passed" "${OUT}"; then
-  echo "==> FAIL: no passing 'All tests' summary — the bundle ran nothing, or failed to load" >&2
+  echo "==> FAIL: the '${EXECUTED} tests' run did not end in a passing 'All tests' summary" >&2
   exit 1
 fi
 
-echo "==> iOS tests OK"
+echo "==> iOS tests OK — ${EXECUTED} of ${DECLARED} declared tests ran on the iOS-Simulator triple"

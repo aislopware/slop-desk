@@ -3913,6 +3913,13 @@ count legitimately includes B's refused launch pane and the pane a closed tab to
 reaped. Counting log lines would pin a number that has no invariant behind it; counting the daemon's
 children names the actual failure, which is a PTY nobody's layout claims.
 
+It is REACHED then HELD, not read once. A single read the instant `converge` returns goes red on a
+correct system under `SLOPDESK_PANE_FANOUT=1`: the transient PTY in §8 below is still alive at that
+moment, because `converge` returns when the DOCUMENT DIFF lands and the reap waits on B's leaf
+unmounting behind it. Waiting cannot hide the failure the census exists to catch — a leak is
+permanent, so the deadline expires and the same message prints — and the hold that follows is what
+stops a late re-dial slipping in behind the assertion.
+
 ### 7. Fan-out is asserted POSITIVELY, per pane
 
 With `SLOPDESK_PANE_FANOUT=1`, "no `attachedElsewhere` refusals" is satisfied by a second client that

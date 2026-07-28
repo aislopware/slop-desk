@@ -363,15 +363,38 @@ converge "after A closes that tab" 1 2
 # pane B minted at launch and the pane the closed tab took with it, both of which were reaped — a
 # leak is a shell that is still THERE. hostd forks nothing but PTYs, so its child set IS the shell
 # set; if that ever stops being true this goes red and somebody looks.
+#
+# REACHED, then HELD — never a single read the instant `converge` returns. With
+# `SLOPDESK_PANE_FANOUT=1` the close that just happened leaves a TRANSIENT extra PTY: client B's leaf
+# re-dials the dying pane in the window between the host's `channelClose` and the document diff that
+# removes it, and a pane channel naming a session the host no longer has is a SPAWN (docs/DECISIONS.md
+# — "One thing hardware said that no test had"). `converge` returns when the DIFF lands, which is
+# before B's leaf unmounts and the host reaps that orphan, so a single-shot read here goes red on a
+# CORRECT system. Waiting cannot hide the failure it exists to catch, because a leak is permanent:
+# the deadline expires and the same message prints. The hold afterwards is the other half — a re-dial
+# that lands late must not slip in behind the assertion.
+LIVE_SHELL_SETTLE=40 # ×0.5 s
+LIVE_SHELL_HOLD=6    # ×1 s
+live_shells() { { pgrep -P "${HOSTD_PID}" || true; } | grep -c . || true; }
 FINAL_SIG="$(signature "${SOCK_A}" 2> /dev/null || true)"
 PANE_COUNT="$(count_of pane "${FINAL_SIG}")"
-LIVE_SHELLS="$(pgrep -P "${HOSTD_PID}" 2> /dev/null | grep -c . || true)"
-if [[ "${LIVE_SHELLS}" != "${PANE_COUNT}" ]]; then
+shell_census_failed() {
   echo "--- live children of hostd ---" >&2
   pgrep -P "${HOSTD_PID}" -l >&2 || true
-  fatal "the layout has ${PANE_COUNT} pane(s) but the host is running ${LIVE_SHELLS} shell(s)"
-fi
-echo "==> ${PANE_COUNT} pane(s) in the layout, ${LIVE_SHELLS} live shell(s) on the host ✅"
+  fatal "the layout has ${PANE_COUNT} pane(s) but the host is running $(live_shells) shell(s) $1"
+}
+for _ in $(seq 1 "${LIVE_SHELL_SETTLE}"); do
+  [[ "$(live_shells)" != "${PANE_COUNT}" ]] || break
+  sleep 0.5
+done
+[[ "$(live_shells)" == "${PANE_COUNT}" ]] ||
+  shell_census_failed "and stayed there for $((LIVE_SHELL_SETTLE / 2))s — that is a leak, not a churn"
+for second in $(seq 1 "${LIVE_SHELL_HOLD}"); do
+  sleep 1
+  [[ "$(live_shells)" == "${PANE_COUNT}" ]] ||
+    shell_census_failed "${second}s after the counts matched — a pane was re-dialled behind the check"
+done
+echo "==> ${PANE_COUNT} pane(s) in the layout, ${PANE_COUNT} live shell(s) on the host, held ${LIVE_SHELL_HOLD}s ✅"
 
 # 7b. PTY fan-out — a SEPARATE claim, only when the flag asked for it.
 #

@@ -320,6 +320,73 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         )
     }
 
+    /// The geometry the PTY keeps is the one that resolved LAST — under an interleaving this test
+    /// CHOOSES rather than one the scheduler happens to pick.
+    ///
+    /// The shape is the lost `slopdesk-ctl resize` on a busy host: an `.ack` flush folds the client's
+    /// grid, and before it can write, an orchestrator overrides the pane. Parking the flush inside
+    /// the writer section (`resizeApplyStallForTesting`) holds it there with a fold that the override
+    /// then makes stale. Serialised, the override cannot even resolve until the flush is done, so it
+    /// writes last and the pane is the size the orchestrator asked for. Unserialised, the flush
+    /// resumes and lands its older fold on top, and the verb is lost with nothing to correct it.
+    ///
+    /// The load-sensitive version of this claim was `testTheCtlOverrideOutlivesAnAckAndIsRetiredByAnOffer`
+    /// going red under a saturated suite and green alone: a timing observation, not an assertion.
+    func testAParkedFlushCannotLandItsOlderFoldOverACtlResize() throws {
+        let pty = try makePTY()
+        // Both timers parked at a minute: the ONLY appliers here are the two this test starts by
+        // hand, so nothing else can write the grid the assertions read.
+        let session = makeSession(pty: pty, resizeDebounce: .seconds(60), sizeSettle: .seconds(60))
+        session.startRelay() // registers the primary contributor
+        session.scheduleResize(cols: 100, rows: 30, px: 0, py: 0)
+
+        // One-shot, and installed BEFORE either applier starts: re-assigning the seam while a writer
+        // is inside it would be a data race on the property, which is the class of bug under test.
+        // Only the FIRST applier parks — the second reaches the stall once the lock frees it, and a
+        // second park would wait on a `resume` that has already been spent.
+        let firstApplier = ParkOnce()
+        let parked = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        session.resizeApplyStallForTesting = {
+            guard firstApplier.claim() else { return }
+            parked.signal()
+            resume.wait()
+        }
+
+        let flush = expectation(description: "the flush finishes")
+        DispatchQueue.global().async {
+            session.applyResolvedGrid() // resolves 100×30 — the `.ack` flush path
+            flush.fulfill()
+        }
+        XCTAssertEqual(
+            parked.wait(timeout: .now() + 5), .success,
+            "the flush never reached the writer section",
+        )
+
+        // The orchestrator's override, on its own thread — the ctl socket's handler in production.
+        let overrideReturned = DispatchSemaphore(value: 0)
+        let ctl = expectation(description: "the ctl resize returns")
+        DispatchQueue.global().async {
+            session.resizeForControl(rows: 50, cols: 132)
+            overrideReturned.signal()
+            ctl.fulfill()
+        }
+        // Bounded, and the bound IS the mechanism: serialised, the override cannot return here at all
+        // (it is waiting on the parked writer's lock) and the absence of an event cannot be awaited.
+        // Two seconds is three orders of magnitude over the pair of ioctls it takes unserialised.
+        _ = overrideReturned.wait(timeout: .now() + 2)
+        resume.signal()
+        wait(for: [flush, ctl], timeout: 10)
+
+        let grid = pollGrid(pty, untilCols: 132, rows: 50)
+        XCTAssertEqual(grid.cols, 132, "the override resolved last, so the override is what the PTY keeps")
+        XCTAssertEqual(grid.rows, 50, "…in both dimensions: a stale fold cannot land over a newer one")
+        assertGridHolds(
+            pty, cols: 132, rows: 50, seconds: 0.3,
+            "nothing follows a lost resize to correct it, so the size has to be right when it settles",
+        )
+    }
+
     /// A pane held ONLY by size-passive clients is sized by them.
     ///
     /// "A phone must never crush a Mac" (docs/45 §8.3 rule 3) is a statement about a Mac that is
@@ -445,5 +512,24 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
             "the resolved grid re-asserts against the LIVE size, so the short row is repaired",
         )
         XCTAssertEqual(restored.cols, 120)
+    }
+}
+
+/// A latch that hands `true` to exactly one caller — the first applier to reach
+/// ``MuxChannelSession/resizeApplyStallForTesting``.
+///
+/// A `DispatchSemaphore` would be the shorter spelling and is WRONG here: one taken down to zero and
+/// never signalled back traps on deallocation ("semaphore object deallocated while in use"), and the
+/// whole point of the latch is that the token is never returned.
+private final class ParkOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
     }
 }

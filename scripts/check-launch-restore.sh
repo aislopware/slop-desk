@@ -353,6 +353,28 @@ detached_all() {
 
 projects_the_restored_layout() { [[ "$(signature 2> /dev/null || true)" == "${WANT_SIG}" ]]; }
 
+# Whether the app has REPLACED the seeded `workspace.json` with one of its own (phase A). `.atomic`
+# saves rename a fresh file into place, so a real autosave changes the inode as well as the mtime —
+# an observation that stays honest even if the fixture is one day regenerated from the app's own
+# encoder and the two files' BYTES coincide.
+autosave_replaced_the_seed() { [[ "$(file_stamp "${SEEDED_WORKSPACE}")" != "${SEEDED_STAMP}" ]]; }
+
+# Whether the autosaved layout has become HOST TRUTH (phase C). Content alone is the whole verdict
+# here, and it cannot be tautological the way phase A's is: this file was seeded with the DIVERGENT
+# ids, so naming the fixture's three and none of the divergent three is a state only the app can have
+# written. A client that shows host truth but keeps offering its refused layout from disk relaunches
+# into the same refusal for ever.
+autosaved_host_truth() {
+  local pane
+  while read -r pane; do
+    grep -qi "${pane}" "${SEEDED_WORKSPACE}" || return 1
+  done <<< "${FIXTURE_PANES}"
+  while read -r pane; do
+    if grep -qi "${pane}" "${SEEDED_WORKSPACE}"; then return 1; fi
+  done <<< "${DIVERGENT_PANES}"
+  return 0
+}
+
 # Waits for exactly one shell per restored pane, and on timeout says what the host actually DID.
 # The interesting failure here is an OVERSHOOT, not an absence: a restored pane that is torn down and
 # re-dialled gets a SECOND shell while the first is abandoned, and a bare "timed out" cannot tell that
@@ -498,6 +520,12 @@ echo "==> hostd up (pid ${HOSTD_PID}), with no workspace document of its own"
 rm -rf "${CONTAINER}"
 mkdir -p "$(dirname "${SEEDED_WORKSPACE}")"
 cp "${FIXTURE}" "${SEEDED_WORKSPACE}"
+# The stamp the app has to move. `WorkspacePersistence.save` writes `.atomic` — write-aside-then-
+# rename — so a real autosave replaces this file with a different INODE at a later mtime, whatever it
+# decides to put inside. Captured at the one moment the file's contents are known to be nobody's
+# output but this script's, and used in §4 to tell "the app rewrote it" from "nobody wrote anything".
+file_stamp() { stat -f '%i:%Fm' "$1" 2> /dev/null || echo "missing"; }
+SEEDED_STAMP="$(file_stamp "${SEEDED_WORKSPACE}")"
 echo "==> seeded the saved layout at ${SEEDED_WORKSPACE}"
 
 # The MRU entry the auto-reconnect reads, as an argument-domain `Data` (see the header). Assembled
@@ -561,12 +589,23 @@ echo "==> phase A: ${LIVE_COUNT_A} live shells for ${PANE_COUNT} panes (pids: ${
 # The layout the app AUTOSAVES has to still be the user's. A client that churned to host truth with
 # fresh ids would look identical on the wire and quietly rewrite `workspace.json` with panes the user
 # never made — the layout survives the launch, but its identity does not.
+#
+# THE OBSERVATION HAS TO MOVE FIRST. Reading the pane ids alone proves nothing here: this file was
+# `cp`'d from the fixture at §3, so it ALREADY names all three, and a build whose restore path never
+# autosaves at all (`WorkspacePersistence` nil off the automation branch, a projection-driven
+# `reconcileTree` that stops arming `scheduleSave`) leaves the byte-identical fixture on disk and
+# every grep below still matches. That build ships a client that loses every layout edit the user
+# makes, under a gate printing ✅. So the app must be shown to have REPLACED the file — a different
+# inode at a later mtime, which is what `.atomic` write-aside-then-rename produces — and only then
+# does what the file says mean anything.
+await "the client to autosave over the layout this gate seeded" 80 autosave_replaced_the_seed
+echo "==> phase A: the client REWROTE workspace.json itself (${SEEDED_STAMP} → $(file_stamp "${SEEDED_WORKSPACE}")) ✅"
 while read -r pane; do
   grep -qi "${pane}" "${SEEDED_WORKSPACE}" ||
     fatal "phase A: the autosaved layout no longer names restored pane ${pane} — the client kept the
     SHAPE but replaced the panes, so every reattach after this is a respawn"
 done <<< "${FIXTURE_PANES}"
-echo "==> phase A: the autosaved layout still names all ${PANE_COUNT} restored panes ✅"
+echo "==> phase A: the layout the client autosaved still names all ${PANE_COUNT} restored panes ✅"
 
 # ── 5. PHASE B — a relaunch against the same, now NON-pristine, host ────────────────────────────
 # The host now holds this layout as its own document, so the relaunching client's `adoptWorkspace` is
@@ -637,6 +676,13 @@ done <<< "${DIVERGENT_PANES}"
 echo "==> phase C: not one of the ${PANE_COUNT} divergent ids reached the host ✅"
 
 hold_steady "phase C" "${PANE_COUNT}"
+
+# The autosave again — and this time the CONTENT alone is the discriminator, because the file on disk
+# says the opposite of the claim. Phase C seeded it with the divergent ids; a client that autosaves
+# what it projects must have replaced every one of them with host truth. A build that never writes
+# leaves the refused layout there and offers it again on the next launch, for ever.
+await "the client to autosave host truth over the divergent layout" 80 autosaved_host_truth
+echo "==> phase C: the autosaved layout is now HOST truth — the ${PANE_COUNT} divergent ids are gone ✅"
 
 LIVE_PIDS_C="$(live_shell_pids)"
 if [[ "${LIVE_PIDS_C}" != "${LIVE_PIDS_A}" ]]; then
