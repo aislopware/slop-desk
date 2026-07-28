@@ -156,8 +156,7 @@ def screens_for_agent(fragments, rng):
     screens.append("\n\n\n")
     screens.append("x" * 1500)
     screens.append("\n".join(noise() for _ in range(300)))
-    for _ in range(8):
-        screens.append("\n".join(noise() for _ in range(rng.randint(1, 20))))
+    screens.extend("\n".join(noise() for _ in range(rng.randint(1, 20))) for _ in range(8))
     return screens
 
 
@@ -184,15 +183,18 @@ def run_case(herdr_bin, env, case_path, label):
         text=True,
         env=env,
         timeout=30,
+        check=False,
     )
     swift_raw = subprocess.run(
         [str(SWIFT_BIN), "--file", str(case_path), "--agent", label],
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     if herdr_raw.returncode != 0 or swift_raw.returncode != 0:
-        return f"nonzero exit (herdr={herdr_raw.returncode} swift={swift_raw.returncode})\n{herdr_raw.stderr}{swift_raw.stderr}"
+        codes = f"herdr={herdr_raw.returncode} swift={swift_raw.returncode}"
+        return f"nonzero exit ({codes})\n{herdr_raw.stderr}{swift_raw.stderr}"
     herdr_doc = json.loads(herdr_raw.stdout)
     swift_doc = json.loads(swift_raw.stdout)
     source = herdr_doc.get("manifest_source")
@@ -205,17 +207,21 @@ def run_case(herdr_bin, env, case_path, label):
     for key in COMPARED_KEYS:
         if left[key] != right[key]:
             if key == "evaluated_rules":
-                for l_rule, r_rule in zip(left[key], right[key]):
+                # strict=False: a length mismatch is reported by the rule-count line below
+                # rather than raised, so the whole diff still prints.
+                for l_rule, r_rule in zip(left[key], right[key], strict=False):
                     if l_rule != r_rule:
+                        l_json = json.dumps(l_rule, ensure_ascii=False)
+                        r_json = json.dumps(r_rule, ensure_ascii=False)
                         detail.append(
-                            f"  rule {l_rule['id']}:\n    herdr: {json.dumps(l_rule, ensure_ascii=False)}\n    swift: {json.dumps(r_rule, ensure_ascii=False)}"
+                            f"  rule {l_rule['id']}:\n    herdr: {l_json}\n    swift: {r_json}"
                         )
                 if len(left[key]) != len(right[key]):
                     detail.append(f"  rule count: herdr={len(left[key])} swift={len(right[key])}")
             else:
-                detail.append(
-                    f"  {key}: herdr={json.dumps(left[key], ensure_ascii=False)} swift={json.dumps(right[key], ensure_ascii=False)}"
-                )
+                l_json = json.dumps(left[key], ensure_ascii=False)
+                r_json = json.dumps(right[key], ensure_ascii=False)
+                detail.append(f"  {key}: herdr={l_json} swift={r_json}")
     return "\n".join(detail)
 
 
@@ -240,6 +246,7 @@ def main():
         ["git", "-C", str(args.herdr_dir), "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
     pin = pin_path.read_text().strip() if pin_path.exists() else "(no pin)"
     if head != pin:
@@ -268,8 +275,7 @@ def main():
                 case_path = tmp_path / f"case-{case_id}.txt"
                 case_path.write_text(screen, encoding="utf-8")
                 case_id += 1
-                for target in [label, *others]:
-                    cases.append((case_path, target, screen))
+                cases.extend((case_path, target, screen) for target in [label, *others])
         # Unknown-label handling parity.
         probe = tmp_path / "case-unknown.txt"
         probe.write_text("plain shell prompt $\n", encoding="utf-8")
@@ -282,9 +288,7 @@ def main():
                 pool.submit(run_case, herdr_bin, env, path, label): (path, label, screen)
                 for path, label, screen in cases
             }
-            done = 0
-            for future in concurrent.futures.as_completed(futures):
-                done += 1
+            for done, future in enumerate(concurrent.futures.as_completed(futures), start=1):
                 if done % 1000 == 0:
                     print(f"  {done}/{len(cases)}…")
                 result = future.result()
@@ -295,7 +299,7 @@ def main():
         print(f"PARITY OK: {len(cases)} cases, herdr ≡ slopdesk on every compared field")
         return 0
     print(f"MISMATCH: {len(mismatches)}/{len(cases)} cases diverged")
-    for (path, label, screen), detail in mismatches[: args.max_report]:
+    for (_path, label, screen), detail in mismatches[: args.max_report]:
         print(f"\n=== agent={label} screen={screen[:120]!r}")
         print(detail)
     if len(mismatches) > args.max_report:

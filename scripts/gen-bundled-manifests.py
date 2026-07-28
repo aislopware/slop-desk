@@ -66,8 +66,7 @@ def swift_var(stem: str) -> str:
 
 def literal(stem: str, toml_text: str) -> str:
     lines = [f'    static let {swift_var(stem)} = #"""']
-    for line in toml_text.rstrip("\n").split("\n"):
-        lines.append(f"    {line}" if line else "")
+    lines.extend(f"    {line}" if line else "" for line in toml_text.rstrip("\n").split("\n"))
     lines.append('    """#')
     return "\n".join(lines)
 

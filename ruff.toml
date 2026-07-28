@@ -22,7 +22,18 @@ ignore = [
     "PLR0915", # too many statements — ditto
     "COM812",  # trailing comma — handled by the formatter (avoid conflict)
     "ISC001",  # implicit string concat — handled by the formatter (avoid conflict)
+    "CPY",     # copyright header — no file in this repo carries one; not the convention
+    "S603",    # `subprocess` "untrusted input" — fires on EVERY subprocess.run(list, …);
+    "S607",    # partial executable path — `git`/`shfmt` via PATH is the wanted behaviour.
+    #          Both: these scripts drive git and locally built binaries with argv the
+    #          developer wrote. There is no untrusted input to reach them.
 ]
+
+# Confusables this repo means on purpose. `herdr-differential.py` feeds Greek final sigma and
+# Turkish dotless i to the case-fold divergence probe, and `›`/`×` are literal terminal glyphs
+# (the Codex prompt marker, an "N × M" count). Listing them keeps RUF001 live for every OTHER
+# ambiguous character instead of switching the rule off.
+allowed-confusables = ["σ", "ı", "›", "×"]
 
 [lint.per-file-ignores]
 "scripts/*.py" = ["INP001"] # not a package (no __init__.py) — intentional

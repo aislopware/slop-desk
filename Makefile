@@ -35,10 +35,10 @@ fmt-swift: ## Format Swift (SwiftFormat)
 	swiftformat $(SWIFTFMT_PATHS)
 
 fmt-shell: ## Format shell (shfmt)
-	@[ -n "$(SHELL_FILES)" ] && shfmt $(SHFMT_FLAGS) -w $(SHELL_FILES) || true
+	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -w $(SHELL_FILES); fi
 
 fmt-python: ## Format Python (ruff format)
-	@[ -n "$(PY_FILES)" ] && ruff format $(PY_FILES) || true
+	@if [ -n "$(PY_FILES)" ]; then ruff format $(PY_FILES); fi
 
 # ---------------------------------------------------------------------------- #
 # Autofix (writes) — formatting + every safe lint autocorrect
@@ -67,13 +67,18 @@ lint-ds-leaks: ## Design-system token-leak ratchet (raw font/radius literals)
 lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut in WorkspaceCommands)
 	bash scripts/check-menu-shortcutless.sh
 
+# The `if` form is load-bearing. A `[ -n … ] && cmd` chain exits nonzero on an EMPTY file
+# list, and the `|| true` that silences THAT silences every real diagnostic with it: the tool
+# prints its findings and the gate still passes. `if` yields 0 for the empty list and the
+# tool's own exit status otherwise. Same tools, flags and file sets as the CI `shell-python`
+# job, so local green implies CI green rather than the reverse.
 lint-shell: ## shellcheck + shfmt --diff
-	@[ -n "$(SHELL_FILES)" ] && shellcheck $(SHELL_FILES) || true
-	@[ -n "$(SHELL_FILES)" ] && shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES) || true
+	@if [ -n "$(SHELL_FILES)" ]; then shellcheck $(SHELL_FILES); fi
+	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
 
 lint-python: ## ruff check + ruff format --check
-	@[ -n "$(PY_FILES)" ] && ruff check $(PY_FILES) || true
-	@[ -n "$(PY_FILES)" ] && ruff format --check $(PY_FILES) || true
+	@if [ -n "$(PY_FILES)" ]; then ruff check $(PY_FILES); fi
+	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES); fi
 
 # SwiftLint analyzer rules need a compiler invocation log — heavier, run on demand.
 .PHONY: lint-swift-analyze
