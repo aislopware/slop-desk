@@ -175,6 +175,11 @@ public final class MetalVideoRenderer {
     /// Draws one NV12 `CVPixelBuffer`. Called at vsync by ``FramePacer`` with the
     /// most recent decoded frame (show-last-frame on empty queue, skip-late upstream).
     private var renderDiagCount = 0
+    /// Counts frames that reached `commandBuffer.present(drawable)`. SEPARATE from
+    /// ``renderDiagCount``, which counts entries that merely got a drawable: everything between the
+    /// two returns early on a frame this renderer cannot draw, so the gap between the counters IS the
+    /// present-path failure. `scripts/check-video.sh` asserts on the marker this one prints.
+    private var presentDiagCount = 0
     private static let renderDiag = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
 
     public func render(_ pixelBuffer: CVPixelBuffer) {
@@ -358,6 +363,19 @@ public final class MetalVideoRenderer {
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
         commandBuffer.present(drawable)
+        // PRESENT marker — the one line that means a frame reached the screen, and the only frame
+        // marker `scripts/check-video.sh` may assert on. `RENDER#` above prints the instant
+        // `nextDrawable()` returns, which is BEFORE every guard between here and there: a plane that
+        // will not make an `MTLTexture` (a stream that is not 8-bit NV12), a `CVMetalTextureGetTexture`
+        // that yields nil, a command buffer or render encoder the device refuses. Each of those
+        // `return`s having encoded no pass and presented nothing, and each of them leaves `RENDER#0`
+        // in the log for a pane that is blank for ever. Same cadence as `RENDER#` so a healthy session
+        // pairs them and a broken present path shows the gap.
+        if Self.renderDiag, presentDiagCount == 0 || presentDiagCount.isMultiple(of: 120) {
+            FileHandle.standardError
+                .write(Data("SlopDesk[video.client]: PRESENTED#\(presentDiagCount)\n".utf8))
+        }
+        presentDiagCount += 1
         // Pin both CVMetalTexture wrappers (+ pixel buffer) until the GPU finishes reading. The
         // completed handler runs on a private Metal thread; capturing the wrappers there keeps their
         // IOSurfaces valid for the whole async read. The CV handles aren't `Sendable`, so we ferry them

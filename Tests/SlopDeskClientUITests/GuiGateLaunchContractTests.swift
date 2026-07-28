@@ -144,7 +144,55 @@ final class GuiGateLaunchContractTests: XCTestCase {
         }
     }
 
-    /// Every GUI gate that launches a window must ASSERT there is one.
+    /// The PRESENTED half must count a marker printed AFTER the present, not before the guards.
+    ///
+    /// `MetalVideoRenderer.render` writes `RENDER#N` as soon as `metalLayer.nextDrawable()` returns.
+    /// Between that line and `commandBuffer.present(drawable)` sit four `return`s — `makeTexture` for
+    /// either plane, `CVMetalTextureGetTexture`, `makeCommandBuffer` / `makeRenderCommandEncoder` —
+    /// and each leaves the frame undrawn and unpresented. So a decoder that starts vending a
+    /// non-NV12 or 10-bit `CVPixelBuffer` prints `RENDER#0` once, presents nothing ever, and a gate
+    /// that counted `RENDER#` called that "PRESENTED ✅".
+    ///
+    /// Pinned from both sides: the renderer must still emit a marker after the present, and the gate
+    /// must count THAT one. Asserted on the code body so the prose above `PRESENTED#` in either file
+    /// cannot satisfy it.
+    func testThePresentedAssertionCountsAMarkerPrintedAfterThePresent() throws {
+        let renderer = try String(
+            contentsOf: scriptURL("Sources/SlopDeskVideoClient/MetalVideoRenderer.swift"),
+            encoding: .utf8,
+        )
+        let presentIndex = try XCTUnwrap(
+            renderer.range(of: "commandBuffer.present(drawable)")?.upperBound,
+            "MetalVideoRenderer no longer presents a drawable — this contract lost its subject",
+        )
+        XCTAssertTrue(
+            renderer[presentIndex...].contains("PRESENTED#"),
+            "MetalVideoRenderer emits no PRESENTED# marker after `commandBuffer.present(drawable)`, so "
+                + "check-video.sh has nothing to assert the present leg on",
+        )
+        XCTAssertFalse(
+            renderer[..<presentIndex].contains("PRESENTED#"),
+            "the PRESENTED# marker is printed BEFORE the present — every guard between the two returns "
+                + "without drawing, which is the exact bug this marker exists to catch",
+        )
+
+        let gate = try codeBody(of: "scripts/check-video.sh")
+        let presentProbes = gate
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("PRESENTED=\"$(grep") }
+        XCTAssertFalse(presentProbes.isEmpty, "check-video.sh no longer counts a present marker at all")
+        for probe in presentProbes {
+            XCTAssertTrue(
+                probe.contains("PRESENTED#"),
+                "check-video.sh's present check counts a marker that is not PRESENTED#. `RENDER#` prints "
+                    + "before the texture/encoder guards, so counting it passes on a client that draws "
+                    + "nothing. Offending line: \(probe.trimmingCharacters(in: .whitespaces))",
+            )
+        }
+    }
+
+    /// Every GUI gate that launches a window must ASSERT there is one — off the WINDOW SERVER.
     ///
     /// "The process is alive" is not "the app came up": a macOS app with zero windows is a healthy
     /// process in a run loop, and `check-macos.sh`'s default and --renderer modes had nothing else to
@@ -152,17 +200,137 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// `alive after Ns ✅` and screenshotted whatever was on the desktop. The other gates each assert
     /// it implicitly, by needing a scene `.task` to have run: a projection read back over the client
     /// control socket, or a UDP flow that only a mounted video pane can open.
+    ///
+    /// The window claim may NOT be read off the control socket, which is what it used to be. Two
+    /// independent reasons, both HW-observed 2026-07-28: `WorkspaceControlBackend.listWindows()` maps
+    /// `WorkspaceStore.tree.sessions`, a value the App's `init()` builds before any scene exists — a
+    /// SESSION count with no window information in it; and `ClientControlServer.start()` hands its
+    /// listener to `Thread.detachNewThread` with no `stop()` anywhere, so a bound socket outlives the
+    /// scene. Close the app's window and the process answered `1` for as long as it ran.
     func testTheMacosGateAssertsTheAppHasAWindow() throws {
         let code = try codeBody(of: "scripts/check-macos.sh")
         XCTAssertTrue(
-            code.contains("windows --json"),
-            "check-macos.sh no longer asks the running app what it is rendering, so a launch that "
-                + "made no UI at all still passes `alive after Ns`",
+            code.contains("window-census"),
+            "check-macos.sh no longer asks the WINDOW SERVER how many windows the app has. Whatever it "
+                + "counts now, a windowless process can satisfy it.",
         )
         XCTAssertTrue(
             code.contains("FAIL: the app is running with NO window"),
             "check-macos.sh's window check no longer terminates the run",
         )
+        // The counted variable must come off the census, never off the socket read.
+        let windowCounts = code
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("WINDOW_COUNT=\"$(") }
+        XCTAssertFalse(windowCounts.isEmpty, "check-macos.sh no longer computes a window count")
+        for line in windowCounts {
+            XCTAssertTrue(
+                line.contains("${CENSUS}"),
+                "check-macos.sh derives its window count from something other than the window-server "
+                    + "census. Offending line: \(line.trimmingCharacters(in: .whitespaces))",
+            )
+        }
+    }
+
+    /// The census the gate leans on has to exist, and has to answer about WINDOWS.
+    ///
+    /// `CGWindowListCopyWindowInfo` is the seam: owner pid / layer / bounds are TCC-free (only window
+    /// TITLES are behind Screen Recording), which is what lets `check-macos.sh` keep its promise of
+    /// needing neither Screen-Recording nor Accessibility.
+    func testTheWindowCensusReadsTheWindowServer() throws {
+        // Comment lines dropped, same discipline as `codeBody`: the census's own header explains why it
+        // must NOT read `kCGWindowName`, and that prose would otherwise satisfy the ban on reading it.
+        let census = try String(contentsOf: scriptURL("scripts/window-census.swift"), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        XCTAssertTrue(
+            census.contains("CGWindowListCopyWindowInfo"),
+            "scripts/window-census.swift no longer asks the window server anything",
+        )
+        XCTAssertTrue(
+            census.contains("kCGWindowOwnerPID"),
+            "scripts/window-census.swift no longer attributes windows to a pid, so it cannot answer "
+                + "about the app this gate launched",
+        )
+        XCTAssertFalse(
+            census.contains("kCGWindowName"),
+            "scripts/window-census.swift reads window TITLES, which requires Screen-Recording TCC — "
+                + "check-macos.sh promises it needs none",
+        )
+    }
+
+    /// An automation run must never be able to reshape the developer's live state.
+    ///
+    /// Every gate here execs the bundle binary, and a direct exec starts a SECOND instance even while
+    /// the developer's own SlopDesk is running (`open` would not). `check-macos.sh`'s default and
+    /// --renderer modes set no `SLOPDESK_AUTOCONNECT_*`, so `hasAutomationEnvironment()` is FALSE for
+    /// them and the app builds a real `WorkspacePersistence()` + `DevicePreferencesStore()` and runs
+    /// `connectIfSavedTarget()`. Two things must therefore be true of every launch in every gate:
+    ///
+    ///   - `CFFIXED_USER_HOME` — redirects `NSHomeDirectory()` / Application Support, so `workspace.json`
+    ///     and friends are the run's own. HW-observed 2026-07-28: without it a default-mode launch
+    ///     RESTORED the container's saved layout and wrote `device-prefs.json` into it.
+    ///   - the auto-reconnect dial must be shut off. `CFFIXED_USER_HOME` does NOT redirect
+    ///     `UserDefaults`, so `connection.recentTargets` stays the DEVELOPER's MRU and
+    ///     `connectIfSavedTarget()` dials whatever is at the top of it — their live `slopdesk-hostd`,
+    ///     which owns the workspace layout (docs/45). No amount of client-side file isolation protects
+    ///     against that. HW-observed: a decoy listener on the MRU entry took 17 bytes from a
+    ///     default-mode launch, and 0 with `SLOPDESK_SKIP_AUTO_RECONNECT=1` set.
+    ///
+    /// Three spellings satisfy the second rule, because the gates need different ones: an autoconnect
+    /// host (the app takes the automation branch and skips the reconnect task), the skip flag itself,
+    /// or an argument-domain `-connection.recentTargets` — which is what `check-launch-restore.sh`
+    /// must use, since running the real auto-reconnect IS its subject.
+    func testNoGateLaunchCanReachTheDevelopersOwnState() throws {
+        for script in Self.gateScripts {
+            let commands = try launchCommands(of: script)
+            XCTAssertFalse(commands.isEmpty, "\(script) no longer execs the app — no launch to check")
+            for command in commands {
+                let shown = command.trimmingCharacters(in: .whitespacesAndNewlines)
+                XCTAssertTrue(
+                    command.contains("CFFIXED_USER_HOME="),
+                    "\(script) execs the app without CFFIXED_USER_HOME, so this run's `workspace.json` / "
+                        + "`device-prefs.json` / `video-prefs.json` are the DEVELOPER's own files. "
+                        + "Offending launch: \(shown)",
+                )
+                XCTAssertTrue(
+                    command.contains("SLOPDESK_SKIP_AUTO_RECONNECT=1")
+                        || command.contains("SLOPDESK_AUTOCONNECT_HOST=")
+                        || command.contains("SLOPDESK_VIDEO_AUTOCONNECT_HOST=")
+                        || command.contains("-connection.recentTargets"),
+                    "\(script) execs the app with nothing that stops `connectIfSavedTarget()`, so it "
+                        + "dials the DEVELOPER's MRU host — the live daemon that owns their layout. "
+                        + "Offending launch: \(shown)",
+                )
+            }
+        }
+    }
+
+    /// Every WHOLE shell command that execs the app: the `"${APP_BIN}"` line plus its backslash
+    /// continuations BOTH ways. The env assignments sit above that line and the `-key value`
+    /// argument-domain fixtures sit below it, so a rule read off the exec line alone misses either
+    /// half.
+    ///
+    /// Walked BY INDEX rather than by looking a line up in the file. `check-macos.sh` execs the app
+    /// from two branches whose exec lines are character-for-character identical, so a lookup by string
+    /// resolves both to the first one — and the second branch, which is the one with no autoconnect
+    /// env and therefore the one that needs the rule most, would never be read at all.
+    private func launchCommands(of script: String) throws -> [String] {
+        let lines = try codeBody(of: script)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        var commands: [String] = []
+        for (index, line) in lines.enumerated() where line.contains("\"${APP_BIN}\"") {
+            var start = index
+            while start > 0, lines[start - 1].hasSuffix("\\") { start -= 1 }
+            var end = index
+            while end < lines.count - 1, lines[end].hasSuffix("\\") { end += 1 }
+            commands.append(lines[start...end].joined(separator: "\n"))
+        }
+        return commands
     }
 
     /// EVERY gate counts the shells, because neither the OUT-path proof nor the pixels nor the two

@@ -48,14 +48,30 @@ APP_BIN="${APP}/Contents/MacOS/SlopDesk"
 SHOT="${WORK}/macos-shot.png"
 HOSTD_LOG="${WORK}/hostd.log"
 CLI="${REPO_ROOT}/.build/debug/slopdesk"
-CONNECT_PORT=47420 # uncommon fixed loopback port for the e2e host daemon
+CENSUS="${WORK}/window-census" # the compiled CGWindowList window observer (step 4b)
+CONNECT_PORT=47420             # uncommon fixed loopback port for the e2e host daemon
 
-# The app's client-control socket, which step 4b asks whether a window exists. AF_UNIX paths cap at
+# The app's client-control socket, which step 4c asks what the app mounted. AF_UNIX paths cap at
 # ~104 bytes and `${WORK}` is already long — keyed by this script's pid under /tmp, removed on the way
 # out (the check-multiclient.sh / check-launch-restore.sh discipline). Per-run, never the Application
 # Support default: that one is the DEVELOPER's own running app, and asking it would answer about a
-# window this gate never launched.
+# process this gate never launched.
 SOCK="/tmp/slopdesk-macos-$$.sock"
+
+# The client's THROWAWAY container, one per run (the check-multiclient.sh / check-launch-restore.sh
+# discipline). `CFFIXED_USER_HOME` redirects `NSHomeDirectory()` and Application Support, so every
+# device-local file this run touches — `workspace.json`, `device-prefs.json`, `video-prefs.json`,
+# `workspace-cache.json`, `folders-frecency.json`, the scrollback journals — is its own.
+#
+# Load-bearing in EVERY mode, and the default / --renderer modes are the ones that make it so.
+# `hasAutomationEnvironment()` keys on `SLOPDESK_AUTOCONNECT_HOST` / `SLOPDESK_VIDEO_AUTOCONNECT_HOST`
+# only, and neither of those modes sets one — so both run with `isAutomation == false`, which builds a
+# REAL `WorkspacePersistence()` and a REAL `DevicePreferencesStore()`. A direct exec starts a NEW
+# process even while the developer's own SlopDesk is running, so without this the gate is a second
+# instance autosaving the developer's live layout. HW-observed 2026-07-28: a default-mode launch
+# RESTORED the container's `workspace.json` (its own pane ids came back over the control socket) and
+# wrote `device-prefs.json` + `video-prefs.json` into it.
+CLIENT_HOME="${WORK}/client-home"
 
 WITH_RENDERER=0
 CONNECT=0
@@ -116,11 +132,17 @@ xcodebuild \
   build > /dev/null
 echo "==> build OK: ${APP}"
 
-# The `slopdesk` CLI is this gate's window observer (step 4b) — it asks the running app, over the
-# shipping client-control socket, what it is rendering. Built in EVERY mode, because every mode
-# launches a window.
-echo "==> building the slopdesk client CLI (the window observer)"
+# The `slopdesk` CLI is how step 4c asks the running app what it MOUNTED, over the shipping
+# client-control socket. Built in EVERY mode, because every mode launches a scene.
+echo "==> building the slopdesk client CLI (the scene observer)"
 (cd "${REPO_ROOT}" && swift build --product slopdesk > /dev/null)
+
+# The WINDOW observer (step 4b). Compiled once here rather than run through `swift` on every poll:
+# the census is polled up to 40 times and `swift <file>` recompiles on each one. It reads
+# `CGWindowListCopyWindowInfo`, which needs no TCC for owner-pid/layer/bounds — only window TITLES are
+# gated behind Screen Recording, and it never asks for one.
+echo "==> compiling the window census (CGWindowList; no Screen-Recording / Accessibility TCC)"
+swiftc -O "${REPO_ROOT}/scripts/window-census.swift" -o "${CENSUS}" > /dev/null
 
 # ── 2b. (--connect) stand up the host daemon ────────────────────────────────────────────────
 if [[ "${CONNECT}" == "1" ]]; then
@@ -183,7 +205,7 @@ fi
 #
 #   ENV. LaunchServices forwards NO shell environment, and every seam these modes read is a
 #   `SLOPDESK_*` env var: the auto-connect pair, the autotype command, the echo probe, and
-#   `SLOPDESK_CLIENT_SOCKET` — the socket step 4b asks whether a window exists. `open` can carry ARGV
+#   `SLOPDESK_CLIENT_SOCKET` — the socket step 4c asks what the app mounted. `open` can carry ARGV
 #   (`open "${APP}" --args …`) but there is no `open` flag that carries an ENVIRONMENT, so an
 #   `open`-launched app is one this gate cannot address.
 #
@@ -194,16 +216,35 @@ fi
 #   windows every time. `GuiGateLaunchContractTests` pins the flag onto every `"${APP_BIN}"` line in
 #   this file, and pins that no gate launches the app through `open` at all.)
 #
-# Stderr is kept: the SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there (step 4f).
+#   ISOLATION. Two vars, on EVERY launch, because a direct exec is a SECOND instance — it starts even
+#   while the developer's own SlopDesk is running, which `open` would not.
+#     `CFFIXED_USER_HOME` / `HOME` — the throwaway container above. It redirects `NSHomeDirectory()`
+#     and Application Support, so nothing this run autosaves can land on the developer's files.
+#     `SLOPDESK_SKIP_AUTO_RECONNECT=1` — because `CFFIXED_USER_HOME` does NOT redirect `UserDefaults`
+#     (cfprefsd resolves the real home), so `connection.recentTargets` is the DEVELOPER's MRU and
+#     `connectIfSavedTarget()` — the scene task that runs precisely when `isAutomation` is false —
+#     dials whatever host is at the top of it. That host is their live `slopdesk-hostd`, which OWNS
+#     the workspace layout (docs/45): an automation instance connecting to it reshapes the layout
+#     they are working in, and no client-side file isolation protects against that. HW-observed
+#     2026-07-28: a decoy listener on the MRU entry took 17 bytes from a default-mode launch, and 0
+#     with this flag set. It is inert under --connect (the automation branch calls `connect()`
+#     explicitly and skips the auto-reconnect task), and set there anyway so the rule holds for every
+#     launch in this file rather than for the two that happen to need it today.
+#
+# Stderr is kept: the SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there (step 4g).
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
+rm -rf "${CLIENT_HOME}"
+mkdir -p "${CLIENT_HOME}"
 APP_LOG="${WORK}/app-stderr.log"
 if [[ "${CONNECT}" == "1" ]]; then
-  SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
+  CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" SLOPDESK_SKIP_AUTO_RECONNECT=1 \
+    SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
     SLOPDESK_AUTOTYPE="${AUTOTYPE}" SLOPDESK_ECHO_PROBE=1 SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 else
-  SLOPDESK_CLIENT_SOCKET="${SOCK}" \
+  CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" SLOPDESK_SKIP_AUTO_RECONNECT=1 \
+    SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 fi
 PID=""
@@ -230,37 +271,44 @@ if ! pgrep -f "${APP_PROC_PAT}" > /dev/null; then
 fi
 echo "==> alive after ${SETTLE}s ✅"
 
-# ── 4b. The app has a WINDOW — asserted, in every mode ───────────────────────────────────────
+# ── 4b. The app has a WINDOW — asserted off the WINDOW SERVER, in every mode ──────────────────
 # "The process is alive" is not "the app came up". A macOS app with ZERO windows is a perfectly
 # healthy process: it sits in its run loop, `pgrep` finds it, the settle window passes, and this gate
 # printed `alive after Ns ✅` and screenshotted the bare desktop. That is the exact shape that made
-# check-video.sh useless for months, and until this assertion existed the default and --renderer modes
-# had NOTHING else to say — they carry no auto-connect, so the ESTABLISHED/OUT-path checks below never
-# ran for them. Proven RED on this host: launched without `-ApplePersistenceIgnoreState YES` the app
-# reports 0 windows for the whole settle window and the gate still exited 0.
+# check-video.sh useless for months, and the default and --renderer modes have NOTHING else to say —
+# they carry no auto-connect, so the ESTABLISHED/OUT-path checks below never run for them.
 #
-# Read off the SHIPPING client-control socket rather than off pixels or AX: no Screen-Recording and no
-# Accessibility TCC, and the answer is `WorkspaceStore.tree` — the value the window paints. It is also
-# a two-in-one claim, because `ClientControlServer.start()` is itself a scene `.task`: a windowless
-# app never binds the socket at all, so it fails here on the connect, not on the count.
-echo "==> asking the app what it is rendering (${SOCK})…"
-WINDOW_JSON=""
+# Counted with `CGWindowListCopyWindowInfo` (scripts/window-census.swift), because the window server
+# is the only thing that knows. The obvious cheaper answer is a lie in two independent ways, and both
+# were HW-observed on this host on 2026-07-28:
+#   - `slopdesk … windows --json` is answered by `WorkspaceControlBackend.listWindows()`, which maps
+#     `WorkspaceStore.tree.sessions` — a value the App's `init()` builds before any scene exists. It
+#     is a SESSION count with no window information in it.
+#   - the socket does not carry the claim either. `ClientControlServer.start()` hands its listener to
+#     `Thread.detachNewThread` and nothing ever calls `stop()`, so a bound socket outlives the scene.
+# Proven RED: with the app's window CLOSED and the process still alive, `windows --json` answered `1`
+# for as long as it ran, while this census answered `0`.
+#
+# Still no TCC: owner-pid, window layer and bounds are public CoreGraphics fields; only window TITLES
+# are behind Screen Recording, and the census never asks for one.
+echo "==> counting the app's on-screen windows (CGWindowList, pid ${PID})…"
+WINDOW_COUNT=0
+CENSUS_DIAG="${WORK}/window-census.txt"
 for _ in $(seq 1 40); do
-  WINDOW_JSON="$("${CLI}" --socket "${SOCK}" windows --json 2> /dev/null || true)"
-  [[ -n "${WINDOW_JSON}" ]] && break
+  # stdout is the COUNT, stderr is one line per window the server attributes to the pid (kept for a
+  # red run's diagnosis). Anything that is not a number is not a window.
+  WINDOW_COUNT="$("${CENSUS}" "${PID}" 2> "${CENSUS_DIAG}" || echo 0)"
+  [[ "${WINDOW_COUNT}" =~ ^[0-9]+$ ]] || WINDOW_COUNT=0
+  [[ "${WINDOW_COUNT}" -ge 1 ]] && break
   kill -0 "${PID}" 2> /dev/null || break
   sleep 0.5
 done
-# `|| echo 0` covers BOTH an empty answer and a malformed one — either way it is not a window.
-WINDOW_COUNT="$(printf '%s' "${WINDOW_JSON}" | python3 -c '
-import json, sys
-raw = sys.stdin.read().strip()
-print(len(json.loads(raw)) if raw else 0)
-' 2> /dev/null || echo 0)"
 if [[ "${WINDOW_COUNT}" -lt 1 ]]; then
-  echo "==> FAIL: the app is running with NO window (${WINDOW_COUNT} reported over ${SOCK})." >&2
+  echo "==> FAIL: the app is running with NO window (window server reports ${WINDOW_COUNT} for pid ${PID})." >&2
   echo "    No window means no scene, and every scene .task seam is dead with it: the auto-connect," >&2
   echo "    the workspace document, the control socket. A screenshot past this point proves nothing." >&2
+  echo "--- windows the server does attribute to this pid ---" >&2
+  if [[ -s "${CENSUS_DIAG}" ]]; then cat "${CENSUS_DIAG}" >&2; else echo "  (none at all)" >&2; fi
   echo "--- app stderr ---" >&2
   tail -40 "${APP_LOG}" >&2 2> /dev/null || true
   [[ "${CONNECT}" == "1" ]] && {
@@ -269,9 +317,43 @@ if [[ "${WINDOW_COUNT}" -lt 1 ]]; then
   }
   exit 1
 fi
-echo "==> the app reports ${WINDOW_COUNT} window(s) ✅"
+echo "==> the window server attributes ${WINDOW_COUNT} on-screen window(s) to pid ${PID} ✅"
 
-# ── 4c. (--connect) assert the client↔host TCP session is established ────────────────────────
+# ── 4c. …and its SCENE mounted — a separate claim, read off the shipping control socket ───────
+# A window is the app's UI; this is the app's STATE. `WorkspaceControlBackend` answers off
+# `WorkspaceStore.tree`, so a reply means the scene came up far enough to bind the socket (the bind is
+# a scene `.task`) and the store has a session to describe. Kept distinct from 4b on purpose: it is
+# what the multi-client and launch-restore gates assert their whole projection on, and conflating it
+# with "there is a window" is what made 4b unable to fail.
+echo "==> asking the app what it mounted (${SOCK})…"
+SCENE_JSON=""
+for _ in $(seq 1 40); do
+  SCENE_JSON="$("${CLI}" --socket "${SOCK}" windows --json 2> /dev/null || true)"
+  [[ -n "${SCENE_JSON}" ]] && break
+  kill -0 "${PID}" 2> /dev/null || break
+  sleep 0.5
+done
+# `|| echo 0` covers BOTH an empty answer and a malformed one — either way nothing mounted.
+SESSION_COUNT="$(printf '%s' "${SCENE_JSON}" | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+print(len(json.loads(raw)) if raw else 0)
+' 2> /dev/null || echo 0)"
+if [[ "${SESSION_COUNT}" -lt 1 ]]; then
+  echo "==> FAIL: the app has a window but mounted nothing (${SESSION_COUNT} sessions over ${SOCK})." >&2
+  echo "    Either the control socket never bound — it is a scene .task — or the store came up with" >&2
+  echo "    no session at all. Every projection this and the other GUI gates read is dead with it." >&2
+  echo "--- app stderr ---" >&2
+  tail -40 "${APP_LOG}" >&2 2> /dev/null || true
+  [[ "${CONNECT}" == "1" ]] && {
+    echo "--- hostd log ---" >&2
+    cat "${HOSTD_LOG}" >&2
+  }
+  exit 1
+fi
+echo "==> the app mounted ${SESSION_COUNT} session(s) and answers on its control socket ✅"
+
+# ── 4d. (--connect) assert the client↔host TCP session is established ────────────────────────
 if [[ "${CONNECT}" == "1" ]]; then
   if lsof -nP -iTCP:"${CONNECT_PORT}" -sTCP:ESTABLISHED > /dev/null 2>&1; then
     echo "==> client↔host session ESTABLISHED on :${CONNECT_PORT} ✅"
@@ -282,7 +364,7 @@ if [[ "${CONNECT}" == "1" ]]; then
     exit 1
   fi
 
-  # ── 4d. (--connect) assert the host shell EXECUTED a typed command (the OUT path) ──────────
+  # ── 4e. (--connect) assert the host shell EXECUTED a typed command (the OUT path) ──────────
   # ESTABLISHED only proves a live socket. This proves the round trip: the app auto-typed a
   # command through the real OUT path, the host PTY ran it, and the shell COMPUTED 42 (so this
   # is execution, not a literal-keystroke echo). The remote shell wrote the marker to a file on
@@ -305,15 +387,15 @@ if [[ "${CONNECT}" == "1" ]]; then
     exit 1
   fi
 
-  # ── 4e. (--connect) ONE auto-connect spawns ONE shell ─────────────────────────────────────
+  # ── 4f. (--connect) ONE auto-connect spawns ONE shell ─────────────────────────────────────
   # The terminal autoconnect shape is a LONE terminal pane, so exactly one shell may ever attach.
   # A second means the client mounted one pane, gave it a PTY, and then let the workspace document
   # replace it — the first shell abandoned on the host and a second spawned for its replacement.
   #
-  # Asserted DIRECTLY rather than inferred from 4d. The OUT-path proof used to fail as a side effect
+  # Asserted DIRECTLY rather than inferred from 4e. The OUT-path proof used to fail as a side effect
   # of that bug, because the autotype latch was spent by the pane that got torn down; the seam now
   # re-arms and rides the replacement pane's connect edge, which is correct on its own terms and
-  # leaves 4c green. Nothing else in this gate would have noticed. Read AFTER 4c so a second attach
+  # leaves 4d green. Nothing else in this gate would have noticed. Read AFTER 4e so a second attach
   # that happens while the proof is still polling still counts.
   SHELLS="$(grep -c 'shell .* attached' "${HOSTD_LOG}" || true)"
   if [[ "${SHELLS}" != "1" ]]; then
@@ -324,7 +406,7 @@ if [[ "${CONNECT}" == "1" ]]; then
   fi
   echo "==> exactly one shell attached for one auto-connect ✅"
 
-  # ── 4f. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
+  # ── 4g. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
   # The probe prints one "key→ingest NN.Nms" line per echoed keystroke on the app's stderr —
   # the user-feel span (wire out + host PTY + wire back + client delivery to the render feed).
   # Informational, never a failure: the smoothness-work A/B number, not a gate.

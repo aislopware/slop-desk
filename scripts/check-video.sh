@@ -214,9 +214,20 @@ echo "==> hostd up (pid ${TERMD_PID})"
 # with no UI, no TCP, no UDP, and the screenshot shows the desktop. Ignoring persisted state makes
 # every automation launch a clean first launch. (HW-confirmed 2026-07-28: `YES` ⇒ window + session
 # + frames; omitted or `NO` ⇒ 0 windows, 0 sockets, every time.)
+#
+# `CFFIXED_USER_HOME` is the client's half of the isolation the two daemons already have. The video
+# autoconnect env makes `hasAutomationEnvironment()` true, so `WorkspacePersistence` /
+# `DevicePreferencesStore` / the document cache are all nil here — but `PreferencesStore` is built
+# UNCONDITIONALLY in the App's `init()`, and it writes the `video-prefs.json` sidecar that
+# `slopdesk-hostd` folds into `EnvConfig.overlay` at ITS launch. Without the redirect this gate
+# rewrites a file that changes how the developer's own daemon comes up next time.
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
+CLIENT_HOME="${WORK}/client-home"
+rm -rf "${CLIENT_HOME}"
+mkdir -p "${CLIENT_HOME}"
 CLIENTLOG="${WORK}/client.log"
-SLOPDESK_VIDEO_DEBUG=1 \
+CFFIXED_USER_HOME="${CLIENT_HOME}" HOME="${CLIENT_HOME}" \
+  SLOPDESK_VIDEO_DEBUG=1 \
   SLOPDESK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
   SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT="${MEDIA_PORT}" \
   SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT="${CURSOR_PORT}" \
@@ -304,11 +315,18 @@ sleep 5
 # Read off the client's own `SLOPDESK_VIDEO_DEBUG` stream, which this gate already turns on:
 #   `DECODED frame #N` — `SlopDeskVideoClientSession.finishDecode`, decode-SUCCESS path only
 #                        (frame 1, then every 15th),
-#   `RENDER#N`         — `MetalVideoRenderer.render`, AFTER `metalLayer.nextDrawable()` returned a
-#                        drawable (frame 0, then every 120th).
+#   `PRESENTED#N`      — `MetalVideoRenderer.render`, immediately AFTER
+#                        `commandBuffer.present(drawable)` (frame 0, then every 120th).
 # Both land within a frame of each other on a healthy session. The OSLog flow captured below carries
 # the session SETUP only ("client decode pipeline up at capture WxH") — there is no per-frame counter
 # in it, and "the pipeline was built" is the premise, not the claim.
+#
+# NOT `RENDER#`, and that distinction is the whole assertion. `RENDER#` prints the instant
+# `metalLayer.nextDrawable()` returns, which is BEFORE every guard that follows it: `makeTexture` for
+# either plane, `CVMetalTextureGetTexture`, `makeCommandBuffer` / `makeRenderCommandEncoder`. Each of
+# those `return`s having encoded no pass and presented nothing. So a decoder that starts vending a
+# non-NV12 or 10-bit `CVPixelBuffer` accumulates decode markers, prints `RENDER#0` once, draws NOTHING
+# ever — and a gate that counted `RENDER#` passed on it.
 #
 # The two halves fail differently and that is the point: decoded-but-never-presented is a present-path
 # regression (the pixels exist and never reach a drawable); neither is a decode regression.
@@ -317,7 +335,7 @@ DECODED=0
 PRESENTED=0
 for _ in $(seq 1 40); do
   DECODED="$(grep -c 'DECODED frame #' "${CLIENTLOG}" 2> /dev/null || true)"
-  PRESENTED="$(grep -c 'RENDER#' "${CLIENTLOG}" 2> /dev/null || true)"
+  PRESENTED="$(grep -c 'PRESENTED#' "${CLIENTLOG}" 2> /dev/null || true)"
   [[ "${DECODED}" -gt 0 && "${PRESENTED}" -gt 0 ]] && break
   sleep 0.5
 done
@@ -333,13 +351,16 @@ if [[ "${DECODED}" -lt 1 ]]; then
 fi
 if [[ "${PRESENTED}" -lt 1 ]]; then
   echo "==> FAIL: the client is decoding (${DECODED} decode marker(s)) and PRESENTED none. The pixels exist" >&2
-  echo "    and never reached a drawable — the Metal present path (no CAMetalLayer drawable, no" >&2
-  echo "    renderer, a pacer that never fires). The remote-desktop pane is blank." >&2
+  echo "    and never reached a drawable — the Metal present path (no CAMetalLayer drawable, a plane" >&2
+  echo "    that will not make an MTLTexture, a command encoder the device refused, a pacer that never" >&2
+  echo "    fires). The remote-desktop pane is blank." >&2
+  echo "    (RENDER# markers seen: $(grep -c 'RENDER#' "${CLIENTLOG}" 2> /dev/null || true) — those print BEFORE" >&2
+  echo "     the texture/encoder guards, so a positive count here is the signature of exactly this bug.)" >&2
   echo "--- client log ---" >&2
   tail -60 "${CLIENTLOG}" >&2
   exit 1
 fi
-echo "==> frames DECODED and PRESENTED (${DECODED} decode / ${PRESENTED} render markers) ✅"
+echo "==> frames DECODED and PRESENTED (${DECODED} decode / ${PRESENTED} present markers) ✅"
 
 # 5d. ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED
 # desktop pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second
