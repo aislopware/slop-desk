@@ -365,7 +365,9 @@ final class MuxChannelSession: @unchecked Sendable {
     private let foregroundLock = NSLock()
     private var _lastForeground: String?
 
-    /// Monotone count of `working → done` edges (`pane/completionEpoch`).
+    /// Monotone count of FINISHED TURNS (`pane/completionEpoch`), and the status the count last
+    /// stood at (the transition, not the state, is what mints one — see
+    /// ``isCompletionTransition(previous:next:)``).
     ///
     /// The host holds ZERO per-client acknowledgement state: it publishes how many turns have
     /// finished, and each viewer compares that against its own device-local `seenCompletionEpoch`.
@@ -373,6 +375,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// what makes "unseen" per-device without any of it crossing the wire.
     private let completionLock = NSLock()
     private var _completionEpoch: UInt32 = 0
+    private var _lastCompletionStatus: ClaudeStatus = .none
 
     /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
     /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
@@ -837,15 +840,40 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Invokes ``onAgentStatusChanged`` (if set) with `status`. Called from the detector-folding
     /// sites AFTER `agentDetectLock` is released, only on a real status transition.
     private func notifyAgentStatusChanged(_ status: ClaudeStatus) {
-        // A `working → done` edge is one finished turn. Counting them here — at the ONE place every
-        // detector fold funnels a real transition through — is why the count cannot be double-bumped
-        // by two feeds observing the same edge.
-        if status == .done {
-            completionLock.lock()
-            _completionEpoch &+= 1
-            completionLock.unlock()
-        }
+        // A finished turn is a TRANSITION, counted here — at the ONE place every detector fold
+        // funnels a real transition through — which is why the count cannot be double-bumped by two
+        // feeds observing the same edge.
+        completionLock.lock()
+        let previous = _lastCompletionStatus
+        _lastCompletionStatus = status
+        if Self.isCompletionTransition(previous: previous, next: status) { _completionEpoch &+= 1 }
+        completionLock.unlock()
         onAgentStatusChanged?(status)
+    }
+
+    /// Whether `previous → next` is one finished turn (herdr `is_background_completion_transition`).
+    ///
+    /// `.done` is the AUTHORITATIVE finish and only a `Stop` hook (or a ctl self-report) ever
+    /// produces it. Hooks are opt-in and off by default, and the screen-manifest engine — the
+    /// fallback that actually runs on most panes — has no `done` verdict at all: its states are
+    /// `unknown`/`working`/`blocked`/`idle`. Counting only `.done` therefore meant that on a
+    /// hook-free host a turn ending was indistinguishable from a turn never having happened, and the
+    /// finished-turn marker could not exist. The pane simply went grey.
+    ///
+    /// herdr never had that gap because it never had a `done` STATE: it derives `Done` as
+    /// `Idle && !seen` and mints the unread bit on `Working|Blocked → Idle`. Ported exactly, with
+    /// `.done` kept as an additional mint so a hook-driven host still counts the finish at the edge
+    /// the hook announces it (`.done → .idle`, the decay, is then the same turn ending twice and
+    /// mints nothing).
+    ///
+    /// `.none → .idle` is the presence FLOOR lifting — an agent appearing, not a turn ending — and
+    /// is deliberately not a completion. (herdr's second clause, `Unknown → Idle` guarded by an
+    /// unchanged agent label, has no equivalent here: this codebase's `.none` means "no agent
+    /// detected", so honouring it would mint a finish every time an agent was first seen.)
+    static func isCompletionTransition(previous: ClaudeStatus, next: ClaudeStatus) -> Bool {
+        if next == .done { return previous != .done }
+        guard next == .idle else { return false }
+        return previous == .working || previous == .needsPermission
     }
 
     private enum OutputItem {

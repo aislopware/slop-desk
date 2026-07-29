@@ -92,15 +92,25 @@ final class PaneScreenScannerTests: XCTestCase {
         XCTAssertEqual(out.nextInterval, AgentDetectionHold.scanInterval)
     }
 
-    func testRebuildReplayRepaintsTheGrid() {
+    /// A rebuild REPAINTS the grid — the verdict follows the replayed bytes — but a reconstruction
+    /// is not an observation, so it is only reported once the program has drawn on it.
+    ///
+    /// The wait is the point: a rebuild happens because the pane RESIZED, and replaying the ring at
+    /// the new width lands an inline TUI's relative-motion erases in the wrong rows (see
+    /// ``PaneScreenScannerRebuildTests``). This test previously pinned the publish-immediately
+    /// behaviour, which is what turned a tab switch into a phantom "waiting for input".
+    func testRebuildReplayRepaintsTheGridButWaitsForTheProgramToDrawOnIt() {
         var scanner = PaneScreenScanner()
         _ = scanner.scan(input(pending: workingBytes(), seq: 1, now: 0))
-        // A rebuild replays ring bytes carrying a blocked form; the verdict follows the grid.
         let blockedScreen = Data(
             "──────────\r\n  1. Yes\r\n  2. No\r\n\r\nEnter to select · ↑/↓ to navigate · Esc to cancel\r\n\u{1B}]0;✳ x\u{07}"
                 .utf8,
         )
-        let out = scanner.scan(input(replay: blockedScreen, seq: 2, now: 4))
+        var out = scanner.scan(input(replay: blockedScreen, seq: 2, now: 4))
+        XCTAssertNil(out.publish)
+        // The program repaints (any byte does) — the grid it repainted onto is now trustworthy, and
+        // the standing blocked form on it publishes.
+        out = scanner.scan(input(pending: Data("\r\n".utf8), seq: 3, now: 4.4))
         XCTAssertEqual(out.publish?.state, .blocked)
         XCTAssertTrue(out.publish?.visibleBlocker ?? false)
     }

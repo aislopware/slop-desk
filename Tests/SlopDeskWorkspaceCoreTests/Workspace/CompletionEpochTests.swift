@@ -258,4 +258,31 @@ final class CompletionEpochTests: XCTestCase {
             "a seen value from another daemon's counting means nothing here",
         )
     }
+
+    // MARK: - The finish that never had a `.done` to announce it
+
+    /// The hook-free pane, which is most of them: `ClaudeStatus.done` is produced only by an
+    /// authoritative `Stop` hook, and the screen-manifest engine that runs otherwise has no `done`
+    /// verdict at all — its finish is a `working → idle` edge and nothing more.
+    ///
+    /// So the marker cannot be keyed off the STATUS. The counter carries the finish; the pane sits
+    /// at `.idle` throughout; the row still shows the finished dot, exactly as herdr renders
+    /// `Idle && !seen` as Done.
+    func testAFinishReadsAsFinishedOnAPaneThatWasNeverDone() throws {
+        let store = makeStore()
+        let paneID = try makeBackgroundPane(store)
+        // The whole turn, as a hook-free host reports it: working, then back to rest.
+        store.setAgentStatus(.working, for: paneID)
+        store.setAgentStatus(.idle, for: paneID)
+        XCTAssertEqual(store.agentStatus(for: paneID), .idle, "no `.done` was ever available")
+
+        applySnapshot(
+            PaneLiveness(paneID: paneID.raw, liveness: .attached, completionEpoch: 1),
+            to: store,
+        )
+
+        XCTAssertTrue(store.paneUnseenDone.contains(paneID))
+        let entry = store.unseenAttentionPanes.first { $0.pane == paneID }
+        XCTAssertEqual(entry?.badge, .finished, "an unread finish is the green dot, `.done` or not")
+    }
 }

@@ -20,6 +20,23 @@ struct PaneScreenScanner {
     private var lastAgent: AgentKind?
     private var agentSince: TimeInterval?
     private var lastScanSeq: UInt64 = 0
+    /// TRUE between a ring REBUILD and the first output that lands on the rebuilt grid — while it
+    /// stands, the engine's verdict is computed but never published.
+    ///
+    /// A rebuild re-feeds the RAW scrollback ring into a grid of the CURRENT size, and a resize is
+    /// the reason a rebuild happens at all. Claude Code (like every inline TUI) dismisses its
+    /// dialogs with RELATIVE motion — `CSI nA` + `CSI J` for a row count it measured at the OLD
+    /// width — so replaying those bytes at the NEW width lands the erase in the wrong place and
+    /// leaves the top of a long-dismissed permission dialog sitting in the visible rows. The engine
+    /// reads that faithfully and calls the pane BLOCKED, which is how switching tabs conjured a
+    /// "waiting for your input" banner for a pane sitting quietly at its prompt.
+    ///
+    /// The grid is only ever trustworthy again once the program has repainted at the new size — the
+    /// SIGWINCH the resize already delivered (plus ``MuxChannelSession``'s redraw nudge) is what
+    /// makes that arrive. So the reconstruction stays a WARM GUESS: good enough to feed, never good
+    /// enough to publish. Nothing is lost by waiting — the last published verdict stands, and a
+    /// resize changes what is on screen, not what the agent is doing.
+    private var awaitingRepaintAfterRebuild = false
 
     struct Input {
         /// PTY output bytes accumulated since the last scan (empty when quiet).
@@ -64,6 +81,11 @@ struct PaneScreenScanner {
             fresh.feed(replay)
             model = fresh
             tracker.observe(replay)
+            // A reconstruction is not an observation — hold publishing until the program repaints
+            // onto it (see `awaitingRepaintAfterRebuild`). The hold goes with it: a pending
+            // working→idle confirmation was counting reads of a grid that no longer exists.
+            awaitingRepaintAfterRebuild = true
+            hold = AgentDetectionHold()
         } else if model == nil || model?.rows != input.rows || model?.cols != input.cols {
             // No replay supplied but the size drifted — restart empty; the next repaint fills it.
             model = TerminalScreenModel(rows: input.rows, cols: input.cols)
@@ -74,6 +96,12 @@ struct PaneScreenScanner {
         }
         let seqUnchanged = input.contentSeq == lastScanSeq
         lastScanSeq = input.contentSeq
+        // Output landing AFTER the rebuild is the repaint the guess was waiting for. The rebuild
+        // tick itself never clears the flag: `markScreenModelDirty` drops the pending buffer, so the
+        // bytes replayed there are the ring's, not the resized program's.
+        if awaitingRepaintAfterRebuild, input.rebuildReplay == nil, !seqUnchanged {
+            awaitingRepaintAfterRebuild = false
+        }
 
         guard let agent = input.agent else {
             return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
@@ -84,6 +112,10 @@ struct PaneScreenScanner {
         }
         // Idle-scan skip: a quiescent idle pane with no new bytes does no regex work.
         if lastPublished?.state == .idle, seqUnchanged, !hold.isHoldingIdle, !agentChanged {
+            return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
+        }
+        // The rebuilt grid is a guess until the program repaints onto it — read it, never report it.
+        if awaitingRepaintAfterRebuild {
             return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
         }
 
