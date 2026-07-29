@@ -4490,3 +4490,47 @@ launch arm on hardware. It cannot reach a host switch — one hostd, one port �
 other gate, so the host-switch arm is pinned headlessly and this entry says so rather than claiming
 coverage that does not exist. The honest residual: the second host's 2N shells are measured on the
 in-process rig, not on two real hostds.
+
+## The establish fan-out runs before the subscription, and the document is its second chance (2026-07-29)
+
+An adversarial review of the three commits above found a regression the ten hardware gates are blind
+to. `handleConnectionEstablished()` had been reordered to open the workspace subscription first, so
+that the provenance stamp would be armed before any pane could dial. But `startWorkspaceChannel()`
+stops the old subscription, `stop()` resets the mirror, and `WorkspaceStore.tree` is a pure
+PROJECTION of that mirror — so `redialDisconnectedPanes()` iterated an EMPTY pane set on every
+reconnect. A pane that gave up to `.failed`/`.unreachable` during an outage was never revived: a dead
+terminal behind a green "Connected" pill, until the user hits per-pane Reconnect once per pane.
+
+### 1. The order is forced by the projection, not chosen
+
+The fan-out has to read the pane set before anything resets it, so it goes first. What keeps that
+safe at a NEW host is not the order — it is `panesMayDial`, which is already holding by then because
+`commitConnectionTarget(_:)` stamps the new host before the connection reports up, and the provenance
+rule refuses ids the attached host has not named.
+
+### 2. `.closed` is not "nothing is coming"
+
+`resolvedPaneDialGate()` read `.closed` as a host that will never publish, and answered `true`. That
+is the state the app is ACTUALLY in when the next target is committed, since the shared connection is
+torn down before the new endpoint is stamped — so the arm handed a host switch exactly the dial it
+exists to prevent. `.refused` keeps that answer, because a host that declines `channelClass 1` really
+will never publish one; `.closed` falls through to provenance, bounded by `paneDialHoldBackstop`.
+
+### 3. The flap that beats the snapshot needs an edge nothing else provides
+
+An establish arriving while the mirror is already empty — the previous establish re-opened the
+subscription and the link died again before the snapshot answered — has no pane set to iterate at any
+point in the method, and the gate never moves, because the host that confirmed those ids is still the
+host being dialled. `armPaneRedialOnDocument()` books the fan-out a second run; the first document
+frame the ATTACHED host folds spends it, which is the one instant at which the panes are back on
+screen and their provenance is settled.
+
+### 4. What made the previous test unfalsifiable, and the rule that follows
+
+`testNoPaneDialsThePreviousHostsIdsAtANewHost` claimed "RED at six channels for three panes" while
+its dial-count assertion could not fail: the same reset emptied the tree before any redial could see
+it, so the count stayed at 3 with the provenance rule fully disabled. It now asserts a precondition
+that host A's layout is still on screen when the fan-out runs. Verified by neutering
+`resolvedPaneDialGate()` to `return true` and confirming the count line fires at 6 vs 3 — the number
+hardware produced. **A test over a projection must pin that the projection is populated, or it is
+asserting about an empty tree and the code it claims to cover can be deleted outright.**

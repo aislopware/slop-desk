@@ -581,19 +581,29 @@ public extension WorkspaceStore {
         loadCompletionSeen()
     }
 
-    /// What the store does when the app-global shared connection comes up: re-open the workspace
-    /// subscription, then redial the panes that were left disconnected.
+    /// What the store does when the app-global shared connection comes up: redial the panes the drop
+    /// left disconnected, then re-open the workspace subscription.
     ///
-    /// That order is the rule this whole class of bug lives in — ask which panes exist before asking
-    /// for them. Both calls are asynchronous underneath, so the order alone settles nothing; what
-    /// settles it is ``panesMayDial``, which holds the fan-out until the host on the other end of the
-    /// subscription has confirmed the layout on screen. Opening the subscription first is what makes
-    /// that answer the nearest thing in flight rather than a race behind three PTYs.
+    /// The order is forced, and the forcing thing is ``startWorkspaceChannel()``: it stops the old
+    /// subscription, `stop()` resets the mirror, and ``WorkspaceStore/tree`` is a pure PROJECTION of
+    /// that mirror. So a fan-out placed after this line has an empty pane set to iterate on every
+    /// live channel — three dead terminals behind a green "Connected" pill, which is the whole point
+    /// of the fan-out inverted. What keeps the earlier fan-out safe is not the order but
+    /// ``panesMayDial``, which is holding by the time this runs whenever the target has changed:
+    /// ``commitConnectionTarget(_:)`` stamps the new host before the connection reports up, and the
+    /// provenance rule refuses ids the attached host has not named.
+    ///
+    /// ``armPaneRedialOnDocument()`` covers what neither ordering can: the establish that arrives
+    /// while the mirror is ALREADY empty, because the previous establish re-opened the subscription
+    /// and the link died again before the snapshot answered. That fan-out has nothing to iterate at
+    /// any point in this method, and the gate never moves, so its second chance has to hang off the
+    /// document itself.
     ///
     /// Re-opening every time is deliberate — see ``startWorkspaceChannel()``.
     func handleConnectionEstablished() {
-        startWorkspaceChannel()
+        armPaneRedialOnDocument()
         redialDisconnectedPanes()
+        startWorkspaceChannel()
     }
 
     /// Builds the production channel: `channelClass 1` on the app-global shared connection.

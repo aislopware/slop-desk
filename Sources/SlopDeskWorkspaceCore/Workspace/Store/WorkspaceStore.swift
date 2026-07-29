@@ -171,6 +171,12 @@ public final class WorkspaceStore {
     @ObservationIgnored
     var paneDialHoldExpired = false
 
+    /// Whether an app-connection establish still owes its panes a fan-out — see
+    /// ``armPaneRedialOnDocument()``. Set on every establish, spent by the first document frame the
+    /// attached host folds.
+    @ObservationIgnored
+    var paneRedialAwaitsDocument = false
+
     /// The armed backstop, cancelled the moment the hold releases on an answer.
     @ObservationIgnored
     var paneDialHoldBackstopTask: Task<Void, Never>?
@@ -575,6 +581,10 @@ public final class WorkspaceStore {
             // the dial hold, and it has to be AFTER the reconcile above — the panes that then dial
             // are the ones that pass just materialized.
             refreshPaneDialGate()
+            // …and the one place a reconnect whose fan-out found an EMPTY document gets its panes
+            // back: this frame is what puts them on screen, and the two lines above are what make
+            // them dialable at the host that just sent it.
+            redialArmedPanesOnConfirmedDocument()
         }
         // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
         // real layout from the first instant rather than `nil` until a host frame happens to arrive.

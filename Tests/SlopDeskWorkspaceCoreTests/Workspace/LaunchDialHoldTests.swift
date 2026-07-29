@@ -150,6 +150,14 @@ final class LaunchDialHoldTests: XCTestCase {
 
         func deliver(_ message: WireMessage) { continuation.yield(message) }
 
+        /// Ends this subscription the way a DROPPED LINK does: the inbound stream finishes and the
+        /// run loop unwinds to `.closed` on its own.
+        ///
+        /// Deliberately not ``WorkspaceChannelClient/stop()``. A stop also resets the mirror, and the
+        /// whole question a reconnect asks is what the fan-out can see — so a test that reached for
+        /// the stop would be asserting about an empty document rather than about the drop.
+        func drop() { continuation.finish() }
+
         /// Every intent this client has put on the wire, decoded.
         var intents: [WorkspaceIntent] {
             lock.lock()
@@ -566,17 +574,43 @@ final class LaunchDialHoldTests: XCTestCase {
         return rig
     }
 
-    /// The user points the app at a SECOND machine inside one app run.
+    /// A link going away: every pane channel goes down with it (a deliberate close, so no per-pane
+    /// reconnect campaign follows and the only thing that can dial is the store's own fan-out), and
+    /// the workspace subscription unwinds to `.closed` on its own.
     ///
-    /// Every pane channel goes down with the old link (a deliberate close: the app tears the shared
-    /// connection down itself, so no per-pane reconnect campaign follows and the only thing that can
-    /// dial is the store's own fan-out); the new target is committed, which ``AppConnection`` does
-    /// BEFORE the connection reports up; and the fan-out runs the moment it does.
-    private func switchToHostB(_ rig: Rig) async {
+    /// The subscription half is not decoration. It is the state the app is ACTUALLY in when the next
+    /// target is committed — the shared connection is torn down before the new endpoint is stamped —
+    /// and a rig that left the channel `.live` would be asking the gate an easier question than
+    /// hardware ever does.
+    private func dropTheLink(_ rig: Rig) async {
         for id in rig.store.tree.allPaneIDs() {
             await (rig.store.handle(for: id) as? LivePaneSession)?.connection?.disconnect()
         }
+        rig.pipe.drop()
+        await expect("the subscription to unwind") { rig.client.state == .closed }
+    }
+
+    /// The user points the app at a SECOND machine inside one app run.
+    ///
+    /// The old link goes away, the new target is committed — which ``AppConnection`` does BEFORE the
+    /// connection reports up — and the establish fan-out runs the moment it does.
+    private func switchToHostB(
+        _ rig: Rig,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) async {
+        await dropTheLink(rig)
         rig.store.commitConnectionTarget(Self.hostB)
+        // The fan-out has to have panes to iterate for the HOLD to be what stops them. `tree` is a
+        // pure projection of the mirror, so an empty document at this instant would make every
+        // "nothing dialled" assertion below true for a reason that has nothing to do with
+        // provenance — and the gate could then be deleted outright with every one of them still
+        // green.
+        XCTAssertFalse(
+            rig.store.tree.allPaneIDs().isEmpty,
+            "precondition: host A's layout is still on screen when the fan-out runs",
+            file: file, line: line,
+        )
         rig.store.handleConnectionEstablished()
     }
 
@@ -643,5 +677,89 @@ final class LaunchDialHoldTests: XCTestCase {
         XCTAssertFalse(rig.store.panesMayDial, "precondition: waiting on host B's first frame")
 
         await expect("the backstop to release the hold") { rig.store.panesMayDial }
+    }
+
+    // MARK: - The reconnect fan-out
+
+    /// The reconnect ``AppConnection`` drives: the SAME target is re-stamped, then the establish
+    /// hook runs.
+    private func reconnectToHostA(_ rig: Rig) {
+        rig.store.commitConnectionTarget(Self.hostA)
+        rig.store.handleConnectionEstablished()
+    }
+
+    /// The headline of this section: a reconnect to the same machine brings the panes back.
+    ///
+    /// ``WorkspaceStore/redialDisconnectedPanes()`` is the ONLY thing that can. The leaf's
+    /// connect-on-appear `.task` does not re-fire under keep-all-mounted — the live id never moved —
+    /// so a fan-out that dials nothing leaves three dead terminals behind a green "Connected" pill,
+    /// until the user hits per-pane Reconnect three times.
+    ///
+    /// RED at three channels for three panes when the fan-out runs AFTER the subscription is
+    /// re-opened: ``WorkspaceChannelClient/stop()`` resets the mirror and ``WorkspaceStore/tree`` is
+    /// a pure projection of it, so the fan-out iterates an EMPTY pane set — and the re-subscribe's
+    /// own snapshot then puts the layout back on screen without dialling any of it.
+    func testAReconnectToTheSameHostRedialsThePanesTheDropTookDown() async throws {
+        let hostATree = clientTree(titles: ["a one", "a two", "a three"])
+        let rig = try await settledAtHostA(hostATree)
+        let panes = Set(hostATree.allPaneIDs())
+
+        await dropTheLink(rig)
+        await expect("every pane to be down") {
+            panes.allSatisfy {
+                (rig.store.handle(for: $0) as? LivePaneSession)?.connection?.status == .disconnected
+            }
+        }
+
+        reconnectToHostA(rig)
+        await expect("the re-subscribe to reach the host") { rig.pipes.openCount == 2 }
+        rig.pipe.deliver(hostSnapshot(hostATree, stateNum: 7))
+        await expect("the layout to come back") { Set(rig.store.tree.allPaneIDs()) == panes }
+
+        await expect("every pane the drop took down to dial again") {
+            rig.dials.dialled.count == 2 * panes.count
+        }
+        XCTAssertEqual(
+            Set(rig.dials.dialled), panes,
+            "…each of them host A's own id, dialled at host A — the second channel is a REATTACH",
+        )
+        await expect("every pane to be live again") {
+            panes.allSatisfy {
+                (rig.store.handle(for: $0) as? LivePaneSession)?.connection?.status == .connected
+            }
+        }
+    }
+
+    /// The same reconnect, one flap deeper — the case the fan-out alone cannot serve.
+    ///
+    /// The second establish arrives while the mirror is EMPTY: the first one re-opened the
+    /// subscription, and that reset the document before this host's snapshot had answered. So there
+    /// is no pane set to iterate at establish time, and the gate never moves (host A confirmed these
+    /// ids before the flap, so it was open the whole way through) — nothing gives the fan-out a
+    /// second chance. What does is the document itself: the first frame the ATTACHED host folds is
+    /// the moment the panes are back on screen and their provenance is settled.
+    func testTheReconnectFanOutSurvivesADropThatBeatsTheSnapshot() async throws {
+        let hostATree = clientTree(titles: ["a one", "a two", "a three"])
+        let rig = try await settledAtHostA(hostATree)
+        let panes = Set(hostATree.allPaneIDs())
+
+        await dropTheLink(rig)
+        reconnectToHostA(rig)
+        await expect("the re-subscribe to reach the host") { rig.pipes.openCount == 2 }
+
+        // …and the link dies again before that subscription's snapshot lands, so the mirror the
+        // NEXT establish reads is the empty one the re-open left behind.
+        rig.pipe.drop()
+        await expect("the second subscription to unwind") { rig.client.state == .closed }
+        XCTAssertTrue(rig.store.tree.allPaneIDs().isEmpty, "precondition: the document is gone")
+
+        reconnectToHostA(rig)
+        await expect("the third subscribe to reach the host") { rig.pipes.openCount == 3 }
+        rig.pipe.deliver(hostSnapshot(hostATree, stateNum: 11))
+
+        await expect("host A's own document to redial its panes") {
+            rig.dials.dialled.count == 2 * panes.count
+        }
+        XCTAssertEqual(Set(rig.dials.dialled), panes, "and nothing outside host A's own layout dialled")
     }
 }

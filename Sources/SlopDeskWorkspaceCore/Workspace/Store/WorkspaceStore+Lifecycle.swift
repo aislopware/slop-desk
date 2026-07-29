@@ -116,9 +116,18 @@ extension WorkspaceStore {
         guard armedBootstrapEnvironment == nil else { return true }
         guard !workspaceChannel.servesLocalDocument else { return true }
         switch workspaceChannelState {
-        case .refused,
-             .closed: return true
-        case .idle,
+        // A host that does not serve `channelClass 1` is a host that will never publish a document,
+        // so nothing about the layout on screen can ever be confirmed and holding for it would hold
+        // for the life of the process.
+        case .refused: return true
+        // `.closed` is NOT that answer, and reading it as one is what makes a host switch churn: the
+        // app tears the shared connection down BEFORE it commits the new target, so the state at the
+        // moment ``WorkspaceStore/commitConnectionTarget(_:)`` recomputes the gate is `.closed` with
+        // the PREVIOUS host's document still on screen. A dead subscription says nothing about whose
+        // ids these are — the provenance below does, and a close with no reconnect behind it is what
+        // ``paneDialHoldBackstop`` bounds.
+        case .closed,
+             .idle,
              .live,
              .opening: break
         }
@@ -166,6 +175,31 @@ extension WorkspaceStore {
             guard let connection = (handle(for: id) as? LivePaneSession)?.connection else { continue }
             Task { @MainActor in await connection.connectIfNeeded() }
         }
+    }
+
+    /// Books the establish fan-out a second run, on the first document frame the ATTACHED host folds.
+    ///
+    /// A one-shot per establish. ``handleConnectionEstablished()`` dials what is on screen and then
+    /// re-opens the subscription, which empties the mirror — so an establish that finds the mirror
+    /// already empty (the previous one re-opened it and the link died again before the snapshot
+    /// answered) has no pane set to fan across and no gate edge coming, because the host that
+    /// confirmed those ids is still the host being dialled. This is the missing edge.
+    func armPaneRedialOnDocument() {
+        paneRedialAwaitsDocument = true
+    }
+
+    /// Fires that booking the moment the pane set is back on screen AND its provenance is settled —
+    /// the one instant at which a fan-out is both possible and legitimate.
+    ///
+    /// Driven by the mirror's change hook, after the reconcile that materializes the leaves and after
+    /// ``refreshPaneDialGate()``, so `handle(for:)` answers and the gate is current. Left armed while
+    /// either half is missing: a hold released by ``paneDialHoldBackstop`` with no document behind it
+    /// dials an empty tree, and disarming there would spend the booking on nothing.
+    func redialArmedPanesOnConfirmedDocument() {
+        guard paneRedialAwaitsDocument, panesMayDial else { return }
+        guard dialConfirmedHostKey == attachedHostKey else { return }
+        paneRedialAwaitsDocument = false
+        redialDisconnectedPanes()
     }
 
     // MARK: - Session-retention LRU (R-lifecycle #3)
