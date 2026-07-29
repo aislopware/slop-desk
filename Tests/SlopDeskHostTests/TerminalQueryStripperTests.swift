@@ -237,36 +237,27 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(TerminalQueryStripper.strip(Data(input.utf8)), Data(expected.utf8))
     }
 
-    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL SEVEN off → nil transform.
-    func testTransformEnvGates() throws {
-        let stripOff = ScrollbackReplayTransform.make(
-            environment: ["SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0"],
-        )
-        XCTAssertNotNil(stripOff, "distill stays on")
-        XCTAssertEqual(
-            try XCTUnwrap(stripOff?(Data("a\u{1B}[cb".utf8))), Data("a\u{1B}[cb".utf8),
-            "with the stripper off the DA query must survive",
-        )
-        XCTAssertNil(ScrollbackReplayTransform.make(environment: [
+    /// The cleanup passes have no env gates left — six `STRIP_*`/`COLLAPSE_*` opt-outs were deleted,
+    /// so the transform always exists and always strips. Only `SLOPDESK_SCROLLBACK_DISTILL` survives,
+    /// over the B→C line-editor collapse, and turning it off does not turn the rest off with it.
+    func testTheCleanupPassesHaveNoOptOut() throws {
+        let retired = [
             "SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0",
-            "SLOPDESK_SCROLLBACK_DISTILL": "0",
             "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0",
             "SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN": "0",
             "SLOPDESK_SCROLLBACK_COLLAPSE_SYNC": "0",
             "SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT": "0",
             "SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS": "0",
-        ]))
-        XCTAssertNotNil(
-            ScrollbackReplayTransform.make(environment: [
-                "SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0",
-                "SLOPDESK_SCROLLBACK_DISTILL": "0",
-                "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0",
-                "SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN": "0",
-                "SLOPDESK_SCROLLBACK_COLLAPSE_SYNC": "0",
-            ]),
-            "the PROMPT_SP mark stripper keeps the transform alive on its own",
-        )
-        let allOn = ScrollbackReplayTransform.make(environment: [:])
-        XCTAssertEqual(allOn?(Data("a\u{1B}[cb".utf8)), Data("ab".utf8))
+        ]
+        let transform = try XCTUnwrap(ScrollbackReplayTransform.make(environment: retired))
+        XCTAssertEqual(transform(Data("a\u{1B}[cb".utf8)), Data("ab".utf8), "the DA query goes regardless")
+
+        var withDistillOff = retired
+        withDistillOff["SLOPDESK_SCROLLBACK_DISTILL"] = "0"
+        let distillOff = try XCTUnwrap(ScrollbackReplayTransform.make(environment: withDistillOff))
+        XCTAssertEqual(distillOff(Data("a\u{1B}[cb".utf8)), Data("ab".utf8))
+
+        let allDefault = try XCTUnwrap(ScrollbackReplayTransform.make(environment: [:]))
+        XCTAssertEqual(allDefault(Data("a\u{1B}[cb".utf8)), Data("ab".utf8))
     }
 }

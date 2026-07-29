@@ -40,7 +40,7 @@ public final class ConnectionViewModel {
     public private(set) var latencyMS: Double?
     public private(set) var sessionID: UUID?
 
-    // MARK: Detach/resume identity mirror (SLOPDESK_DETACH_ENABLED)
+    // MARK: Detach/resume identity mirror
 
     /// The session UUID the client is currently using (presented to the host in the channelOpen
     /// preamble) — the pane's own ``PaneID``, echoed back by the host. Mirrors

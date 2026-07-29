@@ -44,11 +44,11 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     func testEnvConfigResolvesTheOverlayValueAfterApply() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        store.agent = AgentPreferences(agentDetect: true)
-        // The agent gate is default-OFF (== "1"); an explicit ON writes "1" into the overlay, which
-        // `EnvConfig` then resolves.
-        XCTAssertEqual(EnvConfig.string("SLOPDESK_AGENT_DETECT"), "1")
-        XCTAssertTrue(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_DETECT"))
+        store.agent = AgentPreferences(preventSleep: true)
+        // The prevent-sleep gate is default-OFF (== "1"); an explicit ON writes "1" into the overlay,
+        // which `EnvConfig` then resolves.
+        XCTAssertEqual(EnvConfig.string("SLOPDESK_AGENT_PREVENT_SLEEP"), "1")
+        XCTAssertTrue(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_PREVENT_SLEEP"))
     }
 
     // MARK: Sidecar (video-prefs.json)

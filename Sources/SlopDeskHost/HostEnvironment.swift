@@ -35,8 +35,9 @@ public enum HostEnvironment {
     ///   - term: the `TERM` to advertise. Defaults to ``defaultTerm`` (`xterm-ghostty`),
     ///     matching what the libghostty client renders.
     ///   - agentSocketPath: when non-nil, exported as `SLOPDESK_SOCKET_PATH` so an installed
-    ///     Claude Code hook (``AgentInstaller``) knows where to POST hook events. Absent
-    ///     by default — detection works WITHOUT hooks via the foreground watcher (Decision #5).
+    ///     Claude Code hook (``AgentInstaller``) knows where to POST hook events. Absent by
+    ///     default here (the daemon always supplies it); detection still works without hooks via
+    ///     the foreground watcher (Decision #5).
     ///   - paneID: when non-nil, exported as `SLOPDESK_PANE_ID` so the hook can tag which pane
     ///     it belongs to (Muxy's `MUXY_PANE_ID` analog). Absent by default.
     public static func curated(
@@ -105,9 +106,9 @@ public enum HostEnvironment {
         if let cursor = parent[ShellIntegration.cursorEnvKey] { env[ShellIntegration.cursorEnvKey] = cursor }
 
         // Export the agent-hook socket path + pane id into the PTY env (Muxy's
-        // MUXY_SOCKET_PATH / MUXY_PANE_ID analog) when the host has the opt-in hook listener
-        // enabled. The installed hook script (``AgentInstaller/hookScript()``) reads these to
-        // POST hook events to the host; absent → the hook is a silent no-op.
+        // MUXY_SOCKET_PATH / MUXY_PANE_ID analog). The installed hook script
+        // (``AgentInstaller/hookScript()``) reads these to POST hook events to the host;
+        // absent → the hook is a silent no-op.
         if let agentSocketPath { env[Self.agentSocketEnvKey] = agentSocketPath }
         if let paneID { env[Self.agentPaneIDEnvKey] = paneID }
         if let controlSocketPath { env[Self.agentControlSocketEnvKey] = controlSocketPath }
@@ -149,27 +150,14 @@ public enum HostEnvironment {
         environment[agentControlEnvKey] == "1"
     }
 
-    /// Whether host-side Claude-Code agent detection is enabled (the foreground
-    /// process-watch + the rolled-up status emission). Default idiom = DEFAULT-ON via
-    /// `env[key] != "0"` (only an explicit `"0"` disables) — process-watch is zero-config and
-    /// the ratified primary signal (Decision #5), so it is on unless the operator opts out.
-    public static let agentDetectEnvKey = "SLOPDESK_AGENT_DETECT"
-
-    /// Resolves whether agent detection (the foreground watcher) is enabled. Default-ON:
-    /// only the exact string `"0"` disables; anything else (unset, `"1"`, …) enables.
-    ///
-    /// The default `environment` resolves through ``EnvConfig`` (ProcessInfo env → settings
-    /// overlay), so a GUI toggle in the agent settings (folded in from `video-prefs.json`) reaches this
-    /// gate. An EMPTY overlay is byte-identical to a plain `ProcessInfo.processInfo.environment[key]`
-    /// read, so the default-ON `!= "0"` truth table is unchanged. An explicit `environment:` (tests)
-    /// bypasses the overlay.
-    public static func agentDetectEnabled(
-        environment: [String: String] = configEnv(agentDetectEnvKey),
-    )
-        -> Bool
-    {
-        environment[agentDetectEnvKey] != "0"
-    }
+    // Agent detection has no gate either. `SLOPDESK_AGENT_DETECT` (and its "Foreground-process
+    // watch" toggle) is gone: knowing what the agent in a pane is doing is what this product is
+    // for, and the watch is zero-config, host-local and costs a `tcgetpgrp` per second. Turning it
+    // off bought nothing and cost every status the sidebar shows.
+    //
+    // `HostServer.agentDetectEnabled` / `MuxChannelSession(agentDetectEnabled:)` remain as INJECTED
+    // arguments — several tests want a channel whose byte pipeline is provably identical to one
+    // with no watch at all, and that is a test seam, not a user-facing switch.
 
     /// Whether the host segments the outbound PTY stream into Warp-style "Blocks" (the
     /// additive parallel ``CommandBlockSegmenter`` tap + the type-28/29 wire). Default idiom =

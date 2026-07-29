@@ -227,8 +227,15 @@ enum TerminalQueryStripper {
 /// (``MuxChannelSession/makeReplayBuffer()``) and the disk journal's restore
 /// (``ScrollbackJournalStore``) — so both replay paths stay behaviour-identical.
 ///
-/// Composition (all default-ON, the `!= "0"` idiom):
-/// 1. `SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES` — ``TerminalInputModeStripper`` removes mouse /
+/// Composition. Every pass below is UNCONDITIONAL: each removes bytes whose only effect on a
+/// replay is to be wrong — armed input modes that make the shell read garbage, a TUI's drawing
+/// replayed as a pane stuck inside vim, megabytes of progress ticks whose last revision is the
+/// only visible one. Six env opt-outs (`SLOPDESK_SCROLLBACK_STRIP_*` / `_COLLAPSE_*`) used to
+/// exist; nobody wants the garbage back, and six flags for "do not show garbage" is six ways to
+/// break a reattach with no way to notice. `SLOPDESK_SCROLLBACK_DISTILL` survives as the one
+/// remaining gate over the B→C line-editor collapse.
+///
+/// 1. ``TerminalInputModeStripper`` removes mouse /
 ///    kitty-keyboard / in-band-resize mode changes so replayed history can never transiently arm
 ///    the client's input reporting (the reattach `zsh: command not found: 18M65…` garbage fix).
 ///    With `reassertInputModes` the NET final state is re-appended after the whole pipeline, so a
@@ -238,48 +245,37 @@ enum TerminalQueryStripper {
 ///    Runs FIRST, on the RAW stream: the net state must be computed in true chronological order,
 ///    and the distiller reorders it — an open B→C span's bytes (where zsh toggles `?2004`
 ///    per prompt) are flushed out of sequence or replaced by the committed command line.
-/// 2. `SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN` — ``AltScreenSegmentStripper`` drops CLOSED
+/// 2. ``AltScreenSegmentStripper`` drops CLOSED
 ///    alt-screen segments (`?1049h…?1049l`): a TUI's drawing contributes nothing to the final
 ///    display but costs tens of MiB of replay that renders as the pane "stuck inside vim". A
 ///    segment still open at end-of-stream (live TUI) is kept verbatim — that IS the repaint.
-/// 3. `SLOPDESK_SCROLLBACK_COLLAPSE_SYNC` — ``SyncUpdateFrameCollapser`` drops synchronized-output
+/// 3. ``SyncUpdateFrameCollapser`` drops synchronized-output
 ///    frames (`?2026h…?2026l`) that repaint in place without scrolling anything into history —
 ///    the INLINE-TUI (Claude Code) counterpart of the alt-screen pass, which cannot see churn
 ///    that never enters the alt screen and lives inside an OPEN command span. Runs after the
 ///    alt-screen strip (only inline + live-segment churn left to chew) and before the distiller.
-/// 4. `SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT` — ``LineOverprintCollapser`` drops the superseded
+/// 4. ``LineOverprintCollapser`` drops the superseded
 ///    revisions of a line a progress reporter overprints with `CR` (`git push`, `swift build`,
 ///    `npm`, `docker pull` — megabytes of percentage ticks whose only visible result is the LAST
 ///    revision). The third churn pass, for output that is neither alt-screen nor sync-framed and
 ///    so invisible to both siblings; it runs before the distiller (megabytes less to scan) and
 ///    leaves every line carrying an OSC `133` mark verbatim, so the distiller's marks all survive.
 /// 5. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
-/// 6. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
+/// 6. ``TerminalQueryStripper`` removes terminal queries /
 ///    echoed responses / stale color state (the reattach "garbage input" fix).
-/// 7. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
+/// 7. ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
 ///    mark+fill clusters, whose width-dependent overprint trick surfaces stray `%` lines when
 ///    history is replayed at a different grid width. Runs LAST: the earlier passes only improve
 ///    its cluster→`133;D`/`133;A` adjacency anchor (the distiller flushes clusters buffered in a
 ///    B→C span; the query/mode strippers remove interposed sequences).
 ///
-/// Returns `nil` when all are disabled (raw replay — the pre-transform behaviour).
+/// Always returns a transform — the cleanup passes are not optional.
 enum ScrollbackReplayTransform {
     static func make(
         environment env: [String: String] = ProcessInfo.processInfo.environment,
         reassertInputModes: Bool = false,
     ) -> (@Sendable (Data) -> Data)? {
         let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
-        let stripQueries = env["SLOPDESK_SCROLLBACK_STRIP_QUERIES"] != "0"
-        let stripInputModes = env["SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES"] != "0"
-        let stripAltScreen = env["SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN"] != "0"
-        let collapseSync = env["SLOPDESK_SCROLLBACK_COLLAPSE_SYNC"] != "0"
-        let collapseOverprint = env["SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT"] != "0"
-        let stripEOLMarks = env["SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS"] != "0"
-        guard distill || stripQueries || stripInputModes || stripAltScreen || collapseSync
-            || collapseOverprint || stripEOLMarks
-        else {
-            return nil
-        }
         return { @Sendable data in
             // Hold back a trailing INCOMPLETE escape sequence and re-attach it LAST. PTY reads
             // chunk at arbitrary offsets, so the scrollback-ring / un-acked-tail boundary (the
@@ -292,17 +288,15 @@ enum ScrollbackReplayTransform {
             let split = splitTrailingIncompleteEscape(data)
             var result = split.head
             var reassert = Data()
-            if stripInputModes {
-                let stripped = TerminalInputModeStripper.strip(result)
-                result = stripped.data
-                if reassertInputModes { reassert = stripped.state.reassertSequence }
-            }
-            if stripAltScreen { result = AltScreenSegmentStripper.strip(result) }
-            if collapseSync { result = SyncUpdateFrameCollapser.collapse(result) }
-            if collapseOverprint { result = LineOverprintCollapser.collapse(result) }
+            let stripped = TerminalInputModeStripper.strip(result)
+            result = stripped.data
+            if reassertInputModes { reassert = stripped.state.reassertSequence }
+            result = AltScreenSegmentStripper.strip(result)
+            result = SyncUpdateFrameCollapser.collapse(result)
+            result = LineOverprintCollapser.collapse(result)
             if distill { result = ScrollbackDistiller.distill(result) }
-            if stripQueries { result = TerminalQueryStripper.strip(result) }
-            if stripEOLMarks { result = PromptEOLMarkStripper.strip(result) }
+            result = TerminalQueryStripper.strip(result)
+            result = PromptEOLMarkStripper.strip(result)
             result.append(reassert)
             result.append(split.dangling)
             return result

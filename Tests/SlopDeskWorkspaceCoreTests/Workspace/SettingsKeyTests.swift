@@ -221,7 +221,7 @@ final class SettingsKeyTests: XCTestCase {
         let store = PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontFamily: "JetBrains Mono", fontSize: 15, cursorStyle: .bar)
         store.video = VideoPreferences(qpSharp: 22, fecM: 2, fecK: 5)
-        store.agent = AgentPreferences(agentDetect: true)
+        store.agent = AgentPreferences(preventSleep: true)
         store.keybindings = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "e", command: true)])
         store.rawOverrides = ["SLOPDESK_FOO": "1"]
 

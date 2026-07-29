@@ -209,7 +209,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         store.appearance = AppearancePreferences(theme: .monokaiProSpectrum)
         store.keybindings = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "e", command: true)])
         store.video = VideoPreferences(qpSharp: 30)
-        store.agent = AgentPreferences(agentDetect: true)
+        store.agent = AgentPreferences(preventSleep: true)
         store.rawOverrides = ["SLOPDESK_X": "9"]
         // Flip a tab-reachable toggle on each non-Advanced section (Controls / General / Appearance / Agents).
         // These are NON-default values that a Reset-Advanced-Only must NOT destroy.

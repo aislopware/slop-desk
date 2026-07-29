@@ -28,7 +28,7 @@ import SlopDeskTransport
 /// dup-free.
 ///
 /// What reconnect does TODAY: the mux transport HAS per-channel server-side resume
-/// (`SLOPDESK_DETACH_ENABLED`, default-ON). A link drop parks the live shell in the host's
+/// (host-side, gated by "Resume on Recovery"). A link drop parks the live shell in the host's
 /// `DetachedSessionStore`; reconnect presents the same `sessionID` + `lastReceivedSeq` and the
 /// host either reattaches it (PATH A — replays `seq > lastReceivedSeq`, byte-exact or as a
 /// rendered snapshot, docs/20 §8.3.1) or spawns fresh (PATH B/C). The `channelOpenAck`
@@ -383,7 +383,7 @@ public actor SlopDeskClient {
     // MARK: Connect / reconnect
 
     /// Pre-seeds the resume identity so the NEXT ``connect(...)`` presents this session
-    /// UUID and last-received seq to the host (the SLOPDESK_DETACH_ENABLED path).
+    /// UUID and last-received seq to the host (the detach/reattach path).
     ///
     /// NOT the production restore-a-pane path (seed-resume-identity-race, docs/DECISIONS):
     /// `LivePaneSession.makeTerminal` threads the pane's own id
@@ -511,7 +511,7 @@ public actor SlopDeskClient {
         //     dropped as a "duplicate" (a reattached shell's next seqs just re-baseline via
         //     the gap-tolerant `deliverOutput`).
         //
-        //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (SLOPDESK_DETACH_ENABLED
+        //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (the detach/reattach path
         //     path): it replays the tail from `resumeFromSeq` onward. The client's marks were seeded
         //     by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup high-water is ALREADY
         //     correct — resetting would discard them and make `deliverOutput` re-deliver the replayed

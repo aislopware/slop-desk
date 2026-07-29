@@ -67,8 +67,8 @@ final class PreferencesTests: XCTestCase {
     }
 
     func testAgentPreferencesRoundTrip() throws {
-        XCTAssertNil(AgentPreferences().agentDetect)
-        let custom = AgentPreferences(agentDetect: true, preventSleep: false)
+        XCTAssertNil(AgentPreferences().preventSleep)
+        let custom = AgentPreferences(preventSleep: true, resumeOnRecovery: false)
         XCTAssertEqual(try roundTrip(custom), custom)
     }
 

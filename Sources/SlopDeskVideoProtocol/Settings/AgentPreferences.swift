@@ -13,9 +13,6 @@ import Foundation
 /// `slopdesk-hostd` loads that sidecar at launch, so these flags actually reach `HostEnvironment`.
 /// Default = `nil` (unset) ⇒ EMPTY env overlay ⇒ today's compile-time-default behaviour.
 public struct AgentPreferences: Codable, Sendable, Equatable {
-    /// Host foreground-process watch (the primary, zero-config Claude signal, wire type 26) →
-    /// `SLOPDESK_AGENT_DETECT`. `nil` ⇒ unset (the daemon default).
-    public var agentDetect: Bool?
     /// Hold a system-sleep assertion while ANY agent is processing (the "Prevent Sleep
     /// While Processing" toggle) → `SLOPDESK_AGENT_PREVENT_SLEEP` (default-OFF host gate, `== "1"`). Host-LOCAL
     /// policy: the daemon holds the `IOPMAssertion` (``PreventSleepAssertion``) driven by the `claudeStatus
@@ -28,11 +25,9 @@ public struct AgentPreferences: Codable, Sendable, Equatable {
     public var resumeOnRecovery: Bool?
 
     public init(
-        agentDetect: Bool? = nil,
         preventSleep: Bool? = nil,
         resumeOnRecovery: Bool? = nil,
     ) {
-        self.agentDetect = agentDetect
         self.preventSleep = preventSleep
         self.resumeOnRecovery = resumeOnRecovery
     }

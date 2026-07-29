@@ -1727,11 +1727,11 @@ private struct AgentsSettingsTab: View {
         Form {
             claudeCodeSection
 
-            slateFormSection("Agent detection (host)") {
-                optionalBoolToggle("Foreground-process watch", $store.agent.agentDetect)
-                timingFooter(.reconnect)
-            }
-
+            // "Agent detection (host)" is gone. It held two switches — the foreground-process watch
+            // and the Claude hooks — over the machinery that tells you what the agent in a pane is
+            // doing, which is what this product is for. Neither had an OFF worth offering; both are
+            // now unconditional. What remains a choice is INSTALLING the hooks into the user's own
+            // `~/.claude/settings.json`, which the Claude Code card above owns.
             agentBehaviorSection
             agentBehaviorHostSection
 

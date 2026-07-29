@@ -29,8 +29,8 @@ if getrlimit(RLIMIT_NOFILE, &fdLimit) == 0 {
 }
 
 // Fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
-// any consumer reads a setting — here the agent-detection gate (`SLOPDESK_AGENT_DETECT`, read
-// below) resolves ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.
+// any consumer reads a setting — the remaining gates resolve ProcessInfo env → overlay → default,
+// so a GUI toggle applies on the next launch.
 // A real `SLOPDESK_*` env var still wins (the sidecar only fills gaps). The same sidecar the
 // `slopdesk-videohostd` daemon loads — both host daemons now honour the shared agent prefs. A
 // missing / corrupt sidecar is a no-op. (No live reload — the gates are read once.)
@@ -90,8 +90,8 @@ let log: @Sendable (String) -> Void = { message in
 }
 
 // The foreground-process watch is the PRIMARY, zero-config Claude detection signal
-// (Decision #5) — default-ON, only `SLOPDESK_AGENT_DETECT=0` disables it.
-let agentDetectEnabled = HostEnvironment.agentDetectEnabled()
+// (Decision #5). No gate — see `HostEnvironment`.
+let agentDetectEnabled = true
 
 // The Warp-style "Blocks" tap (per-command segmentation) — default-ON, only
 // `SLOPDESK_BLOCKS=0` disables it. When off the byte pipeline + sniffer are byte-identical.

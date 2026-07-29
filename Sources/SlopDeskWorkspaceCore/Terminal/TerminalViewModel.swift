@@ -1659,7 +1659,7 @@ public final class TerminalViewModel {
     ///
     /// A reconnect can land on EITHER a fresh host shell (PATH B/C — output restarts at seq 1; the wipe must
     /// fire or the new prompt grafts onto the dead session's still-resident framebuffer + scrollback) OR a
-    /// PATH-A reattach of the SAME live shell (`SLOPDESK_DETACH_ENABLED`, default-ON — the host replays only the
+    /// PATH-A reattach of the SAME live shell (host-side detach, on unless "Resume on Recovery" is off — the host replays only the
     /// un-acked tail and never re-sends the surviving screen, so the wipe must NOT fire). Which one is only
     /// knowable from the first post-reconnect output seq (``SlopDeskClient/SessionResumeOutcome``), so the
     /// boundary ARMS this flag pessimistically and the output pump (``observe(client:)``) resolves it against

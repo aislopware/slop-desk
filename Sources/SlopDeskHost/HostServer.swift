@@ -37,13 +37,13 @@ public final class HostServer: @unchecked Sendable {
     public let launchMode: LaunchMode
 
     /// Whether new channels run the host-side foreground-process watch (the PRIMARY,
-    /// zero-config Claude-Code detection signal, Decision #5). Resolved by the daemon from
-    /// `SLOPDESK_AGENT_DETECT` (default-ON; only `"0"` disables). When false, the channel's byte
-    /// pipeline is byte-identical to one with no watch at all.
+    /// zero-config Claude-Code detection signal, Decision #5). Always true in the daemon — the
+    /// argument survives as a TEST seam, and when false the channel's byte pipeline is
+    /// byte-identical to one with no watch at all.
     public let agentDetectEnabled: Bool
 
-    /// The OPT-IN Claude-hook listener (the `AF_UNIX` socket), or `nil` when hooks are
-    /// disabled (Decision #5: hooks are SECOND/opt-in — the foreground watcher runs regardless).
+    /// The Claude-hook listener (the `AF_UNIX` socket), or `nil` when the host was built without
+    /// one (tests). The daemon always supplies it.
     /// When set, each new channel exports the socket path + a pane id into its PTY env and
     /// registers a per-pane sink; an installed hook then POSTs status events for that pane.
     public let agentHookListener: AgentHookListener?
@@ -181,10 +181,10 @@ public final class HostServer: @unchecked Sendable {
     /// no Blocks tap at all.
     public let blocksEnabled: Bool
 
-    /// Whether detach/reattach is enabled (env `SLOPDESK_DETACH_ENABLED`). Default-ON idiom:
-    /// when the env var equals `"0"`, detach is off and a disconnect routes to the existing immediate
-    /// shutdown. Any other value (or absence) enables detach. Resolved once at init so
-    /// every handler reads a single immutable Bool.
+    /// Whether a disconnect DETACHES the session (keeping the shell alive to reattach) rather than
+    /// routing to the immediate shutdown. Follows ``resumeOnRecovery`` — there is no separate env
+    /// flag any more — and can be forced off by the injected `detachEnabled:` init argument (tests).
+    /// Resolved once at init so every handler reads a single immutable Bool.
     public let detachEnabled: Bool
 
     /// How long a detached session's shell survives before being killed, or `nil` for
@@ -199,7 +199,7 @@ public final class HostServer: @unchecked Sendable {
     /// Maps onto ``DetachedSessionStore`` (spec `getting-started__first-launch` §"Resume Session on
     /// Recovery"): ON → a recovered terminal reattaches to the still-running detached session; OFF →
     /// the host neither keeps nor reattaches, so recovery yields a FRESH shell. Resolved once at init
-    /// and AND-ed into ``detachEnabled`` (the single reattach gate) so this flag actuates.
+    /// and IS ``detachEnabled`` (the single reattach gate) so this flag actuates.
     public let resumeOnRecovery: Bool
 
     /// Resolved detached-session cap: `nil` = UNBOUNDED (the default — tmux/zellij have no
@@ -325,14 +325,17 @@ public final class HostServer: @unchecked Sendable {
         gitWatchEnabled = ProcessInfo.processInfo.environment["SLOPDESK_GIT_WATCH"] != "0"
         transport = HostTransport()
 
-        // Resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
-        let envDetach = ProcessInfo.processInfo.environment["SLOPDESK_DETACH_ENABLED"]
-        // "Resume on Recovery" gates the SAME reattach machinery. AND it into the
-        // detach gate — when OFF, detached sessions are neither kept (handleLinkDown hard-shuts down) nor
-        // reattached (spawnMuxChannel sees a nil store), so recovery yields a fresh shell.
+        // ONE gate. "Resume on Recovery" (the real Settings toggle) decides whether detached
+        // sessions are kept and reattached — when OFF, they are neither kept (handleLinkDown hard-shuts
+        // down) nor reattached (spawnMuxChannel sees a nil store), so recovery yields a fresh shell.
+        //
+        // `SLOPDESK_DETACH_ENABLED` used to AND into this and is GONE. Two flags reaching one behaviour
+        // is how a second, undocumented way to break it survives: setting it to "0" made a reconnect
+        // spawn a new shell instead of reattaching, silently discarding whatever the agent left running.
+        // `detachEnabled:` stays as an INJECTED override so tests can drive a no-detach host directly.
         let effectiveResume = resumeOnRecovery ?? HostEnvironment.agentResumeOnRecoveryEnabled()
         self.resumeOnRecovery = effectiveResume
-        let effectiveDetach = (detachEnabled ?? (envDetach != "0")) && effectiveResume
+        let effectiveDetach = (detachEnabled ?? true) && effectiveResume
         self.detachEnabled = effectiveDetach
 
         // TTL default = NEVER (tmux/zellij semantics): a detached shell — often a running
@@ -1867,7 +1870,7 @@ public final class HostServer: @unchecked Sendable {
         lock.unlock()
         // Outside `lock`: the store takes its OWN lock, and the nesting contract is one-way
         // (HostServer.lock → DetachedSessionStore.lock is allowed, never the reverse). `nil` when
-        // `SLOPDESK_DETACH_ENABLED=0` — no store, nothing detached, nothing to add.
+        // Detach off — no store, nothing detached, nothing to add.
         let detached = detachedStore?.allSessions() ?? []
         return (mux + ctrl + detached).map { session in
             let agent = session.agentStatusAndMessageForControl

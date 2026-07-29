@@ -37,7 +37,7 @@ typealias MuxSubscriberID = UInt64
 /// the drain brings the queue back under the bound.
 ///
 /// ### Detach / reattach (tmux-style survival)
-/// On client disconnect with `SLOPDESK_DETACH_ENABLED` on, ``detach()`` runs instead of
+/// On client disconnect with detach enabled, ``detach()`` runs instead of
 /// ``shutdown()``: it cancels the relay tasks and engages the ReplayBuffer's offline gate to pause
 /// the PTY drain, but does NOT stop/close the ``PTYReadLoop`` — `stop()` is irreversible. The shell
 /// (and the paused read loop) survive. On return, ``rebindRelay(data:control:)`` swaps the stale
@@ -295,7 +295,9 @@ final class MuxChannelSession: @unchecked Sendable {
     private static let screenPendingCap = 512 * 1024
     private var screenScanner = PaneScreenScanner()
     private var screenScanTask: Task<Void, Never>?
-    /// `agentDetectEnabled` AND not opted out via `SLOPDESK_AGENT_SCREEN=0` (default-ON idiom).
+    /// Mirrors `agentDetectEnabled`. It used to AND in a `SLOPDESK_AGENT_SCREEN` opt-out — a second
+    /// flag for one feature, with no UI and no operational reason, whose OFF blinded the only
+    /// detection branch that runs on a host without hooks. Detection is one decision, taken once.
     private let agentScreenDetectEnabled: Bool
     /// Deep job-probe cache (wrapper basenames): positive hits stick 5 s (herdr's identified
     /// recheck), misses 1 s — the 300 ms scan never pays a pgroup enumeration per tick.
@@ -992,7 +994,6 @@ final class MuxChannelSession: @unchecked Sendable {
         self.shimDir = shimDir
         self.agentDetectEnabled = agentDetectEnabled
         agentScreenDetectEnabled = agentDetectEnabled
-            && ProcessInfo.processInfo.environment["SLOPDESK_AGENT_SCREEN"] != "0"
         self.agentPollInterval = agentPollInterval
         self.agentHookListenerActive = agentHookListenerActive
         self.blocksEnabled = blocksEnabled

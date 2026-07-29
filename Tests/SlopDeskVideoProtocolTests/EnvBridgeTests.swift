@@ -65,11 +65,13 @@ final class EnvBridgeTests: XCTestCase {
 
     func testAgentPreferencesMapsKeys() {
         XCTAssertTrue(EnvBridge.toEnv(AgentPreferences()).isEmpty) // unset ⇒ empty
-        let env = EnvBridge.toEnv(AgentPreferences(agentDetect: true))
-        XCTAssertEqual(env["SLOPDESK_AGENT_DETECT"], "1")
-        XCTAssertNil(env["SLOPDESK_AGENT_HOOKS"], "the hook listener has no flag — nothing to carry")
+        let env = EnvBridge.toEnv(AgentPreferences(preventSleep: true))
+        XCTAssertEqual(env["SLOPDESK_AGENT_PREVENT_SLEEP"], "1")
+        // Detection and its hooks carry no preference — neither has a switch to carry one for.
+        XCTAssertNil(env["SLOPDESK_AGENT_DETECT"])
+        XCTAssertNil(env["SLOPDESK_AGENT_HOOKS"])
         EnvConfig.overlay = env
-        XCTAssertTrue(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_DETECT"))
+        XCTAssertTrue(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_PREVENT_SLEEP"))
     }
 
     /// The sidecar agent flags map 1:1 to their host env keys; an unset field emits nothing.
@@ -100,7 +102,7 @@ final class EnvBridgeTests: XCTestCase {
     func testSidecarRoundTrip() throws {
         let sidecar = EnvBridge.VideoSidecar(
             video: VideoPreferences(qpSharp: 24, fecM: 2, fecK: 5, virtualDisplay: false),
-            agent: AgentPreferences(agentDetect: true),
+            agent: AgentPreferences(preventSleep: true),
         )
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-w12-\(UUID().uuidString)", isDirectory: true)
@@ -116,7 +118,7 @@ final class EnvBridgeTests: XCTestCase {
         XCTAssertEqual(env["SLOPDESK_QP_SHARP"], "24")
         XCTAssertEqual(env["SLOPDESK_FEC_M"], "2")
         XCTAssertEqual(env["SLOPDESK_VD"], "0")
-        XCTAssertEqual(env["SLOPDESK_AGENT_DETECT"], "1")
+        XCTAssertEqual(env["SLOPDESK_AGENT_PREVENT_SLEEP"], "1")
     }
 
     /// Raw overrides survive the sidecar round-trip AND take LAST-WINS precedence over a typed field for
@@ -124,7 +126,7 @@ final class EnvBridgeTests: XCTestCase {
     func testSidecarRawOverridesRoundTripAndPrecedence() throws {
         let sidecar = EnvBridge.VideoSidecar(
             video: VideoPreferences(qpSharp: 24, fecM: 2),
-            agent: AgentPreferences(agentDetect: true),
+            agent: AgentPreferences(preventSleep: true),
             rawOverrides: ["SLOPDESK_QP_SHARP": "18", "SLOPDESK_HOST_ONLY": "z"],
         )
         let dir = FileManager.default.temporaryDirectory
@@ -143,7 +145,7 @@ final class EnvBridgeTests: XCTestCase {
         XCTAssertEqual(env["SLOPDESK_QP_SHARP"], "18", "raw override wins over the typed field")
         XCTAssertEqual(env["SLOPDESK_FEC_M"], "2")
         XCTAssertEqual(env["SLOPDESK_HOST_ONLY"], "z")
-        XCTAssertEqual(env["SLOPDESK_AGENT_DETECT"], "1")
+        XCTAssertEqual(env["SLOPDESK_AGENT_PREVENT_SLEEP"], "1")
     }
 
     /// A stale sidecar written BEFORE `rawOverrides` existed must still decode (→ empty), not brick the

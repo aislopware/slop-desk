@@ -2,59 +2,16 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// W10 — the host env wiring for agent detection: the `SLOPDESK_AGENT_DETECT` default idiom
-/// (default-ON) and the `SLOPDESK_SOCKET_PATH` / `SLOPDESK_PANE_ID` PTY-env injection.
+/// W10 — the host env wiring for agent detection: the `SLOPDESK_SOCKET_PATH` / `SLOPDESK_PANE_ID`
+/// PTY-env injection.
 ///
-/// There is no hook flag to assert. `SLOPDESK_AGENT_HOOKS` is GONE — the listener binds always —
-/// so the gate that used to live here has nothing left to resolve.
+/// There are no detection GATES left to assert. `SLOPDESK_AGENT_DETECT`, `_AGENT_SCREEN` and
+/// `_AGENT_HOOKS` are all gone — the watch runs, the screen engine runs, the listener binds — so
+/// the truth tables that used to live here have nothing to resolve.
 final class AgentEnvironmentTests: XCTestCase {
     override func tearDown() {
         EnvConfig.overlay = [:] // the overlay is process-wide; never leak a reaches-consumer override
         super.tearDown()
-    }
-
-    // MARK: SLOPDESK_AGENT_DETECT — DEFAULT-ON (`!= "0"`)
-
-    func testAgentDetectDefaultsOn() {
-        XCTAssertTrue(HostEnvironment.agentDetectEnabled(environment: [:]), "unset → enabled (default-ON)")
-        XCTAssertTrue(HostEnvironment.agentDetectEnabled(environment: ["SLOPDESK_AGENT_DETECT": "1"]))
-        XCTAssertTrue(
-            HostEnvironment.agentDetectEnabled(environment: ["SLOPDESK_AGENT_DETECT": "anything"]),
-            "any value other than exactly \"0\" enables",
-        )
-    }
-
-    func testAgentDetectOnlyZeroDisables() {
-        XCTAssertFalse(
-            HostEnvironment.agentDetectEnabled(environment: ["SLOPDESK_AGENT_DETECT": "0"]),
-            "only the exact string \"0\" disables",
-        )
-    }
-
-    // MARK: W12 — the settings overlay REACHES the agent gates (via the DEFAULT-arg path)
-
-    /// REACHES-CONSUMER (P1): a Settings toggle folded into ``EnvConfig/overlay`` drives the host's
-    /// agent-detection gates when called with NO explicit `environment:` (the production call shape in
-    /// `slopdesk-hostd`). The default arg resolves through `HostEnvironment.configEnv` → `EnvConfig`,
-    /// so the overlay value lands at the gate. With an EMPTY overlay (and no real env var in the test
-    /// runner) the gate keeps today's compile-time default: detect ON.
-    ///
-    /// Guard: only run when the test process does NOT set these as real env vars (a real env var WINS
-    /// over the overlay by decision #16, which would mask the overlay path being asserted here).
-    func testOverlayReachesAgentGatesViaDefaultArg() throws {
-        let realEnv = ProcessInfo.processInfo.environment
-        try XCTSkipIf(
-            realEnv["SLOPDESK_AGENT_DETECT"] != nil,
-            "a real env var would win over the overlay (decision #16) — not the path under test",
-        )
-        EnvConfig.overlay = [:]
-
-        // Empty overlay ⇒ today's default via the default-arg path.
-        XCTAssertTrue(HostEnvironment.agentDetectEnabled(), "empty overlay ⇒ detect default-ON")
-
-        // A settings override in the overlay reaches the gate (no explicit environment: arg).
-        EnvConfig.overlay["SLOPDESK_AGENT_DETECT"] = "0" // OFF
-        XCTAssertFalse(HostEnvironment.agentDetectEnabled(), "overlay SLOPDESK_AGENT_DETECT=0 ⇒ detect OFF")
     }
 
     // MARK: socket / pane env injection

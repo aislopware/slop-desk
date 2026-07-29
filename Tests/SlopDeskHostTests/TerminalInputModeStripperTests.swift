@@ -202,17 +202,18 @@ final class TerminalInputModeStripperTests: XCTestCase {
     }
 
     /// Env gate: `STRIP_INPUT_MODES=0` restores the pre-fix passthrough (the enables survive) —
-    /// the regression this type exists to prevent.
-    func testEnvGateOffLeavesModesArmed() throws {
-        let gateOff = try XCTUnwrap(
-            ScrollbackReplayTransform.make(
-                environment: ["SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0"],
-                reassertInputModes: true,
-            ),
+    /// the regression this type exists to prevent. There is no longer an env gate to turn it off —
+    /// `SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES` is gone, because "leave the modes armed" was never a
+    /// mode anyone wanted, only a way to reintroduce the garbage.
+    func testTheStripAlwaysRuns() throws {
+        let transform = try XCTUnwrap(
+            ScrollbackReplayTransform.make(environment: [
+                "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0", // ignored — no such gate
+            ], reassertInputModes: false),
         )
         XCTAssertEqual(
-            gateOff(Data("\u{1B}[?2048ha".utf8)), Data("\u{1B}[?2048ha".utf8),
-            "with the pass off the enable must survive (pre-fix behaviour)",
+            transform(Data("\u{1B}[?2048ha".utf8)), Data("a".utf8),
+            "the replayed enable is removed however the environment is set",
         )
     }
 }

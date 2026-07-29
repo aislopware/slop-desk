@@ -51,7 +51,6 @@ public enum EnvBridge {
     /// resolves, so the polarity is preserved on both ends.
     public static func toEnv(_ prefs: AgentPreferences) -> [String: String] {
         var env: [String: String] = [:]
-        if let v = prefs.agentDetect { env["SLOPDESK_AGENT_DETECT"] = v ? "1" : "0" }
         if let v = prefs.preventSleep { env["SLOPDESK_AGENT_PREVENT_SLEEP"] = v ? "1" : "0" }
         if let v = prefs.resumeOnRecovery { env["SLOPDESK_AGENT_RESUME_ON_RECOVERY"] = v ? "1" : "0" }
         return env

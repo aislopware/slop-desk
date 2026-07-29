@@ -445,13 +445,17 @@ final class LineOverprintCollapserTests: XCTestCase {
         XCTAssertFalse(text.contains("Enumerating objects: 50%"))
     }
 
-    func testTransformKillSwitchLeavesChurnAlone() throws {
+    /// There is no kill switch. `SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT=0` used to hand the churn
+    /// back verbatim; it is gone, because megabytes of superseded percentage ticks is not a mode.
+    func testThereIsNoKillSwitchForTheChurn() throws {
         var stream = ""
         for percent in 0...100 { stream += "Writing objects: \(percent)%\r" }
         stream += "done.\n"
         let raw = Data(stream.utf8)
-        let env = ["SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT": "0"]
-        let transform = ScrollbackReplayTransform.make(environment: env, reassertInputModes: false)
-        XCTAssertEqual(try XCTUnwrap(transform)(raw), raw)
+        let env = ["SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT": "0"] // ignored — no such gate
+        let transform = try XCTUnwrap(
+            ScrollbackReplayTransform.make(environment: env, reassertInputModes: false),
+        )
+        XCTAssertLessThan(transform(raw).count, raw.count / 20)
     }
 }
