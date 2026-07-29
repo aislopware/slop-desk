@@ -170,6 +170,17 @@ public final class WorkspaceMirrorBox {
     /// How many document frames have been folded. Back to zero after a ``reset()``, so a caller can
     /// tell a fold from every other reason ``onChange`` fires.
     public var documentFramesApplied: UInt64 { mirror.framesApplied }
+
+    /// Whether a HOST has spoken into this mirror, as opposed to nothing having (`nil`) or the store
+    /// having seeded the layout it restored from disk (``WorkspaceStore/seedEpoch``).
+    ///
+    /// The distinction ``documentFramesApplied`` cannot draw on its own: the seed is folded like any
+    /// other frame, so the counter reads non-zero before a host has said anything at all.
+    public var holdsHostDocument: Bool {
+        guard let epoch = mirror.epoch else { return false }
+        return epoch != WireMessage.newSessionID
+    }
+
     public var roster: WorkspacePresenceRoster? { mirror.roster }
 
     public func paneLiveness(_ paneID: UUID) -> PaneLiveness? { mirror.paneLiveness(paneID) }

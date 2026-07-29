@@ -215,6 +215,9 @@ public final class WorkspaceChannelClient {
     /// The mirror is reset because `entries` is only meaningful with respect to a live subscription:
     /// keeping it would let a reconnect apply a diff against a document the host may have replaced.
     /// The next subscribe declares `stateNum 0` and gets a snapshot, which is one frame.
+    ///
+    /// A mirror no host has spoken into is the exception, and it is the one a COLD LAUNCH is in — see
+    /// the reset itself.
     public func stop() {
         // A loopback client has no subscription to tear down, and `box.reset()` would delete the
         // document it is authoritative over. The store re-opens its channel on every connection
@@ -226,11 +229,22 @@ public final class WorkspaceChannelClient {
         let id = channelID
         channelID = nil
         control = nil
-        box.reset()
+        // Forgetting host truth is what the reset is FOR, and a mirror no host has spoken into holds
+        // none: every entry in it is the seed the store restored from disk. Resetting there empties
+        // ``WorkspaceStore/tree``, which is a pure PROJECTION of this box — so the layout the user
+        // restored leaves the screen the instant the connection comes up, and a host that then never
+        // answers (a class it does not know, a wedged daemon, a link that dies mid-subscribe) leaves
+        // the window blank with no error on it. The restored layout is the right thing to look at
+        // until a host names a different one; ``WorkspaceStore/panesMayDial`` is what keeps those
+        // unconfirmed ids from opening a PTY, so showing them costs nothing.
+        //
+        // Once a frame HAS landed the reset stands, for the reason in this method's doc.
+        if box.holdsHostDocument { box.reset() }
         // Whatever is still queued is an OFFLINE intent, and those are dropped rather than replayed
-        // (docs/45 §7.2). `box.reset()` one line up just took away the patch each was standing in for,
-        // so a write that went out after this would ask a host for a change nothing on screen is
-        // predicting. The drain task is left to notice the empty queue on its next pass, for the same
+        // (docs/45 §7.2). The patch each was standing in for is either gone with the reset above or
+        // bounded by the mirror's own pending sweep, so a write that went out after this would ask a
+        // host for a change nothing on screen is predicting for much longer. The drain task is left
+        // to notice the empty queue on its next pass, for the same
         // reason ``clearPresence()`` leaves its own: clearing the SLOT is what would let a
         // stopped-then-reused client start a SECOND drain, and two drains sharing one queue reorder
         // precisely what the single one exists to keep in order.

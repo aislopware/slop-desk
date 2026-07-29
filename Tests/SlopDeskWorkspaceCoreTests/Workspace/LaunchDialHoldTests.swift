@@ -762,4 +762,36 @@ final class LaunchDialHoldTests: XCTestCase {
         }
         XCTAssertEqual(Set(rig.dials.dialled), panes, "and nothing outside host A's own layout dialled")
     }
+
+    // MARK: - What the window shows while the host says nothing
+
+    /// The layout restored from disk stays on screen across an establish the host never answers.
+    ///
+    /// ``WorkspaceStore/handleConnectionEstablished()`` re-opens the subscription, and
+    /// ``WorkspaceChannelClient/stop()`` forgets host truth on the way — but a COLD launch has none
+    /// to forget: every entry in the mirror is this client's own seed. Resetting there empties
+    /// ``WorkspaceStore/tree``, which is a pure projection, so the window the user restored goes
+    /// blank. A host that then never answers — a class it does not know, a wedged daemon, a link
+    /// that dies mid-subscribe — makes the blank permanent, which is the exact failure the document
+    /// being unconditional exists to rule out.
+    ///
+    /// Shown, not dialled: the ids are still unconfirmed, so the layout is a picture until the host
+    /// names it. That is the division of labour the hold was built for.
+    func testTheRestoredLayoutSurvivesAnEstablishTheHostNeverAnswers() async {
+        let restored = clientTree(titles: ["alpha", "beta", "gamma"])
+        let rig = makeRig(restored: restored, connectedTo: Self.hostA)
+        XCTAssertEqual(
+            Set(rig.store.tree.allPaneIDs()), Set(restored.allPaneIDs()),
+            "precondition: the restored layout is what the window is showing",
+        )
+
+        rig.store.handleConnectionEstablished()
+        await expect("the re-subscribe to reach the host") { rig.pipes.openCount == 2 }
+
+        XCTAssertEqual(
+            Set(rig.store.tree.allPaneIDs()), Set(restored.allPaneIDs()),
+            "the window still shows the layout this client restored",
+        )
+        XCTAssertTrue(rig.dials.dialled.isEmpty, "and no pane opened a PTY under an unconfirmed id")
+    }
 }

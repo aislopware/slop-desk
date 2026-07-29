@@ -4534,3 +4534,38 @@ that host A's layout is still on screen when the fan-out runs. Verified by neute
 `resolvedPaneDialGate()` to `return true` and confirming the count line fires at 6 vs 3 — the number
 hardware produced. **A test over a projection must pin that the projection is populated, or it is
 asserting about an empty tree and the code it claims to cover can be deleted outright.**
+
+## A cold launch keeps the layout it restored, because the reset has nothing to forget (2026-07-29)
+
+The window the user restored from disk left the screen the instant the connection came up.
+`handleConnectionEstablished()` re-opens the subscription, `WorkspaceChannelClient.stop()` resets the
+mirror on the way, and `WorkspaceStore.tree` is a pure projection of that mirror — so every establish
+blanked the layout and the window stayed blank until a snapshot answered.
+
+The reset is right when there is host truth to forget: keeping `entries` across a reconnect would let
+a diff apply against a document the host may have replaced. A COLD launch has none. Everything in the
+mirror is the store's own seed, carried under `WorkspaceStore.seedEpoch`, and throwing it away buys
+nothing — the next subscribe declares `stateNum 0` and gets a full snapshot either way. So the reset
+is now conditional on `WorkspaceMirrorBox.holdsHostDocument`, which is the same test
+`noteFoldedDocumentProvenance()` already used to decide whether a host had spoken. `framesApplied`
+cannot answer it: the seed is folded like any other frame.
+
+What this closes is the blank window with no error on it — a host that accepts the connection and
+then never publishes (a class it does not know, a wedged daemon, a link that dies mid-subscribe) used
+to leave the user with nothing to look at. That is the same failure the deleted `SLOPDESK_WORKSPACE_DOC`
+produced in its OFF position, arrived at by a different road.
+
+Showing is not dialling. The restored ids are still unconfirmed, so `panesMayDial` keeps them from
+opening a PTY until the attached host names them — the division of labour the hold was built for, and
+the reason a possibly-stale layout on screen is inert rather than dangerous.
+
+**Deliberately not changed.** A WARM reconnect — one where the host has already published — still
+resets, so the window is empty for one round trip and, if that link also dies, until a subscribe
+succeeds. Suppressing that would mean holding one host's entries across a reconnect, which is exactly
+the hazard the reset exists for. `armPaneRedialOnDocument()` already covers the redial half of that
+window.
+
+**Latent, recorded rather than fixed.** `attachWorkspaceChannel(_:)` stops the outgoing channel — and
+so may reset the box — after `attachLoopbackWorkspaceDocument()` has published its adopt. Replacing a
+live host channel with a loopback would therefore erase the document the loopback is authoritative
+over. Unreachable today: the shell installs one channel at startup and never replaces it.
