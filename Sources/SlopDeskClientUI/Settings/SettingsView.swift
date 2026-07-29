@@ -1729,7 +1729,6 @@ private struct AgentsSettingsTab: View {
 
             slateFormSection("Agent detection (host)") {
                 optionalBoolToggle("Foreground-process watch", $store.agent.agentDetect)
-                optionalBoolToggle("Claude Code hooks", $store.agent.agentHooks)
                 timingFooter(.reconnect)
             }
 
@@ -1823,12 +1822,13 @@ private struct AgentsSettingsTab: View {
 
             // installed-but-INACTIVE — hooks are in settings.json but the host daemon's hook listener isn't
             // bound, so every hook exits silently and no live agent states (or prompt-queue turn signals)
-            // arrive. Show the exact fix, not a green check over a dead integration.
+            // arrive. There is no toggle to blame any more (the listener binds unconditionally), so this
+            // now means the bind FAILED or the host predates it. Show the fix, not a green check over a
+            // dead integration.
             if state == .installedInactive {
                 Text(
-                    "Hooks are installed but the host isn't listening. Restart the host daemon with "
-                        + "SLOPDESK_AGENT_HOOKS=1 (or enable the “Claude Code hooks” toggle below and "
-                        + "relaunch it), then open new panes.",
+                    "Hooks are installed but the host isn't listening — its socket failed to bind, or "
+                        + "the host daemon is an older build. Restart it, then open new panes.",
                 )
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Status.warn)

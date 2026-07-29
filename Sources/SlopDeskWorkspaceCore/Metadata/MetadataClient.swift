@@ -176,8 +176,8 @@ public final class MetadataClient {
     /// (``MetadataVerb/agentHookStatus``; drives the Agents card's status row). Empty request payload.
     /// The reply payload is `[installed][listenerActive]` (see docs/20): byte 0 is the
     /// `settings.json` install marker; byte 1 is the LIVE bind state of the hostd hook
-    /// listener — so the card can show installed-but-INACTIVE (hooks written but hostd wasn't launched
-    /// with `SLOPDESK_AGENT_HOOKS=1` → every hook exits silently) instead of a false green.
+    /// listener — so the card can show installed-but-INACTIVE (hooks written but the host's socket
+    /// never bound → every hook exits silently) instead of a false green.
     /// Returns `nil` on ANY non-decodable outcome — a non-`.ok` status, an empty payload, an
     /// unsupported verb, or a dropped reply (timeout → `.error`) — which is what lets the card show
     /// "Connect a session to manage hooks" instead of a false "Not Installed". A missing second byte
@@ -247,8 +247,8 @@ public final class MetadataClient {
     public struct AgentHookStatusReport: Equatable, Sendable {
         /// The slopdesk entries are present in the host's `~/.claude/settings.json`.
         public var installed: Bool
-        /// The hostd hook listener socket is ACTUALLY bound (hostd launched with
-        /// `SLOPDESK_AGENT_HOOKS=1` and the bind succeeded) — hooks can flow.
+        /// The hostd hook listener socket is ACTUALLY bound — hooks can flow. The listener is
+        /// unconditional now, so `false` means the bind failed or the host predates it.
         public var listenerActive: Bool
 
         public init(installed: Bool, listenerActive: Bool) {

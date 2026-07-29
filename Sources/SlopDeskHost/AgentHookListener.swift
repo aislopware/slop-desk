@@ -4,11 +4,16 @@ import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskProtocol
 
-/// W10 — the Claude-Code HOOK listener (docs/41 §4.2 signal 2, docs/42 W10). The RICHEST,
-/// opt-in detection path (Decision #5: hooks are SECOND / opt-in — detection works WITHOUT
-/// them via the foreground watcher). An installed Claude Code hook POSTs its stdin JSON to a
-/// host-local Unix-domain socket; the host folds those events → a type-27
+/// W10 — the Claude-Code HOOK listener (docs/41 §4.2 signal 2, docs/42 W10). The RICHEST
+/// detection path. An installed Claude Code hook POSTs its stdin JSON to a host-local
+/// Unix-domain socket; the host folds those events → a type-27
 /// ``WireMessage/claudeStatus(state:kind:label:)`` on the owning pane's CONTROL channel.
+///
+/// Decision #5 ranks hooks SECOND — detection works without them, via the foreground watcher and
+/// the screen engine. That is a statement about EVIDENCE, and it was long mistaken for one about
+/// configuration: the socket used to bind only under `SLOPDESK_AGENT_HOOKS=1`. It binds always now.
+/// Ranked second is not the same as switched off, and the difference was visible — only this path
+/// produces ``ClaudeStatus/done``.
 ///
 /// **Pure handler / thin shim split (hang-safety).** Two pieces:
 ///
@@ -250,6 +255,10 @@ public final class UnixSocketAcceptor: @unchecked Sendable {
             unlink(path)
             throw AgentSocketError.listenFailed(e)
         }
+        // Owner-only, like the ctl socket. The per-user temp dir is already 0700, so this is
+        // belt-and-braces — but the listener now binds unconditionally, and a surface that is
+        // always up earns the narrower mode rather than inheriting whatever the umask allowed.
+        chmod(path, 0o600)
 
         lock.lock()
         listenFD = fd
@@ -382,8 +391,8 @@ public final class AgentHookListener: @unchecked Sendable {
 
     /// TRUE while the underlying socket is bound + accepting — the REAL hook-listener state the
     /// `agentHookStatus` verb (13) reports, so "hooks installed" and "hooks actually flowing" can't
-    /// be conflated on the Settings card. `false` when hostd was launched without
-    /// `SLOPDESK_AGENT_HOOKS=1` (the listener is never constructed) OR the bind failed.
+    /// be conflated on the Settings card. The listener is unconditional, so `false` means the bind
+    /// failed (or the host is an older build that gated it).
     public var isListening: Bool { acceptor.isListening }
 
     /// Registers a per-pane sink for `paneID`. Replaces any prior sink for that id (idempotent).

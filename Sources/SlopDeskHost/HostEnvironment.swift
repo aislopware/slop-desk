@@ -243,25 +243,23 @@ public enum HostEnvironment {
         environment[ipcAllowSensitiveEnvKey] == "1"
     }
 
-    /// Whether the opt-in Claude-Code HOOK listener (the `AF_UNIX` socket) is enabled.
-    /// Default idiom = DEFAULT-OFF via `env[key] == "1"` (only an explicit `"1"` enables):
-    /// hooks are the SECOND/opt-in signal (Decision #5), so the socket is bound only when the
-    /// operator turned it on (or `integration install claude` set it for them).
-    public static let agentHooksEnvKey = "SLOPDESK_AGENT_HOOKS"
-
-    /// Resolves whether the hook listener socket should be bound. Default-OFF: only `"1"`
-    /// enables; anything else (unset, `"0"`) keeps it off (foreground watch still runs).
-    ///
-    /// The default `environment` resolves through ``EnvConfig`` — same as
-    /// ``agentDetectEnabled(environment:)`` — so a GUI toggle reaches the gate; an EMPTY overlay is
-    /// byte-identical to a `ProcessInfo` read (default-OFF `== "1"` preserved).
-    public static func agentHooksEnabled(
-        environment: [String: String] = configEnv(agentHooksEnvKey),
-    )
-        -> Bool
-    {
-        environment[agentHooksEnvKey] == "1"
-    }
+    // The Claude-Code HOOK listener has NO gate. It was `SLOPDESK_AGENT_HOOKS`, default-OFF,
+    // because Decision #5 called hooks the "second, opt-in" signal — a claim about where the
+    // detector's evidence RANKS, mistaken for a claim about whether to bind a socket.
+    //
+    // Off, the product is wrong rather than reduced. `ClaudeStatus.done` exists only on this path
+    // (the screen engine has no `done` verdict at all), so a finished turn was indistinguishable
+    // from one that never happened; `HookParser.classifyNotification`'s `idle_prompt` filter had
+    // nothing to filter; and `suppressesChildNotifications` stayed false, so claude's own OSC 9
+    // notifications passed through as a second banner. A user cannot be expected to diagnose any of
+    // that — they see a grey pane and a phantom prompt.
+    //
+    // Nothing is risked by binding it: the listener is READ-ONLY (it parses hook JSON and folds it
+    // into the detector — it never writes to a PTY, which is what `SLOPDESK_AGENT_CONTROL` gates
+    // and why THAT one stays opt-in), the socket is 0600 in the per-user temp dir, and an installed
+    // hook with no socket to reach already exits silently. The only remaining choice a user makes is
+    // whether to INSTALL the hooks into their own `~/.claude/settings.json` — which is theirs, and
+    // stays an explicit action in Settings → Agents.
 
     /// Whether the host holds a system-sleep assertion while ANY agent is processing
     /// ("Prevent Sleep While Processing"). Default idiom = DEFAULT-OFF via `env[key] == "1"` (like

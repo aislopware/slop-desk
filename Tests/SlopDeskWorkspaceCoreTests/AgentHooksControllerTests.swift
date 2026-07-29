@@ -8,7 +8,7 @@ import XCTest
 /// the un-fixed code:
 /// - `refresh()` folds the typed status report — installed+listener → `.installed`, installed with the
 ///   listener DOWN → `.installedInactive` (the false-green bug — hooks
-///   written to settings.json while hostd was launched without `SLOPDESK_AGENT_HOOKS=1` are DEAD, so the
+///   written to settings.json while the host's hook socket never bound are DEAD, so the
 ///   card must warn, not show "✓ Installed"), not-installed → `.notInstalled`, `nil` → `.disconnected`
 ///   (the nil case is what keeps the card off a FALSE "Not Installed");
 /// - `install()`/`uninstall()` transition THROUGH `.working` (captured inside the seam); install RE-PROBES

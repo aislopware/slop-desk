@@ -1,22 +1,21 @@
 import Foundation
 
-/// Claude-Code / agent detection preferences (decision #5 / §7.5). Maps to the two agent-detection
-/// flags consumed by the TERMINAL host daemon (`slopdesk-hostd`, via `HostEnvironment`) — the
-/// foreground-process watch (`SLOPDESK_AGENT_DETECT`, default-ON) and the opt-in Claude hooks
-/// (`SLOPDESK_AGENT_HOOKS`, default-OFF). The detection core (`SlopDeskAgentDetect`) is env-free
-/// and pure; these prefs gate whether the HOST emits the type-26/27 signals at all.
+/// Claude-Code / agent detection preferences (decision #5 / §7.5). Maps to the agent flags consumed
+/// by the TERMINAL host daemon (`slopdesk-hostd`, via `HostEnvironment`). The detection core
+/// (`SlopDeskAgentDetect`) is env-free and pure; these prefs gate host-side POLICY only.
+///
+/// The Claude hook listener is deliberately ABSENT: it has no gate any more (it binds always), so
+/// there is no preference to carry. An older sidecar still naming `agentHooks` decodes fine — an
+/// unknown key is simply not read, which is this repo's no-migration contract.
 ///
 /// Like ``VideoPreferences``, these gate host-daemon behaviour read at launch, so they ride the same
 /// `video-prefs.json` sidecar → ``EnvConfig/overlay`` mechanism (decision #10, "applies on reconnect").
-/// `slopdesk-hostd` loads that sidecar at launch, so these two flags actually reach
-/// `HostEnvironment.agentDetectEnabled()` / `agentHooksEnabled()`.
+/// `slopdesk-hostd` loads that sidecar at launch, so these flags actually reach `HostEnvironment`.
 /// Default = `nil` (unset) ⇒ EMPTY env overlay ⇒ today's compile-time-default behaviour.
 public struct AgentPreferences: Codable, Sendable, Equatable {
     /// Host foreground-process watch (the primary, zero-config Claude signal, wire type 26) →
     /// `SLOPDESK_AGENT_DETECT`. `nil` ⇒ unset (the daemon default).
     public var agentDetect: Bool?
-    /// Claude Code hooks (the richest, opt-in signal, wire type 27) → `SLOPDESK_AGENT_HOOKS`.
-    public var agentHooks: Bool?
     /// Hold a system-sleep assertion while ANY agent is processing (the "Prevent Sleep
     /// While Processing" toggle) → `SLOPDESK_AGENT_PREVENT_SLEEP` (default-OFF host gate, `== "1"`). Host-LOCAL
     /// policy: the daemon holds the `IOPMAssertion` (``PreventSleepAssertion``) driven by the `claudeStatus
@@ -30,12 +29,10 @@ public struct AgentPreferences: Codable, Sendable, Equatable {
 
     public init(
         agentDetect: Bool? = nil,
-        agentHooks: Bool? = nil,
         preventSleep: Bool? = nil,
         resumeOnRecovery: Bool? = nil,
     ) {
         self.agentDetect = agentDetect
-        self.agentHooks = agentHooks
         self.preventSleep = preventSleep
         self.resumeOnRecovery = resumeOnRecovery
     }

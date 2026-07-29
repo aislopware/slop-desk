@@ -65,23 +65,20 @@ final class EnvBridgeTests: XCTestCase {
 
     func testAgentPreferencesMapsKeys() {
         XCTAssertTrue(EnvBridge.toEnv(AgentPreferences()).isEmpty) // unset ⇒ empty
-        let env = EnvBridge.toEnv(AgentPreferences(agentDetect: true, agentHooks: false))
+        let env = EnvBridge.toEnv(AgentPreferences(agentDetect: true))
         XCTAssertEqual(env["SLOPDESK_AGENT_DETECT"], "1")
-        XCTAssertEqual(env["SLOPDESK_AGENT_HOOKS"], "0")
-        // Default-OFF read idiom: detect ON reads true, hooks OFF reads false.
+        XCTAssertNil(env["SLOPDESK_AGENT_HOOKS"], "the hook listener has no flag — nothing to carry")
         EnvConfig.overlay = env
         XCTAssertTrue(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_DETECT"))
-        XCTAssertFalse(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_HOOKS"))
     }
 
     /// The sidecar agent flags map 1:1 to their host env keys; an unset field emits nothing.
     func testAgentPreferencesMapsPreventSleepAndResumeKeys() {
-        // Only the prevent-sleep/resume fields set — the detect/hooks keys stay absent (unset emits nothing).
+        // Only the prevent-sleep/resume fields set — the detect key stays absent (unset emits nothing).
         let onOff = EnvBridge.toEnv(AgentPreferences(preventSleep: true, resumeOnRecovery: false))
         XCTAssertEqual(onOff["SLOPDESK_AGENT_PREVENT_SLEEP"], "1")
         XCTAssertEqual(onOff["SLOPDESK_AGENT_RESUME_ON_RECOVERY"], "0")
         XCTAssertNil(onOff["SLOPDESK_AGENT_DETECT"], "an unset field emits nothing")
-        XCTAssertNil(onOff["SLOPDESK_AGENT_HOOKS"])
 
         let offOn = EnvBridge.toEnv(AgentPreferences(preventSleep: false, resumeOnRecovery: true))
         XCTAssertEqual(offOn["SLOPDESK_AGENT_PREVENT_SLEEP"], "0")

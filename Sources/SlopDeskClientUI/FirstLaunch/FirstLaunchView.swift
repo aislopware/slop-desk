@@ -285,7 +285,7 @@ private struct FirstLaunchClaudeHooksStep: View {
             // check (Settings ▸ Agents carries the restart hint).
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(Slate.Status.warn)
-                .help("Restart the host daemon with SLOPDESK_AGENT_HOOKS=1, then open new panes.")
+                .help("The host's hook socket isn't bound. Restart the host daemon, then open new panes.")
         case .notInstalled:
             Button("Install") {
                 Task {

@@ -36,9 +36,9 @@ enum HostAgentActionPerformer {
     ///
     /// `hookListenerActive` is the LIVE bind state of the hostd hook listener: verb 13's reply carries it
     /// as a second flag byte so the client can distinguish "hooks written to settings.json" from "hooks
-    /// actually flowing" — the listener binds only when hostd was LAUNCHED with `SLOPDESK_AGENT_HOOKS=1`,
-    /// so a green "Installed" without it would be a lie (every installed hook exits silently without
-    /// `$SLOPDESK_SOCKET_PATH`).
+    /// actually flowing" — a green "Installed" over an unbound socket would be a lie (every installed
+    /// hook exits silently without `$SLOPDESK_SOCKET_PATH`). The listener is unconditional now, so the
+    /// flag reports a bind FAILURE rather than a configuration choice.
     static func response(
         requestID: UInt32, verb: UInt8, payload _: Data, hookListenerActive: Bool = false,
     ) -> WireMessage? {

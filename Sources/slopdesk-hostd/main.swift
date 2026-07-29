@@ -29,8 +29,8 @@ if getrlimit(RLIMIT_NOFILE, &fdLimit) == 0 {
 }
 
 // Fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
-// any consumer reads a setting — here the agent-detection gates (`SLOPDESK_AGENT_DETECT`/`_HOOKS`,
-// read below) resolve ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.
+// any consumer reads a setting — here the agent-detection gate (`SLOPDESK_AGENT_DETECT`, read
+// below) resolves ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.
 // A real `SLOPDESK_*` env var still wins (the sidecar only fills gaps). The same sidecar the
 // `slopdesk-videohostd` daemon loads — both host daemons now honour the shared agent prefs. A
 // missing / corrupt sidecar is a no-op. (No live reload — the gates are read once.)
@@ -64,7 +64,7 @@ if arguments.count >= 2, arguments[1] == "integration" {
             _ = try AgentInstaller.install(settingsPath: settingsPath, scriptPath: scriptPath)
             print("slopdesk: installed Claude Code hooks → \(settingsPath)")
             print("slopdesk: hook script → \(scriptPath)")
-            print("slopdesk: start the host with \(HostEnvironment.agentHooksEnvKey)=1 to bind the listener socket.")
+            print("slopdesk: restart claude in a slopdesk pane — the host is already listening.")
             exit(0)
         case "uninstall":
             _ = try AgentInstaller.uninstall(settingsPath: settingsPath)
@@ -97,19 +97,18 @@ let agentDetectEnabled = HostEnvironment.agentDetectEnabled()
 // `SLOPDESK_BLOCKS=0` disables it. When off the byte pipeline + sniffer are byte-identical.
 let blocksEnabled = HostEnvironment.blocksEnabled()
 
-// The OPT-IN Claude-hook listener (Decision #5: SECOND/opt-in). Bound only when
-// `SLOPDESK_AGENT_HOOKS=1` (default-OFF). The socket lives in the user's temp dir, keyed by
-// pid so concurrent hosts don't collide. The installed hook (`integration install claude`)
-// POSTs to `SLOPDESK_SOCKET_PATH`, which every PTY env exports.
-var agentHookListener: AgentHookListener?
-var agentHookSocketPath = ""
-if HostEnvironment.agentHooksEnabled() {
-    agentHookSocketPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent("slopdesk-agent-\(getpid()).sock").path
+// The Claude-hook listener — ALWAYS bound, no gate (see `HostEnvironment` for why the old
+// `SLOPDESK_AGENT_HOOKS` is gone). The socket lives in the user's temp dir, keyed by pid so
+// concurrent hosts don't collide. The installed hook (`integration install claude`) POSTs to
+// `SLOPDESK_SOCKET_PATH`, which every PTY env exports; a host whose hooks were never installed
+// simply never receives a connection.
+let agentHookSocketPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+    .appendingPathComponent("slopdesk-agent-\(getpid()).sock").path
+let agentHookListener: AgentHookListener? = {
     let listener = AgentHookListener()
     listener.onLog = log
-    agentHookListener = listener
-}
+    return listener
+}()
 
 // Agent-control Unix-domain socket (DEFAULT-OFF: only `SLOPDESK_AGENT_CONTROL=1` enables).
 // The socket path is keyed by pid (same derivation as the hook socket) so concurrent hosts
