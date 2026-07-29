@@ -75,8 +75,6 @@ final class MuxChannelSession: @unchecked Sendable {
     /// state); `replayLock` guards `lastAckedSeq`.
     final class Subscriber: @unchecked Sendable {
         let id: MuxSubscriberID
-        /// What this subscriber is FOR: `pane` reads and writes; `paneObserver` reads only.
-        let channelClass: MuxChannelClass
         let data: MuxSubChannel
         let control: MuxSubChannel
 
@@ -144,12 +142,10 @@ final class MuxChannelSession: @unchecked Sendable {
 
         init(
             id: MuxSubscriberID,
-            channelClass: MuxChannelClass,
             data: MuxSubChannel,
             control: MuxSubChannel,
         ) {
             self.id = id
-            self.channelClass = channelClass
             self.data = data
             self.control = control
         }
@@ -734,10 +730,6 @@ final class MuxChannelSession: @unchecked Sendable {
         /// holds the pane. **iOS is size-passive**, so a phone in a pocket can never crush a Studio's
         /// nvim to its own width.
         var sizePassive: Bool
-        /// A `channelClass == 2` member. Passivity it can never shed: an observer is watching a grid
-        /// it did not choose, so it stays out of the fold even when it is the last one here — unlike
-        /// a size-passive PANE member, which sizes a pane no voter holds (see ``fold(_:)``).
-        var observer: Bool = false
         var offer: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
     }
 
@@ -960,7 +952,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // constructed: `detach()` runs on sessions that never started a relay, and it must have a
         // member to retire.
         subscribers[Self.primarySubscriberID] = Subscriber(
-            id: Self.primarySubscriberID, channelClass: .pane, data: data, control: control,
+            id: Self.primarySubscriberID, data: data, control: control,
         )
         self.sessionID = sessionID
         self.resizeDebounce = resizeDebounce
@@ -1077,24 +1069,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// AFTER the write returns (credit-at-consumption), so a stalled PTY transitively parks the
     /// CLIENT's sender at one window instead of buffering the paste in host RAM.
     ///
-    /// ### Read-only is a property of the SUBSCRIBER
-    /// A `channelClass == 2` member (docs/45 §8.4) READS the pane: its `input` is dropped HERE, and
-    /// here only. There are two other writers into the same PTY — every ordinary member's own copy
-    /// of this loop, and ``writeRawForControl(_:)`` (the `slopdesk-ctl` / orchestrator injection) —
-    /// and both must keep writing while somebody watches, so a session-level flag would be wrong.
-    ///
-    /// A dropped frame is STILL credited. Credit is granted at CONSUMPTION, so a drop that skips
-    /// ``MuxSubChannel/noteConsumed(_:)`` never returns the window: the observer's sender parks after
-    /// exactly one window and the channel dies with no error anywhere. The echo probe and the
-    /// blocked-agent unblock fold are skipped with the write — `foldUserInput` is the Esc-cancel
-    /// edge, so a read-only client's stray keystroke would clear ANOTHER client's blocked latch.
+    /// Every member of a pane writes: the fan-out is tmux's, where each attached client types into
+    /// the same shell. This loop is one of three writers into the master fd — one copy per member,
+    /// plus ``writeRawForControl(_:)`` (the `slopdesk-ctl` / orchestrator injection).
     private func startInputRelay(for sub: Subscriber) {
         let data = sub.data
-        let readOnly = sub.channelClass == .paneObserver
         let relay = Task.detached { [weak self] in
             do {
                 for try await message in data.inbound {
-                    if case let .input(bytes) = message, !readOnly {
+                    if case let .input(bytes) = message {
                         await self?.writePTYInput(bytes)
                         // termios ECHO flips fastest around a password prompt — re-probe right
                         // after writing this keystroke so AUTO Secure Keyboard Entry engages with minimal
@@ -1107,7 +1090,7 @@ final class MuxChannelSession: @unchecked Sendable {
                             foldUserInput(bytes)
                         }
                     }
-                    // Consumed (written to the PTY / processed / DROPPED for an observer): grant the
+                    // Consumed (written to the PTY, or processed): grant the
                     // window back ON THE CHANNEL THE BYTES ARRIVED ON. Every ``MuxSubChannel`` owns
                     // its own ``ReceiveWindowAccountant``, and a sender parked on an exhausted window
                     // wakes only on a grant for ITS channel — crediting any other one parks the real
@@ -1776,7 +1759,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // detach retired: a subscriber IS its channel pair, so a new pair is a new member under the
         // same id, never a swap underneath the tasks a departed one owned.
         let sub = Subscriber(
-            id: Self.primarySubscriberID, channelClass: .pane, data: newData, control: newControl,
+            id: Self.primarySubscriberID, data: newData, control: newControl,
         )
         subscribersLock.lock()
         subscribers[sub.id] = sub
@@ -2276,27 +2259,17 @@ final class MuxChannelSession: @unchecked Sendable {
     /// PTY lives on, and forgetting the offer there would snap the pane back to its spawn size until
     /// the returning client happened to send a new one.
     ///
-    /// An OBSERVER (`channelClass == 2`) is passive whatever the caller says. It is watching a grid
-    /// it did not choose, so letting its window clamp the fold would shrink somebody else's shell to
-    /// a spectator's. It is still REGISTERED — it genuinely holds the pane — and the roster publishes
-    /// it with `contributes: false`, which is what lets the UI name who IS clamping.
     func addResizeContributor(
         _ subscriber: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
         sizePassive: Bool,
     ) {
-        // Resolved BEFORE `resizeLock`: `subscribersLock` is this file's innermost lock and is never
-        // held across another acquisition.
-        let observer = self.subscriber(subscriber)?.channelClass == .paneObserver
-        let passive = sizePassive || observer
         resizeLock.lock()
         let before = contributingCountLocked()
         if var existing = resizeContributions[subscriber] {
-            existing.sizePassive = passive
-            existing.observer = observer
+            existing.sizePassive = sizePassive
             resizeContributions[subscriber] = existing
         } else {
-            resizeContributions[subscriber] =
-                ResizeContribution(sizePassive: passive, observer: observer, offer: nil)
+            resizeContributions[subscriber] = ResizeContribution(sizePassive: sizePassive, offer: nil)
         }
         armSizeSettleIfSetChangedLocked(from: before)
         resizeLock.unlock()
@@ -2447,13 +2420,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// `openpty` default 80×24 for its whole life — a phone unable to size its own pane. The
     /// fallback keys on the contributing set being EMPTY, not on it having made no offer, so a Mac
     /// that has opened its channel but not yet said how big it is still shuts the phone out.
-    /// OBSERVERS are excluded from both passes: they watch a grid they did not choose.
     private static func fold(
         _ contributions: [MuxSubscriberID: ResizeContribution],
     ) -> (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)? {
         let voters = contributions.filter { !$0.value.sizePassive }
         if !voters.isEmpty { return foldOffers(voters) }
-        return foldOffers(contributions.filter { !$0.value.observer })
+        return foldOffers(contributions)
     }
 
     /// `min(cols)` / `min(rows)` over whichever slice of the set the fold decided votes.
@@ -2489,10 +2461,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// never drift into disagreeing about who counts.
     ///
     /// - Parameter passiveDecides: whether the contributing set is EMPTY, i.e. the fold has fallen
-    ///   through to its size-passive pass. Observers are excluded from that pass: a spectator watches
-    ///   a grid it did not choose and never inherits the vote (docs/45 §8.4).
+    ///   through to its size-passive pass.
     private static func creditsOffer(_ contribution: ResizeContribution, passiveDecides: Bool) -> Bool {
-        !contribution.sizePassive || (passiveDecides && !contribution.observer)
+        !contribution.sizePassive || passiveDecides
     }
 
     /// Arms the settle when the contributing set moved BETWEEN two non-empty states — a join into a
@@ -3904,7 +3875,7 @@ final class MuxChannelSession: @unchecked Sendable {
         return subscribers.count
     }
 
-    /// Enters a bare second member: ``admitJoiner(reserved:data:control:channelClass:composedThrough:)``
+    /// Enters a bare second member: ``admitJoiner(reserved:data:control:composedThrough:)``
     /// minus the state transfer and the sender tasks (testing only).
     ///
     /// Every refcounted teardown reads the SUBSCRIBER SET, so a rig that aliases a second live-map
@@ -3918,11 +3889,10 @@ final class MuxChannelSession: @unchecked Sendable {
     func enterBareSubscriberForTesting(
         data: MuxSubChannel,
         control: MuxSubChannel,
-        channelClass: MuxChannelClass = .pane,
     ) -> MuxSubscriberID {
         subscribersLock.lock()
         let id = mintSubscriberIDLocked()
-        subscribers[id] = Subscriber(id: id, channelClass: channelClass, data: data, control: control)
+        subscribers[id] = Subscriber(id: id, data: data, control: control)
         subscribersLock.unlock()
         recomputeClientOnline()
         applyQueueCapacityForPopulation()
@@ -3937,7 +3907,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// rebuilt BEFORE the output drain can run.
     var onOutputDrainRestartedForTesting: (() -> Void)?
 
-    /// Race seam — fired inside ``joinSubscriber(id:data:control:channelClass:sizePassive:)`` with
+    /// Race seam — fired inside ``joinSubscriber(id:data:control:sizePassive:)`` with
     /// the joiner already in the set and its DATA sender not yet built: the window in which fanned-out
     /// frames land in an outbox whose wake is nil.
     var onJoinerAdmittedForTesting: (@Sendable () async -> Void)?
@@ -4346,7 +4316,6 @@ extension MuxChannelSession {
         id: MuxSubscriberID? = nil,
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
-        channelClass: MuxChannelClass = .pane,
         sizePassive: Bool,
     ) async -> MuxSubscriberID? {
         guard !newData.isFinished, !newControl.isFinished else { return nil }
@@ -4361,7 +4330,7 @@ extension MuxChannelSession {
         // A join must cost the client already watching nothing.
         let (rendered, composedThrough) = composeJoinSnapshot()
         guard let (sub, catchUp) = admitJoiner(
-            reserved: id, data: newData, control: newControl, channelClass: channelClass,
+            reserved: id, data: newData, control: newControl,
             composedThrough: composedThrough,
         ) else { return nil }
         let id = sub.id
@@ -4393,7 +4362,7 @@ extension MuxChannelSession {
         return id
     }
 
-    /// The synchronous half of ``joinSubscriber(data:control:channelClass:sizePassive:)``: switches
+    /// The synchronous half of ``joinSubscriber(data:control:sizePassive:)``: switches
     /// the drain to fan-out, composes the state transfer, and enters the new member — all under
     /// `fanoutLock`, so no frame can be sequenced between "the drain now fans out" and "every
     /// member can receive a fan-out", nor between the snapshot and the joiner's arrival.
@@ -4404,7 +4373,6 @@ extension MuxChannelSession {
         reserved: MuxSubscriberID?,
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
-        channelClass: MuxChannelClass,
         composedThrough: Int64,
     ) -> (Subscriber, [WireMessage])? {
         fanoutLock.lock()
@@ -4429,7 +4397,7 @@ extension MuxChannelSession {
         replayLock.unlock()
         subscribersLock.lock()
         let id = reserved ?? mintSubscriberIDLocked()
-        let sub = Subscriber(id: id, channelClass: channelClass, data: newData, control: newControl)
+        let sub = Subscriber(id: id, data: newData, control: newControl)
         // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind
         // it, so its retention cursor must not hold bytes every other member has already acked.
         sub.lastAckedSeq = replayHighestSeqLocked()
@@ -4468,7 +4436,7 @@ extension MuxChannelSession {
     ///
     /// The composite key a joining channel registers under is visible to every per-client teardown
     /// path (`handleLinkDown`, a peer `channelClose`, the eviction seam) the instant it is written,
-    /// but the member itself does not exist until ``joinSubscriber(id:data:control:channelClass:sizePassive:)``
+    /// but the member itself does not exist until ``joinSubscriber(id:data:control:sizePassive:)``
     /// has composed an O(retained history) screen and shipped it through the joiner's credit window —
     /// seconds on a pane with a full scrollback. A key naming no id in that window falls back to
     /// ``primarySubscriberID``, and the joiner's link dropping there retires the INCUMBENT and parks

@@ -74,17 +74,16 @@ final class HostServerChannelClassTests: XCTestCase {
         await rig.server.stop()
     }
 
-    /// Class 2 (`paneObserver`) is a READ-ONLY view of a LIVE pane, and `openClass` mints a fresh
-    /// UUID — so there is nothing here to watch. It is refused exactly as an unknown class is, and
-    /// the point of the assertion is the second line: an observer of nothing must not be served a
-    /// login shell to make it something. The join route is `HostServerObserverRoutingTests`.
-    func testTheObserverClassForksNothingForAPaneNobodyHolds() async throws {
+    /// Class 2 is spoken for and served by nobody, which makes it the one unserved class a peer can
+    /// realistically send. It is refused like any other, and the second assertion is the point: a
+    /// class this host declines must not be quietly answered with a login shell.
+    func testTheUnservedMiddleClassOpensNoPane() async throws {
         let rig = await makeRig()
-        let accepted = try await openClass(rig, MuxChannelClass.paneObserver.rawValue)
-        XCTAssertFalse(accepted, "there is no live pane under this session id to observe")
+        let accepted = try await openClass(rig, 2)
+        XCTAssertFalse(accepted, "class 2 is not a class this host serves")
         XCTAssertTrue(
             rig.server.listPanesForControl().isEmpty,
-            "a refused observer must never reach the PTY spawn path",
+            "a declined class must never reach the PTY spawn path",
         )
         await rig.server.stop()
     }

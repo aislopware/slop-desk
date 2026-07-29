@@ -4602,3 +4602,33 @@ The production awaiter (`MuxNWConnection.awaitOpenAck`) already resumes a cancel
 `WorkspaceChannelLoopbackTests` red — it hung xctest for 77 minutes. The unbounded wait in the rig's
 `awaitOpenAck` is what stranded it, in a file whose own comment states the rule every wait in it must
 be bounded.
+
+## Read-only attach is removed; class 2 stays reserved (2026-07-29)
+
+`channelClass == 2` opened a pane somebody else already held as a **read-only** member: the host
+joined it to the live session, dropped its `input` frames (while still crediting them), skipped the
+echo probe and `foldUserInput`, and kept it out of the PTY size fold for good. `slopdesk-client
+--observe` was the one caller. It is gone — route, CLI flag, `Subscriber.channelClass`, the
+`readOnly` fork in `startInputRelay`, and `ResizeContribution.observer` with it.
+
+**Why.** Read-only attach exists in tmux (`attach -r`) and `screen` (multiuser ACLs) to serve pairing
+and demos — one person driving while others watch. This product is one human on their own machines,
+where every attachment is a hand that should be able to type. Nobody asked for a spectator seat.
+
+The cost was not the route. It was that "read-only" is a property of a SUBSCRIBER, so it leaked into
+every per-member path: a branch in the input relay that three other writers had to be reasoned about
+against, and a passivity flag the size fold could never let expire — an exception carried by code
+that is otherwise about one thing, sizing a grid for the people who are here.
+
+**The enum case goes; the byte does not.** `MuxChannelClass` now names 0 and 1 only, and 2 falls into
+the existing unserved-class guard: `accepted: false`, decided BEFORE the exclusivity critical section,
+so a stale peer that still sends `--observe` is refused rather than handed a login shell it never
+asked for. Nothing on the wire changed shape — the class field was already golden-pinned at 0 and 255
+— and 2 is not reusable, because one byte must never name two things.
+
+**What kept its coverage.** The observer suites pinned two behaviours that were not about observing at
+all: that a JOINED member's input reaches the PTY, and that a joined member's Esc folds through
+`foldUserInput` to drop a blocked agent's hand. The primary's relay is built at `init`, so both would
+stay green while a joiner's relay went nowhere. They live on in
+`MuxChannelSessionJoinedInputTests`. The size-fold cases the observer tests covered were the
+size-passive ones, already pinned by `MuxChannelSessionResizeFoldTests`.

@@ -283,7 +283,7 @@ its own rule rather than a table cell):
 ```
 0 = .pane          today's PTY channel                 (unchanged)
 1 = .workspace     the workspace-document channel      (NEW)
-2 = .paneObserver  read-only PTY subscriber            (Phase 6)
+2                  spoken for, served by nobody        (see §8.4)
 ```
 
 `HostServer.spawnMuxChannel` (`:616`) gains a **first line**, placed **before** the critical section
@@ -521,7 +521,7 @@ subscriber whose acked `stateNum` falls outside that window gets a snapshot.
      Code is `ReplayBuffer.maxBackupBytes = 256 MiB` (`ReplayBuffer.swift:54-55`) and
      `offlineGateBytes = 64 MiB` (`:57-58`). Correct it in the same pass — the multi-subscriber
      eviction policy (§8.6) is calibrated against those numbers;
-   - §8.3.1 gains a `channelClass` paragraph (0 PTY / 1 workspace / 2 observer);
+   - §8.3.1 gains a `channelClass` paragraph (0 PTY / 1 workspace);
    - new **§10 "Workspace document channel"** — entry grammar, epoch/stateNum, diff-from-acked-base,
      the depth-12 cap, the coalescing-not-shedding rule, the PTY size policy, and the
      state-plane/byte-plane ordering rule (§8.7).
@@ -1124,14 +1124,14 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    **iOS is size-passive by default.** A phone must never crush a Mac. Enforced HOST-side, from the
    workspace channel's `clientKind`: `MuxChannelOpen` carries no client kind, so a client-side gate
    alone would be defeated by any build that predates it. A pane channel with **no** workspace channel
-   behind it **CONTRIBUTES** — that is `slopdesk-client`, which only ever opens class 0 or 2, and
+   behind it **CONTRIBUTES** — that is `slopdesk-client`, which only ever opens class 0, and
    defaulting it to passive would leave a CLI unable to size its own pane. Panes opened before
    the workspace `subscribe` lands are re-resolved by the subscribe itself. **A pane no VOTER holds
    is sized by its size-passive members instead** — "never crush a Mac" is about a Mac that is
    THERE, and folding every contributor away on an iOS-only setup left the shell at the `openpty`
    default for its whole life. The fallback keys on the contributing set being EMPTY, not on it
    having made no offer, so a Mac that has opened its channel but not yet offered still shuts the
-   phone out; OBSERVERS are excluded from it either way (§8.4).
+   phone out.
 4. **A pane with zero ATTACHED subscribers keeps its last size** — it does not snap to 80×24.
 5. Wire type 11 `resize` stops being a command and becomes a **contribution**. `scheduleResize`
    records the offering subscriber's LATEST offer; `applyResolvedGrid()` folds the min and performs
@@ -1172,23 +1172,11 @@ and WezTerm all do this, and it is correct here because the writers are **one hu
 not adversaries. Each subscriber's own input relay feeds the session's ONE serial PTY writer; bytes
 interleave atomically at frame granularity.
 
-**Observer-class (`channelClass == 2`) subscribers' `input` frames are dropped host-side.** Three
-things make that a property of the SUBSCRIBER rather than of the session:
-
-- The drop lives in `startInputRelay(for:)` and NOWHERE else. There is a third writer into the same
-  PTY — `writeRawForControl` (the `slopdesk-ctl` / orchestrator injection) — and it must keep writing
-  while somebody watches, so a session-level `isReadOnly` flag would gag the cockpit.
-- A dropped frame is **still credited** (`noteConsumed`). Credit is granted at CONSUMPTION, so a drop
-  that skips the credit never returns the window: the observer's sender parks after exactly one
-  window and the channel dies with no error anywhere. This is the failure that would otherwise only
-  appear on hardware.
-- The echo probe and `foldUserInput` are skipped with the write. `foldUserInput` is the Esc-cancel
-  UNBLOCK edge, so a read-only client's stray keystroke would clear ANOTHER client's blocked latch
-  and make a supervision alert vanish with nobody answering the prompt.
-
-An observer contributes nothing to the size fold (§8.3): it is watching a grid it did not choose. It
-is still published as an attachment with `contributes: false`, which is what lets a client name who
-IS clamping.
+**There is no read-only attachment.** Class 2 was built as one — a subscriber whose `input` the host
+dropped — and it is REMOVED: every member of a pane types into it. tmux's `attach -r` and `screen`'s
+multiuser ACLs serve pairing and demos, which is not what this product is for, and the machinery cost
+a fork in the input relay plus a permanent exception in the size fold. The class byte stays reserved
+so a stale peer that still sends it is refused rather than handed somebody else's shell.
 
 `tab/syncInputArmed` fans a sync-armed tab's input from **any** subscriber to every pane in the tab,
 and the SYNC INPUT pill shows on every client — true `synchronize-panes` parity.
@@ -1581,8 +1569,6 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
   check never fires on the exact member it exists to remove.
 - min-fold over the ATTACHED set with the 750 ms settle; every `pty.setWindowSize` caller routes
   through `applyResolvedGrid()`; iOS size-passive; contributors published in the roster.
-- `channelClass == 2` observer subscribers: `input` DROPPED host-side and still credited, no echo
-  probe, no `foldUserInput`, no vote in the size fold.
 - Park in `DetachedSessionStore` only when the subscriber set empties.
 - iOS letterbox / scale-to-fit, with §8.3 rule 7's readout.
 

@@ -60,7 +60,7 @@ final class MuxClientTransportChannelClassTests: XCTestCase {
     func testTheRequestedChannelClassReachesTheAcquisition() async throws {
         let recorder = Recorder()
         let transport = MuxClientTransport(
-            channelClass: MuxChannelClass.paneObserver.rawValue,
+            channelClass: MuxChannelClass.workspace.rawValue,
             acquire: { _, _, _, _, channelClass, cwd in
                 recorder.append(channelClass: channelClass, cwd: cwd)
                 return await Self.nullAcquisition()
@@ -69,8 +69,8 @@ final class MuxClientTransportChannelClassTests: XCTestCase {
         )
         try await connect(transport)
         XCTAssertEqual(
-            recorder.observedClasses, [MuxChannelClass.paneObserver.rawValue],
-            "a read-only transport announces itself as one",
+            recorder.observedClasses, [MuxChannelClass.workspace.rawValue],
+            "a transport opened for the document announces itself as one",
         )
     }
 

@@ -14,9 +14,6 @@ public enum MuxChannelClass: UInt8, Sendable, CaseIterable {
     /// The workspace-document channel: at most ONE per mux connection, CONTROL sub-channel only
     /// (the DATA sub-channel `openChannel` also creates stays idle).
     case workspace = 1
-    /// A READ-ONLY subscriber on a pane another client already holds (docs/45 §8.4). The host joins
-    /// it to the existing session — one PTY, N readers — and DROPS its `input` frames while still
-    /// crediting them; it contributes nothing to the pane's size fold. Refused when no such pane is
-    /// live — an observer joins something, it never creates one.
-    case paneObserver = 2
+    // 2 is spoken for and served by nobody: a peer that sends it is refused like any other class
+    // this host does not route. The next class to land takes 3, so one byte never names two things.
 }
