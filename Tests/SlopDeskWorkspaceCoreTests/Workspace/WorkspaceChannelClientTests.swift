@@ -791,4 +791,52 @@ final class WorkspaceChannelClientTests: XCTestCase {
             "with the patch gone the row shows what the host actually says",
         )
     }
+
+    /// The same host silence with NO frame behind it: the sweep the client arms for itself is what
+    /// clears the patch.
+    ///
+    /// This is the bound with no other signal — a host that accepted the intent and died before
+    /// answering, on a channel quiet enough that no later frame arrives to sweep it. Every other test
+    /// in this pair disarms ``WorkspaceChannelClient/pendingSweepDelay`` on purpose, so that the FRAME
+    /// is provably the sweeper; the arming itself is what this one is here to watch.
+    ///
+    /// What rides on it is the launch dial hold: ``WorkspaceStore/panesMayDial`` answers `false` for
+    /// as long as the adopt patch is pending, and that arm short-circuits ahead of
+    /// ``WorkspaceStore/paneDialHoldBackstop``. So with this timer unarmed the hold has no wall clock
+    /// at all, and a launch the host goes quiet on renders a full layout of panes that never dial —
+    /// the restored window, alive-looking, permanently dead.
+    func testAnUnansweredIntentPatchIsSweptWithNoFrameBehindIt() async {
+        let rig = makeRig()
+        let layout = layoutEntries()
+        let clock = Box(1000.0)
+        rig.client.now = { clock.value }
+        // Short enough to keep the test quick; the DEADLINE it sweeps against is the clock's, so the
+        // delay decides only when the sweep runs, never whether it drops anything.
+        rig.client.pendingSweepDelay = .milliseconds(50)
+        rig.client.start()
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+        rig.pipe.deliver(snapshot(layout.entries, stateNum: 1))
+        await expect("the channel to go live") { rig.client.state == .live(1) }
+
+        XCTAssertTrue(rig.client.send(
+            intent: .renameTab,
+            args: WorkspaceIntentArgs.encode(id: layout.tab.raw, name: "renamed"),
+            now: clock.value,
+        ))
+        await expect("the intent to reach the wire") { !rig.pipe.requests(verb: .intent).isEmpty }
+        XCTAssertEqual(rig.box.pendingIntentCount, 1, "precondition: the patch is standing")
+
+        // The verdict is not coming, and neither is anything else.
+        clock.mutate { $0 += HostWorkspaceMirror.pendingTimeout }
+
+        await expect("the armed sweep to drop the patch") { rig.box.pendingIntentCount == 0 }
+        XCTAssertEqual(
+            rig.box.documentFramesApplied, 1,
+            "the snapshot is the only frame this channel ever folded, so nothing else could have swept it",
+        )
+        XCTAssertEqual(
+            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            "the layout snapped back to host truth rather than freezing on the prediction",
+        )
+    }
 }
