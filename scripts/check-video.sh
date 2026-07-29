@@ -22,6 +22,15 @@
 #     the two legs a live dial cannot vouch for (step 5c),
 #   - the desktop-window screenshot shows the decoded remote pixels (visual confirmation).
 #
+# WITH `--second-client` it also proves the multi-client half (docs/45 §10): a SECOND client
+# instance, given only the TERMINAL autoconnect, learns the detached `.desktop` pane from the HOST's
+# workspace document, dials its own UDP lane, and decodes + presents the SAME window — while the
+# first client keeps streaming. That is the one claim a unit test cannot make: two concurrent
+# `SCStream`s and two `VTCompressionSession`s on ONE capture target, which the hang-safety rule
+# forbids constructing in XCTest. Its assertions are the pair, never one: client B rendering while A
+# went dark is a takeover, not a fan-out, so A's marker counts are re-read AFTER B is up and must
+# have GROWN.
+#
 # It runs TWO daemons: slopdesk-videohostd for the pixels, and slopdesk-hostd because the detached
 # .desktop pane is an object in the HOST's workspace document (docs/45) — the client asks for it with
 # an intent and has nowhere to send one without a terminal daemon. Both get a throwaway
@@ -31,7 +40,8 @@
 # alone did none of that: it does not move Application Support and does not move `NSHomeDirectory()`.
 #
 # USAGE:
-#   bash scripts/check-video.sh [--window-title SUBSTR]   # default: first Finder window
+#   bash scripts/check-video.sh [--window-title SUBSTR] [--second-client]
+#     default target: the largest real app window; --second-client adds the fan-out half above.
 #
 set -euo pipefail
 
@@ -71,14 +81,25 @@ remove_defaults_suite() {
 }
 
 TITLE_NEEDLE="Finder"
-case "${1:-}" in
-  --window-title) TITLE_NEEDLE="${2:?--window-title needs a value}" ;;
-  "") ;;
-  *)
-    echo "usage: check-video.sh [--window-title SUBSTR]" >&2
-    exit 2
-    ;;
-esac
+TITLE_EXPLICIT=0
+SECOND_CLIENT=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --window-title)
+      TITLE_NEEDLE="${2:?--window-title needs a value}"
+      TITLE_EXPLICIT=1
+      shift 2
+      ;;
+    --second-client)
+      SECOND_CLIENT=1
+      shift
+      ;;
+    *)
+      echo "usage: check-video.sh [--window-title SUBSTR] [--second-client]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 mkdir -p "${WORK}"
 # Before ANY daemon runs, including the `--list` enumeration below: `slopdesk-videohostd` folds
@@ -150,7 +171,7 @@ LISTING="$(SLOPDESK_APP_SUPPORT_DIR="${DAEMON_STATE}" \
   SLOPDESK_FILE_DROP_DIR="${DAEMON_STATE}/drop" \
   SLOPDESK_WORKSPACE_STATE_DIR="${DAEMON_STATE}" \
   "${HOSTD}" --list 2>&1)"
-if [[ -n "${2:-}" || "${1:-}" == "--window-title" ]]; then
+if [[ "${TITLE_EXPLICIT}" == "1" ]]; then
   # Explicit title requested.
   WID="$(echo "${LISTING}" | grep -i "${TITLE_NEEDLE}" | grep -oE 'id=[0-9]+' | head -1 | cut -d= -f2 || true)"
 else
@@ -429,6 +450,122 @@ if [[ "${SHELLS}" != "1" ]]; then
 fi
 echo "==> exactly one shell attached for one auto-connect ✅"
 
+# ── 5f. The SECOND client (opt-in): the fan-out half of docs/45 ────────────────────────────────
+# The question this answers is the one left HW-PENDING: the workspace document advertises
+# `pane/videoTarget` to every attached client, but nothing established that two clients can watch one
+# window — two `SCStream`s and two `VTCompressionSession`s on a single capture target — and the
+# hang-safety rule forbids constructing any of those four objects in XCTest.
+#
+# B gets the TERMINAL autoconnect and NOTHING else. No `SLOPDESK_VIDEO_AUTOCONNECT_*`: giving it those
+# would have B mint its own detached pane from its own environment, which proves only that two
+# independently-configured clients can both dial — the trivial case. Withholding them makes B learn
+# the pane from the HOST's document (`pane/kind` + `pane/videoTarget`), resolve the ports off its
+# `ConnectionTarget` defaults, and dial a window nobody told it about. That is the real second-device
+# shape, and it exercises the document → satellite-window → video-lane path end to end.
+if [[ "${SECOND_CLIENT}" == "1" ]]; then
+  echo "==> launching a SECOND client (document-driven, no video autoconnect)"
+  CLIENT_B_HOME="${WORK}/client-b-home"
+  CLIENT_B_LOG="${WORK}/client-b.log"
+  rm -rf "${CLIENT_B_HOME}"
+  mkdir -p "${CLIENT_B_HOME}"
+  # Its own container (so it shares neither `workspace-cache.json` nor `device-prefs.json` with A),
+  # the same throwaway Defaults suite (the pair are meant to agree, and what is being kept out is the
+  # developer's own MRU), and the same `-ApplePersistenceIgnoreState YES` without which AppKit brings
+  # it up with zero windows and every scene `.task` silently never runs.
+  CFFIXED_USER_HOME="${CLIENT_B_HOME}" HOME="${CLIENT_B_HOME}" \
+    SLOPDESK_DEFAULTS_SUITE="${DEFAULTS_SUITE}" \
+    SLOPDESK_VIDEO_DEBUG=1 \
+    SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 \
+    SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
+    "${APP_BIN}" -ApplePersistenceIgnoreState YES > "${CLIENT_B_LOG}" 2>&1 &
+  PID_B=""
+  for _ in $(seq 1 16); do
+    PID_B="$(pgrep -f "${APP_PROC_PAT}" | grep -v "^${PID}$" | head -1 || true)"
+    [[ -n "${PID_B}" ]] && break
+    sleep 0.5
+  done
+  [[ -z "${PID_B}" ]] && {
+    echo "==> FAIL: the second client never started" >&2
+    cat "${CLIENT_B_LOG}" >&2
+    exit 1
+  }
+  echo "==> second client up (pid ${PID_B})"
+
+  # 5f-i. TWO accepted workspace channels. Without this, everything below could be measuring a B that
+  # never reached the document at all — and a B with no document has no pane to render, so its
+  # silence would read as "two SCStreams are impossible" when it means "B never asked".
+  echo "==> waiting for a SECOND workspace document channel on :${CONNECT_PORT}…"
+  for _ in $(seq 1 40); do
+    [[ "$(grep -cE "workspace channel .* accepted" "${TERMLOG}" || true)" -ge 2 ]] && break
+    sleep 0.5
+  done
+  CHANNELS="$(grep -cE "workspace channel .* accepted" "${TERMLOG}" || true)"
+  if [[ "${CHANNELS}" -lt 2 ]]; then
+    echo "==> FAIL: the second client never opened a workspace document channel (saw ${CHANNELS})." >&2
+    echo "--- hostd log ---" >&2
+    tail -60 "${TERMLOG}" >&2
+    echo "--- client B log ---" >&2
+    tail -60 "${CLIENT_B_LOG}" >&2
+    exit 1
+  fi
+  echo "==> two workspace document channels ✅"
+
+  # 5f-ii. B decoded AND presented — the same two-legged assertion 5c makes of A, for the same
+  # reason: a lane that dialled can stay blank for ever.
+  echo "==> waiting for the second client to DECODE and PRESENT…"
+  DECODED_B=0
+  PRESENTED_B=0
+  for _ in $(seq 1 60); do
+    DECODED_B="$(grep -c 'DECODED frame #' "${CLIENT_B_LOG}" 2> /dev/null || true)"
+    PRESENTED_B="$(grep -c 'PRESENTED#' "${CLIENT_B_LOG}" 2> /dev/null || true)"
+    [[ "${DECODED_B}" -gt 0 && "${PRESENTED_B}" -gt 0 ]] && break
+    sleep 0.5
+  done
+  if [[ "${DECODED_B}" -lt 1 || "${PRESENTED_B}" -lt 1 ]]; then
+    echo "==> FAIL: the second client rendered nothing (${DECODED_B} decode / ${PRESENTED_B} present)." >&2
+    echo "    It HAS the document (two channels accepted above), so this is the fan-out claim itself" >&2
+    echo "    failing: either the client never materialised the document's desktop pane, or the host" >&2
+    echo "    cannot serve a second SCStream / VTCompressionSession on one capture target." >&2
+    echo "--- video host log ---" >&2
+    tail -60 "${HOSTLOG}" >&2
+    echo "--- client B log ---" >&2
+    tail -60 "${CLIENT_B_LOG}" >&2
+    exit 1
+  fi
+  echo "==> second client DECODED + PRESENTED (${DECODED_B} / ${PRESENTED_B}) ✅"
+
+  # 5f-iii. And A is STILL streaming. This is the assertion that separates a fan-out from a takeover:
+  # a host that can only hold one session per target might well hand the newcomer the stream and leave
+  # the incumbent on a frozen last frame — in which case every check above still passes. Re-read A's
+  # counters and require GROWTH, not merely a non-zero total from before B existed.
+  A_BEFORE="${DECODED}"
+  sleep 3
+  A_AFTER="$(grep -c 'DECODED frame #' "${CLIENTLOG}" 2> /dev/null || true)"
+  if [[ "${A_AFTER}" -le "${A_BEFORE}" ]]; then
+    echo "==> FAIL: the FIRST client stopped decoding once the second attached (${A_BEFORE} → ${A_AFTER})." >&2
+    echo "    The second client took the stream over instead of joining it — a fan-out serves both." >&2
+    echo "--- video host log ---" >&2
+    tail -60 "${HOSTLOG}" >&2
+    echo "--- client A log ---" >&2
+    tail -60 "${CLIENTLOG}" >&2
+    exit 1
+  fi
+  echo "==> the first client kept streaming across the join (${A_BEFORE} → ${A_AFTER} decodes) ✅"
+
+  # 5f-iv. Two SEPARATE UDP lanes, one per client process. Asserted per-PID rather than by counting
+  # sockets on :${MEDIA_PORT}: the host's own bound socket lives there too, so a total is not a
+  # per-client fact, and this must not pass because one client holds two flows.
+  for pair in "A:${PID}" "B:${PID_B}"; do
+    name="${pair%%:*}"
+    pid="${pair##*:}"
+    if ! lsof -nP -iUDP -a -p "${pid}" 2> /dev/null | grep -q ":${MEDIA_PORT}"; then
+      echo "==> FAIL: client ${name} (pid ${pid}) holds no UDP flow to :${MEDIA_PORT}." >&2
+      exit 1
+    fi
+  done
+  echo "==> both clients hold their own media lane ✅"
+fi
+
 # ── 5e. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
 OSLOG="${WORK}/oslog.txt"
 {
@@ -445,10 +582,24 @@ echo "==> OSLog flow → ${OSLOG} ($(wc -l < "${OSLOG}") lines)"
 # GOTCHA (2026-06-09, HW-learned): running `$HOSTD --list` here AGAIN — while the serving host's
 # SCStream is ACTIVE — hangs the enumeration. Never list-while-active: raise the client app and
 # take a full-screen grab instead (the client window is what we need to read anyway).
-osascript -e 'tell application "System Events" to set frontmost of first process whose name is "SlopDesk" to true' 2> /dev/null || true
-sleep 1
-screencapture -x "${SHOT}"
-echo "==> screenshot (full screen; client raised) saved: ${SHOT}"
+#
+# Raised BY PID, not by process name. With two instances there are two processes called SlopDesk, and
+# `first process whose name is "SlopDesk"` picks whichever the window server happens to answer with —
+# so a name-matched raise photographs one client twice and calls it two. One shot per instance, each
+# taken with THAT instance in front, is what makes the pair readable as a pair.
+raise_and_shoot() {
+  local pid="$1" path="$2" label="$3"
+  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is ${pid}) to true" \
+    2> /dev/null || true
+  sleep 1
+  screencapture -x "${path}"
+  echo "==> screenshot (${label} raised) saved: ${path}"
+}
+raise_and_shoot "${PID}" "${SHOT}" "client A"
+if [[ "${SECOND_CLIENT}" == "1" ]]; then
+  SHOT_B="${WORK}/client-b-shot.png"
+  raise_and_shoot "${PID_B}" "${SHOT_B}" "client B"
+fi
 echo
 echo "================================================================================"
 echo " DONE. Document channel, UDP flow, a decoded + presented frame and the one-shell rule are all"
@@ -458,4 +609,10 @@ echo " PASS = the remote-desktop window shows the remote '${WTITLE}' window's li
 echo " FAIL = it shows some OTHER window, or a stale/garbled frame. A blank pane cannot reach here."
 echo " host log:   ${HOSTLOG}"
 echo " client log: ${CLIENTLOG}"
+if [[ "${SECOND_CLIENT}" == "1" ]]; then
+  echo " client B:   ${CLIENT_B_LOG}  (document-driven — it was given a port, never a window)"
+  echo " read  ${SHOT_B}"
+  echo " PASS also needs client B's OWN window showing that same remote window's live pixels —"
+  echo " two clients watching one target, which is the claim no unit test may construct."
+fi
 echo "================================================================================"

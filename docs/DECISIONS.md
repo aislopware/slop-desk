@@ -4632,3 +4632,37 @@ all: that a JOINED member's input reaches the PTY, and that a joined member's Es
 stay green while a joiner's relay went nowhere. They live on in
 `MuxChannelSessionJoinedInputTests`. The size-fold cases the observer tests covered were the
 size-passive ones, already pinned by `MuxChannelSessionResizeFoldTests`.
+
+## Two clients CAN watch one window; the refusal that was never written stays unwritten (2026-07-29)
+
+**Decision.** A second client's video pane ships as a real stream, not as a placeholder. The
+`docs/45` §10 risk row that reserved the right to render it **unavailable** is retired, and no
+refusal is added on either side.
+
+**Why the row existed.** The workspace document advertises `pane/videoTarget` to every attached
+client, so a second client sees the desktop pane and will dial it. Whether the host could serve that
+— two `SCStream`s and two `VTCompressionSession`s bound to ONE capture target — was never
+established, and hang-safety forbids constructing any of those four objects in a unit test. So the
+document made a promise the test suite structurally cannot check.
+
+**What settled it: measurement, not a guard.** `scripts/check-video.sh --second-client` stands up the
+real videohostd, a real `slopdesk-hostd`, and two client instances. Client B is given the TERMINAL
+autoconnect and nothing else — no `SLOPDESK_VIDEO_AUTOCONNECT_*` — so it has to learn the pane from
+the host's document, resolve the ports off its `ConnectionTarget` defaults, and dial a window nobody
+named to it. It decoded and presented. That is the whole claim, and it is true.
+
+**The assertion that matters is the PAIR.** A host that could hold only one session per target might
+hand the newcomer the stream and leave the incumbent on a frozen last frame — and every other check
+in the gate would still pass. So client A's decode counter is re-read after B is up and must have
+GROWN (16 → 34), and each client's media lane is asserted per-PID rather than by counting sockets on
+the media port, where the host's own bound socket also lives.
+
+**One shot per instance, raised by PID.** Two instances are two processes named SlopDesk, so
+`first process whose name is "SlopDesk"` photographs whichever the window server answers with — one
+client, twice, presented as two. Each instance is raised by its unix id and shot separately. B's
+frame is visibly NEWER than A's, which is what makes it a live second stream rather than a copy.
+
+**The refusal was documented but never coded.** The retired row described "the refusal in the
+client's video-pane materializer" — there is no such code and there never was. A mitigation that
+exists only in prose is worse than an open risk: it reads as handled. The row now records what was
+measured, on which date, by which command.

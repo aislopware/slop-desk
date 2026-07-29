@@ -1708,7 +1708,7 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
 | Phase 1's `.title`-after-`.commandStatus` ordering is one careless reorder from silently regressing | 1 | Explicit comment + `testTitleIsEnqueuedAfterCommandStatus`; **deleted** in Phase 4 when `pane/titleFresh` ships |
 | `tab/syncInputArmed` host-side means an iPhone can fan thumb-typing into four panes | 5 | The armed state is **visible on every client** (that is the point of hosting it) and arming is an explicit user action; accepted |
 | Shared focus feels like a screen-grab in real use | 5 | `followSessionFocus` ships in the same phase, default OFF on iOS; unfollowed clients carry their view in presence |
-| A second client's **video** pane: the document advertises `pane/videoTarget`, but nothing establishes that `SCStream` / `VTCompressionSession` support two concurrent sessions on one target — and the hang-safety rule forbids proving it in a unit test | 4 | **HW-PENDING.** Until `scripts/check-video.sh` says otherwise, a second client's video pane renders **unavailable** with the refusal in the client's video-pane materializer, not the host |
+| A second client's **video** pane: the document advertises `pane/videoTarget`, and the hang-safety rule forbids constructing an `SCStream` / `VTCompressionSession` in a unit test, so whether two of each can serve ONE capture target was unprovable headlessly | 4 | **MEASURED — it works** (`bash scripts/check-video.sh --second-client`, 2026-07-29). A second instance given ONLY the terminal autoconnect learned the pane from the document, resolved the ports off its `ConnectionTarget` defaults, dialled its own lane and decoded + presented; the first client's decode counter kept CLIMBING across the join (16 → 34), so it is a fan-out and not a takeover; both instances hold their own media lane, asserted per-PID. Pixel-checked: each instance's own screenshot shows the same remote window live, B's frame NEWER than A's. No refusal ships on either side |
 | The blast radius of a compromised mesh peer grows from "can attach one pane" to "can restructure your whole workspace and close your tabs" | 5 | Stated out loud in DECISIONS Entry 1. Security remains the WireGuard mesh; no app-layer auth is introduced |
 
 **Open questions**
@@ -1731,11 +1731,13 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
    32 MiB stands as an unvalidated guess pending a real cellular link.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.
-4. ~~Does anything read `followSessionFocus`?~~ **SETTLED** (DECISIONS, Multi-client Phase 5b — "the
-   store's mutations become intents" ruling 7). Every focus gesture forks through
+4. ~~Does anything read `followSessionFocus`?~~ **CLOSED.** Every focus gesture forks through
    `stageFocus(tab:)` / `stageFocus(pane:)`: ON sends the intent, OFF records a `DeviceFocus` the
-   `tree` getter overlays and sends nothing. Presence goes out either way. What is still open is the
-   UI — no control toggles the flag, so a device keeps its platform default.
+   `tree` getter overlays and sends nothing. Presence goes out either way (DECISIONS, Multi-client
+   Phase 5b, ruling 7). The flag is also **reachable**: Settings → General → Shared Focus writes it
+   through `WorkspaceStore.setFollowSessionFocus(_:)`, injected at BOTH settings roots
+   (`SlopDeskSettingsScene` and the iOS `SettingsSheet`, which does not inherit its presenter's
+   environment), so neither platform is stuck on the default it was born with.
 
 ---
 
