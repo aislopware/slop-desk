@@ -995,9 +995,9 @@ public final class HostServer: @unchecked Sendable {
         }
         // Anything this host does not route is DECLINED, never guessed at — and declined HERE, before
         // the exclusivity critical section, for the same reason the workspace route sits above it.
-        // Every unrouted class used to fall through into the PTY spawn path, so a peer one version
-        // ahead got a login shell it never asked for: a pty, a reaper thread and a scrollback journal
-        // addressed by nobody.
+        // Falling through into the PTY spawn path instead would hand a peer one version ahead a login
+        // shell it never asked for: a pty, a reaper thread and a scrollback journal addressed by
+        // nobody.
         guard open.channelClass == MuxChannelClass.pane.rawValue else {
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): declined — "
