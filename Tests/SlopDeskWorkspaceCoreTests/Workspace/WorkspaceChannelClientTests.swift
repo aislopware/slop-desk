@@ -149,12 +149,16 @@ final class WorkspaceChannelClientTests: XCTestCase {
             return resolved
         }
 
+        /// Honours cancellation, as the production awaiter does: a caller that races this against a
+        /// clock cancels the loser, and a poll loop that swallowed cancellation would spin instead —
+        /// keeping the racing task group open forever and turning a bounded wait back into a hang.
         var value: Bool {
             get async {
-                while true {
+                while !Task.isCancelled {
                     if let current = peek() { return current }
                     try? await Task.sleep(for: .milliseconds(1))
                 }
+                return false
             }
         }
     }
@@ -837,6 +841,34 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(
             rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
             "the layout snapped back to host truth rather than freezing on the prediction",
+        )
+    }
+
+    /// A host that takes the channel and then says nothing — a live link carrying no verdict.
+    ///
+    /// The pane path already bounds this exact wait (`MuxClientTransport.race`, one
+    /// `handshakeTimeout`), and this one has to as well: an unbounded `awaitAccepted()` strands `run`
+    /// for the life of the process. The state never leaves `.opening`, so no reopen is ever attempted
+    /// and no document arrives — the window keeps drawing per-pane facts off the control-push sinks
+    /// while its LAYOUT sits frozen at whatever was last folded, with nothing on screen to say so.
+    /// ``WorkspaceStore/paneDialHoldBackstop`` still frees the panes to dial, which is what makes the
+    /// state survivable and invisible at once.
+    ///
+    /// `.closed`, deliberately, and not `.refused`: a refusal is a host stating it does not serve the
+    /// class, and it stops this client for good. Silence states nothing, so it has to stay retryable.
+    func testAnOpenTheHostNeverAnswersGivesUpInsteadOfWaitingForever() async {
+        let rig = makeRig(autoAccept: nil)
+        rig.client.handshakeTimeout = .milliseconds(50)
+        rig.client.start()
+
+        await expect("the unanswered open to give up") { rig.client.state == .closed }
+        XCTAssertEqual(
+            rig.released(), [7],
+            "the channel goes back — a host that never answered still has it open on its side",
+        )
+        XCTAssertTrue(
+            rig.pipe.requests(verb: .subscribe).isEmpty,
+            "nothing may ride a channel the host never acked; that ordering is the reason for the wait",
         )
     }
 }

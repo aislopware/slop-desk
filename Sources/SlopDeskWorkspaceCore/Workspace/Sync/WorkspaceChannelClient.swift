@@ -284,8 +284,22 @@ public final class WorkspaceChannelClient {
         // subscribe sent immediately can beat the host's registration of the control sub-channel and
         // be dropped — leaving this client waiting for a snapshot that will never come. The failure
         // presents as a hang, not an error, which is exactly why it must be structural.
+        //
+        // BOUNDED, for the same reason the pane path bounds it: a host that takes the channel and
+        // then says nothing would otherwise strand this loop for the life of the process, in a state
+        // no other clock reaches. Nothing reopens a subscription stuck at `.opening`, so the window
+        // would keep drawing per-pane facts off the control-push sinks with its LAYOUT frozen at the
+        // last fold and nothing on screen to say why.
         if let awaitAccepted = opened.awaitAccepted {
-            guard await awaitAccepted() else {
+            guard let accepted = await Self.race(awaitAccepted, timeout: handshakeTimeout) else {
+                onLog?("workspace channel: no open ack within the handshake window — closing")
+                await releaseIfOwned(opened.channelID)
+                // `.closed`, never `.refused`: a refusal is the host stating it does not serve the
+                // class, and it stops this client for good. Silence states nothing.
+                finish(.closed, generation: generation)
+                return
+            }
+            guard accepted else {
                 onLog?("workspace channel: host refused — falling back to the control-push sinks")
                 await releaseIfOwned(opened.channelID)
                 finish(.refused, generation: generation)
@@ -323,6 +337,29 @@ public final class WorkspaceChannelClient {
         channelID = nil
         control = nil
         await close(id)
+    }
+
+    /// Races `operation` against `timeout`, answering `nil` when the timeout wins.
+    ///
+    /// The loser is cancelled. The production awaiter (`MuxNWConnection.awaitOpenAck`) resumes a
+    /// cancelled waiter immediately, so no continuation is stranded and the group closes.
+    private static func race(
+        _ operation: @escaping @Sendable () async -> Bool,
+        timeout: Duration,
+    ) async -> Bool? {
+        await withTaskGroup(of: Bool?.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            guard let first = await group.next() else {
+                group.cancelAll()
+                return nil
+            }
+            group.cancelAll()
+            return first
+        }
     }
 
     private func finish(_ next: State, generation: Int) {
@@ -581,6 +618,10 @@ public final class WorkspaceChannelClient {
     /// which is what isolates the FRAME-driven sweep in a test — the two would otherwise race and
     /// whichever won would look like the one under test.
     var pendingSweepDelay: Duration? = .seconds(HostWorkspaceMirror.pendingTimeout)
+
+    /// How long the open waits for the host's `channelOpenAck` before treating the silence as a dead
+    /// handshake. The pane path's own bound, to the second (`SlopDeskClient.connect`).
+    var handshakeTimeout: Duration = .seconds(10)
 
     var isRunningForTesting: Bool { runTask != nil }
 

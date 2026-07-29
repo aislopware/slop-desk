@@ -4569,3 +4569,36 @@ window.
 so may reset the box — after `attachLoopbackWorkspaceDocument()` has published its adopt. Replacing a
 live host channel with a loopback would therefore erase the document the loopback is authoritative
 over. Unreachable today: the shell installs one channel at startup and never replaces it.
+
+## The workspace handshake is bounded, because silence is not a verdict (2026-07-29)
+
+`WorkspaceChannelClient.run()` awaited the host's `channelOpenAck` with no clock on it. The pane path
+bounds the identical wait — `MuxClientTransport.race` against one `handshakeTimeout`, and its comment
+names the case: a dead host mid-open. The document path did not, and it is the path whose silence
+costs the most.
+
+A host that registers the channel and then never acks leaves the loop suspended for the life of the
+process. `state` never leaves `.opening`, and nothing anywhere reaches that: `workspaceChannelState`
+has four readers and not one of them is a watchdog. No reopen is attempted, no subscribe goes out, no
+snapshot arrives. The window keeps drawing per-pane facts off the control-push sinks while its LAYOUT
+sits frozen at the last fold, with nothing on screen to say why — the same blank-window class as the
+deleted `SLOPDESK_WORKSPACE_DOC` and the establish reset, reached by a third road.
+
+`paneDialHoldBackstop` still frees the panes to dial, so the state is survivable. That is exactly what
+made it invisible: the panes work, the layout is simply never the host's again.
+
+**`.closed`, never `.refused`.** A refusal is a host stating it does not serve `channelClass 1`, and
+it stops this client for good — `resolvedPaneDialGate` reads it as "no document is ever coming" and
+releases the hold on that basis. Silence states nothing about the host, so it has to stay retryable;
+the connection layer's next establish re-opens.
+
+**The test double had to learn cancellation.** The race cancels the loser, and `withTaskGroup` awaits
+every child at scope exit. A poll loop that swallows cancellation with `try?` spins instead of
+returning, which keeps the group open and turns the bound back into the hang it was added to remove.
+The production awaiter (`MuxNWConnection.awaitOpenAck`) already resumes a cancelled waiter; the rig's
+`VerdictBox` now does too.
+
+**How it was found.** A mutation that made the host drop the workspace route silently did not turn
+`WorkspaceChannelLoopbackTests` red — it hung xctest for 77 minutes. The unbounded wait in the rig's
+`awaitOpenAck` is what stranded it, in a file whose own comment states the rule every wait in it must
+be bounded.
