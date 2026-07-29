@@ -49,11 +49,12 @@ public extension WorkspaceStore {
         return workspaceMirror.u32(.pane, documentPaneID(id), WorkspacePaneField.completionEpoch) ?? 0
     }
 
-    /// Bumps this client's OWN counter for `id` — the flag-off path, and a no-op the moment host truth
-    /// holds the key (``HostWorkspaceMirror/writeFastPath(_:_:)`` refuses to write over `entries`).
+    /// Bumps this client's OWN counter for `id` — what runs before a snapshot lands, and a no-op the
+    /// moment host truth holds the key (``HostWorkspaceMirror/writeFastPath(_:_:)`` refuses to write
+    /// over `entries`).
     ///
     /// Which is the point: the client's guess and the host's truth are the same KIND of value in the
-    /// same slot, so turning the document on changes where the number comes from, not what it means.
+    /// same slot, so a document arriving changes where the number comes from, not what it means.
     func bumpOwnCompletionEpoch(for id: PaneID) {
         let next = paneCompletionEpoch(id) &+ 1
         workspaceMirror.writeFastPath(

@@ -1075,8 +1075,9 @@ read nowhere in the host. It now carries meaning:
 | 1 | `.workspace` | the workspace document. Exactly ONE per mux connection; a second is `accepted: false`. Only the CONTROL sub-channel is used (unwindowed); the DATA sub-channel `openChannel` also creates stays idle |
 | 2 | `.paneObserver` | read-only PTY subscriber. `input` frames are DROPPED host-side |
 
-Workspace routing happens in `spawnMuxChannel` **before** the `attachedElsewhere` critical section,
-so the PTY one-attachment-per-sessionID invariant is untouched.
+Workspace routing happens in `spawnMuxChannel` **before** the critical section that resolves a pane
+open, so class 1 never touches the PTY session map. Class 0 for a `sessionID` that is live under
+another key JOINS that session inside that critical section — one PTY, N subscribers.
 
 ### 11.2 Verbs and kinds
 

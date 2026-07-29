@@ -499,8 +499,8 @@ echo "==> ${ATTACH_LINES} shell mint(s), no pane minted twice ✅"
 #
 # Asserted POSITIVELY, per pane: every pane in the FINAL layout has to appear in a `joined live
 # session … as subscriber` line. A negative — counting refusals and expecting none — is satisfied by
-# a second client that never tried to attach at all, and by a host that no longer has a refusal to
-# log. Only the positive distinguishes "both clients hold this PTY" from "nothing happened".
+# a second client that never tried to attach at all, and by a host that has no refusal to log. Only
+# the positive distinguishes "both clients hold this PTY" from "nothing happened".
 #
 # There is no mode in which this is skipped. Sharing a pane is what the host does, so a run of this
 # gate that did not observe it observed a broken host.

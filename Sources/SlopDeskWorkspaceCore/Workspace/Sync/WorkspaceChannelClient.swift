@@ -237,7 +237,7 @@ public final class WorkspaceChannelClient {
         intentQueue.removeAll()
         clearPresence()
         // A deliberate teardown clears a refusal too: the next `start()` may be against a DIFFERENT
-        // host, or the same one with the flag now on, and a refusal is a fact about one connection.
+        // host, or the same one restarted, and a refusal is a fact about one connection.
         publish(.closed)
         // Claiming `channelID` above is what makes this the SINGLE release: the run task's exit path
         // releases only the channel it still owns, so a stop that races the loop unwinding cannot

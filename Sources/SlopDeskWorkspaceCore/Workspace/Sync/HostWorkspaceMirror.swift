@@ -200,7 +200,7 @@ public struct HostWorkspaceMirror: Sendable {
     /// Keeping ``fastPath`` is deliberate: it is fed by the per-pane channels, whose lifetime is
     /// their own, and clearing it here would blank rows those channels are still painting. With
     /// `entries` empty the overlay simply becomes visible again — the same state the client is in
-    /// before its first snapshot, and the same state it runs in with the flag off.
+    /// before its first snapshot, and the same state it runs in when a host refuses the channel.
     private mutating func applyReset(epoch frameEpoch: UUID) -> ApplyOutcome {
         entries = HostWorkspaceState()
         epoch = frameEpoch

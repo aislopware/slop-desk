@@ -871,16 +871,14 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// The fan-out assertion runs on EVERY invocation, or the gate can pass without observing the
     /// feature it exists to check.
     ///
-    /// Step 7b used to sit inside `if [[ "${FANOUT}" == "1" ]]`, so a plain `bash
-    /// scripts/check-multiclient.sh` — the invocation in CLAUDE.md, and the one anybody actually
-    /// runs — skipped it and printed a line saying that was expected. This repo has shipped five
-    /// gates that could run blind to their own subject; a shell conditional around the only
-    /// PTY-sharing assertion is how the sixth would happen.
+    /// A shell conditional around the only PTY-sharing assertion would let the invocation in
+    /// CLAUDE.md — the one anybody actually runs — skip it and print a line saying that was
+    /// expected. This repo has shipped five gates that could run blind to their own subject.
     ///
     /// The claim is also pinned as POSITIVE. Counting refusals and expecting none is satisfied by a
-    /// second client that never attached at all, and — since the exclusivity refusal is deleted — by
-    /// a host with no such log line left to emit. Only `joined live session … as subscriber`,
-    /// required per pane, separates sharing from nothing having happened.
+    /// second client that never attached at all, and by a host with no such log line to emit, since
+    /// sharing a pane is what the host does and no refusal exists. Only `joined live session … as
+    /// subscriber`, required per pane, separates sharing from nothing having happened.
     func testTheMulticlientGateAssertsTheFanOutUnconditionally() throws {
         let code = try codeBody(of: "scripts/check-multiclient.sh")
         XCTAssertTrue(
@@ -893,12 +891,12 @@ final class GuiGateLaunchContractTests: XCTestCase {
             "check-multiclient.sh names a fan-out toggle again; the fan-out assertion must not be "
                 + "reachable only under a flag",
         )
-        // The negative that must NOT come back: the refusal it once grepped for is deleted, so the
-        // check could only ever pass vacuously — coverage-shaped and incapable of failing.
+        // The negative that must NOT come back: no host emits this refusal, so a grep for it passes
+        // vacuously — coverage-shaped and incapable of failing.
         XCTAssertFalse(
             code.contains("already attached on another connection"),
-            "check-multiclient.sh greps for a refusal the host no longer emits — a check that cannot "
-                + "fail reads like coverage and is worse than none",
+            "check-multiclient.sh greps for a refusal no host emits — a check that cannot fail "
+                + "reads like coverage and is worse than none",
         )
     }
 

@@ -588,7 +588,7 @@ public final class WorkspaceStore {
         }
         // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
         // real layout from the first instant rather than `nil` until a host frame happens to arrive.
-        // A client with no channel — headless, a test, the flag off — never gets one, and a nil
+        // A client with no channel — headless, a test — never gets one, and a nil
         // topology is silent: `WorkspaceMirrorBox.stageIntent` returns `nil` for it and every call
         // built on that becomes a no-op with nothing logged anywhere.
         //

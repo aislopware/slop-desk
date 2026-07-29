@@ -20,7 +20,7 @@ public extension WorkspaceStore {
     /// `false` for a store with no channel (headless, a unit test that asked for none), for one whose
     /// channel is not yet `.live`, and for one whose host has not published a topology. In those
     /// states every mutator below is a silent no-op — and with no topology ``WorkspaceStore/tree``
-    /// renders nothing, which is exactly what a default-ON client against a default-OFF host looks
+    /// renders nothing, which is exactly what a client whose host refuses `channelClass 1` looks
     /// like.
     var canMutate: Bool { workspaceChannel?.isLive == true && workspaceMirror.topology != nil }
 

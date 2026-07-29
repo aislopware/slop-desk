@@ -240,8 +240,8 @@ extension WorkspaceStore {
         // can see.
         //
         // Scoped to a REAL host document. Before one lands the mirror holds this client's own seed,
-        // which IS the tree on offer — nothing to hold against — and a client whose host never opens a
-        // workspace channel (the flag off there) would otherwise stop reconciling for good.
+        // which IS the tree on offer — nothing to hold against — and a client whose host refuses
+        // `channelClass 1` would otherwise stop reconciling for good.
         guard pendingLaunchAdopt == nil || workspaceMirror.knownEpoch == Self.seedEpoch else { return }
         reconcileTree(acknowledgingFocus: false)
     }
@@ -492,7 +492,7 @@ extension HostWorkspaceMirror {
 
 public extension WorkspaceStore {
     /// Installs the workspace-document channel. `nil` (headless, tests, automation) leaves the store
-    /// running on the control-push overlay alone, which is exactly the flag-off shape.
+    /// running on the control-push overlay alone — per-pane facts still arrive, the LAYOUT does not.
     func attachWorkspaceChannel(_ client: WorkspaceChannelClient?) {
         workspaceChannel?.stop()
         workspaceChannel = client
