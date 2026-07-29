@@ -3904,6 +3904,31 @@ final class MuxChannelSession: @unchecked Sendable {
         return subscribers.count
     }
 
+    /// Enters a bare second member: ``admitJoiner(reserved:data:control:channelClass:composedThrough:)``
+    /// minus the state transfer and the sender tasks (testing only).
+    ///
+    /// Every refcounted teardown reads the SUBSCRIBER SET, so a rig that aliases a second live-map
+    /// key onto one session without entering a member is not a fan-out to any of them: leaving that
+    /// key takes ``removeSubscriber(_:)``'s unknown-id branch, which reports "not emptied" off the
+    /// PRIMARY still being there. The refcount assertion then passes for a reason unrelated to
+    /// refcounting, and holds just as well for a host that never counted at all.
+    ///
+    /// Hang-safe: no drain, no sender, no PTY — the set and the population-derived bounds only.
+    @discardableResult
+    func enterBareSubscriberForTesting(
+        data: MuxSubChannel,
+        control: MuxSubChannel,
+        channelClass: MuxChannelClass = .pane,
+    ) -> MuxSubscriberID {
+        subscribersLock.lock()
+        let id = mintSubscriberIDLocked()
+        subscribers[id] = Subscriber(id: id, channelClass: channelClass, data: data, control: control)
+        subscribersLock.unlock()
+        recomputeClientOnline()
+        applyQueueCapacityForPopulation()
+        return id
+    }
+
     static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
 
     /// Race seam — invoked by ``rebindRelay(data:control:onExit:)`` immediately after the restarted

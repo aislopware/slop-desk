@@ -2292,15 +2292,25 @@ public final class HostServer: @unchecked Sendable {
     /// Registers `key` as an ADDITIONAL member of an already-live session — the state
     /// `performJoin` leaves behind (testing only). The fan-out's N-keys-one-session shape without
     /// a real second connection.
+    ///
+    /// The member is ENTERED, not just aliased: the refcounted teardowns read the subscriber set,
+    /// so a key-only rig would put every one of them on
+    /// ``MuxChannelSession/removeSubscriber(_:)``'s unknown-id branch and prove nothing about the
+    /// count.
+    @discardableResult
     func registerJoinedKeyForTesting(
         _ session: MuxChannelSession,
         key: MuxSessionKey,
-        subscriber: MuxSubscriberID,
-    ) {
+    ) -> MuxSubscriberID {
+        let id = session.enterBareSubscriberForTesting(
+            data: MuxSubChannel(channelID: key.channelID, channel: .data) { _, _ in },
+            control: MuxSubChannel(channelID: key.channelID, channel: .control) { _, _ in },
+        )
         lock.lock()
         muxSessions[key] = session
-        muxSubscriberIDs[key] = subscriber
+        muxSubscriberIDs[key] = id
         lock.unlock()
+        return id
     }
 
     /// Drives the REAL join REGISTRATION — the state `spawnMuxChannel`'s critical section leaves

@@ -73,7 +73,7 @@ final class HostServerCloseReasonTests: XCTestCase {
         let pair = try await rig.client.openChannel(sessionID: pane, lastReceivedSeq: 0)
         let session = makeSession(sessionID: pane)
         let key = MuxSessionKey(connectionID: rig.connectionID, channelID: pair.data.channelID)
-        rig.server.registerJoinedKeyForTesting(session, key: key, subscriber: 1)
+        rig.server.registerJoinedKeyForTesting(session, key: key)
         rig.server.armSubscriberEvictionForTesting(session, on: rig.host, connectionID: rig.connectionID)
 
         // What `evictLaggingSubscribers` does once a member is past `SLOPDESK_SUB_LAG_BYTES`.

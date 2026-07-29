@@ -33,7 +33,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         let first = MuxSessionKey(connectionID: UUID(), channelID: 1)
         let second = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.registerMuxSessionForTesting(session, key: first)
-        server.registerJoinedKeyForTesting(session, key: second, subscriber: 1)
+        server.registerJoinedKeyForTesting(session, key: second)
         return (session, first, second)
     }
 
@@ -307,7 +307,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         let first = MuxSessionKey(connectionID: UUID(), channelID: 1)
         let second = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.registerMuxSessionForTesting(session, key: first)
-        server.registerJoinedKeyForTesting(session, key: second, subscriber: 1)
+        server.registerJoinedKeyForTesting(session, key: second)
 
         server.leavePaneChannelForTesting(second)
         XCTAssertEqual(
