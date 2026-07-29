@@ -264,4 +264,63 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         )
         XCTAssertEqual(session.subscriberCountForTesting, 1)
     }
+
+    // MARK: - The last leave is a REAP, and the maps cannot tell you that
+
+    /// What separates the last member's leave from the earlier ones is everything `removeMuxSession`
+    /// does BESIDES dropping the key: the PTY teardown, the hook sink, and the disk journal.
+    ///
+    /// The key maps alone cannot witness it — the leave branch deletes this client's entry too, so
+    /// after the last one both branches leave zero keys and an empty `listPanesForControl()`. An
+    /// assertion that reads only those is satisfied by a host that deregisters the last client and
+    /// walks away, leaving the shell running with nobody watching and its transcript on disk
+    /// forever: one orphan per deliberately-closed pane, and a stale scrollback for whoever reaches
+    /// that session id next.
+    ///
+    /// The journal is the discriminator. Its deletion is exclusive to the deliberate close — TTL
+    /// eviction, detach and daemon stop all keep the file — so a surviving file after the LAST leave
+    /// means the close never became a reap.
+    func testTheLastMemberLeavingReapsThePaneRatherThanDeregisteringIt() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fanout-last-leave-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let journals = ScrollbackJournalStore(directory: dir, byteCap: ReplayBuffer.defaultScrollbackBytes)
+
+        let id = UUID()
+        let transcript = Data("output the closing pane produced\n".utf8)
+        journals.journal(for: id).append(transcript)
+        journals.journal(for: id).synchronize()
+        let file = dir.appendingPathComponent("\(id.uuidString).scrollback", isDirectory: false)
+        XCTAssertEqual(try? Data(contentsOf: file), transcript, "precondition: the transcript is on disk")
+
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, scrollbackJournals: journals)
+        defer { Task { await server.stop() } }
+
+        let session = MuxChannelSession(
+            channelID: 1,
+            pty: PTYProcess(), // unspawned: no PTY, no read loop
+            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
+            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
+            sessionID: id,
+            scrollbackJournal: journals.journal(for: id),
+        )
+        let first = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        let second = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        server.registerMuxSessionForTesting(session, key: first)
+        server.registerJoinedKeyForTesting(session, key: second, subscriber: 1)
+
+        server.leavePaneChannelForTesting(second)
+        XCTAssertEqual(
+            try? Data(contentsOf: file), transcript,
+            "one of two clients leaving is not a close — the transcript belongs to the pane, "
+                + "which the other client is still watching",
+        )
+
+        server.leavePaneChannelForTesting(first)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: file.path),
+            "the LAST member leaving is the deliberate close: the pane takes its transcript with it",
+        )
+        XCTAssertEqual(session.subscriberCountForTesting, 0)
+    }
 }
