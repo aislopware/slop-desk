@@ -142,6 +142,46 @@ final class WorkspaceRosterPanesTests: XCTestCase {
         )
     }
 
+    /// The same edge on a pane a Mac already holds — the shape a phone joining an open session makes.
+    ///
+    /// The re-resolve has to reach the member THIS connection rides. Addressing the pane's primary
+    /// instead reads plausibly and, on a pane whose only member IS the primary, behaves identically —
+    /// but under a fan-out the primary belongs to whoever opened the pane. A phone subscribing would
+    /// then stamp its own passivity onto the MAC's contribution and keep the vote it was denied: the
+    /// Mac's grid collapses to a phone's, on a pane the Mac opened, with no client having asked for
+    /// anything.
+    func testAPhoneSubscribingUnderAFanOutMarksItsOwnMemberAndNotTheMacs() {
+        let server = HostServer(port: 0)
+        defer { Task { await server.stop() } }
+
+        let session = makeSession(sessionID: UUID())
+        let mac = UUID()
+        let phone = UUID()
+        // The Mac opened the pane, so it is the primary; the phone joined it.
+        session.addResizeContributor(sizePassive: false)
+        server.registerMuxSessionForTesting(session, key: MuxSessionKey(connectionID: mac, channelID: 1))
+        let joined = server.registerJoinedKeyForTesting(session, key: MuxSessionKey(connectionID: phone, channelID: 2))
+        session.addResizeContributor(joined, sizePassive: false)
+
+        registerWorkspaceChannel(
+            on: server, connectionID: phone, clientInstanceID: UUID(),
+            clientKind: WorkspaceClientKind.iOS.rawValue,
+        )
+        server.reresolveSizePassivity(connectionID: phone)
+
+        let bySubscriber = Dictionary(
+            uniqueKeysWithValues: session.resizeContributionsForWorkspace.map { ($0.subscriber, $0.contributes) },
+        )
+        XCTAssertEqual(
+            bySubscriber[joined], false,
+            "the phone's own member is the one the subscribe settles",
+        )
+        XCTAssertEqual(
+            bySubscriber[MuxChannelSession.primarySubscriberID], true,
+            "and the Mac keeps the vote — a phone subscribing is not a verdict about somebody else",
+        )
+    }
+
     // MARK: - The published record
 
     func testTheRosterNamesTheResolvedGridAndTheDeviceHoldingIt() {
