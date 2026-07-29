@@ -145,6 +145,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     case nextTab // ⌘⇧]
     case prevTab // ⌘⇧[
     case selectTab(Int) // ⌘1…⌘9 (1-based)
+    case tabSwitcher // ⌃⇥ — the press-and-hold MRU switcher. CHORD-LESS in this table on purpose: the live
+    // gesture (open / step / commit-on-⌃-release) cannot be expressed as one chord row, so
+    // `WorkspaceKeyDispatcher` owns ⌃⇥ directly. This entry exists so the switcher is DISCOVERABLE in the
+    // palette / cheat sheet and openable without a keyboard; routing it opens an UNARMED switcher (Return
+    // commits, since no modifier is held to release).
     case closeTab // no default chord — closes the active tab (all its panes); reachable via the ⌘W
     // cascade + palette/menu (⌘⇧W is Close Window, so there's no Close-Tab chord)
     case closeWindow // ⌘⇧W — close the active window (→ Session); the close-confirmation surface gates it
@@ -256,6 +261,7 @@ public extension WorkspaceAction {
              .nextTab,
              .prevTab,
              .selectTab,
+             .tabSwitcher, // switches between TABS — a session-scope action, needs no active pane
              .closeTab,
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
@@ -485,6 +491,17 @@ public enum WorkspaceBindingRegistry {
         // cascades pane → tab → window, so a dedicated Close-Tab chord is unnecessary. `chord: nil` keeps the
         // row in the palette / menu; tab close stays reachable via the ⌘W cascade. Pinned chord-less by
         // `TreeCommandRoutingTests`; the ⌘⇧W assignment is explained in DECISIONS.md.
+        // The ⌃⇥ switcher. `chord: nil` — the ⌃⇥ gesture is dispatcher-owned (see the action's comment), and
+        // registering ⌃⇥ here would both misdescribe it (one row cannot mean open/step/commit) and put a
+        // ⌃-only chord in a table whose §5 invariant is "every chord carries ⌘ or ⌥". The glyph rides the
+        // keywords instead — the established idiom for a chord-less row whose key is worth advertising
+        // (cf. `view.viKeyHints` carrying ⌘/).
+        WorkspaceBinding(
+            id: "tab.switcher", action: .tabSwitcher, title: "Tab Switcher",
+            category: .tabs, chord: nil,
+            symbol: "square.stack",
+            keywords: "⌃⇥ ctrl tab switcher recent recently used mru last previous quick switch alt-tab",
+        ),
         WorkspaceBinding(
             id: "tab.close", action: .closeTab, title: "Close Tab",
             category: .tabs, chord: nil,

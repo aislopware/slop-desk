@@ -316,7 +316,7 @@ A pure command-intent layer drives both platforms; SwiftUI `Commands` (macOS men
 public enum WorkspaceCommand: Sendable, Equatable {
     case splitHorizontal, splitVertical          // ⌘D / ⇧⌘D
     case closePane, closeTab                      // ⌘W / ⇧⌘W
-    case newTab, nextTab, prevTab                 // ⌘T / ⌃⇥ / ⌃⇧⇥
+    case newTab, nextTab, prevTab                 // ⌘T / ⌘⇧] / ⌘⇧[  (⌃⇥ is the MRU switcher, not this)
     case selectTab(Int)                           // ⌘1…⌘9
     case focus(FocusDirection)                    // ⌥⌘←/→/↑/↓
     case cycleFocus(forward: Bool)                // ⌘] / ⌘[

@@ -1051,6 +1051,16 @@ public final class WorkspaceStore {
         reconcile()
     }
 
+    // MARK: - Tab switcher (⌃⇥ press-and-hold, MRU-ordered)
+
+    /// The live ⌃⇥ switcher, or `nil` while it is closed. Set by ``openOrStepTabSwitcher(forward:armedByModifier:)``,
+    /// cleared by ``commitTabSwitcher()`` / ``cancelTabSwitcher()``.
+    ///
+    /// PURELY LOCAL, deliberately: a tab focus is a host-owned intent (`.focusTab`), so staging one per
+    /// highlight step would broadcast every intermediate tab of a cycle to every other client attached to
+    /// this workspace. The highlight moves here; only the commit stages.
+    public internal(set) var tabSwitcher: TabSwitcher?
+
     // MARK: - Recent-pane MRU (quick-switch to the previously-focused pane)
 
     /// Panes in most-recently-FOCUSED order (front = current), deduped, capped at ``focusHistoryCap``,

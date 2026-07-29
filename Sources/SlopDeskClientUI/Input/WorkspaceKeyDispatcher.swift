@@ -129,11 +129,15 @@ final class WorkspaceKeyDispatcher {
     /// SwiftUI observer).
     func setCloseWindow(_ close: @escaping () -> Void) { closeWindow = close }
 
-    /// Install the `.keyDown` local monitor. Returning `nil` from the handler SWALLOWS the event; returning
-    /// the event passes it through to the focused responder (the terminal / video pane).
+    /// Install the local monitor. Returning `nil` from the handler SWALLOWS the event; returning the event
+    /// passes it through to the focused responder (the terminal / video pane).
+    ///
+    /// `.flagsChanged` rides the same monitor because the ⌃⇥ tab switcher COMMITS on the ⌃ key-up: a
+    /// modifier transition is the end of that gesture, not a keystroke. Those events are always passed
+    /// through — the monitor reads them, it never consumes them.
     func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             return handle(event)
         }
@@ -156,13 +160,33 @@ final class WorkspaceKeyDispatcher {
         // workspace window holds focus. If a separate window is key (Settings, a sheet), pass EVERY key through
         // UNCHANGED so that window (and the keybindings recorder) receives its own keystrokes instead of this
         // monitor resolving + swallowing against the hidden workspace tree.
-        if !isWorkspaceWindowKey() { return event }
+        //
+        // An in-flight ⌃⇥ switcher is ABANDONED here rather than left open: the window that lost key will
+        // never deliver the ⌃ key-up that would commit it, so the overlay would hang with a highlight the
+        // user can no longer act on.
+        if !isWorkspaceWindowKey() {
+            store.cancelTabSwitcher()
+            return event
+        }
+        // MODIFIER TRANSITIONS: releasing ⌃ COMMITS an armed ⌃⇥ switcher — that key-up IS the selection.
+        // This must precede every `charactersIgnoringModifiers` read below: a `.flagsChanged` event carries
+        // no characters and asking it for them raises `NSInternalInconsistencyException`. A transition is
+        // never swallowed — the terminal tracks modifier state too.
+        if event.type == .flagsChanged {
+            if !event.modifierFlags.contains(.control) { store.commitTabSwitcherOnModifierRelease() }
+            return event
+        }
         // MODAL YIELD: while a keyboard-capturing overlay (the Open-Quickly picker) is presented, this monitor
         // — which PREEMPTS the responder chain — must NOT resolve the global chord table behind it, or ⌘1–9
         // would switch the BACKGROUND tab and ⌘W would DESTROY the focused pane behind it. Pass every key
         // through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
         // ⌘1–9, ⌘K); Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
         if isOverlayCapturingKeys() { return event }
+        // The ⌃⇥ tab-switcher gesture, resolved BEFORE the chord table because it is not expressible as a
+        // table row: one chord means open / step / commit depending on whether the switcher is already up,
+        // and Escape — its cancel key — normalizes to no chord at all (`\u{1B}` is a control scalar the
+        // normalizer rejects, precisely so a bare Esc always reaches the TUI).
+        if consumeTabSwitcher(event) { return nil }
         // A keystroke that does not normalize to a chord we model (a pure modifier, a dead key, …) is left
         // untouched — never swallow what we cannot classify.
         guard let chord = KeyChordNormalizer.chord(
@@ -195,6 +219,64 @@ final class WorkspaceKeyDispatcher {
             return nil // swallow — the workspace owns this chord
         }
         return event // bare typing / unbound chord → reaches the focused responder UNCHANGED
+    }
+
+    /// The ⌃⇥ switcher's key handling. Returns `true` when the event was consumed (the caller swallows it).
+    ///
+    /// Keyed off `keyCode` rather than a normalized `KeyChord` for two reasons: Escape has no chord (by
+    /// design — see `KeyChordNormalizer`), and matching the physical key keeps ⇥ recognisable regardless of
+    /// what `charactersIgnoringModifiers` reports under a non-US layout.
+    ///
+    /// THE BOUNDARY THIS FUNCTION DEFENDS: a bare ⇥ is shell completion and ⇧⇥ is how Claude Code cycles
+    /// permission modes. Neither carries ⌃, and with the switcher closed neither is claimed here — they fall
+    /// straight through to the PTY. Only ⌃⇥ opens the gesture; only while it is open do Esc / Return /
+    /// arrows / a bare ⇥ mean anything to us.
+    private func consumeTabSwitcher(_ event: NSEvent) -> Bool {
+        let control = event.modifierFlags.contains(.control)
+        let shift = event.modifierFlags.contains(.shift)
+        let isOpen = store.tabSwitcher != nil
+        // ⇧ selects the direction: ⌃⇥ walks toward less-recent, ⌃⇧⇥ walks back.
+        let forward = !shift
+
+        switch event.keyCode {
+        case 48: // Tab
+            // Ours only when ⌃ is held (the gesture) or the switcher is already up (a palette-opened one has
+            // no held modifier). Otherwise this is the terminal's Tab and we must not touch it.
+            guard control || isOpen else { return false }
+            // `unbind: ctrl+tab` gives the GESTURE back — the escape hatch a Neovim user needs once the
+            // Kitty protocol delivers ⌃⇥ to the PTY as `CSI 9 ; 5 u`. The gesture has no table row, so
+            // the ordinary unbind branch below (which runs after this one) would never see it.
+            //
+            // Gates OPENING only, and reclaims each chord INDIVIDUALLY — unbinding ⌃⇥ is not a statement
+            // about ⌃⇧⇥. Once the switcher is up it owns ⇥ regardless, or an unbind would strand an
+            // overlay with no way to step it.
+            var mods: KeyChord.Modifiers = []
+            if control { mods.insert(.control) }
+            if shift { mods.insert(.shift) }
+            if !isOpen, WorkspaceBindingRegistry.isUnbound(KeyChord(.tab, mods)) { return false }
+            store.openOrStepTabSwitcher(forward: forward, armedByModifier: control)
+            // A refusal (one tab ⇒ nothing to switch to) leaves the switcher nil; pass ⌃⇥ through rather
+            // than swallowing it into a gesture that cannot happen.
+            return store.tabSwitcher != nil
+        case 53: // Escape — abandon the walk
+            guard isOpen else { return false }
+            store.cancelTabSwitcher()
+            return true
+        // Return / keypad Enter — commit (the palette-opened switcher's only commit path)
+        case 36,
+             76:
+            guard isOpen else { return false }
+            store.commitTabSwitcher()
+            return true
+        // ← / → — step the highlight while the switcher is up
+        case 123,
+             124:
+            guard isOpen else { return false }
+            store.openOrStepTabSwitcher(forward: event.keyCode == 124, armedByModifier: false)
+            return true
+        default:
+            return false
+        }
     }
 
     /// The active pane id (the literal-byte binding's send target). `nil` when no pane is focused (the send

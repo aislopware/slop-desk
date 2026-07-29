@@ -4666,3 +4666,50 @@ frame is visibly NEWER than A's, which is what makes it a live second stream rat
 client's video-pane materializer" — there is no such code and there never was. A mitigation that
 exists only in prose is worse than an open risk: it reads as handled. The row now records what was
 measured, on which date, by which command.
+
+## ⌃⇥ is a held gesture the dispatcher owns, not a chord-table row (2026-07-29)
+
+**Decision.** Tab switching gains a second gesture: hold ⌃ and tap ⇥ to walk a MOST-RECENTLY-USED
+ring, release ⌃ to commit — kero's `TabSwitcherView` shape. It lives in `WorkspaceKeyDispatcher`, not
+in `WorkspaceBindingRegistry`'s chord table. The positional ⌘⇧] / ⌘⇧[ cycle and ⌘1–9 are unchanged.
+
+**Why not a table row.** A row maps ONE chord to ONE action. ⌃⇥ means three different things
+depending on state — open, step, commit — and the commit is not a keystroke at all but a modifier
+key-up. There is no row shape that says that. Worse, adding it would put a ⌃-only chord into a table
+whose invariant (`testEveryChordIsCommandOrOptionPrefixed`) requires ⌘ or ⌥ on every chord. That
+invariant is not decoration: it is the thing that keeps the app from swallowing a ⌃-letter the TUI
+needs. Muxy has no such rule and its ⌃[ binding eats ESC.
+
+**Why ⌃⇥ is free to take.** xterm's `modifyOtherKeys` explicitly EXCLUDES Tab, so in a legacy
+terminal ⌃⇥ is byte-identical to bare ⇥ — nothing can distinguish them, so nothing can be bound to
+it. macOS reserves ⌘⇥ at the WindowServer level but leaves ⌃⇥ to the app. Under the Kitty keyboard
+protocol it does become distinguishable (`CSI 9 ; 5 u`), which is why the escape hatch below exists.
+
+**What it must not cost.** Bare ⇥ is shell completion and ⇧⇥ is how Claude Code cycles permission
+modes. Neither carries ⌃, and the dispatcher claims Tab only when ⌃ is held or the switcher is
+already up. `DispatcherTabSwitcherTests` pins both passthroughs first, before anything else.
+
+**The highlight is LOCAL; only the commit is an intent.** Walking the ring stages nothing. The host
+owns tab focus (`docs/45`), so staging a `.focusTab` per step would broadcast every intermediate tab
+of a cycle to every other attached client and repaint their screens. One commit, one intent.
+
+**The ring is FROZEN at open.** Candidates are snapshot from `WorkspaceTopology.focusMRU` when the
+switcher opens. Committing re-fronts the ring, so a live ring would reshuffle under a still-held ⌃
+and the highlight would chase itself. The order is: local active tab, then the host ring by recency,
+then anything never visited, deduped and pruned to live tabs.
+
+**Escape hatch.** `unbind: ctrl+tab` frees the gesture back to the PTY, for the Neovim user who has
+bound `<C-Tab>` and runs with CSI-u on. It gates OPENING only — an open switcher owns ⇥ regardless,
+or the unbind would strand an overlay with no way to step it — and reclaims each chord individually:
+unbinding ⌃⇥ says nothing about ⌃⇧⇥.
+
+**A focus change elsewhere abandons the walk.** The switcher can also be opened from the palette
+(the chord-less `tab.switcher` row), and that one has no held modifier whose release would end it.
+Both `stageFocus` overloads cancel it first — that pair is the choke point every local navigation
+passes through — so clicking into the workspace cannot leave a card floating over a view the user
+has already left.
+
+**Not rebindable as a gesture.** Settings can rebind the chord-less `tab.switcher` row (which opens
+the unarmed switcher), but the held ⌃⇥ gesture itself is fixed. Accepted: expressing "hold this
+modifier, tap that key, commit on release" in the recorder UI is a larger change than the gesture is
+worth, and `unbind:` already covers the user who needs the chord back.

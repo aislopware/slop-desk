@@ -88,8 +88,15 @@ extension WorkspaceStore {
 
     /// Publishes a TAB focus the way this device is configured to: an intent when following, a local
     /// overlay when not. `true` when the focus landed somewhere.
+    ///
+    /// Both overloads ABANDON an open ⌃⇥ switcher first. These two functions are the choke point every
+    /// local navigation passes through (a tab-bar click, a pane click, a rail row, a palette jump), and a
+    /// switcher opened without a held modifier has no key-up coming to end it — left up, its next Return
+    /// would commit a highlight chosen for a workspace the user has already left. Ordering matters: the
+    /// switcher's own commit clears itself BEFORE calling `selectTab`, so this never eats its selection.
     @discardableResult
     func stageFocus(tab: TabID) -> Bool {
+        cancelTabSwitcher()
         guard devicePreferences.followSessionFocus else {
             return setDeviceFocus(DeviceFocus(tab: tab, pane: nil))
         }
@@ -101,6 +108,7 @@ extension WorkspaceStore {
     /// switch this device to that tab as well, exactly as the applier does.
     @discardableResult
     func stageFocus(pane: PaneID) -> Bool {
+        cancelTabSwitcher()
         guard devicePreferences.followSessionFocus else {
             guard let (_, tab) = tree.tab(containing: pane) else { return false }
             return setDeviceFocus(DeviceFocus(tab: tab, pane: pane))

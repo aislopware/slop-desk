@@ -672,8 +672,8 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case closePane                 // ⌘W
     case closeTab                  // ⇧⌘W
     case newTab                    // ⌘T
-    case nextTab                   // ⌃⇥
-    case prevTab                   // ⌃⇧⇥
+    case nextTab                   // ⌘⇧]  — POSITIONAL; ⌃⇥ is the recency switcher, a separate gesture
+    case prevTab                   // ⌘⇧[
     case selectTab(Int)            // ⌘1…⌘9
     case focus(FocusDirection)     // ⌥⌘←/→/↑/↓ — UNCHANGED (FocusResolver reuse)
     case cycleFocus(forward: Bool) // ⌘] / ⌘[  — UNCHANGED

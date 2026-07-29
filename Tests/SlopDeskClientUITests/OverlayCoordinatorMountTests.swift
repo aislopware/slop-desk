@@ -525,10 +525,15 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 // Fit Viewport to Pane + Reset Viewport Zoom are chord-less (palette/menu
                 // discoverability verbs for the footer's viewport cluster).
                 "view.fitViewportToPane", "view.resetViewportZoom",
+                // Tab Switcher is chord-less BY CONSTRUCTION, not by omission: its ⌃⇥ gesture means
+                // open/step/commit depending on state and ends on a modifier RELEASE, which no single
+                // chord row can express — `WorkspaceKeyDispatcher` owns the keys and this row exists
+                // purely so the switcher is discoverable + openable without one.
+                "tab.switcher",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
                 + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + Reattach All "
-                + "+ the two viewport verbs",
+                + "+ the two viewport verbs + the dispatcher-owned Tab Switcher",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.

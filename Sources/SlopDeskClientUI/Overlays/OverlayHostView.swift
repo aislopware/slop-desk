@@ -74,6 +74,10 @@ struct OverlayHostView: View {
                 }
                 .padding(Slate.Metric.space4)
             }
+            // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
+            // `.sheet` (see `TabSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
+            // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
+            .overlay(alignment: .center) { TabSwitcherOverlay(store: store) }
             .animation(Slate.Anim.smallFade, value: connectionAlert)
             .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
             .animation(Slate.Anim.smallFade, value: coordinator.notice)
