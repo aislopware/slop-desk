@@ -4,10 +4,16 @@ import XCTest
 /// The zsh shell-integration shim (generated ZDOTDIR) that forces a post-resize prompt
 /// reprint. Deterministic + HostServer-free: pure string assembly + temp-dir file writes.
 final class ShellIntegrationTests: XCTestCase {
+    /// A throwaway directory that is REMOVED when the test finishes.
+    ///
+    /// It used to leak: every call created a UUID-named directory under `TMPDIR` and nothing ever
+    /// deleted it, so each `make check` left one behind per invocation. Three days of runs had
+    /// accumulated 14,160 of them (169 MB) before anyone looked in the temp dir.
     private func makeTempDir() -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("slopdesk-si-test-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         return dir
     }
 
