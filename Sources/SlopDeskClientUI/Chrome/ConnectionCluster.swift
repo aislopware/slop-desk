@@ -22,15 +22,19 @@
 //   Both lines share the two rails: the leading edge is the x every row title starts on, the
 //   trailing edge is the column the rows' status marks stand in. So the footer reads as the last
 //   lines of the list rather than a widget bolted underneath, and the right rail becomes the one
-//   place a number can turn amber.
-//   State lives in the WORDS and their ink (`LedState` is the ink classifier): the hostname dims
-//   to tertiary while nothing is connected, and the status hues appear ONLY when something has
-//   gone wrong (a degrading link colours the PING digits; kernel memory pressure colours the MEM
-//   digits; a filling volume colours the DISK run) — the ink dialect's rule, colour means trouble.
+//   place a number can raise its voice.
+//   State lives in the WORDS and their WEIGHT, on ONE ink axis (``Alarm``): a healthy readout rests
+//   in the tertiary metadata grey, and a reading in trouble climbs the same brightness ladder the
+//   rail's git line uses — secondary + semibold when it is worth knowing, primary + bold when it is
+//   worth acting on. No hue at all. An instrument that lights up in a different colour per fault
+//   asks the eye to learn a palette before it can read a number; a run that simply gets BRIGHTER and
+//   HEAVIER than its neighbours says "this one" in the only vocabulary a footer of digits has.
+//   Only three readings can climb (a degrading link on the PING digits, kernel memory pressure on
+//   the MEM digits, a filling volume on the DISK run); everything else stays flat.
 //   The pulse line is absent, not blanked, until a reading exists: an instrument showing "cpu —"
 //   advertises breakage, while a footer that grows a second line on connect just reports.
-//   CPU is deliberately NEVER coloured — a build pegging the host is what the machine is FOR, and a
-//   readout that goes amber every compile teaches the eye to ignore it.
+//   CPU is deliberately NEVER raised — a build pegging the host is what the machine is FOR, and a
+//   readout that shouts every compile teaches the eye to ignore it.
 //
 // TITLEBAR / iOS (compact) — the link line alone, hugging its content instead of the rails, and
 // silent (rather than saying "connected") in the beat before the first ping sample lands. The
@@ -131,6 +135,72 @@ struct ConnectionCluster: View {
         }
     }
 
+    /// How loud one reading is allowed to be — the footer's whole state axis, and the only one it has.
+    ///
+    /// A footer is a row of digits, so the two channels it can spend are BRIGHTNESS and WEIGHT; hue is a
+    /// third that would have to be learned before it could be read (amber-means-slow, red-means-worse) and
+    /// that turns a quiet instrument into a row of warning lights. `quiet` is the metadata grey every
+    /// healthy reading rests in, `raised` is worth knowing about, `loud` is worth acting on.
+    enum Alarm: Equatable {
+        case quiet
+        case raised
+        case loud
+    }
+
+    /// The alarm's ink: one step up the text ladder per rung, tertiary → secondary → primary. Resolved in
+    /// exactly one place so a theme change repoints the whole footer at once.
+    static func alarmInk(_ alarm: Alarm) -> Color {
+        switch alarm {
+        case .quiet: Slate.Text.tertiary
+        case .raised: Slate.Text.secondary
+        case .loud: Slate.Text.primary
+        }
+    }
+
+    /// The alarm's weight — the second channel, carrying the same rungs. At the footer's 10 pt a
+    /// brightness step alone is easy to lose against a hostname on the line above; the weight step is what
+    /// makes the raised reading findable without looking for it.
+    static func alarmWeight(_ alarm: Alarm) -> Font.Weight {
+        switch alarm {
+        case .quiet: .regular
+        case .raised: .semibold
+        case .loud: .bold
+        }
+    }
+
+    /// The LINK's alarm: a slow round trip is worth knowing, a bad one is worth acting on. Every
+    /// not-connected state is quiet — a footer that has nothing to measure has nothing to shout about, and
+    /// the status WORD in the slot already says so.
+    static func linkAlarm(_ led: LedState) -> Alarm {
+        switch led {
+        case .slow: .raised
+        case .bad: .loud
+        default: .quiet
+        }
+    }
+
+    /// MEMORY takes the KERNEL's pressure verdict, not the percent: a high memory percent is ordinary on a
+    /// healthy Mac (macOS fills the RAM it has), while pressure is the reading that actually predicts a
+    /// machine about to crawl.
+    static func memoryAlarm(_ pressure: MetadataCodec.MemoryPressure?) -> Alarm {
+        switch pressure {
+        case .warn: .raised
+        case .critical: .loud
+        default: .quiet
+        }
+    }
+
+    /// DISK is the one metric with an ABSOLUTE threshold rather than a verdict from the kernel: there is no
+    /// such thing as "disk pressure", and a percent lies in both directions (2% of a 4 TB disk is plenty;
+    /// 8% of a 128 GB disk is nothing). Bytes left is the only reading that answers the question, so bytes
+    /// left is what climbs. An unreadable volume is quiet, not alarmed — no reading is not bad news.
+    static func diskAlarm(freeMiB: UInt32?) -> Alarm {
+        guard let freeMiB else { return .quiet }
+        if freeMiB < diskCriticalMiB { return .loud }
+        if freeMiB < diskWarnMiB { return .raised }
+        return .quiet
+    }
+
     /// The rail footer's TRAILING slot: the mono ping metric while connected (falling back to the
     /// status word before the first sample — a connected footer with an empty right edge reads as
     /// broken, which is why this mount speaks where the compact one stays silent), else the short
@@ -171,7 +241,7 @@ struct ConnectionCluster: View {
         return String(format: "%.1fT", gib / 1024)
     }
 
-    /// Free space below this is worth an amber run: the machine still works, but the next container
+    /// Free space below this is worth a raised run: the machine still works, but the next container
     /// pull or clean build is the one that fails.
     static let diskWarnMiB: UInt32 = 15 * 1024
     /// Below this the host is effectively out of disk — a build will fail, and so will the editor's
@@ -200,13 +270,14 @@ struct ConnectionCluster: View {
         return " · \(labels.cpu) · \(labels.memory)\(pressure)\(disk)"
     }
 
-    /// Metric digits: tertiary when healthy, warn/err only when degrading.
-    private var metricColor: Color {
+    /// Metric digits: flat metadata grey while the link is healthy, climbing the alarm ladder as it
+    /// degrades. Same classifier as the sidebar footer's — one dialect across both mounts.
+    private var metricAlarm: Alarm {
         switch Self.health(isConnected: isConnected, pingMS: pingMS) {
         case .offline,
-             .good: Slate.Text.tertiary
-        case .slow: Slate.Status.warn
-        case .bad: Slate.Status.err
+             .good: .quiet
+        case .slow: .raised
+        case .bad: .loud
         }
     }
 
@@ -256,7 +327,7 @@ struct ConnectionCluster: View {
     private var compactBody: some View {
         HStack(alignment: .center, spacing: Slate.Metric.space2) {
             // Host name carries the identity; it DIMS to tertiary when not connected — state
-            // lives in the text, not a separate LED, since the metric digits carry health colour.
+            // lives in the text, not a separate LED, since the metric digits carry the health.
             Text(displayHost)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(isConnected ? Slate.Text.secondary : Slate.Text.tertiary)
@@ -294,13 +365,14 @@ struct ConnectionCluster: View {
     /// the row's designated truncator; this slot always renders at ideal width.
     @ViewBuilder private var trailingSlot: some View {
         if let trailing {
+            let alarm = trailing.isMetric ? metricAlarm : .quiet
             Text(trailing.text)
                 .font(
                     trailing.isMetric
-                        ? Slate.Typeface.instrument(Slate.Typeface.small)
+                        ? Slate.Typeface.instrument(Slate.Typeface.small, weight: Self.alarmWeight(alarm))
                         : .system(size: Slate.Typeface.small),
                 )
-                .foregroundStyle(trailing.isMetric ? metricColor : Slate.Text.tertiary)
+                .foregroundStyle(Self.alarmInk(alarm))
                 .lineLimit(1)
                 .transition(.opacity.animation(isConnected ? Slate.Anim.needle.delay(0.08) : nil))
                 // Ideal width always (the metric is a short readout — squeezing it into `…` would defeat
@@ -372,10 +444,12 @@ struct ConnectionRailFooter: View {
                 Text(detail.text)
                     .font(
                         detail.isMetric
-                            ? Slate.Typeface.instrument(Slate.Typeface.small)
+                            ? Slate.Typeface.instrument(
+                                Slate.Typeface.small, weight: ConnectionCluster.alarmWeight(linkAlarm),
+                            )
                             : .system(size: Slate.Typeface.small),
                     )
-                    .foregroundStyle(detailInk)
+                    .foregroundStyle(ConnectionCluster.alarmInk(linkAlarm))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -389,13 +463,19 @@ struct ConnectionRailFooter: View {
     /// to VoiceOver, which cannot see a silhouette.
     private func pulseLine(_ readings: (cpu: String, memory: String, disk: String?)) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
-            reading(ConnectionCluster.cpuSymbol, readings.cpu, ink: Slate.Text.tertiary)
+            reading(ConnectionCluster.cpuSymbol, readings.cpu, alarm: .quiet)
             Spacer(minLength: Slate.Metric.space1)
             // The middle: memory, the reading between the second-to-second one and the day-to-day one.
-            reading(ConnectionCluster.memorySymbol, readings.memory, ink: memoryInk)
+            reading(
+                ConnectionCluster.memorySymbol, readings.memory,
+                alarm: ConnectionCluster.memoryAlarm(pulse?.memoryPressure),
+            )
             if let disk = readings.disk {
                 Spacer(minLength: Slate.Metric.space1)
-                reading(ConnectionCluster.diskSymbol, disk, ink: diskInk)
+                reading(
+                    ConnectionCluster.diskSymbol, disk,
+                    alarm: ConnectionCluster.diskAlarm(freeMiB: pulse?.diskFreeMiB),
+                )
             }
         }
         .lineLimit(1)
@@ -404,19 +484,20 @@ struct ConnectionRailFooter: View {
         .accessibilityLabel(pulseSpoken)
     }
 
-    /// One reading: its mark, then its number, in ONE ink — when memory pressure colours the metric
-    /// the glyph turns with the digits, because a half-tinted readout reads as a rendering bug
-    /// rather than a warning. The mark sits a step above the digits (`footnote`) so a drawing built
-    /// from strokes holds its silhouette next to type built from stems.
-    private func reading(_ symbol: SFSymbol, _ value: String, ink: Color) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
+    /// One reading: its mark, then its number, at ONE alarm — the glyph climbs WITH the digits, because a
+    /// half-raised readout reads as a rendering bug rather than a warning. The mark sits a step above the
+    /// digits (`footnote`) so a drawing built from strokes holds its silhouette next to type built from
+    /// stems.
+    private func reading(_ symbol: SFSymbol, _ value: String, alarm: ConnectionCluster.Alarm) -> some View {
+        let weight = ConnectionCluster.alarmWeight(alarm)
+        return HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
             Image(systemSymbol: symbol)
-                .font(.system(size: Slate.Typeface.footnote))
+                .font(.system(size: Slate.Typeface.footnote, weight: weight))
                 .symbolRenderingMode(.monochrome)
             Text(value)
-                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: weight))
         }
-        .foregroundStyle(ink)
+        .foregroundStyle(ConnectionCluster.alarmInk(alarm))
     }
 
     /// The pulse as words, for the readers that get no glyph.
@@ -426,36 +507,11 @@ struct ConnectionRailFooter: View {
         return "\(labels.cpu), \(labels.memory)\(disk)"
     }
 
-    /// Metric digits carry the health colour only while degrading; words stay muted.
-    private var detailInk: Color {
-        guard let detail, detail.isMetric else { return Slate.Text.tertiary }
-        switch led {
-        case .slow: return Slate.Status.warn
-        case .bad: return Slate.Status.err
-        default: return Slate.Text.tertiary
-        }
-    }
-
-    /// The memory metric takes the KERNEL's pressure verdict, not the percent: a high memory percent
-    /// is ordinary on a healthy Mac (macOS fills the RAM it has), while pressure is the reading that
-    /// actually predicts a machine about to crawl. CPU has no such ink by design.
-    private var memoryInk: Color {
-        switch pulse?.memoryPressure {
-        case .warn: Slate.Status.warn
-        case .critical: Slate.Status.err
-        default: Slate.Text.tertiary
-        }
-    }
-
-    /// Disk is the one metric with an ABSOLUTE threshold rather than a verdict from the kernel:
-    /// there is no such thing as "disk pressure", and a percent lies in both directions (2% of a
-    /// 4 TB disk is plenty; 8% of a 128 GB disk is nothing). Bytes left is the only reading that
-    /// answers the question, so bytes left is what colours.
-    private var diskInk: Color {
-        guard let free = pulse?.diskFreeMiB else { return Slate.Text.tertiary }
-        if free < ConnectionCluster.diskCriticalMiB { return Slate.Status.err }
-        if free < ConnectionCluster.diskWarnMiB { return Slate.Status.warn }
-        return Slate.Text.tertiary
+    /// The ping digits climb the alarm ladder as the link degrades; a status WORD is prose, and prose
+    /// that has already said "disconnected" gains nothing from being shouted.
+    private var linkAlarm: ConnectionCluster.Alarm {
+        guard let detail, detail.isMetric else { return .quiet }
+        return ConnectionCluster.linkAlarm(led)
     }
 }
 

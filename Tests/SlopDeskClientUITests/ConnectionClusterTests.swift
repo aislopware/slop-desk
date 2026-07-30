@@ -186,6 +186,59 @@ final class ConnectionClusterTests: XCTestCase {
         )
     }
 
+    // MARK: - The alarm ladder (one axis, no hue)
+
+    /// The footer spends BRIGHTNESS and WEIGHT, never hue: `quiet` is the metadata grey every healthy
+    /// reading rests in, `raised` steps up to the body-secondary ink at semibold, `loud` to the primary ink
+    /// at bold. Three distinct rungs on both channels — a rung that only moved one of them would be
+    /// invisible on a theme whose greys sit close, or on a line already full of medium-weight type.
+    @MainActor
+    func testAlarmLadderClimbsBrightnessAndWeightTogether() {
+        XCTAssertEqual(ConnectionCluster.alarmInk(.quiet), Slate.Text.tertiary)
+        XCTAssertEqual(ConnectionCluster.alarmInk(.raised), Slate.Text.secondary)
+        XCTAssertEqual(ConnectionCluster.alarmInk(.loud), Slate.Text.primary)
+        XCTAssertEqual(ConnectionCluster.alarmWeight(.quiet), .regular)
+        XCTAssertEqual(ConnectionCluster.alarmWeight(.raised), .semibold)
+        XCTAssertEqual(ConnectionCluster.alarmWeight(.loud), .bold)
+        let inks = [ConnectionCluster.Alarm.quiet, .raised, .loud].map(ConnectionCluster.alarmInk)
+        XCTAssertEqual(Set(inks).count, 3, "every rung is its own ink — no two states paint the same")
+        for alarm in [ConnectionCluster.Alarm.quiet, .raised, .loud] {
+            XCTAssertNotEqual(
+                ConnectionCluster.alarmInk(alarm), Slate.Status.warn,
+                "the footer has no hue register — \(alarm) must not reach for a status colour",
+            )
+            XCTAssertNotEqual(ConnectionCluster.alarmInk(alarm), Slate.Status.err)
+        }
+    }
+
+    /// The LINK climbs with the round trip: slow is worth knowing, bad is worth acting on. Everything
+    /// not-connected stays quiet — the status WORD in that slot already says so, and a footer with nothing
+    /// to measure has nothing to shout about (a `dialing` retry campaign least of all).
+    func testLinkAlarmClimbsOnlyWithADegradingLink() {
+        XCTAssertEqual(ConnectionCluster.linkAlarm(.good), .quiet)
+        XCTAssertEqual(ConnectionCluster.linkAlarm(.slow), .raised)
+        XCTAssertEqual(ConnectionCluster.linkAlarm(.bad), .loud)
+        XCTAssertEqual(ConnectionCluster.linkAlarm(.dialing), .quiet, "a dial in flight is not a fault")
+        XCTAssertEqual(ConnectionCluster.linkAlarm(.dim), .quiet)
+    }
+
+    /// MEMORY takes the kernel's pressure verdict, not the percent (macOS fills the RAM it has, so a high
+    /// percent is ordinary on a healthy Mac). DISK takes an absolute byte threshold, since there is no
+    /// kernel verdict for it. An unreadable volume is quiet: no reading is not bad news.
+    func testMemoryAndDiskAlarmsUseTheirOwnEvidence() {
+        XCTAssertEqual(ConnectionCluster.memoryAlarm(.normal), .quiet)
+        XCTAssertEqual(ConnectionCluster.memoryAlarm(.warn), .raised)
+        XCTAssertEqual(ConnectionCluster.memoryAlarm(.critical), .loud)
+        XCTAssertEqual(ConnectionCluster.memoryAlarm(nil), .quiet)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: 245_760), .quiet)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: ConnectionCluster.diskWarnMiB), .quiet)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: ConnectionCluster.diskWarnMiB - 1), .raised)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: ConnectionCluster.diskCriticalMiB), .raised)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: ConnectionCluster.diskCriticalMiB - 1), .loud)
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: 0), .loud, "a genuinely full disk is loud")
+        XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: nil), .quiet, "an unread volume is not a fault")
+    }
+
     @MainActor
     func testNoteStreamKbpsKeepsZeroAndDropsNegative() {
         let model = RemoteWindowModel()
