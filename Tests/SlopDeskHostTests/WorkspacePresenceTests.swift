@@ -17,11 +17,28 @@ private final class RecordingChannel: MessageChannel, @unchecked Sendable {
 
     private let lock = NSLock()
     private var _sent: [WireMessage] = []
+    private var _held = false
 
     var sent: [WireMessage] {
         lock.lock()
         defer { lock.unlock() }
         return _sent
+    }
+
+    /// Holds THIS link's sends until released — a stalled link, expressed as a gate rather than a
+    /// sleep so a test can pin the interleaving without depending on how fast the machine is. Each
+    /// subscriber owns its own send task, so one link lagging the other is the ordinary case.
+    var held: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _held
+        }
+        set {
+            lock.lock()
+            _held = newValue
+            lock.unlock()
+        }
     }
 
     /// Every roster the host has fanned to this client, decoded.
@@ -47,8 +64,25 @@ private final class RecordingChannel: MessageChannel, @unchecked Sendable {
 
     func send(_ message: WireMessage) async {
         await Task.yield()
+        while held { try? await Task.sleep(for: .milliseconds(1)) }
         record(message)
     }
+}
+
+/// Has this link received the roster GENERATION that shows `pane` being viewed?
+///
+/// Every broadcast — including the one `addSubscriber` fires — reaches each link through its OWN send
+/// task, and depth-1 coalescing lets a link skip a generation outright. So "a roster arrived" is the
+/// wrong thing to wait on before asserting about a PARTICULAR roster: it is already satisfied by the
+/// pre-presence one, leaving the two links a generation apart. Free function, not a method, so the
+/// wait closure stays `@Sendable` without capturing the test case.
+private func saw(_ channel: RecordingChannel, viewing pane: UUID) -> Bool {
+    channel.rosters.last?.clients.contains { $0.viewingPaneID == pane } ?? false
+}
+
+/// What the link's newest roster says everyone is looking at.
+private func views(of channel: RecordingChannel) -> Set<UUID> {
+    Set(channel.rosters.last?.clients.map(\.viewingPaneID) ?? [])
 }
 
 private func expect(
@@ -162,7 +196,14 @@ final class WorkspacePresenceTests: XCTestCase {
         _ = two.note(presence: update(clock: 1, pane: paneB))
         await document.broadcastRoster()
 
-        await expect({ first.rosters.last?.clients.count == 2 }, "both windows in the roster")
+        // A count of two is ALREADY true of the roster `addSubscriber` broadcast, where both windows
+        // are still viewing NOTHING — so wait for the generation in which both have declared a view
+        // (or the assertion below is handed an earlier one and fails on a busy machine), and leave
+        // WHICH view to the assertion.
+        await expect(
+            { views(of: first).count == 2 && !views(of: first).contains(WireMessage.newSessionID) },
+            "the generation where both windows have declared a view",
+        )
         let roster = try XCTUnwrap(first.rosters.last)
         XCTAssertEqual(
             Set(roster.clients.map(\.viewingPaneID)), [paneA, paneB],
@@ -177,7 +218,13 @@ final class WorkspacePresenceTests: XCTestCase {
     }
 
     /// Everyone sees the same roster — that is the whole point of a shared one.
+    ///
+    /// Waits for the roster generation the assertion is ABOUT — the one carrying the presence — on
+    /// each link, not merely for "a roster" on each: `addSubscriber` broadcasts one too, so the weaker
+    /// wait is satisfied before the presence has reached either side and the comparison then straddles
+    /// two generations. ``testALaggingLinkStillConvergesOnTheSameRoster`` pins that interleaving.
     func testTheRosterIsFannedToEverySubscriber() async {
+        let watched = paneA
         let document = HostWorkspaceDocument(onLog: nil)
         let first = RecordingChannel()
         let second = RecordingChannel()
@@ -186,11 +233,60 @@ final class WorkspacePresenceTests: XCTestCase {
 
         await document.addSubscriber(one)
         await document.addSubscriber(two)
-        _ = one.note(presence: update(clock: 1, pane: paneA))
+        _ = one.note(presence: update(clock: 1, pane: watched))
         await document.broadcastRoster()
 
-        await expect({ !first.rosters.isEmpty && !second.rosters.isEmpty }, "a roster on both links")
+        await expect(
+            { saw(first, viewing: watched) && saw(second, viewing: watched) },
+            "the presence roster on both links",
+        )
         XCTAssertEqual(first.rosters.last?.clients, second.rosters.last?.clients)
+        one.close()
+        two.close()
+    }
+
+    /// A roster ARRIVING on both links is not the same roster arriving on both links.
+    ///
+    /// Every subscriber owns its own send task, so the two are a generation apart whenever one has
+    /// already committed an older roster to the wire and then stalls — the state this pins by HOLDING
+    /// one link. That is the interleaving `testTheRosterIsFannedToEverySubscriber` lost to under a
+    /// loaded parallel run: it waited for "a roster on both links", which the pre-presence roster
+    /// already satisfies, and then compared two different generations. Held rather than slowed, so
+    /// what is pinned is the ORDER and not the machine being a particular speed.
+    func testALaggingLinkStillConvergesOnTheSameRoster() async {
+        // Bound locally so the wait closures stay `@Sendable` without capturing the test case.
+        let watched = paneA
+        let document = HostWorkspaceDocument(onLog: nil)
+        let prompt = RecordingChannel()
+        let lagging = RecordingChannel()
+        let one = makeSession(prompt)
+        let two = makeSession(lagging)
+
+        await document.addSubscriber(one)
+        await document.addSubscriber(two)
+        await expect(
+            { !prompt.rosters.isEmpty && !lagging.rosters.isEmpty },
+            "the silent roster committed on both links",
+        )
+
+        // Held AFTER it has the silent roster: depth-1 coalescing means a link that has not sent yet
+        // simply skips to the newest, so an already-committed generation is the ONLY way to disagree.
+        lagging.held = true
+        _ = one.note(presence: update(clock: 1, pane: watched))
+        await document.broadcastRoster()
+
+        await expect({ saw(prompt, viewing: watched) }, "the presence roster on the prompt link")
+        XCTAssertFalse(
+            saw(lagging, viewing: watched),
+            "the held link is a generation behind — this is the window the flake lived in",
+        )
+
+        lagging.held = false
+        await expect({ saw(lagging, viewing: watched) }, "the presence roster on the lagging link")
+        XCTAssertEqual(
+            prompt.rosters.last?.clients, lagging.rosters.last?.clients,
+            "once both have caught up the roster is identical, field for field",
+        )
         one.close()
         two.close()
     }
@@ -230,9 +326,12 @@ final class WorkspacePresenceTests: XCTestCase {
         await expect({ !channel.sent.isEmpty }, "the opening snapshot")
         let before = await document.stateNum
 
-        _ = session.note(presence: update(clock: 1, pane: paneA))
+        let watched = paneA
+        _ = session.note(presence: update(clock: 1, pane: watched))
         await document.broadcastRoster()
-        await expect({ !channel.rosters.isEmpty }, "the roster")
+        // The frame this test is ABOUT is the one carrying the presence — `addSubscriber`'s roster
+        // arrived before it and would satisfy a mere "not empty".
+        await expect({ saw(channel, viewing: watched) }, "the presence roster")
 
         let after = await document.stateNum
         XCTAssertEqual(after, before, "presence is derived, never versioned")
