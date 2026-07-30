@@ -300,49 +300,133 @@ final class RailRowReadoutTests: XCTestCase {
         )
     }
 
-    /// The four WORKTREE states form a RAMP — `+staged` → `!modified` → `?untracked` → `~conflicted` is
-    /// "how far this work is from being committed", and the filter's chromatics sweep it monotonically
-    /// (green→yellow→orange→red, hue 126.9°→89.2°→51.5°→9.8° on the default theme) in the SAME order the
-    /// sigils appear. Divergence and stash sit OFF the ramp on cool hues (neither is a worktree state),
-    /// and the branch keeps the body ink.
-    @MainActor
-    func testGitInkRampAndOffRampRoles() {
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.staged), Slate.Status.ok)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.modified), Slate.Status.warn)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.untracked), Slate.Chroma.orange)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.conflicted), Slate.Status.err)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.divergence), Slate.Status.info)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.stash), Slate.Chroma.purple)
-        XCTAssertEqual(SidebarSectionHeaderRow.ink(.branch), Slate.Text.secondary)
+    // MARK: - The git line's shed ladder
+
+    /// Narrower than the folded form, the readout starts GIVING UP runs rather than crowding the branch
+    /// into a stub — least important first: `$` stash (parked on purpose), then `↑↓` divergence (unpushed
+    /// commits are safely committed), then `?` untracked (mostly build output). What survives is the
+    /// WORKTREE — `+staged !modified ~conflicted`, the states that say whether this project is safe to
+    /// leave. Both divergence runs go together: `↑` and `↓` are one fact about the same remote.
+    func testShedLadderDropsBookkeepingBeforeWorktree() {
+        let busy = PaneGitSummary(
+            hasRepo: true, branch: "feature/a-very-long-branch-name", ahead: 12, behind: 3,
+            changedCount: 9, staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
+        let status = SidebarSectionHeaderRow.compactStatus(SidebarSectionHeaderRow.gitSegments(busy))
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedding(status, to: 0).map(\.text), ["↑", "↓", "+", "!", "?", "~", "$"],
+            "rung 0 sheds nothing",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedding(status, to: 1).map(\.text), ["↑", "↓", "+", "!", "?", "~"],
+            "the stash parks itself first",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedding(status, to: 2).map(\.text), ["+", "!", "?", "~"],
+            "one rung is a ROLE — both divergence runs are one fact and leave together",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedding(status, to: 3).map(\.text), ["+", "!", "~"],
+            "untracked goes last of the three; the worktree core is what the deepest rung keeps",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.gitLine(busy),
+            "feature/a-very-long-branch-name ↑12 ↓3 +30 !4 ?5 ~6 $7",
+            "a shed run is not lost — the tooltip / a11y line still speaks every one",
+        )
     }
 
-    /// No two runs share an ink, and none falls back to the tertiary metadata grey — the flat grey was
-    /// the original bug, and a duplicate would silently re-merge two states the sigils keep apart.
-    @MainActor
-    func testEveryGitRunHasItsOwnInkAndNoneIsTheMetadataGrey() {
-        let inks = SidebarSectionHeaderRow.GitInk.allCases.map { SidebarSectionHeaderRow.ink($0) }
-        for (role, colour) in zip(SidebarSectionHeaderRow.GitInk.allCases, inks) {
-            XCTAssertNotEqual(colour, Slate.Text.tertiary, "\(role) must not sink into the flat grey")
+    /// The LAST run standing is never shed: a line that reports nothing is not a tighter readout, it is a
+    /// missing one. A repo whose only dirt is `↑2` keeps its `↑` at any width, however low the ladder ranks
+    /// divergence.
+    func testShedLadderNeverEmptiesTheReadout() {
+        let ahead = SidebarSectionHeaderRow.compactStatus(SidebarSectionHeaderRow.gitSegments(
+            PaneGitSummary(hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 0),
+        ))
+        XCTAssertEqual(ahead.map(\.text), ["↑"])
+        for level in 0...SidebarSectionHeaderRow.shedLadder.count {
             XCTAssertEqual(
-                inks.filter { $0 == colour }.count, 1, "\(role) shares its ink with another run",
+                SidebarSectionHeaderRow.shedding(ahead, to: level).map(\.text), ["↑"],
+                "the only run reporting anything survives rung \(level)",
+            )
+        }
+        XCTAssertTrue(
+            SidebarSectionHeaderRow.shedding([], to: 3).isEmpty,
+            "nothing to report stays nothing — the tight form is just the branch",
+        )
+        // A role the line never had costs no rung: a worktree-only repo spends rung 1 on a state it
+        // actually shows, instead of burning the ladder shedding sigils that were never there.
+        let worktreeOnly = SidebarSectionHeaderRow.compactStatus(SidebarSectionHeaderRow.gitSegments(
+            PaneGitSummary(
+                hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 2,
+                staged: 1, modified: 1,
+            ),
+        ))
+        XCTAssertEqual(worktreeOnly.map(\.text), ["+", "!"])
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedding(worktreeOnly, to: 1).map(\.text), ["!"],
+            "absent roles are skipped, so the first rung narrows the line for real",
+        )
+    }
+
+    /// The ladder ranks every role exactly once, so no run can be shed twice or made unsheddable by
+    /// omission — the paint rungs walk this list, and a missing role would silently pin itself on screen.
+    func testShedLadderCoversEveryRoleOnce() {
+        XCTAssertEqual(
+            Set(SidebarSectionHeaderRow.shedLadder), Set(SidebarSectionHeaderRow.GitInk.allCases.filter {
+                $0 != .branch
+            }),
+            "every status role has a rank; the branch is not a status and has none",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedLadder.count, Set(SidebarSectionHeaderRow.shedLadder).count,
+            "no role is ranked twice",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.shedLadder.suffix(3), [.staged, .modified, .conflicted],
+            "the worktree core sits at the far end of the ladder — it leaves last",
+        )
+    }
+
+    /// TWO registers, not a palette: the branch keeps the body-secondary ink, and every COUNT steps up to
+    /// the primary text ink — brighter than the name beside it. The sigils already say WHICH state each
+    /// run reports, so hue was restating the glyph and turning a column of folder names into a paint chart.
+    @MainActor
+    func testGitCountsTakeTheBodyInkAndOnlyTheBranchStaysDim() {
+        for role in SidebarSectionHeaderRow.GitInk.allCases where role != .branch {
+            XCTAssertEqual(
+                SidebarSectionHeaderRow.ink(role), Slate.Text.primary,
+                "\(role) is a count — it takes the bright body ink, not a hue of its own",
+            )
+        }
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.branch), Slate.Text.secondary)
+        XCTAssertNotEqual(
+            SidebarSectionHeaderRow.ink(.branch), SidebarSectionHeaderRow.ink(.modified),
+            "the counts must out-read the branch — that step IS the readout",
+        )
+    }
+
+    /// No run falls back to the tertiary metadata grey — sinking the line into that flat grey is what made
+    /// a conflict count read exactly like a branch name.
+    @MainActor
+    func testNoGitRunSinksIntoTheMetadataGrey() {
+        for role in SidebarSectionHeaderRow.GitInk.allCases {
+            XCTAssertNotEqual(
+                SidebarSectionHeaderRow.ink(role), Slate.Text.tertiary,
+                "\(role) must not sink into the flat grey",
             )
         }
     }
 
-    /// The weight ladder has three rungs: every COUNT is heavy (at 10 pt mono a regular weight leaves the
-    /// readout thin enough that colour does all the work), the BRANCH stays regular so the counts read as
-    /// a group beside it, and `~conflicted` steps one further — the palette ranks it FOURTH by contrast
-    /// (5.7:1) behind `!modified` (11.9:1), so the state that needs a human pulls least. Re-assigning hues
-    /// cannot fix that without lying about what the states mean; weight is the channel outside the
-    /// palette, so it holds on every theme and under the protanopia collapse that puts `+staged` and
-    /// `~conflicted` ~3 ΔE apart.
-    func testWeightLadderRanksCountsAboveBranchAndConflictAboveAll() {
+    /// The weight ladder has two rungs: every COUNT is bold (with hue gone the readout has only brightness
+    /// and weight left, and at 10 pt mono a lighter run is thin enough that brightness carries it alone),
+    /// and the BRANCH stays regular so the counts read as one group beside the name.
+    func testWeightLadderRanksCountsAboveBranch() {
         XCTAssertEqual(SidebarSectionHeaderRow.weight(.branch), .regular, "the branch is identity, not a count")
-        XCTAssertEqual(SidebarSectionHeaderRow.weight(.conflicted), .bold, "the one state that needs a human")
-        for role in SidebarSectionHeaderRow.GitInk.allCases where role != .branch && role != .conflicted {
+        for role in SidebarSectionHeaderRow.GitInk.allCases where role != .branch {
             XCTAssertEqual(
-                SidebarSectionHeaderRow.weight(role), .semibold,
-                "\(role) is a count — heavy enough to read without colour carrying it alone",
+                SidebarSectionHeaderRow.weight(role), .bold,
+                "\(role) is a count — bold is half of the two channels the line has left",
             )
         }
     }

@@ -613,8 +613,8 @@ struct SidebarSectionHeaderRow: View {
                 if !segments.isEmpty {
                     // The git line is DATA — the instrument mono, one register with the rows' process
                     // labels. But it is data with STATES, and rendering all of them in one flat grey
-                    // made the counts that matter (a conflict, unpushed work) read exactly like the
-                    // ones that don't. Each run wears its own ink instead; the mono grid keeps the
+                    // made the counts that matter read exactly like the branch name they sit beside.
+                    // The counts step up to the body ink and go bold instead; the mono grid keeps the
                     // line from turning into confetti.
                     Self.gitDetailLine(segments)
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
@@ -744,58 +744,44 @@ struct SidebarSectionHeaderRow: View {
         return parts
     }
 
-    /// The ink for one run — every role its own, no two alike.
+    /// The ink for one run — TWO registers, not a palette.
     ///
-    /// The four WORKTREE states are a RAMP, not a set of labels: `+staged` → `!modified` → `?untracked` →
-    /// `~conflicted` is "how far this work is from being committed" (in the index → in the worktree → git
-    /// has never seen it → it is broken), and the filter's chromatics happen to sweep that distance
-    /// exactly. Measured on the default theme the hue angles run 126.9° → 89.2° → 51.5° → 9.8° —
-    /// green→yellow→orange→red, monotone, in the SAME left-to-right order the sigils already appear. The
-    /// ramp is the reason `?` is orange rather than one more grey: it is not a sixth arbitrary colour,
-    /// it is the rung between "you changed it" and "it is broken".
+    /// The BRANCH is the line's identity and keeps the body-secondary ink; every COUNT takes the primary
+    /// text ink, one full step BRIGHTER than the name it sits beside. The sigils already name WHICH state
+    /// each run reports — `↑`/`↓` divergence, `+` staged, `!` modified, `?` untracked, `~` conflicts, `$`
+    /// stash — so hue was spending six colours restating what the glyph says, and a header that is mostly
+    /// folder names read as a paint chart. What the eye actually needs from this line is one bit at a
+    /// glance ("is there dirt here?"), and brightness plus bold carries that bit without the confetti.
     ///
-    /// Off the ramp: `↑↓` divergence is where the branch sits against its upstream and `$` stash is work
-    /// parked to one side — neither is a worktree state, so both take a cool hue and stay out of the
-    /// warm sweep. The BRANCH keeps the body ink: it is the line's identity, not a count.
-    ///
-    /// Nothing here resolves to the tertiary metadata grey — painting the whole line in it is what made a
+    /// Nothing here resolves to the tertiary metadata grey — sinking the whole line into it is what made a
     /// conflict count read exactly like a branch name.
     static func ink(_ role: GitInk) -> Color {
         switch role {
         case .branch: Slate.Text.secondary
-        case .divergence: Slate.Status.info
-        case .staged: Slate.Status.ok
-        case .modified: Slate.Status.warn
-        case .untracked: Slate.Chroma.orange
-        case .conflicted: Slate.Status.err
-        case .stash: Slate.Chroma.purple
-        }
-    }
-
-    /// The weight for one run — a second channel the palette cannot supply, on three rungs.
-    ///
-    /// Every COUNT is set heavy: the sigil runs are the readout, and at 10 pt mono a regular weight
-    /// leaves them thin enough that the colour is doing all the work. The BRANCH stays regular — it is
-    /// the line's identity, not a status, and keeping it light is what lets the counts read as a group.
-    ///
-    /// `~conflicted` goes one rung further still, to fix a ranking the palette gets backwards. Measured
-    /// on the default theme the runs rank by contrast against the sidebar as `!modified` 11.9 : `↑↓`/`$`
-    /// 10.3 : `+staged` 10.2 : `~conflicted` 5.7 : branch 5.3 — the ONE state that genuinely needs a
-    /// human pulls the eye LEAST of the coloured runs. That inversion is baked into the palette
-    /// (Monokai's yellow is bright, its red is a mid pink) and cannot be fixed by re-assigning hues
-    /// without lying about what the states mean. Weight is free of the palette, so this holds on every
-    /// theme — and it survives the one CVD collapse the measurement found (under protanopia `+staged`
-    /// and `~conflicted` land ~3 ΔE apart, indistinguishable by hue alone; the sigils already carry the
-    /// meaning, and the weight step adds a second non-colour cue).
-    static func weight(_ role: GitInk) -> Font.Weight {
-        switch role {
-        case .branch: .regular
-        case .conflicted: .bold
-        case .divergence,
+        case .conflicted,
+             .divergence,
              .modified,
              .staged,
              .stash,
-             .untracked: .semibold
+             .untracked: Slate.Text.primary
+        }
+    }
+
+    /// The weight for one run — the second half of the contrast step, on two rungs.
+    ///
+    /// Every COUNT is set BOLD: with hue gone the readout has exactly two channels left, and at 10 pt mono
+    /// a lighter weight leaves the sigils thin enough that the brightness step alone has to carry them. The
+    /// BRANCH stays regular — it is identity, not a status, and keeping it light is what lets the counts
+    /// read as one group beside it rather than as more of the name.
+    static func weight(_ role: GitInk) -> Font.Weight {
+        switch role {
+        case .branch: .regular
+        case .conflicted,
+             .divergence,
+             .modified,
+             .staged,
+             .stash,
+             .untracked: .bold
         }
     }
 
@@ -809,18 +795,54 @@ struct SidebarSectionHeaderRow: View {
         }
     }
 
-    /// The git line as it PAINTS, in the two forms the sidebar's real width asks for.
+    /// The order the status runs GIVE UP their place when the branch runs out of room, least important
+    /// first. It is a ranking of "how much does knowing this right now change what I do next":
     ///
-    /// Roomy: the whole dialect inline, branch then counts. Tight: the BRANCH is the only run that
-    /// truncates (tail — a long branch name loses its end, which is the part that repeats), and the
-    /// counts fold to ``compactStatus(_:)``'s bare sigils pinned flush to the trailing edge, one tight
-    /// cluster with no gaps so they read as a single readout rather than a second sentence.
+    /// `$` stash is work you parked on purpose. `↑↓` divergence is bookkeeping against a remote — unpushed
+    /// commits are safely committed, and pushing is a thing you do on your own schedule. `?` untracked is
+    /// usually build output and scratch files. Those three are worth a glance when there is room and worth
+    /// nothing when there isn't. What survives is the WORKTREE: `+staged`, `!modified`, `~conflicted` —
+    /// uncommitted work and broken merges, the states that decide whether this project is safe to leave.
     ///
-    /// The tight form exists because one tail-truncating `Text` took the counts down WITH the branch:
-    /// `feature/some-very-long-name…` spelled three more characters of a name you already know and ate
-    /// the readout you were actually watching. Presence is what the sigils report — `↑` says there is
-    /// unpushed work at any width — so the counts survive the squeeze and the numbers retreat to the
-    /// tooltip.
+    /// Nothing is lost by shedding: the full line with its numbers is one hover away in the tooltip, and
+    /// the accessibility label always speaks every run.
+    static let shedLadder: [GitInk] = [.stash, .divergence, .untracked, .staged, .modified, .conflicted]
+
+    /// The status runs left after giving up `level` RUNGS of ``shedLadder``. A rung is a ROLE, not a run:
+    /// `↑` and `↓` are one fact about one remote and leave together, and a role the line never had costs
+    /// no rung (so the rungs always narrow the readout — otherwise a clean-but-diverged repo would spend
+    /// its whole ladder shedding sigils it does not have).
+    ///
+    /// The last runs standing are never shed — a git line that reports nothing is not a tighter readout, it
+    /// is a missing one — so a repo whose only dirt is `↑2` keeps its `↑` however narrow the rail gets.
+    static func shedding(_ status: [GitSegment], to level: Int) -> [GitSegment] {
+        var kept = status
+        var shed = 0
+        for role in shedLadder where shed < level {
+            let remaining = kept.filter { $0.ink != role }
+            guard remaining.count < kept.count else { continue } // the line never had this role
+            guard !remaining.isEmpty else { break } // shedding it would leave nothing to read
+            kept = remaining
+            shed += 1
+        }
+        return kept
+    }
+
+    /// The git line as it PAINTS, across the widths the sidebar's real column asks for.
+    ///
+    /// Roomy: the whole dialect inline, branch then counts. Tight: the counts fold to
+    /// ``compactStatus(_:)``'s bare sigils pinned flush to the trailing edge, one cluster with no gaps so
+    /// they read as a single readout rather than a second sentence. Presence is what a sigil reports — `!`
+    /// says there is uncommitted work at any width — so the numbers retreat to the tooltip first.
+    ///
+    /// Narrower still, the branch and the readout are competing for the same line, and the readout starts
+    /// SHEDDING down ``shedLadder`` — one rung per candidate — rather than crowding the name into a stub.
+    /// Only when even the worktree core cannot buy the branch enough room does the name truncate (tail: a
+    /// long branch loses its end, which is the part that repeats).
+    ///
+    /// The whole ladder exists because one tail-truncating `Text` took the counts down WITH the branch:
+    /// `feature/some-very-long-name…` spelled three more characters of a name you already know and ate the
+    /// readout you were actually watching.
     @ViewBuilder
     static func gitDetailLine(_ segments: [GitSegment]) -> some View {
         let branch = segments.filter { $0.ink == .branch }
@@ -833,18 +855,35 @@ struct SidebarSectionHeaderRow: View {
             ViewThatFits(in: .horizontal) {
                 gitDetailText(segments)
                     .lineLimit(1)
-                HStack(spacing: 0) {
-                    gitDetailText(branch)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    // The one gap the tight form keeps: the branch never touches the readout, however
-                    // little room is left for it.
-                    Spacer(minLength: 4)
-                    gitDetailText(compactStatus(status), separator: "")
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+                // The branch is held at its FULL width in every rung but the last, so a rung stops
+                // fitting exactly when the name would start losing characters — that is the signal to
+                // shed one more sigil instead.
+                tightGitLine(branch, shedding(status, to: 0), branchTruncates: false)
+                tightGitLine(branch, shedding(status, to: 1), branchTruncates: false)
+                tightGitLine(branch, shedding(status, to: 2), branchTruncates: false)
+                tightGitLine(branch, shedding(status, to: 3), branchTruncates: false)
+                tightGitLine(branch, shedding(status, to: 3), branchTruncates: true)
             }
+        }
+    }
+
+    /// One rung of the tight form: the branch on the left, a cluster of bare sigils pinned right.
+    /// `branchTruncates` is the last rung's escape hatch — every rung above it holds the name whole so the
+    /// fit test asks "does the branch still fit?" rather than silently eating it.
+    static func tightGitLine(
+        _ branch: [GitSegment], _ status: [GitSegment], branchTruncates: Bool,
+    ) -> some View {
+        HStack(spacing: 0) {
+            gitDetailText(branch)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: !branchTruncates, vertical: false)
+            // The one gap the tight form keeps: the branch never touches the readout, however little
+            // room is left for it.
+            Spacer(minLength: 4)
+            gitDetailText(compactStatus(status), separator: "")
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 

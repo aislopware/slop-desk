@@ -391,6 +391,46 @@ final class SlateSnapshotRender: XCTestCase {
         return store
     }
 
+    // MARK: - Opt-in render of the git line's squeeze ladder (one repo, narrowing widths)
+
+    /// Renders ONE busy repo's header at a sweep of sidebar widths, so the shed ladder is visible as a
+    /// ladder: the numbers go first (sigils fold, pinned right), then the readout gives up `$` stash, then
+    /// `↑↓` divergence, then `?` untracked — the branch name keeping its characters the whole way — and
+    /// only at the end does the name itself truncate beside the surviving worktree core. Opt-in like the
+    /// rest; writes `git-line-squeeze.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderGitLineSqueezeLadder() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the git squeeze ladder")
+        }
+        let key = "/Volumes/Lacie/Workspace/oss/slop-desk"
+        let store = makeSectionStore(key: key)
+        store.projectGitSummary[key] = PaneGitSummary(
+            hasRepo: true, branch: "feature/shed-ladder", ahead: 12, behind: 3, changedCount: 9,
+            staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
+        // Descending, and FINE around the shed rungs: one sigil is ~8 pt wide, so each rung of the ladder
+        // owns a band about that narrow — a coarse sweep steps straight over it and reads as "the ladder
+        // does not fire".
+        let widths: [CGFloat] = [Slate.Metric.sidebarWidth, 214, 206, 198, 190, 168, 148, 128]
+        let panel = VStack(alignment: .leading, spacing: 10) {
+            ForEach(widths, id: \.self) { width in
+                self.captioned("\(Int(width)) pt") {
+                    SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
+                        .frame(width: width)
+                        .background(Slate.Surface.ground)
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: Slate.Metric.sidebarWidth + 16, alignment: .leading)
+        .background(Slate.Surface.ground)
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth + 16, height: 460),
+            to: dir, named: "git-line-squeeze.png",
+        )
+    }
+
     // MARK: - Opt-in render of the grouped NavigatorColumn (search + By-Project sections)
 
     /// Renders the live ``NavigatorColumn`` over a headless store grouped By-Project — the visual lock for the
