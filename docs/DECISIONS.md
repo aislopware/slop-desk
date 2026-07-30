@@ -3373,9 +3373,14 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   title blinked on and off instead of being swept, and the wrap read as a jerk back to the head
   rather than as a band leaving. Now 0.35 with a 16pt floor, and the render carries a SHORT title
   precisely because that is where the defect lives.
-- ⚠️ **The pass never re-seeds.** `phase` only grows (each pass animates to `phase + 1`) and the
-  position wraps it, so a row rebuilt mid-pass — the rail rebuilds on every status tick — picks the
-  animation up where it left off. Assigning `phase = 0` on restart is the same visible snap.
+- ⚠️⚠️ **The pass's two endpoints must DIFFER.** Wrapping the phase (`phase - phase.rounded(.down)`,
+  tried once so a mid-pass restart would be seamless) makes `offset(0) == offset(1)` — and SwiftUI
+  animates the RESULTING offset between a transaction's endpoints, it does not sample the function
+  over time. The interpolation becomes a no-op and the shimmer silently stops existing. It compiled,
+  it passed every pinned-phase render (those set the phase by hand), and it shipped to hardware
+  before anyone saw it was gone. `Slate.Shimmer.offset(phase:runWidth:)` is now a pure function with
+  `testThePassActuallyTravels` pinning that it is monotonic and that its ends differ — the class of
+  bug a snapshot harness is structurally blind to.
 - ⚠️ **A layer render photographs an animation's MODEL value**, so a live capture of a shimmering row
   yields the same frame every time. `SlateTabRow.shimmerPhase` exists for that: the filmstrip and GIF
   draw the SHIPPING row at pinned instants rather than a mock of it.

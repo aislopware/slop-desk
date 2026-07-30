@@ -53,4 +53,43 @@ final class ShimmerTests: XCTestCase {
             "below the floor the band is the floor — the ramp stays a ramp",
         )
     }
+
+    /// ⚠️⚠️ The pass's two ENDPOINTS must differ, and the travel must be monotonic. SwiftUI animates
+    /// the resulting offset between a transaction's endpoints — it does not sample the function over
+    /// time — so a phase that wraps (tried once, to make a mid-pass restart seamless) makes both ends
+    /// identical, the interpolation a no-op, and the shimmer silently STOP EXISTING. It compiles, it
+    /// passes every pinned-phase render, and nothing catches it short of looking at the app.
+    func testThePassActuallyTravels() {
+        for run: CGFloat in [24, 80, 240] {
+            let start = Slate.Shimmer.offset(phase: 0, runWidth: run)
+            let end = Slate.Shimmer.offset(phase: 1, runWidth: run)
+            XCTAssertNotEqual(start, end, "a pass whose ends match animates NOTHING (run \(run))")
+            XCTAssertEqual(
+                end - start, run + Slate.Shimmer.bandWidth(for: run), accuracy: 1e-9,
+                "one pass carries the band across the run and its own width",
+            )
+            // Monotonic: every step forward moves the band forward.
+            var previous = start
+            for step in 1...20 {
+                let next = Slate.Shimmer.offset(phase: CGFloat(step) / 20, runWidth: run)
+                XCTAssertGreaterThan(next, previous, "the band must never step back")
+                previous = next
+            }
+        }
+    }
+
+    /// A pass begins fully off the HEAD and ends fully off the TAIL — the band creeps in and creeps
+    /// out rather than being switched on at full width somewhere in the middle of the run.
+    func testTheBandStartsAndEndsOffTheRun() {
+        let run: CGFloat = 160
+        let band = Slate.Shimmer.bandWidth(for: run)
+        XCTAssertEqual(
+            Slate.Shimmer.offset(phase: 0, runWidth: run), -band, accuracy: 1e-9,
+            "at the start the band's trailing edge is exactly at the run's head",
+        )
+        XCTAssertEqual(
+            Slate.Shimmer.offset(phase: 1, runWidth: run), run, accuracy: 1e-9,
+            "at the end its leading edge is exactly at the run's tail",
+        )
+    }
 }

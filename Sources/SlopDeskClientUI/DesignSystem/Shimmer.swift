@@ -50,6 +50,21 @@ extension Slate {
         static func bandWidth(for width: CGFloat) -> CGFloat {
             CGFloat.maximum(minimumWidth, width * widthFraction)
         }
+
+        /// Where the band's LEADING edge sits at `phase` of one pass across a run of `runWidth`.
+        /// A pass starts fully off the head and ends fully off the tail, so the band creeps IN and
+        /// creeps OUT — it is never simply switched on.
+        ///
+        /// ⚠️⚠️ This MUST stay monotonic in `phase`, and `offset(0)` must differ from `offset(1)`.
+        /// SwiftUI animates the RESULTING offset between the transaction's endpoints — it does not
+        /// sample this function over time. A wrapped phase (`phase - phase.rounded(.down)`, tried
+        /// once to make a mid-pass restart seamless) makes both endpoints identical, so the
+        /// interpolation becomes a no-op and the shimmer silently STOPS EXISTING. It still compiles,
+        /// still passes every pinned-phase render, and is invisible until someone looks at the app.
+        static func offset(phase: CGFloat, runWidth: CGFloat) -> CGFloat {
+            let band = bandWidth(for: runWidth)
+            return -band + phase * (runWidth + band)
+        }
     }
 }
 
@@ -95,38 +110,24 @@ private struct SlateShimmer: ViewModifier {
         }
     }
 
-    /// Where the band is in its pass, wrapped into `0..<1`.
-    ///
-    /// ⚠️ The wrap is what makes a restart invisible. `phase` only ever GROWS (each pass animates to
-    /// `phase + 1`), so a row that is rebuilt mid-pass — the rail rebuilds on every status tick —
-    /// picks the animation up where it left off instead of snapping the band back to the head.
-    private var lap: CGFloat {
-        let raw = pinnedPhase ?? phase
-        return raw - raw.rounded(.down)
-    }
-
     private func band(over content: Content) -> some View {
         GeometryReader { proxy in
-            let width = proxy.size.width
-            let band = Slate.Shimmer.bandWidth(for: width)
             LinearGradient(
                 stops: Slate.Shimmer.stops, startPoint: .leading, endPoint: .trailing,
             )
-            .frame(width: band)
-            // Starts fully off the leading edge and ends fully off the trailing one, so the band
-            // creeps IN from the head and creeps OUT past the tail — it is never simply switched on.
-            .offset(x: -band + lap * (width + band))
+            .frame(width: Slate.Shimmer.bandWidth(for: proxy.size.width))
+            .offset(x: Slate.Shimmer.offset(
+                phase: pinnedPhase ?? phase, runWidth: proxy.size.width,
+            ))
         }
         .mask(content)
         .allowsHitTesting(false)
     }
 
     private func run() {
-        // ⚠️ NOT `phase = 0` first: re-seeding is exactly the jump this animation must not have. One
-        // pass is one unit, and ``lap`` wraps, so continuing from wherever the value stands is
-        // seamless — `position(p)` and `position(p + 1)` are the same point.
+        phase = 0
         withAnimation(.linear(duration: Slate.Shimmer.period).repeatForever(autoreverses: false)) {
-            phase += 1
+            phase = 1
         }
     }
 }
