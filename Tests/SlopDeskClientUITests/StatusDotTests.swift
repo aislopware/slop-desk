@@ -1,7 +1,7 @@
 // StatusDotTests — pins the trailing status MARK: since round 19 the shape is the grammar and the
 // hue rides along, so each state's pin is a (shape, ink) PAIR. The agent's own states are ONE
 // CIRCLE and the pins say so: a resting code agent keeps the static finely dashed RING (muted), a
-// working one keeps that IDENTICAL cut and runs a LIGHT through it (accent, keyed on the same
+// working one becomes ONE SOLID ARC chasing its own tail round the circle (accent, keyed on the same
 // raw-working status liveness uses, outranking every badge), an unread finish fills the circle in
 // as the green DOT; and the two states you must act on CLOSE the ring and hold still — amber for a
 // question, red for a failure (⚠️ those two draw ALIKE and are separated by HUE alone, by user
@@ -29,7 +29,7 @@ final class StatusDotTests: XCTestCase {
     @MainActor
     func testWorkingAgentTurnsAndOutranksEveryBadge() {
         let raw = StatusPresentation.statusDot(working: true, badge: nil)
-        XCTAssertEqual(raw?.shape, .working, "a thinking agent's mark is the ring with the travelling light")
+        XCTAssertEqual(raw?.shape, .working, "a thinking agent's mark is the turning arc")
         XCTAssertEqual(raw?.ink, Slate.State.accent, "working rides the in-motion accent")
         for badge: TabBadgeKind? in [.commandBusy, .error, .awaitingInput, .finished, .sudo] {
             XCTAssertEqual(
@@ -87,8 +87,8 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue, distinct
-    /// from the closed attention ring — and from the working ring, which is the SAME cut with a light
-    /// running through it on the accent. It does NOT move.
+    /// from the closed attention ring — and from the working mark, which is the same circle drawn as one
+    /// solid turning arc. It does NOT move.
     @MainActor
     func testRestingAgentRingsMutedAndStatic() {
         // The claude pane at its prompt keeps the shell busy for its whole lifetime, so it
@@ -267,188 +267,135 @@ final class StatusDotTests: XCTestCase {
     func testBothAnimatedMarksAreDrawnGeometryNotGlyphs() {
         XCTAssertEqual(CommandSpinner.spokeCount, 8, "the AppKit wheel's own spoke count")
         XCTAssertGreaterThan(CommandSpinner.beat, 0)
-        XCTAssertGreaterThan(AgentWorkingMark.lap, 0)
-        XCTAssertGreaterThan(AgentWorkingMark.dashFill, 0)
+        XCTAssertGreaterThan(AgentWorkingMark.cycle, 0)
+        XCTAssertGreaterThan(AgentWorkingMark.span, 0)
     }
 
-    /// ⚠️ The mark's GEOMETRY CANNOT MOVE — the whole point of this cut, and the pin that protects it:
-    /// an arc's position is a function of its INDEX and nothing else, so there is no instant to move it
-    /// with. Four earlier cuts all moved the shape (a star blooming, a comet sweeping, a dashed ring
-    /// turning and splitting) and all read as cheap at 12pt; what moves here is light.
-    func testTheWorkingRingsGeometryIsFixedForever() {
-        let starts = (0..<AgentWorkingMark.dashCount).map { AgentWorkingMark.start(arc: $0) }
-        XCTAssertEqual(starts.first, 0, "the first arc starts at 3 o'clock")
-        for (index, start) in starts.enumerated() {
-            XCTAssertEqual(
-                start, Double(index) / Double(AgentWorkingMark.dashCount), accuracy: 1e-12,
-                "arc \(index) sits on its own even slot",
-            )
-        }
-        // The arcs fill exactly the declared fraction of the circle, leaving even gaps between them.
-        XCTAssertEqual(
-            AgentWorkingMark.arcLength * Double(AgentWorkingMark.dashCount),
-            Double(AgentWorkingMark.dashFill), accuracy: 1e-12,
-            "five arcs of this length ARE the dash fill — no seam, no overlap",
-        )
-        XCTAssertLessThan(
-            AgentWorkingMark.arcLength, 1 / Double(AgentWorkingMark.dashCount),
-            "a dash must be shorter than its slot or the ring closes",
-        )
-    }
-
-    /// The LIGHT travels: it visits every arc, once per lap, in order — and the travel is a pure
-    /// function of the clock off a fixed epoch, so every working row in the rail lights the same arc at
-    /// the same instant and a re-render lands mid-lap instead of restarting the chase.
-    func testTheLightVisitsEveryArcInOrderOncePerLap() {
-        let lap = AgentWorkingMark.lap
-        XCTAssertEqual(AgentWorkingMark.phase(at: 0), 0, accuracy: 1e-12, "the epoch is 3 o'clock")
-        XCTAssertEqual(AgentWorkingMark.phase(at: lap), 0, accuracy: 1e-12, "one lap wraps round")
-        XCTAssertEqual(
-            AgentWorkingMark.phase(at: lap * 1.25), AgentWorkingMark.phase(at: lap * 0.25),
-            accuracy: 1e-12, "the lap after is the lap before",
-        )
-        XCTAssertTrue(
-            (0..<1).contains(AgentWorkingMark.phase(at: -lap / 3)),
-            "a pre-epoch instant is still a real position",
-        )
-        // Each arc takes its turn as the brightest, and they do so in index order across one lap.
-        var order: [Int] = []
-        for step in 0..<600 {
-            let phase = AgentWorkingMark.phase(at: Double(step) * lap / 600)
-            let lit = (0..<AgentWorkingMark.dashCount).max {
-                AgentWorkingMark.brightness(arc: $0, phase: phase)
-                    < AgentWorkingMark.brightness(arc: $1, phase: phase)
-            }
-            if let lit, order.last != lit { order.append(lit) }
-        }
-        XCTAssertEqual(
-            Set(order).count, AgentWorkingMark.dashCount, "every arc must get the light once a lap",
-        )
-        // …and in ORDER: the sequence is the arcs rotating, not an arbitrary flicker. (The lap may
-        // start mid-arc, so compare against the same cycle rotated to wherever it began — and a lap
-        // sampled to its end legitimately returns to the arc it started on.)
-        let expected = (0..<AgentWorkingMark.dashCount).map {
-            (order[0] + $0) % AgentWorkingMark.dashCount
-        }
-        XCTAssertEqual(
-            Array(order.prefix(AgentWorkingMark.dashCount)), expected,
-            "the light must travel round, not hop about",
-        )
-        if order.count > AgentWorkingMark.dashCount {
-            XCTAssertEqual(
-                order[AgentWorkingMark.dashCount], order[0], "…and comes back round, not back down",
-            )
-        }
-    }
-
-    /// The pulse's SHAPE: brightest on the arc it sits over, falling off with wrapped angular distance,
-    /// and never darker than ``dimFloor``.
+    /// The arc CHASES ITS OWN TAIL: through the first half of a cycle the head runs out to ``span``,
+    /// through the second the tail catches up to it. Pinned as the sweep's shape — shortest at both ends
+    /// of the cycle, widest in the middle, never past `span`, never below ``minSweep``.
     ///
-    /// ⚠️ Two things are load-bearing here. The distance is WRAPPED — measured the short way round —
-    /// or the chase would stall and jump at 3 o'clock once per lap, where the seam is. And the floor is
-    /// NOT zero: the comet cut proved that ink fading to nothing at 12pt simply disappears, so the ring
-    /// would break into a moving arc, which is the generic-spinner look this replaced. The floor is what
-    /// holds the SHAPE constant while only the light moves.
-    func testThePulseFallsOffTheShortWayRoundAndNeverGoesDark() {
-        let mid = AgentWorkingMark.middle(arc: 0)
-        let onIt = AgentWorkingMark.brightness(arc: 0, phase: mid)
-        XCTAssertEqual(onIt, 1, accuracy: 1e-9, "the arc under the light is fully inked")
-        // Monotonic falloff as the light walks away from arc 0 — up to half a turn, then it comes back.
-        var previous = onIt
-        for step in 1...50 {
-            let value = AgentWorkingMark.brightness(arc: 0, phase: mid + Double(step) / 100)
-            XCTAssertLessThan(value, previous, "step \(step) away must be dimmer")
+    /// ⚠️ `minSweep` is not decoration: an arc allowed to collapse to zero BLINKS OUT at the end of every
+    /// cycle, and a mark that vanishes 40 times a minute reads as broken rather than busy.
+    func testTheArcGrowsToItsMarkThenCollapsesOntoIt() {
+        let cycle = AgentWorkingMark.cycle
+        let widest = AgentWorkingMark.figure(at: cycle / 2).sweep
+        XCTAssertEqual(widest, AgentWorkingMark.span, accuracy: 1e-9, "mid-cycle the head is at its mark")
+        for step in 0...200 {
+            let sweep = AgentWorkingMark.figure(at: Double(step) * cycle / 200).sweep
             XCTAssertGreaterThanOrEqual(
-                value, AgentWorkingMark.dimFloor, "the ring may never go dark at step \(step)",
+                sweep, AgentWorkingMark.minSweep, "step \(step): the arc may never blink out",
             )
-            previous = value
+            XCTAssertLessThanOrEqual(
+                sweep, AgentWorkingMark.span, "step \(step): the arc may never pass its mark",
+            )
         }
-        // The wrap: a light just BEFORE 3 o'clock lights arc 0 exactly as much as one just after it.
-        XCTAssertEqual(
-            AgentWorkingMark.brightness(arc: 0, phase: mid + 0.97),
-            AgentWorkingMark.brightness(arc: 0, phase: mid - 0.97 + 1), accuracy: 1e-12,
-            "the far side of the seam is the near side — a chase with a seam stalls once a lap",
-        )
-        XCTAssertGreaterThan(AgentWorkingMark.dimFloor, 0.15, "below this the dim arcs vanish at 8pt")
-        XCTAssertLessThan(
-            AgentWorkingMark.dimFloor, 0.5, "above this the light stops reading as a light",
-        )
-        // The pulse is roughly one dash wide: clearly ON one dash, just touching its neighbours.
-        let neighbour = AgentWorkingMark.brightness(arc: 1, phase: mid)
-        XCTAssertLessThan(neighbour, 0.75, "the neighbour must not be lit as brightly as the dash")
+        // Grows through the first half…
         XCTAssertGreaterThan(
-            neighbour, AgentWorkingMark.dimFloor,
-            "…but it must be touched, or the arcs blink in sequence instead of handing over",
+            AgentWorkingMark.figure(at: cycle * 0.35).sweep,
+            AgentWorkingMark.figure(at: cycle * 0.15).sweep, "the head runs ahead first",
+        )
+        // …and collapses through the second.
+        XCTAssertLessThan(
+            AgentWorkingMark.figure(at: cycle * 0.85).sweep,
+            AgentWorkingMark.figure(at: cycle * 0.65).sweep, "then the tail catches up",
+        )
+        XCTAssertEqual(
+            AgentWorkingMark.figure(at: 0).sweep, AgentWorkingMark.minSweep, accuracy: 1e-9,
+            "a cycle opens at the shortest arc",
         )
     }
 
-    /// The cadence: a lap is fast enough that the light reads as ONE thing moving and slow enough that
-    /// the ring does not strobe. Pinned as the per-arc interval, which is what the eye actually times.
-    func testTheLapReadsAsOneTravellingLight() {
-        XCTAssertGreaterThan(AgentWorkingMark.handoff, 0.12, "faster than this and the ring strobes")
-        XCTAssertLessThan(AgentWorkingMark.handoff, 0.5, "slower than this and the mark looks asleep")
-        // ⚠️ The HAND-OFF is the constant and the lap is derived, not the other way round: a cut with
-        // more dashes must take LONGER to go round, never flicker faster. (Pinning the lap instead is
-        // how a dash-count change turns into a strobe nobody meant.)
-        XCTAssertEqual(
-            AgentWorkingMark.lap,
-            AgentWorkingMark.handoff * Double(AgentWorkingMark.dashCount), accuracy: 1e-12,
-        )
-        // The pulse is likewise measured in SLOTS, so it tracks the cut instead of being retuned with it.
-        XCTAssertEqual(
-            AgentWorkingMark.pulseWidth,
-            AgentWorkingMark.pulseSlots / Double(AgentWorkingMark.dashCount), accuracy: 1e-12,
-        )
+    /// ⚠️ The cycle is SEAMLESS by construction, which is what lets the mark hold no animation state: at
+    /// the end of a cycle head and tail have both travelled exactly `span`, which is precisely where the
+    /// next cycle starts from. Pinned across the boundary — a discontinuity here is a visible JUMP once
+    /// every 1.4 s, and it is the exact failure a `repeatForever` animation would produce on every chrome
+    /// tick.
+    func testTheCycleBoundaryIsSeamless() {
+        let cycle = AgentWorkingMark.cycle
+        let epsilon = 1e-6
+        let before = AgentWorkingMark.figure(at: cycle - epsilon)
+        let after = AgentWorkingMark.figure(at: cycle + epsilon)
+        XCTAssertEqual(before.tail, after.tail, accuracy: 1e-4, "the tail may not jump at the seam")
+        XCTAssertEqual(before.sweep, after.sweep, accuracy: 1e-4, "nor may the length")
+        // The TAIL only ever moves forward — sampled far finer than a frame, so a stall would show.
+        var previous = AgentWorkingMark.figure(at: 0).tail
+        for step in 1...2000 {
+            let tail = AgentWorkingMark.figure(at: Double(step) * cycle * 2 / 2000).tail
+            XCTAssertGreaterThanOrEqual(tail, previous, "step \(step): the arc must never run backwards")
+            previous = tail
+        }
+    }
+
+    /// The figure advances exactly ONE TURN per cycle — `span` walked by the arc plus ``spin`` drifted by
+    /// the figure. That is not arithmetic tidiness: it means the head lands on the same clock position
+    /// every cycle, which is what stops a spinner from looking like it is wandering.
+    func testTheFigureAdvancesExactlyOneTurnPerCycle() {
+        XCTAssertEqual(AgentWorkingMark.span + AgentWorkingMark.spin, 1, accuracy: 1e-12)
+        let first = AgentWorkingMark.figure(at: 0).tail
+        for lap in 1...4 {
+            let tail = AgentWorkingMark.figure(at: Double(lap) * AgentWorkingMark.cycle).tail
+            XCTAssertEqual(
+                tail - first, Double(lap), accuracy: 1e-9,
+                "cycle \(lap) must land one whole turn on from the last",
+            )
+        }
+        XCTAssertLessThan(AgentWorkingMark.span, 1, "a closed ring shows nothing — the gap must survive")
+        XCTAssertGreaterThan(AgentWorkingMark.span, 0.5, "…and at its widest it must read as an arc")
+    }
+
+    /// The head EASES onto its mark rather than arriving at a constant rate — smoothstep, flat at both
+    /// ends: a spinner that looks drawn instead of driven. (The constant-rate cut was rejected by eye
+    /// twice before; this is the same finding, kept.)
+    func testTheHeadEasesOntoItsMarkRatherThanArrivingLinearly() {
+        XCTAssertEqual(AgentWorkingMark.ease(0), 0, accuracy: 1e-12)
+        XCTAssertEqual(AgentWorkingMark.ease(1), 1, accuracy: 1e-12)
+        XCTAssertEqual(AgentWorkingMark.ease(0.5), 0.5, accuracy: 1e-12, "symmetric about the middle")
+        // Flat at the ends, steep in the middle — the definition of eased, asserted as a rate ratio.
+        let atEnd = AgentWorkingMark.ease(0.05) - AgentWorkingMark.ease(0)
+        let atMiddle = AgentWorkingMark.ease(0.525) - AgentWorkingMark.ease(0.475)
+        XCTAssertGreaterThan(atMiddle / atEnd, 3, "the middle must move far faster than the ends")
+        // Out-of-range input is clamped, not extrapolated (an overshoot would push the arc past its mark).
+        XCTAssertEqual(AgentWorkingMark.ease(-2), 0, accuracy: 1e-12)
+        XCTAssertEqual(AgentWorkingMark.ease(9), 1, accuracy: 1e-12)
         XCTAssertLessThanOrEqual(
-            AgentWorkingMark.maxFrameInterval, 1.0 / 60, "the fade needs 60 fps to stay smooth",
+            AgentWorkingMark.maxFrameInterval, 1.0 / 60, "smooth needs 60 fps at this size",
         )
     }
 
-    /// The working ring is the RESTING ring's own circle: same diameter, same stroke weight, its dashes
-    /// gathered into FEWER, longer arcs and turning. That shared geometry is what makes the agent's
-    /// states read as a progression instead of a legend, so both numbers are pinned — a drift in
-    /// either splits the family in two. The working ring's dashes tile the circumference exactly
-    /// (whole periods, no seam where the stroke closes).
+    /// The working mark is the RESTING ring's own circle: same diameter, same stroke weight, drawn as ONE
+    /// SOLID ARC instead of eight dashes. That shared geometry is what makes the agent's states read as a
+    /// progression instead of a legend, so both numbers are pinned — a drift in either splits the family
+    /// in two.
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
-        // ⚠️ The working ring's cut is the resting ring's, ALIASED — not merely equal today. An earlier
-        // cut made it five longer arcs ("more ink while busy") and that made the column's rhythm change
-        // from row to row for no gain, so the numbers are shared at the source and pinned here.
+        // The resting ring's own cut is untouched by the working mark's recuts — eight whole periods.
+        let dash = StatusDot.ringDash
         XCTAssertEqual(
-            AgentWorkingMark.dashCount, StatusDot.ringDashCount, "one dash count for the whole column",
-        )
-        XCTAssertEqual(
-            AgentWorkingMark.dashFill, StatusDot.ringDashFill, "one dash length for the whole column",
-        )
-        XCTAssertEqual(
-            AgentWorkingMark.arcLength,
-            Double(StatusDot.ringDash[0]) / Double(CGFloat.pi * StatusDot.ringDiameter),
-            accuracy: 1e-12,
-            "a working dash IS a resting dash — the same arc, measured in turns",
+            Double((dash[0] + dash[1]) * CGFloat(StatusDot.ringDashCount)),
+            Double(CGFloat.pi * StatusDot.ringDiameter), accuracy: 1e-9,
+            "whole periods around the resting ring — no seam",
         )
     }
 
-    /// ⚠️ The working ring is legible when FROZEN, not only when moving — and since its cut is now the
-    /// resting ring's exactly, the thing that carries the difference is the PARKED LIGHT: one dash at
-    /// full ink against neighbours at ``dimFloor``, in the accent rather than the muted grey. This is
-    /// the pin that makes sharing the cut safe; without the light's own contrast, Reduce Motion would
-    /// collapse working and resting to one mark in two hues.
+    /// ⚠️ The working mark is legible when FROZEN, not only when moving: Reduce Motion parks it at its
+    /// WIDEST, where one continuous three-quarter arc cannot be mistaken for the resting ring's eight
+    /// dashes. The distinction is SHAPE, so it survives a colour-blind eye too — which matters because
+    /// the previous cut had to lean on the parked light's contrast for the same guarantee.
     func testFrozenWorkingRingStillDiffersFromTheRestingRing() {
-        let parked = (0..<AgentWorkingMark.dashCount)
-            .map { AgentWorkingMark.brightness(arc: $0, phase: AgentWorkingMark.stillPhase) }
-        guard let brightest = parked.max(), let dimmest = parked.min() else {
-            XCTFail("a ring with no dashes cannot be a mark")
-            return
-        }
-        XCTAssertEqual(brightest, 1, accuracy: 1e-9, "one dash is fully lit even frozen")
-        XCTAssertGreaterThan(
-            brightest - dimmest, 0.5,
-            "the frozen frame needs real contrast, or it reads as the resting ring in another hue",
+        // The frozen frame is the mid-cycle one: the widest arc the figure ever draws.
+        let frozen = AgentWorkingMark.span
+        XCTAssertEqual(
+            frozen, AgentWorkingMark.figure(at: AgentWorkingMark.cycle / 2).sweep, accuracy: 1e-9,
+            "the frozen arc is one the moving figure actually passes through",
         )
-        // Exactly ONE dash carries the light — a frozen frame with two equal candidates has no subject.
-        let lit = parked.filter { $0 > (brightest + dimmest) / 2 }
-        XCTAssertEqual(lit.count, 1, "the parked light has one subject")
+        // …and it is a CONTINUOUS arc many times longer than any single resting dash.
+        let restingDash = Double(StatusDot.ringDashFill) / Double(StatusDot.ringDashCount)
+        XCTAssertGreaterThan(
+            frozen / restingDash, 5,
+            "a frozen working arc must dwarf a resting dash, or the two marks read alike",
+        )
     }
 
     /// ⚠️ ONE diameter, no exceptions — including the finish DOT, which used to be drawn smaller on
@@ -513,19 +460,12 @@ final class StatusDotTests: XCTestCase {
     /// REDUCE MOTION freezes both animated marks on a REPRESENTATIVE frame rather than hiding them:
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
-        // ⚠️ A frozen chase parks the light ON an arc, not at 12 o'clock: with five arcs nothing sits
-        // exactly there, and a light parked in a GAP freezes the mark as two half-lit arcs with no
-        // subject — the one still frame that reads as broken rather than paused.
-        let parked = (0..<AgentWorkingMark.dashCount)
-            .map { AgentWorkingMark.brightness(arc: $0, phase: AgentWorkingMark.stillPhase) }
+        // A frozen working mark holds the WIDEST arc the figure passes through — unmistakably an arc.
         XCTAssertEqual(
-            parked.max() ?? 0, 1, accuracy: 1e-9,
-            "the frozen frame has one arc FULLY lit — it is a legible still",
+            AgentWorkingMark.span, AgentWorkingMark.figure(at: AgentWorkingMark.cycle / 2).sweep,
+            accuracy: 1e-9, "the frozen arc is a frame the moving figure actually draws",
         )
-        XCTAssertLessThan(
-            abs(AgentWorkingMark.stillPhase - 0.75), 1 / Double(AgentWorkingMark.dashCount) / 2,
-            "…and it is the arc nearest the top, so the still frame looks deliberate",
-        )
+        XCTAssertGreaterThan(AgentWorkingMark.span, 0.5, "…and it still reads as 'not at rest'")
         XCTAssertEqual(
             CommandSpinner.stillStep, 0,
             "a frozen wheel is the evenly-lit one, its comet tail at the top",

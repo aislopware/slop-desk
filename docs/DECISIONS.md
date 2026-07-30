@@ -3215,6 +3215,37 @@ reserve: **wave** (arc lengths ripple, positions fixed — the same "geometry st
 expressed in SHAPE rather than ink, and so immune to the dim-arc risk if `dimFloor` turns out too faint
 on real glass) and **inchworm**.
 
+**Follow-up 9 — the SIXTH cut, and it is nearly the third: a solid arc that CHASES ITS OWN TAIL**
+(*"để thành nét liền xoay vòng quanh đi, làm spinner xoay mượt, giữ nguyên đuổi, xoay đầu đến 1 mốc rồi
+thu đuôi lại quay tiếp"*). Material's indeterminate circular indicator, drawn on the house tokens: through
+the first half of a 1.4 s cycle the HEAD runs out to a `span` of 0.75 turn; through the second the TAIL
+catches up to it; the figure drifts the remaining 0.25 turn so it advances **exactly one turn per cycle**.
+
+⚠️ **The distinction from cut 3 is the whole lesson, and it is why this is not a circle back to a rejected
+design.** Cut 3 was also a solid arc — but its tail DISSOLVED through an `AngularGradient`, and what
+failed was the gradient, not the arc: at 12pt a fade spends half its length invisible, so the figure read
+as a shrinking smudge and needed an argument about `lineCap` bleeding ink across the gradient's seam. This
+cut is FLAT INK with two hard ends, where the "tail" is a real geometric end that MOVES. Which also makes
+**round caps safe again** — no gradient means no seam for a cap to pick ink up across — and round ends are
+what make a spinner look drawn rather than cut.
+
+- ✅ **Seamless by construction, so the mark still holds no animation state**: at a cycle's end head and
+  tail have both travelled exactly `span`, which is precisely where the next cycle begins. Pinned across
+  the boundary, plus tail-monotonic over 2,000 samples: a discontinuity here is a visible jump every
+  1.4 s, which is exactly what a `repeatForever` animation produces on every chrome tick.
+- ✅ **`span + spin == 1` exactly** — not arithmetic tidiness: it means the head lands on the same clock
+  position every cycle, which is what stops a spinner from looking like it is wandering.
+- ⚠️ **`minSweep` = 0.07 turn (~25°), never zero.** An arc allowed to collapse to nothing BLINKS OUT at
+  the end of every cycle, and a mark that vanishes 40 times a minute reads as broken rather than busy.
+- ✅ **The head EASES onto its mark** (smoothstep, pinned as a rate ratio between the middle and the
+  ends). The constant-rate finding from the turning cut is kept, not relitigated.
+- ✅ **Frozen legibility goes back to SHAPE.** Reduce Motion parks the widest arc; a continuous
+  three-quarter arc cannot be mistaken for the resting ring's eight dashes, so the guarantee no longer
+  leans on a parked light's contrast the way cut 5's did.
+
+The rail's motion budget is unchanged by all six recuts: **two marks may move, only while something is in
+flight** (this arc, and a command's slot wheel), and nothing blinks to say "unread".
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes

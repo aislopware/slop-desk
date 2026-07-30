@@ -1,18 +1,17 @@
 // StatusDot — the sidebar row's trailing status mark. Round 19 (otty parity) makes the SHAPE the
 // grammar and lets the hue ride along. The agent's states are ONE CIRCLE at one diameter and one
 // stroke weight, so they read as a progression instead of a legend: the ring is finely DASHED at rest
-// (lucide `circle-dashed`), that SAME ring comes alive with a LIGHT running through its dashes while the
-// agent works, and it becomes a FILLED dot once it has finished something unread. The two states you must
+// (lucide `circle-dashed`), becomes ONE SOLID ARC chasing its own tail round the circle while the agent
+// works, and a FILLED dot once it has finished something unread. The two states you must
 // ACT on stay in that same circle with a glyph inside it — `?` a question waits, `!` a failure. An
 // idle row renders null, so the resting rail stays bare, and the only thing that MOVES here is the
-// working ring — and even that moves only its INK, never its shape (``AgentWorkingMark``): motion means
-// "in flight", never decoration. A plain running COMMAND mounts nothing in
+// working arc: motion means "in flight", never decoration. A plain running COMMAND mounts nothing in
 // this column — its ``CommandSpinner`` wheel takes the process-label slot instead (``SlateTabRow``),
 // so no row ever carries two activity marks.
 //
 // ⚠️ Both animated marks are DRAWN, never typed, and at this size both are FLAT INK — a gradient
-// spends half its length being nearly invisible, which is legible only when magnified (see
-// ``AgentWorkingMark``). A glyph spinner here was tried twice and abandoned:
+// spends half its length being nearly invisible, which is legible only when magnified (``AgentWorkingMark``
+// carries the full history of that lesson). A glyph spinner here was tried twice and abandoned:
 // the instrument face is only JetBrains Mono when that font is installed (it is not, on every
 // machine), so anything outside the system monospaced face's own coverage gets SUBSTITUTED — braille
 // lands in AppleBraille (embossing dots, weight ignored, invisible at 11pt) and a bare dingbat star
@@ -32,8 +31,7 @@ import SwiftUI
 /// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) unit-tests without rendering.
 ///
 /// The vocabulary is ONE circle whose COMPLETENESS rises with how much the row wants from you:
-/// broken into fine dashes at rest → the same dashes with a light running through them while it works →
-/// CLOSED and
+/// broken into fine dashes at rest → one live arc chasing its tail while it works → CLOSED and
 /// still when it is waiting on you → FILLED once it has finished something unread.
 ///
 /// ⚠️ ``question`` and ``alert`` draw the SAME closed ring and are told apart by hue alone (amber vs
@@ -73,8 +71,8 @@ enum StatusDot {
     static let ringDiameter: CGFloat = 8
     static let ringLineWidth: CGFloat = 1.5
     /// Dash segments around the RESTING ring — the lucide `circle-dashed` cut T3 Code mounts. The
-    /// working ring reuses this exact cut (``AgentWorkingMark/dashCount`` aliases it), so the two states
-    /// differ only in hue and in the light travelling through one of them.
+    /// working mark is the same circle drawn as ONE SOLID ARC instead (``AgentWorkingMark``), so the two
+    /// states differ in shape as well as in hue — which is what keeps them apart when motion is off.
     static let ringDashCount = 8
     /// The drawn fraction of each dash period — lucide's roughly-even dash/gap rhythm.
     static let ringDashFill: CGFloat = 0.6
@@ -145,154 +143,123 @@ struct StatusDotView: View {
     }
 }
 
-/// The WORKING-AGENT mark — the RESTING RING ITSELF, with a LIGHT running round it. Same diameter, same
-/// stroke weight, same dash count, same dash length: the cut is ALIASED to the resting ring's, so the
-/// two cannot drift apart. What separates them is the accent hue and one travelling pulse of ink. That
-/// is the whole idea — the agent's column is ONE circle throughout, so its states read as a progression
-/// rather than as a legend to learn: the ring waits, then it comes alive, then it becomes a FILLED dot
-/// once it has finished something you haven't read.
+/// The WORKING-AGENT mark — a SOLID arc that chases its own tail round the circle. The head runs ahead
+/// to a mark, the tail catches up to it, and the whole figure keeps turning: one revolution and one
+/// grow-and-collapse per 1.4 s cycle, so the arc is never the same length twice in a row and never
+/// stops. Same diameter and stroke weight as every other mark in the column, so the family holds — the
+/// ring is finely dashed while the agent waits, becomes this one live arc while it works, and a FILLED
+/// dot once it has finished something you haven't read.
 ///
-/// ⚠️ NOTHING HERE MOVES GEOMETRICALLY. The arcs sit at fixed angles for the mark's whole life; what
-/// travels is BRIGHTNESS, each arc handing the light to its neighbour. That is the point, and it is the
-/// fifth cut of this mark — the four before it all moved the shape and were all rejected as cheap:
+/// ⚠️ This is the SIXTH cut, and it is deliberately close to the THIRD — which was rejected. The
+/// difference is the whole lesson, so it is written down: cut 3 was a solid arc whose tail dissolved
+/// through an `AngularGradient`, and what failed was the GRADIENT, not the arc. At 12pt a fade spends
+/// half its length invisible, so the figure read as a shrinking smudge and needed a `lineCap` argument
+/// about ink bleeding across the gradient's seam. This cut is FLAT INK with two hard ends: the "tail"
+/// is a real geometric end that moves, not a fade. Which also makes ROUND caps safe again — with no
+/// gradient there is no seam for a cap to pick ink up across, and round ends are what make a spinner
+/// look drawn rather than cut.
+///
+/// The full history, because five of these were rejected on looks and each bought a rule:
 ///
 ///   1. the asterisk bloom TYPED in the instrument face — the mono face has no star, so AppleColorEmojiUI
-///      drew `✳` as a COLOUR emoji at 2.4× the advance;
-///   2. the same bloom DRAWN as capsules — at 12pt a radiating star is a burr of spikes, and magnified
-///      it is a cogwheel;
-///   3. a solid arc with a dissolving comet TAIL — which is what every loading spinner on every platform
-///      already is, and at 12pt a gradient spends half its length invisible, so it read generic-to-muddy
-///      no matter how it was eased;
-///   4. the dashed ring TURNING, with the arcs splitting into ten and knitting back into five — the
-///      split read as a gimmick, and a turning ring is still a spinner.
+///      drew `✳` as a COLOUR emoji at 2.4× the advance ⇒ animated marks are DRAWN, never typed;
+///   2. the same bloom DRAWN as capsules — at 12pt a radiating star is a burr of spikes ⇒ one stroke
+///      scales down, detail does not;
+///   3. a solid arc with a dissolving comet TAIL ⇒ at 12pt use FLAT INK, never a gradient;
+///   4. a dashed ring TURNING, its arcs splitting into ten and knitting back into five ⇒ a mark this
+///      size carries exactly ONE idea;
+///   5. the dashed ring standing still with a LIGHT running through its dashes — the calmest cut of all
+///      and still not it ⇒ this column is allowed to look like a spinner, as long as it looks like a
+///      GOOD one.
 ///
-/// A fifth thing was tried and dropped without a rejection: cutting the working ring into FEWER, longer
-/// arcs than the resting one, so it carried more ink while busy. It made the column's rhythm change from
-/// row to row for no gain — the light already says "busy" — so the cut went back to the resting ring's.
-///
-/// The rules those four bought, all of which this cut obeys: at 12pt use FLAT INK and WHOLE SHAPES
-/// (gradients and detail are luxuries of the zoomed-in view); a mark this size carries exactly ONE idea;
-/// and a rail that jitters is worse than a rail that is dull, so the moving thing here is light rather
-/// than geometry. It also gets the rail closest to round 9's original verdict (*nothing in the rail
-/// animates*) while still saying "in flight": the figure's silhouette is as still as the resting ring's.
-///
-/// The travel is a smooth function of the wall clock sampled per display frame, so nothing needs
-/// animation STATE: every working row in the rail lights the same dash at the same instant, and a
-/// re-render lands mid-lap instead of restarting the chase (which is exactly what a `repeatForever`
-/// animation would do on every chrome tick). REDUCE MOTION parks the light on the dash nearest the top —
-/// and the mark stays legible frozen even though the cut is now identical to the resting ring's, because
-/// the parked light itself is the difference: one dash at FULL ink against neighbours at ``dimFloor``,
-/// in the accent rather than the muted grey.
+/// Everything is derived from the wall clock, sampled per display frame, so the mark holds no animation
+/// STATE: every working row in the rail is at the identical phase, and a re-render lands mid-cycle
+/// instead of snapping the head back to the top (which is exactly what a `repeatForever` animation would
+/// do on every chrome tick). REDUCE MOTION freezes it at its widest, where the arc is unmistakably an
+/// arc — and the frozen mark still differs from the resting ring by SHAPE (one solid arc against eight
+/// dashes), not merely by hue.
 struct AgentWorkingMark: View {
     var ink: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Dashes around the working ring — the RESTING ring's own count, aliased rather than repeated so
-    /// the two cuts cannot drift apart. This is the point of the cut: working and resting are the SAME
-    /// circle, cut the same way, and the only difference is the hue plus a light running through it.
-    /// (An earlier cut gathered these into five longer arcs on the argument that "more ink = more
-    /// happening"; it made the column's rhythm change between rows, and the light says "happening"
-    /// better than extra ink ever did.)
-    static var dashCount: Int { StatusDot.ringDashCount }
-    /// The DRAWN fraction of each dash's slot — again the resting ring's own, aliased.
-    static var dashFill: CGFloat { StatusDot.ringDashFill }
-    /// Seconds for the light to cross ONE dash. This is the number the eye actually times — not the
-    /// lap — so it is the constant, and ``lap`` is derived from it: a cut with more dashes should take
-    /// longer to go round, not flicker faster. Faster than ~0.12 s and the ring strobes; slower than
-    /// ~0.5 s and the mark looks asleep.
-    static let handoff: Double = 0.24
-    /// Seconds for the light to travel once round — ``handoff`` per dash.
-    static var lap: Double { handoff * Double(dashCount) }
-    /// The pulse's width as a fraction of ONE dash slot (a standard deviation). At ~0.7 of a slot the
-    /// light is clearly ON one dash while just touching its neighbours, which is what makes the
-    /// hand-off read as travel rather than as dashes blinking in sequence. Relative to the slot, so it
-    /// tracks ``dashCount`` instead of having to be retuned with it.
-    static let pulseSlots: Double = 0.7
-    /// The pulse's width in TURNS — ``pulseSlots`` of one dash slot.
-    static var pulseWidth: Double { pulseSlots / Double(dashCount) }
-    /// How dim an arc gets when the light is on the far side. NOT zero: the ring must stay a ring — the
-    /// comet cut proved that ink fading to nothing at 12pt just disappears, and half a ring vanishing
-    /// is the "generic spinner" look this replaced. The floor is what keeps the SHAPE constant while
-    /// only the light moves.
-    static let dimFloor: Double = 0.28
-    /// Where a REDUCE-MOTION mount parks the light: ON the arc nearest the TOP of the ring. ⚠️ Not 12
-    /// o'clock itself — no dash sits exactly there, and parking the light in a GAP is the
-    /// one frozen frame that reads as broken: two arcs half-lit, none of them the subject. Computed
-    /// rather than written down, so it stays on an arc if ``dashCount`` ever changes.
-    static var stillPhase: Double {
-        let top = 0.75 // 0 is 3 o'clock, turning clockwise
-        let nearest = (0..<dashCount).min { lhs, rhs in
-            abs(middle(arc: lhs) - top) < abs(middle(arc: rhs) - top)
-        } ?? 0
-        return middle(arc: nearest)
-    }
-
-    /// The frame ceiling: 60 fps is smooth for a fade this small, and bounding it keeps a rail full of
-    /// working agents off the display's own 120 Hz treadmill.
+    /// Seconds per cycle — one grow-and-collapse of the arc, and one full revolution of the figure.
+    /// Material's own indeterminate circular indicator runs at 1.33 s; 1.4 s reads the same and lines up
+    /// with nothing else in the chrome, so a rail of working rows never beats against the footer.
+    static let cycle: Double = 1.4
+    /// How far the HEAD runs ahead of the tail before the tail follows, in turns — the "mark" the head
+    /// aims at. Three quarters: long enough that the arc is unmistakably an arc at its widest, short
+    /// enough that the gap never closes into a plain circle (a closed ring shows nothing).
+    static let span: Double = 0.75
+    /// The extra turn the figure drifts per cycle, on top of the ``span`` the arc itself advances. Set so
+    /// `span + spin` is exactly ONE turn: the head therefore lands on the same clock position every
+    /// cycle, which is what stops a spinner from looking like it is wandering.
+    static var spin: Double { 1 - span }
+    /// The arc's shortest length, in turns. NOT zero: an arc that collapses to nothing blinks out at the
+    /// end of every cycle, and a mark that vanishes 40 times a minute reads as broken rather than busy.
+    /// At ~25° it is still visibly an arc with two ends, which is what the eye needs to see it turning.
+    static let minSweep: Double = 0.07
+    /// The frame ceiling: 60 fps is what makes a rotation this size read as smooth rather than as steps,
+    /// and bounding it keeps a rail full of working agents off the display's own 120 Hz treadmill.
     static let maxFrameInterval: Double = 1.0 / 60
 
     var body: some View {
         Group {
             if reduceMotion {
-                ring(phase: Self.stillPhase)
+                arc(tail: 0, sweep: Self.span)
             } else {
                 TimelineView(.animation(minimumInterval: Self.maxFrameInterval)) { timeline in
-                    ring(phase: Self.phase(at: timeline.date.timeIntervalSinceReferenceDate))
+                    let figure = Self.figure(at: timeline.date.timeIntervalSinceReferenceDate)
+                    arc(tail: figure.tail, sweep: figure.sweep)
                 }
             }
         }
         .frame(width: StatusDot.footprint, height: StatusDot.footprint)
     }
 
-    /// Where the light is at one instant, in TURNS clockwise from 3 o'clock. Linear: the travel of a
-    /// light has no mass, so easing it would be the mechanism showing through rather than hidden — the
-    /// opposite of the turning cut, where a constant rate was exactly the tell. Pure, so the cadence is
-    /// unit-pinned headlessly and every mount at the same instant lights the same arc.
-    static func phase(at time: TimeInterval) -> Double {
-        guard lap > 0 else { return stillPhase }
-        var phase = (time / lap).truncatingRemainder(dividingBy: 1)
-        if phase < 0 { phase += 1 }
-        return phase
-    }
-
-    /// Where a dash STARTS, in turns — a function of its index and nothing else. The signature is the
-    /// invariant: this mark cannot move its geometry, because there is no instant to move it with.
-    static func start(arc: Int) -> Double { Double(arc) / Double(dashCount) }
-
-    /// One dash's length, in turns — ``dashFill`` of its slot.
-    static var arcLength: Double { Double(dashFill) / Double(dashCount) }
-
-    /// The MIDDLE of an arc, in turns — what the light's distance is measured to, so an arc reaches full
-    /// ink when the light is over its centre rather than as the light arrives at its leading edge.
-    static func middle(arc: Int) -> Double { start(arc: arc) + arcLength / 2 }
-
-    /// How lit an arc is when the light sits at `phase` — a gaussian on the WRAPPED angular distance
-    /// between the two, so the chase has no seam at 12 o'clock (an unwrapped distance would make the
-    /// light stall and jump there once per lap). Never below ``dimFloor``.
-    static func brightness(arc: Int, phase: Double) -> Double {
-        guard pulseWidth > 0 else { return 1 }
-        var gap = abs(middle(arc: arc) - phase)
-        gap = Double.minimum(gap, 1 - gap)
-        let lit = exp(-((gap / pulseWidth) * (gap / pulseWidth)))
+    /// The arc at one instant: where its TAIL sits (in absolute turns, growing forever) and how long it
+    /// is. Pure, so the cadence is unit-pinned headlessly and every mount at the same instant draws the
+    /// same figure.
+    ///
+    /// The shape of the motion: in the FIRST half of a cycle the head runs from the tail to ``span``; in
+    /// the SECOND half the tail catches up to it. Both moves are eased (smoothstep), so the arc swells
+    /// and collapses smoothly instead of snapping. ⚠️ The two halves are what make the cycle seamless:
+    /// at the end of a cycle head and tail have both travelled exactly `span`, which is precisely where
+    /// the next cycle starts from — no reset, no jump, and therefore no need for animation state.
+    static func figure(at time: TimeInterval) -> (tail: Double, sweep: Double) {
+        guard cycle > 0 else { return (0, span) }
+        let cycles = time / cycle
+        let index = cycles.rounded(.down)
+        let phase = cycles - index
+        // The head leads through the first half; the tail follows through the second.
+        let head = span * ease(Double.minimum(1, phase * 2))
+        let follow = span * ease(Double.maximum(0, phase * 2 - 1))
         // Keep the multiply and the add separate — never `addingProduct` (CLAUDE.md bit-exactness).
-        let span = 1 - dimFloor
-        return dimFloor + span * lit
+        let drift = spin * phase
+        let base = index * (span + spin)
+        let tail = base + drift + follow
+        return (tail, Double.maximum(minSweep, head - follow))
     }
 
-    private func ring(phase: Double) -> some View {
-        ZStack {
-            ForEach(0..<Self.dashCount, id: \.self) { arc in
-                Circle()
-                    .trim(from: 0, to: Self.arcLength)
-                    .stroke(
-                        ink.opacity(Self.brightness(arc: arc, phase: phase)),
-                        style: StrokeStyle(lineWidth: StatusDot.ringLineWidth, lineCap: .butt),
-                    )
-                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-                    .rotationEffect(.degrees(Self.start(arc: arc) * 360))
-            }
-        }
+    /// Smoothstep — flat at both ends, steep through the middle. The head accelerates away and settles
+    /// onto its mark rather than arriving at a constant rate, which is the difference between a spinner
+    /// that looks drawn and one that looks driven.
+    static func ease(_ value: Double) -> Double {
+        let clamped = Double.maximum(0, Double.minimum(1, value))
+        return clamped * clamped * (3 - 2 * clamped)
+    }
+
+    private func arc(tail: Double, sweep: Double) -> some View {
+        Circle()
+            .trim(from: 0, to: sweep)
+            // FLAT ink and ROUND caps. Flat because a gradient at 12pt spends half its length invisible
+            // (cut 3); round because with no gradient there is no seam for a cap to pick up ink across,
+            // which is the bug that made cut 3's tail sprout a detached dot.
+            .stroke(
+                ink, style: StrokeStyle(lineWidth: StatusDot.ringLineWidth, lineCap: .round),
+            )
+            .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
+            .rotationEffect(.degrees(tail * 360))
     }
 }
 
