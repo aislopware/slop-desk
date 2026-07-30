@@ -21,7 +21,13 @@ final class ShimmerTests: XCTestCase {
         XCTAssertEqual(stops.map(\.location), stops.map(\.location).sorted(), "stops run in order")
         let crests = stops.filter { $0.color == .white }
         XCTAssertEqual(crests.count, 1, "one crest per pass")
-        XCTAssertEqual(crests.first?.location, 0.5, "…centred in the band")
+        // ⚠️ Held BACK from the band's leading edge, not centred: the band travels head-first, so a
+        // centred crest is the first thing the glyphs ever show — arriving at full strength the
+        // instant it crosses the head, which reads as the highlight switching on AT the left edge
+        // instead of sliding out from behind it.
+        XCTAssertEqual(crests.first?.location, CGFloat(Slate.Shimmer.crest))
+        XCTAssertLessThan(Slate.Shimmer.crest, 0.5, "the long ramp goes AHEAD of the peak")
+        XCTAssertGreaterThan(Slate.Shimmer.crest, 0, "…and something still trails it")
         XCTAssertGreaterThan(stops.count, 3, "the band needs a ramp, not two edges")
     }
 

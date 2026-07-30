@@ -29,19 +29,29 @@ extension Slate {
         /// first at 0.45 with a 60pt floor, which on the rail's short titles (a project name, a
         /// bare `api`) covered the whole run — so the title blinked on and off instead of being
         /// swept, and the wrap read as a jerk back to the start rather than a band leaving.
-        static let widthFraction: CGFloat = 0.35
+        static let widthFraction: CGFloat = 0.5
         /// …and never narrower than this, so the ramp is still a ramp on a very short run.
         static let minimumWidth: CGFloat = 16
 
-        /// The band, as fractions of its own width: dark at both ends, full in the middle. The
-        /// quarter stops are the ramp — two stops alone give a hard-edged wedge that reads as a
+        /// Where the crest sits inside the band, as a fraction from the band's TRAILING edge.
+        ///
+        /// ⚠️ Deliberately NOT centred. The band travels left→right, so its leading edge is what
+        /// reaches the run first — and with a centred crest the first thing the glyphs ever show is
+        /// the peak itself, arriving at full strength the instant it crosses the head. It reads as
+        /// the highlight being switched on AT the left edge rather than sliding out from behind it.
+        /// With the crest held back, a long ramp enters ahead of it and the light CREEPS out of the
+        /// corner before the peak follows.
+        static let crest: Double = 0.3
+
+        /// The band, as fractions of its own width: dark at both ends, peaking at ``crest``. The
+        /// intermediate stops are the ramp — two stops alone give a hard-edged wedge that reads as a
         /// rendering fault rather than a sweep.
         static var stops: [Gradient.Stop] {
             [
                 Gradient.Stop(color: .clear, location: 0),
-                Gradient.Stop(color: .white.opacity(0.5), location: 0.25),
-                Gradient.Stop(color: .white, location: 0.5),
-                Gradient.Stop(color: .white.opacity(0.5), location: 0.75),
+                Gradient.Stop(color: .white.opacity(0.5), location: crest / 2),
+                Gradient.Stop(color: .white, location: crest),
+                Gradient.Stop(color: .white.opacity(0.5), location: (crest + 1) / 2),
                 Gradient.Stop(color: .clear, location: 1),
             ]
         }

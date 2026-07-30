@@ -3368,6 +3368,11 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   at 0.55 the unlit title sat BELOW the resting rows' secondary ink, so for most of every pass the
   row doing the work read dimmer than the ones asleep. Reduce Motion simply drops it, and that costs
   nothing: it is the second voice on a fact the mark already states.
+- ⚠️ **The crest is held BACK from the band's leading edge** (0.3 of the band, not centred). The band
+  travels head-first, so with a centred crest the first thing the glyphs ever show is the peak
+  itself, arriving at full strength the instant it crosses the head — it reads as the highlight being
+  switched on AT the left edge rather than sliding out from behind it. Held back, a long ramp enters
+  ahead of the peak and the light creeps out of the corner.
 - ⚠️⚠️ **The band must stay well UNDER the run's width.** Shipped first at 0.45 with a 60pt floor,
   which on the rail's real titles — a project name, a bare `api` — covered the run end to end: the
   title blinked on and off instead of being swept, and the wrap read as a jerk back to the head

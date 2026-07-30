@@ -259,15 +259,13 @@ final class SlateSnapshotRender: XCTestCase {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the working shimmer")
         }
-        let frames = 20
+        let frames = 14
         let phases = (0..<frames).map { CGFloat($0) / CGFloat(frames) }
         let width = Slate.Metric.sidebarWidth
 
         let strip = VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(stride(from: 0, to: frames, by: 2)), id: \.self) {
-                self.workingRow(phase: phases[$0])
-            }
-            ForEach(Array(stride(from: 0, to: frames, by: 2)), id: \.self) {
+            ForEach(phases.indices, id: \.self) { self.workingRow(phase: phases[$0]) }
+            ForEach(phases.indices, id: \.self) {
                 self.workingRow(phase: phases[$0], title: "api")
             }
             // The row it must not be mistaken for: an agent present but idle, holding still.
@@ -280,7 +278,7 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: width)
         .background(Slate.Surface.ground)
         try renderHosted(
-            strip, size: CGSize(width: width, height: 760), to: dir, named: "working-shimmer.png",
+            strip, size: CGSize(width: width, height: 1010), to: dir, named: "working-shimmer.png",
         )
 
         renderGIF(
