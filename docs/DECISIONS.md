@@ -3360,6 +3360,10 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   lot — silently, yielding a path, just the wrong one. Pinned by `VectorIconTests`.
 - ⚠️ **Material duotone fills need EVEN-ODD.** The cup punches its inner wall with a second subpath
   wound the same way as the outer one; non-zero winding fills the hole in solid.
+- ✅ **A command's OUTCOME empties the slot beside it.** The disc or the triangle is the row's whole
+  news; `make` / `swift` printed next to it is what WAS running, past tense, on a row whose title
+  already says it — two words where one was doing the work. Everything still LIVE keeps its label,
+  because a running command's name is current information (`markSpeaksForTheSlot`).
 - ⚠️⚠️ **The spinner's APPEARANCE has to be set on the control.** `ProgressView` came out dark grey
   on a dark theme, and neither obvious fix moved it: `\.colorScheme` in the environment is SwiftUI's
   own notion, and the WINDOW's `NSAppearance` is pinned by `SlopDeskSplitViewController` but

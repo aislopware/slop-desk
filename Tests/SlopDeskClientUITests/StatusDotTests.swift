@@ -259,6 +259,43 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
+    /// ⚠️ A command's OUTCOME empties the slot beside it: the disc or the triangle is the row's whole
+    /// news, and `make` / `swift` printed next to it is what WAS running, in the past tense, on a row
+    /// whose title already says it. Everything still LIVE keeps its label — a running command's name
+    /// is current information.
+    @MainActor
+    func testACommandsOutcomeEmptiesTheSlotBesideIt() {
+        for kind: TabBadgeKind in [.error, .completed, .finished] {
+            XCTAssertTrue(
+                StatusPresentation.markSpeaksForTheSlot(
+                    StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false),
+                ),
+                "\(kind) as a command's receipt says everything the process name would",
+            )
+        }
+        // Live states keep the label: a busy shell, a running command, a thinking or resting agent.
+        let live: [StatusDotStyle?] = [
+            StatusPresentation.statusDot(working: true, badge: nil),
+            StatusPresentation.statusDot(working: false, badge: .commandBusy, agentIdle: true),
+            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true),
+            StatusPresentation.statusDot(working: false, badge: .awaitingInput),
+            StatusPresentation.statusDot(working: false, badge: .commandRunning),
+        ]
+        for style in live {
+            XCTAssertFalse(
+                StatusPresentation.markSpeaksForTheSlot(style),
+                "a live row's process name is current information",
+            )
+        }
+        // The AGENT's finish is not a command's — its row never carried a process label anyway, and
+        // suppressing one there would be a rule about the wrong speaker.
+        XCTAssertFalse(
+            StatusPresentation.markSpeaksForTheSlot(
+                StatusPresentation.statusDot(working: false, badge: .finished, agentFinish: true),
+            ),
+        )
+    }
+
     // MARK: - Geometry
 
     /// The ring's dash pattern tiles the circumference EXACTLY — `ringDashCount` whole periods,

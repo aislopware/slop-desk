@@ -191,6 +191,21 @@ enum StatusPresentation {
         StatusDotStyle(ink: Slate.Text.primary, mark: .working)
     }
 
+    /// Whether this mark makes the row's PROCESS LABEL redundant, so the slot beside it stays empty.
+    ///
+    /// A command's outcome — the disc for a clean exit, the triangle for a failure — is the row's
+    /// whole news. The process name next to it (`make`, `swift`) is what was running, in the past
+    /// tense, on a row whose title already says what it was; printing it beside the mark just puts
+    /// two words where one is doing the work. Everything still LIVE keeps its label: a running
+    /// command's name is current information, which is why the busy tiers are untouched here.
+    static func markSpeaksForTheSlot(_ style: StatusDotStyle?) -> Bool {
+        switch style?.mark {
+        case .commandFinish,
+             .failure: true
+        default: false
+        }
+    }
+
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue
     /// having already named the state:
     ///

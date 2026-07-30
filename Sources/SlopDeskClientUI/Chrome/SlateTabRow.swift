@@ -179,13 +179,17 @@ struct SlateTabRow: View {
                     .help("Sync input — keystrokes mirror to every pane in this tab")
             }
             ZStack(alignment: .trailing) {
+                let mark = StatusPresentation.statusDot(
+                    working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
+                    agentFinish: agentFinish,
+                )
                 HStack(spacing: 6) {
                     Group {
                         // Only a PRIVILEGE marker occupies the slot as text — lifecycle states
                         // render as the ring mark, so their rows keep the shell label here.
                         if let badge, StatusPresentation.tabBadge(badge) != nil {
                             TabBadgeView(kind: badge)
-                        } else if let processLabel {
+                        } else if let processLabel, !StatusPresentation.markSpeaksForTheSlot(mark) {
                             // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
                             // in the instrument mono at the caption size on the tertiary ink — one
                             // register with the git line, counts and telemetry.
@@ -198,11 +202,8 @@ struct SlateTabRow: View {
                     }
                     // The status mark — RIGHTMOST, so state reads down one fixed column no matter
                     // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
-                    if let dot = StatusPresentation.statusDot(
-                        working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
-                        agentFinish: agentFinish,
-                    ) {
-                        StatusDotView(style: dot)
+                    if let mark {
+                        StatusDotView(style: mark)
                     }
                 }
                 .opacity(hovering ? 0 : 1)
