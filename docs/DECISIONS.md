@@ -3188,6 +3188,26 @@ now been recut five times and the type should not be renamed a sixth):
 - ✅ **Linear travel, deliberately** — the opposite call from the turning cut, where a constant rate was
   the tell. A light has no mass, so easing it would be the mechanism showing rather than hidden.
 
+**Follow-up 8a — the cut is now the resting ring's, ALIASED** (*"để dash ngắn hơn, giống idle
+indicator được không?"*). The working ring had been five longer arcs on the argument that "more ink =
+more happening"; it made the column's rhythm change from row to row for no gain, and the light says
+"happening" better than extra ink ever did. So `dashCount`/`dashFill` are now aliases of
+`StatusDot.ringDashCount`/`ringDashFill` — shared at the source, not merely equal today — and working
+vs resting is **hue + one travelling light**, nothing else.
+
+Two consequences worth writing down, both pinned:
+
+- ⚠️ **Frozen legibility moves from the CUT to the LIGHT.** The old safety was "five long arcs are not
+  eight short ones"; with the cut shared, Reduce Motion would collapse the two marks to one shape in two
+  hues — except that the parked light is itself the difference: exactly ONE dash at full ink against
+  neighbours at `dimFloor`, in the accent. Pinned as a contrast floor (>0.5) and as "exactly one dash
+  above the midpoint", because a frozen frame with two equal candidates has no subject.
+- ⚠️ **The HAND-OFF is the constant; the lap is DERIVED.** What the eye times is one dash lighting the
+  next (0.24 s), not the lap — so `lap = handoff × dashCount` and `pulseWidth = 0.7 × slot`. Going from
+  five dashes to eight under a fixed lap would have flickered 1.6× faster and strobed; a cut with more
+  dashes must take LONGER to go round. Pinning the lap instead of the hand-off is exactly how a
+  dash-count change turns into a strobe nobody meant.
+
 Rejected on the sheet, each for a stated reason rather than taste: **runner** (the discrete cut of chase
 — a hop is what "plastic" meant), **conveyor** (a comet in disguise: half the ring fades to 0.12 and
 disappears at 8pt), **gyro** (two rings fill the gaps at 8pt, so the dashes stop being dashes). Held in

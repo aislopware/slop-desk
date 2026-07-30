@@ -1,8 +1,8 @@
 // StatusDotTests — pins the trailing status MARK: since round 19 the shape is the grammar and the
 // hue rides along, so each state's pin is a (shape, ink) PAIR. The agent's own states are ONE
 // CIRCLE and the pins say so: a resting code agent keeps the static finely dashed RING (muted), a
-// working one GATHERS those dashes into five longer arcs and runs a LIGHT through them (accent, keyed
-// on the same raw-working status liveness uses, outranking every badge), an unread finish fills the circle in
+// working one keeps that IDENTICAL cut and runs a LIGHT through it (accent, keyed on the same
+// raw-working status liveness uses, outranking every badge), an unread finish fills the circle in
 // as the green DOT; and the two states you must act on CLOSE the ring and hold still — amber for a
 // question, red for a failure (⚠️ those two draw ALIKE and are separated by HUE alone, by user
 // ruling: the `?`/`!` glyphs inside the ring came out for reading as fussy detail at 8pt). A
@@ -87,8 +87,8 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue, distinct
-    /// from the working ring's five turning arcs and from the closed attention ring — the SAME circle,
-    /// cut into eight fine dashes instead of five long ones. It does NOT move.
+    /// from the closed attention ring — and from the working ring, which is the SAME cut with a light
+    /// running through it on the accent. It does NOT move.
     @MainActor
     func testRestingAgentRingsMutedAndStatic() {
         // The claude pane at its prompt keeps the shell busy for its whole lifetime, so it
@@ -292,7 +292,7 @@ final class StatusDotTests: XCTestCase {
         )
         XCTAssertLessThan(
             AgentWorkingMark.arcLength, 1 / Double(AgentWorkingMark.dashCount),
-            "an arc must be shorter than its slot or the ring closes",
+            "a dash must be shorter than its slot or the ring closes",
         )
     }
 
@@ -373,9 +373,9 @@ final class StatusDotTests: XCTestCase {
         XCTAssertLessThan(
             AgentWorkingMark.dimFloor, 0.5, "above this the light stops reading as a light",
         )
-        // The pulse is roughly one arc wide: clearly ON one arc, just touching its neighbours.
+        // The pulse is roughly one dash wide: clearly ON one dash, just touching its neighbours.
         let neighbour = AgentWorkingMark.brightness(arc: 1, phase: mid)
-        XCTAssertLessThan(neighbour, 0.75, "the neighbour must not be lit as brightly as the arc")
+        XCTAssertLessThan(neighbour, 0.75, "the neighbour must not be lit as brightly as the dash")
         XCTAssertGreaterThan(
             neighbour, AgentWorkingMark.dimFloor,
             "…but it must be touched, or the arcs blink in sequence instead of handing over",
@@ -385,9 +385,20 @@ final class StatusDotTests: XCTestCase {
     /// The cadence: a lap is fast enough that the light reads as ONE thing moving and slow enough that
     /// the ring does not strobe. Pinned as the per-arc interval, which is what the eye actually times.
     func testTheLapReadsAsOneTravellingLight() {
-        let perArc = AgentWorkingMark.lap / Double(AgentWorkingMark.dashCount)
-        XCTAssertGreaterThan(perArc, 0.12, "faster than this and the ring strobes")
-        XCTAssertLessThan(perArc, 0.5, "slower than this and the mark looks asleep")
+        XCTAssertGreaterThan(AgentWorkingMark.handoff, 0.12, "faster than this and the ring strobes")
+        XCTAssertLessThan(AgentWorkingMark.handoff, 0.5, "slower than this and the mark looks asleep")
+        // ⚠️ The HAND-OFF is the constant and the lap is derived, not the other way round: a cut with
+        // more dashes must take LONGER to go round, never flicker faster. (Pinning the lap instead is
+        // how a dash-count change turns into a strobe nobody meant.)
+        XCTAssertEqual(
+            AgentWorkingMark.lap,
+            AgentWorkingMark.handoff * Double(AgentWorkingMark.dashCount), accuracy: 1e-12,
+        )
+        // The pulse is likewise measured in SLOTS, so it tracks the cut instead of being retuned with it.
+        XCTAssertEqual(
+            AgentWorkingMark.pulseWidth,
+            AgentWorkingMark.pulseSlots / Double(AgentWorkingMark.dashCount), accuracy: 1e-12,
+        )
         XCTAssertLessThanOrEqual(
             AgentWorkingMark.maxFrameInterval, 1.0 / 60, "the fade needs 60 fps to stay smooth",
         )
@@ -401,30 +412,43 @@ final class StatusDotTests: XCTestCase {
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
-        // The working arcs are longer than the resting ring's dashes: same circle, more ink at work.
-        XCTAssertGreaterThan(
-            AgentWorkingMark.arcLength, Double(StatusDot.ringDashFill) / Double(StatusDot.ringDashCount),
-            "a working arc must be longer than a resting dash, or the two cuts read alike",
+        // ⚠️ The working ring's cut is the resting ring's, ALIASED — not merely equal today. An earlier
+        // cut made it five longer arcs ("more ink while busy") and that made the column's rhythm change
+        // from row to row for no gain, so the numbers are shared at the source and pinned here.
+        XCTAssertEqual(
+            AgentWorkingMark.dashCount, StatusDot.ringDashCount, "one dash count for the whole column",
+        )
+        XCTAssertEqual(
+            AgentWorkingMark.dashFill, StatusDot.ringDashFill, "one dash length for the whole column",
+        )
+        XCTAssertEqual(
+            AgentWorkingMark.arcLength,
+            Double(StatusDot.ringDash[0]) / Double(CGFloat.pi * StatusDot.ringDiameter),
+            accuracy: 1e-12,
+            "a working dash IS a resting dash — the same arc, measured in turns",
         )
     }
 
-    /// ⚠️ The working ring is legible when FROZEN, not only when moving: its cut differs from the
-    /// resting ring's, so Reduce Motion — and a colour-blind eye, which sees neither the accent nor the
-    /// muted grey as itself — still reads two distinct marks. This is the pin that makes the dashed
-    /// working ring safe: identical dashes turning would have collapsed to "same mark, different hue"
-    /// the moment the system asked for stillness.
+    /// ⚠️ The working ring is legible when FROZEN, not only when moving — and since its cut is now the
+    /// resting ring's exactly, the thing that carries the difference is the PARKED LIGHT: one dash at
+    /// full ink against neighbours at ``dimFloor``, in the accent rather than the muted grey. This is
+    /// the pin that makes sharing the cut safe; without the light's own contrast, Reduce Motion would
+    /// collapse working and resting to one mark in two hues.
     func testFrozenWorkingRingStillDiffersFromTheRestingRing() {
-        XCTAssertLessThan(
-            AgentWorkingMark.dashCount, StatusDot.ringDashCount,
-            "working gathers the resting ring's dashes into FEWER, longer arcs — more ink, at work",
-        )
-        XCTAssertGreaterThan(AgentWorkingMark.dashCount, 3, "fewer arcs than this reads as a broken ring")
-        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably.
+        let parked = (0..<AgentWorkingMark.dashCount)
+            .map { AgentWorkingMark.brightness(arc: $0, phase: AgentWorkingMark.stillPhase) }
+        guard let brightest = parked.max(), let dimmest = parked.min() else {
+            XCTFail("a ring with no dashes cannot be a mark")
+            return
+        }
+        XCTAssertEqual(brightest, 1, accuracy: 1e-9, "one dash is fully lit even frozen")
         XCTAssertGreaterThan(
-            AgentWorkingMark.arcLength * Double(AgentWorkingMark.dashCount),
-            Double(StatusDot.ringDashFill),
-            "the working ring carries more ink in total than the resting one",
+            brightest - dimmest, 0.5,
+            "the frozen frame needs real contrast, or it reads as the resting ring in another hue",
         )
+        // Exactly ONE dash carries the light — a frozen frame with two equal candidates has no subject.
+        let lit = parked.filter { $0 > (brightest + dimmest) / 2 }
+        XCTAssertEqual(lit.count, 1, "the parked light has one subject")
     }
 
     /// ⚠️ ONE diameter, no exceptions — including the finish DOT, which used to be drawn smaller on

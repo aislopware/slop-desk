@@ -117,10 +117,9 @@ enum StatusPresentation {
     /// the hue ride along, and the agent's own states are ONE CIRCLE so they read as a progression:
     /// the mark is one circle whose COMPLETENESS rises with how much the row wants from you.
     /// A RESTING CODE AGENT keeps the finely DASHED ring on the muted secondary ink (present,
-    /// spending no hue); a WORKING AGENT gathers those dashes into five longer arcs and runs a LIGHT
-    /// through them on the accent — geometry perfectly still, only the ink travelling — keyed on the RAW
-    /// `.working` status so the badge gate can't kill it (the badge-routed `.running` tier reads
-    /// identically); the two states that need a HUMAN CLOSE the ring
+    /// spending no hue); a WORKING AGENT keeps that IDENTICAL cut and runs a LIGHT through it on the
+    /// accent — geometry perfectly still, only the ink travelling — keyed on the RAW `.working` status
+    /// so the badge gate can't kill it (the badge-routed `.running` tier reads identically); the two states that need a HUMAN CLOSE the ring
     /// and hold still on their attention ink (``attentionInk(_:)`` — amber for a question, red for a
     /// failure); an unread finish FILLS it as the green dot. Three cuts of the two human states have
     /// been pulled to get here: otty's raised hand and warning triangle (a silhouette per state is a

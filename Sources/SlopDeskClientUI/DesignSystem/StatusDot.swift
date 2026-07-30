@@ -1,8 +1,8 @@
 // StatusDot — the sidebar row's trailing status mark. Round 19 (otty parity) makes the SHAPE the
 // grammar and lets the hue ride along. The agent's states are ONE CIRCLE at one diameter and one
 // stroke weight, so they read as a progression instead of a legend: the ring is finely DASHED at rest
-// (lucide `circle-dashed`), its dashes GATHER into five longer arcs with a LIGHT running through them
-// while the agent works, and it becomes a FILLED dot once it has finished something unread. The two states you must
+// (lucide `circle-dashed`), that SAME ring comes alive with a LIGHT running through its dashes while the
+// agent works, and it becomes a FILLED dot once it has finished something unread. The two states you must
 // ACT on stay in that same circle with a glyph inside it — `?` a question waits, `!` a failure. An
 // idle row renders null, so the resting rail stays bare, and the only thing that MOVES here is the
 // working ring — and even that moves only its INK, never its shape (``AgentWorkingMark``): motion means
@@ -32,8 +32,8 @@ import SwiftUI
 /// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) unit-tests without rendering.
 ///
 /// The vocabulary is ONE circle whose COMPLETENESS rises with how much the row wants from you:
-/// broken into fine dashes at rest → gathered into five arcs with a light running through them while it
-/// works → CLOSED and
+/// broken into fine dashes at rest → the same dashes with a light running through them while it works →
+/// CLOSED and
 /// still when it is waiting on you → FILLED once it has finished something unread.
 ///
 /// ⚠️ ``question`` and ``alert`` draw the SAME closed ring and are told apart by hue alone (amber vs
@@ -44,8 +44,7 @@ import SwiftUI
 enum StatusMarkShape: Equatable, Hashable, CaseIterable {
     /// The static, finely dashed ring — a code agent PRESENT and at rest.
     case ring
-    /// The same ring with its dashes gathered into fewer, longer arcs, a light travelling through them
-    /// — a WORKING agent. The one animated mark in this column, and it animates only its INK: the
+    /// The same ring — the identical cut — with a light travelling through its dashes: a WORKING agent. The one animated mark in this column, and it animates only its INK: the
     /// silhouette is as still as the resting ring's. Named for the STATE, not the motion, because the
     /// motion has now been recut five times.
     case working
@@ -74,8 +73,8 @@ enum StatusDot {
     static let ringDiameter: CGFloat = 8
     static let ringLineWidth: CGFloat = 1.5
     /// Dash segments around the RESTING ring — the lucide `circle-dashed` cut T3 Code mounts. The
-    /// working ring is the same circle cut into FEWER, longer arcs (``AgentWorkingMark/dashCount``), so
-    /// the two states differ in cut as well as in hue and motion.
+    /// working ring reuses this exact cut (``AgentWorkingMark/dashCount`` aliases it), so the two states
+    /// differ only in hue and in the light travelling through one of them.
     static let ringDashCount = 8
     /// The drawn fraction of each dash period — lucide's roughly-even dash/gap rhythm.
     static let ringDashFill: CGFloat = 0.6
@@ -146,12 +145,12 @@ struct StatusDotView: View {
     }
 }
 
-/// The WORKING-AGENT mark — the RESTING RING'S OWN DASHES, gathered into five longer arcs, with a
-/// LIGHT running round them. That is the whole idea: the agent's column is ONE circle at the same
-/// diameter and stroke weight throughout, so its states read as a progression rather than as a legend
-/// to learn — the ring is finely dashed while the agent waits at its prompt, its dashes gather into
-/// fewer, longer arcs and a pulse of ink travels through them while it works, and it becomes a FILLED
-/// dot once it has finished something you haven't read.
+/// The WORKING-AGENT mark — the RESTING RING ITSELF, with a LIGHT running round it. Same diameter, same
+/// stroke weight, same dash count, same dash length: the cut is ALIASED to the resting ring's, so the
+/// two cannot drift apart. What separates them is the accent hue and one travelling pulse of ink. That
+/// is the whole idea — the agent's column is ONE circle throughout, so its states read as a progression
+/// rather than as a legend to learn: the ring waits, then it comes alive, then it becomes a FILLED dot
+/// once it has finished something you haven't read.
 ///
 /// ⚠️ NOTHING HERE MOVES GEOMETRICALLY. The arcs sit at fixed angles for the mark's whole life; what
 /// travels is BRIGHTNESS, each arc handing the light to its neighbour. That is the point, and it is the
@@ -167,6 +166,10 @@ struct StatusDotView: View {
 ///   4. the dashed ring TURNING, with the arcs splitting into ten and knitting back into five — the
 ///      split read as a gimmick, and a turning ring is still a spinner.
 ///
+/// A fifth thing was tried and dropped without a rejection: cutting the working ring into FEWER, longer
+/// arcs than the resting one, so it carried more ink while busy. It made the column's rhythm change from
+/// row to row for no gain — the light already says "busy" — so the cut went back to the resting ring's.
+///
 /// The rules those four bought, all of which this cut obeys: at 12pt use FLAT INK and WHOLE SHAPES
 /// (gradients and detail are luxuries of the zoomed-in view); a mark this size carries exactly ONE idea;
 /// and a rail that jitters is worse than a rail that is dull, so the moving thing here is light rather
@@ -174,38 +177,47 @@ struct StatusDotView: View {
 /// animates*) while still saying "in flight": the figure's silhouette is as still as the resting ring's.
 ///
 /// The travel is a smooth function of the wall clock sampled per display frame, so nothing needs
-/// animation STATE: every working row in the rail lights the same arc at the same instant, and a
+/// animation STATE: every working row in the rail lights the same dash at the same instant, and a
 /// re-render lands mid-lap instead of restarting the chase (which is exactly what a `repeatForever`
-/// animation would do on every chrome tick). REDUCE MOTION freezes the light at the TOP of the ring —
-/// and the mark stays legible frozen, because ``dashCount`` differs from the resting ring's: still or
-/// moving, five long arcs are not eight short ones.
+/// animation would do on every chrome tick). REDUCE MOTION parks the light on the dash nearest the top —
+/// and the mark stays legible frozen even though the cut is now identical to the resting ring's, because
+/// the parked light itself is the difference: one dash at FULL ink against neighbours at ``dimFloor``,
+/// in the accent rather than the muted grey.
 struct AgentWorkingMark: View {
     var ink: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Arcs around the working ring — FEWER than the resting ring's ``StatusDot/ringDashCount``, so
-    /// the same circle carries more ink while it works. It is also what keeps the mark readable when
-    /// motion is off: a frozen working ring differs from a resting one in its CUT, not just its hue.
-    static let dashCount = 5
-    /// The DRAWN fraction of each arc's slot. Above ~0.75 the ring is a solid circle with notches in it;
-    /// below ~0.5 it reads as a dotted line rather than a circle.
-    static let dashFill: CGFloat = 0.62
-    /// Seconds for the light to travel once round the ring — so an arc lights every `lap / dashCount`
-    /// ≈ 0.24 s. Faster than the eye can count and slower than a flicker: it reads as one light moving,
-    /// which is the entire illusion. Halve it and the ring strobes; double it and the mark looks asleep.
-    static let lap: Double = 1.2
-    /// The pulse's width, as a standard deviation in TURNS. At ~0.7 of an arc slot the light is clearly
-    /// ON one arc while just touching its neighbours — which is what makes the hand-off read as travel
-    /// rather than as five arcs blinking in sequence.
-    static let pulseWidth: Double = 0.14
+    /// Dashes around the working ring — the RESTING ring's own count, aliased rather than repeated so
+    /// the two cuts cannot drift apart. This is the point of the cut: working and resting are the SAME
+    /// circle, cut the same way, and the only difference is the hue plus a light running through it.
+    /// (An earlier cut gathered these into five longer arcs on the argument that "more ink = more
+    /// happening"; it made the column's rhythm change between rows, and the light says "happening"
+    /// better than extra ink ever did.)
+    static var dashCount: Int { StatusDot.ringDashCount }
+    /// The DRAWN fraction of each dash's slot — again the resting ring's own, aliased.
+    static var dashFill: CGFloat { StatusDot.ringDashFill }
+    /// Seconds for the light to cross ONE dash. This is the number the eye actually times — not the
+    /// lap — so it is the constant, and ``lap`` is derived from it: a cut with more dashes should take
+    /// longer to go round, not flicker faster. Faster than ~0.12 s and the ring strobes; slower than
+    /// ~0.5 s and the mark looks asleep.
+    static let handoff: Double = 0.24
+    /// Seconds for the light to travel once round — ``handoff`` per dash.
+    static var lap: Double { handoff * Double(dashCount) }
+    /// The pulse's width as a fraction of ONE dash slot (a standard deviation). At ~0.7 of a slot the
+    /// light is clearly ON one dash while just touching its neighbours, which is what makes the
+    /// hand-off read as travel rather than as dashes blinking in sequence. Relative to the slot, so it
+    /// tracks ``dashCount`` instead of having to be retuned with it.
+    static let pulseSlots: Double = 0.7
+    /// The pulse's width in TURNS — ``pulseSlots`` of one dash slot.
+    static var pulseWidth: Double { pulseSlots / Double(dashCount) }
     /// How dim an arc gets when the light is on the far side. NOT zero: the ring must stay a ring — the
     /// comet cut proved that ink fading to nothing at 12pt just disappears, and half a ring vanishing
     /// is the "generic spinner" look this replaced. The floor is what keeps the SHAPE constant while
     /// only the light moves.
     static let dimFloor: Double = 0.28
     /// Where a REDUCE-MOTION mount parks the light: ON the arc nearest the TOP of the ring. ⚠️ Not 12
-    /// o'clock itself — with five arcs nothing sits exactly there, and parking the light in a GAP is the
+    /// o'clock itself — no dash sits exactly there, and parking the light in a GAP is the
     /// one frozen frame that reads as broken: two arcs half-lit, none of them the subject. Computed
     /// rather than written down, so it stays on an arc if ``dashCount`` ever changes.
     static var stillPhase: Double {
@@ -244,11 +256,11 @@ struct AgentWorkingMark: View {
         return phase
     }
 
-    /// Where an arc STARTS, in turns — a function of its index and nothing else. The signature is the
+    /// Where a dash STARTS, in turns — a function of its index and nothing else. The signature is the
     /// invariant: this mark cannot move its geometry, because there is no instant to move it with.
     static func start(arc: Int) -> Double { Double(arc) / Double(dashCount) }
 
-    /// One arc's length, in turns — ``dashFill`` of its slot.
+    /// One dash's length, in turns — ``dashFill`` of its slot.
     static var arcLength: Double { Double(dashFill) / Double(dashCount) }
 
     /// The MIDDLE of an arc, in turns — what the light's distance is measured to, so an arc reaches full
