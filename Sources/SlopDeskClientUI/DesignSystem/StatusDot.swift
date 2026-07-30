@@ -162,26 +162,20 @@ struct StatusDotView: View {
 /// that survives all four: at 12pt, FLAT INK and WHOLE SHAPES; gradients and detail are luxuries of
 /// the zoomed-in view.
 ///
-/// The motion is CONTINUOUS, not stepped, and two things move at once:
+/// The motion is CONTINUOUS, not stepped, and there is exactly ONE of it: the ring TURNS, eased. A hop
+/// is a mechanism showing through, and so is a constant rate — so the angle is a smooth function of the
+/// wall clock that surges and coasts once per DASH (see ``swing``), which reads as each arc gliding
+/// into its neighbour's place rather than a wheel being driven round.
 ///
-///   * the ring TURNS, eased. A hop is a mechanism showing through, and so is a constant rate — so the
-///     angle is a smooth function of the wall clock that surges and coasts once per DASH (see
-///     ``swing``), which reads as each arc gliding into its neighbour's place rather than a wheel
-///     being driven round.
-///   * the arcs SPLIT and KNIT. Each one parts down the middle into two short arcs, travels a while as
-///     ten, and closes back up into five, on a cycle incommensurate with the rotation — so the figure
-///     never repeats a silhouette. A fixed pattern going round at a fixed rate is the definition of a
-///     plastic spinner. The parting is a ZERO-length gap when closed, so the merge is one continuous
-///     parameter rather than a swap between two dash patterns, and it is EASED at both ends, so the
-///     ring dwells as five, dwells as ten, and crosses between quickly (an even sine reads as a wobble).
+/// ⚠️ A SECOND motion was tried on top and pulled: the arcs split down the middle into ten and knitted
+/// back into five on their own cycle. It worked exactly as designed and still read as a gimmick —
+/// a mark this size can carry one idea, and "turning" is the one that means "working".
 ///
 /// Both derive from the SAME wall clock, so nothing needs animation STATE: every working row in the
 /// rail is at the identical phase, and a re-render lands mid-rotation instead of snapping the ring
 /// back to the top (which is exactly what a `repeatForever` animation would do on every chrome tick).
-/// REDUCE MOTION freezes it fully KNIT — and it stays legible frozen, because ``dashCount`` differs
-/// from the resting ring's: still or moving, five long arcs are not eight short ones. (That is also
-/// why ``splitMax`` is bounded: split far enough and ten evenly-spaced short dashes IS the resting
-/// ring's cut, so the halves must stay visibly paired.)
+/// REDUCE MOTION freezes it — and it stays legible frozen, because ``dashCount`` differs from the
+/// resting ring's: still or moving, five long arcs are not eight short ones.
 struct AgentSweepMark: View {
     var ink: Color
 
@@ -197,11 +191,6 @@ struct AgentSweepMark: View {
     /// at that rate would strobe: with rotational symmetry every `1/5` turn, a fast spin is eight
     /// visual cycles a second.
     static let revolution: Double = 3.6
-    /// Seconds per SPLIT-AND-KNIT cycle: each long arc parts down the middle into two short ones, the
-    /// ring travels a while as ten, then the halves close back up into five. Deliberately not a
-    /// multiple of ``revolution``, so the two cycles drift against each other and the motion never
-    /// looks like a loop.
-    static let knit: Double = 2.9
     /// ⚠️ How far the rotation LEADS and LAGS a constant rate, in turns. This is what stops the motion
     /// reading as plastic: a constant angular rate is the tell of a mechanism, so the ring accelerates
     /// and coasts once per DASH — the surge is tied to the dash period rather than the revolution
@@ -215,24 +204,11 @@ struct AgentSweepMark: View {
     static let swing: Double = 0.020
     /// The hard ceiling ``swing`` must stay under to keep the rotation monotonic — pinned by test.
     static var swingCeiling: Double { 1 / (2 * .pi * Double(dashCount)) }
-    /// The DRAWN fraction of each dash period — fixed, because the ring already has two motions and a
-    /// third oscillation on an 8pt mark reads as mush. Above ~0.75 the ring is a solid circle with
-    /// notches in it; below ~0.5 it reads as a dotted line rather than a circle.
+    /// The DRAWN fraction of each dash period — fixed. The ring carries ONE motion, so nothing here
+    /// oscillates: a second rhythm on an 8pt mark reads as a gimmick (a split-and-knit cycle shipped
+    /// here and was pulled for exactly that). Above ~0.75 the ring is a solid circle with notches in
+    /// it; below ~0.5 it reads as a dotted line rather than a circle.
     static let dashFill: CGFloat = 0.62
-    /// How much of one arc the SPLIT gap eats at full parting, as a fraction of the arc. Bounded from
-    /// below by legibility, not taste: each half must stay long enough to read as an arc at 8pt (see
-    /// ``splitFloorPoints``), and the two halves must stay closer to each other than to their
-    /// neighbours or the ring just looks like ten evenly-spaced dashes — which is the RESTING ring's
-    /// cut, and the working mark may not borrow it. Walked on a render sheet: 0.16 reads as a clean
-    /// pairing, 0.26 is the most parted the halves stay paired at, and by 0.45 the ring is ten thin
-    /// specks with no pairing left.
-    static let splitMax: CGFloat = 0.26
-    /// The shortest a split half may get before it stops reading as an arc and starts reading as a
-    /// speck. Pinned against ``splitMax``, so widening the parting cannot quietly cross it.
-    static let splitFloorPoints: CGFloat = 0.8
-    /// The parting a REDUCE-MOTION mount holds still at — fully KNIT (five long arcs), which is the
-    /// frame that stays furthest from the resting ring's cut.
-    static let stillSplit: CGFloat = 0
     /// The frame ceiling while turning: 60 fps is smooth for a rotation this size, and bounding it
     /// keeps a rail full of working agents off the display's own 120 Hz treadmill.
     static let maxFrameInterval: Double = 1.0 / 60
@@ -240,11 +216,10 @@ struct AgentSweepMark: View {
     var body: some View {
         Group {
             if reduceMotion {
-                ring(turns: 0, split: Self.stillSplit)
+                ring(turns: 0)
             } else {
                 TimelineView(.animation(minimumInterval: Self.maxFrameInterval)) { timeline in
-                    let time = timeline.date.timeIntervalSinceReferenceDate
-                    ring(turns: Self.turns(at: time), split: Self.split(at: time))
+                    ring(turns: Self.turns(at: timeline.date.timeIntervalSinceReferenceDate))
                 }
             }
         }
@@ -267,42 +242,22 @@ struct AgentSweepMark: View {
         return eased - eased.rounded(.down)
     }
 
-    /// The PARTING for one instant, in [0, ``splitMax``] — how far each arc has opened down its middle.
-    /// A raised cosine put through a smoothstep, which is what makes this read as splitting and knitting
-    /// rather than as a wobble: the eased ends make the figure DWELL as five long arcs and again as ten
-    /// short ones, and cross between quickly. Pure + clock-derived, so it needs no animation state and
-    /// every working row in the rail parts in unison.
-    static func split(at time: TimeInterval) -> CGFloat {
-        guard knit > 0 else { return stillSplit }
-        let raised = (1 - cos(time / knit * 2 * .pi)) / 2
-        // smoothstep — flat at both ends, steep through the middle.
-        // Keep the multiply and the add separate — never `addingProduct` (CLAUDE.md bit-exactness).
-        let eased = raised * raised * (3 - 2 * raised)
-        return splitMax * CGFloat(eased)
-    }
-
-    /// The working ring's dash pattern for one parting frame. ``dashCount`` whole periods tile the
-    /// circumference (so the arcs stay evenly spread with no seam where the stroke closes) and each
-    /// period is `[half, parting, half, gap]` — one arc opened down the middle by `split` of its own
-    /// length. At `split == 0` the parting is a ZERO-length gap, so the two halves abut and render as
-    /// the single long arc they came from: the merge is CONTINUOUS, never a swap of two patterns.
-    static func dash(split: CGFloat) -> [CGFloat] {
+    /// The working ring's dash pattern — ``dashCount`` whole periods tiling the circumference, so the
+    /// arcs stay evenly spread with no seam where the stroke closes.
+    static var dash: [CGFloat] {
         let period = .pi * StatusDot.ringDiameter / CGFloat(dashCount)
         let drawn = period * dashFill
-        let clamped = CGFloat(Double.maximum(0, Double.minimum(Double(splitMax), Double(split))))
-        let parting = drawn * clamped
-        let half = (drawn - parting) / 2
-        return [half, parting, half, period - drawn]
+        return [drawn, period - drawn]
     }
 
-    private func ring(turns: Double, split: CGFloat) -> some View {
+    private func ring(turns: Double) -> some View {
         Circle()
             // FLAT ink and a dashed stroke: no gradient, no line caps to reason about. The comet cut
             // this replaced needed BOTH — and its round caps painted a half-disc past the stroke end
             // that picked up ink across the angular gradient's seam, showing up as a detached dot
             // chasing the arc. A dashed ring has no ends to cap and no seam to cross.
             .stroke(ink, style: StrokeStyle(
-                lineWidth: StatusDot.ringLineWidth, dash: Self.dash(split: split),
+                lineWidth: StatusDot.ringLineWidth, dash: Self.dash,
             ))
             .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             .rotationEffect(.degrees(turns * 360))

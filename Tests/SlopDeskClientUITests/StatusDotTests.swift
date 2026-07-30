@@ -268,7 +268,7 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(CommandSpinner.spokeCount, 8, "the AppKit wheel's own spoke count")
         XCTAssertGreaterThan(CommandSpinner.beat, 0)
         XCTAssertGreaterThan(AgentSweepMark.revolution, 0)
-        XCTAssertGreaterThan(AgentSweepMark.knit, 0)
+        XCTAssertGreaterThan(AgentSweepMark.dashFill, 0)
     }
 
     /// ⚠️ The agent's ring turns CONTINUOUSLY and NOT LINEARLY — the two complaints that killed the
@@ -337,109 +337,24 @@ final class StatusDotTests: XCTestCase {
         XCTAssertGreaterThan(AgentSweepMark.swing, 0, "zero swing is the linear look that was rejected")
     }
 
-    /// The arcs SPLIT down the middle and KNIT back on their own cycle, incommensurate with the
-    /// rotation — so the figure never repeats a silhouette and the motion never reads as a loop. The
-    /// parting stays in `[0, splitMax]`, reaches BOTH ends over a cycle, and is EASED at both ends: the
-    /// ring must DWELL as five long arcs and again as ten short ones, because a plain sine spends its
-    /// time mid-parting and reads as a wobble instead of two states trading.
-    func testAgentArcsSplitAndKnitBackWithADwellAtEachEnd() {
-        let cycle = AgentSweepMark.knit
-        for sample in 0...400 {
-            let split = AgentSweepMark.split(at: Double(sample) * cycle / 100)
-            XCTAssertTrue(
-                (0...AgentSweepMark.splitMax).contains(split), "sample \(sample) escaped the parting",
-            )
-        }
-        XCTAssertEqual(AgentSweepMark.split(at: 0), 0, accuracy: 1e-12, "the epoch is fully knit")
-        XCTAssertEqual(
-            AgentSweepMark.split(at: cycle / 2), AgentSweepMark.splitMax, accuracy: 1e-12,
-            "half a cycle in, the arcs are fully parted",
-        )
-        XCTAssertEqual(
-            AgentSweepMark.split(at: cycle), 0, accuracy: 1e-12, "one cycle knits back",
-        )
-        // The DWELL: a tenth of a cycle either side of an extreme must still be within a tenth of that
-        // extreme. A raw sine moves ~19% of its span in that time — this is the eased-ends pin.
-        let tenth = AgentSweepMark.splitMax / 10
-        XCTAssertLessThan(AgentSweepMark.split(at: cycle / 10), tenth, "it dwells knit")
-        XCTAssertGreaterThan(
-            AgentSweepMark.split(at: cycle / 2 + cycle / 10), AgentSweepMark.splitMax - tenth,
-            "…and dwells parted",
-        )
-        // …and it crosses between them FASTER than an even sine would: peak rate beats π/2 × mean.
-        let steps = (1...200).map {
-            abs(AgentSweepMark.split(at: Double($0) * cycle / 200)
-                - AgentSweepMark.split(at: Double($0 - 1) * cycle / 200))
-        }
-        let peak = steps.max() ?? 0
-        let mean = steps.reduce(0, +) / CGFloat(steps.count)
-        XCTAssertGreaterThan(
-            Double(peak / mean), .pi / 2,
-            "the crossing must be steeper than a raw cosine's, or the dwell is imaginary",
-        )
-        let ratio = AgentSweepMark.knit / AgentSweepMark.revolution
-        XCTAssertGreaterThan(
-            abs(ratio - ratio.rounded()), 0.05,
-            "the knit cycle must NOT be a multiple of the revolution, or the motion loops visibly",
-        )
-    }
-
-    /// ⚠️ The parting is bounded at BOTH ends by legibility. Too far and each half is a speck at 8pt —
-    /// and worse, ten evenly-spaced short dashes IS the resting ring's cut, which the working mark may
-    /// not borrow. Fully KNIT the middle gap must be exactly ZERO, because that is what makes the merge
-    /// one continuous parameter instead of a swap between two dash patterns (a swap would pop).
-    func testPartingStaysLegibleAndClosesToExactlyZero() {
-        let knit = AgentSweepMark.dash(split: 0)
-        XCTAssertEqual(knit.count, 4, "[half, parting, half, gap] at every frame")
-        XCTAssertEqual(knit[1], 0, "fully knit ⇒ a zero-length parting ⇒ the halves abut as one arc")
-        XCTAssertEqual(knit[0], knit[2], "the halves are halves")
-        let parted = AgentSweepMark.dash(split: AgentSweepMark.splitMax)
-        XCTAssertGreaterThan(
-            parted[0], AgentSweepMark.splitFloorPoints,
-            "a fully parted half must still read as an arc, not a speck",
-        )
-        XCTAssertLessThan(
-            parted[1], parted[3],
-            "the parting must stay TIGHTER than the gap between arcs, or the paired halves read as "
-                + "ten evenly-spaced dashes — the resting ring's own cut",
-        )
-        // Out-of-range input is clamped rather than inverting the pattern (a negative half would).
-        XCTAssertEqual(AgentSweepMark.dash(split: -1), knit, "below zero clamps to knit")
-        XCTAssertEqual(
-            AgentSweepMark.dash(split: 9), parted, "above the ceiling clamps to fully parted",
-        )
-    }
-
     /// The working ring is the RESTING ring's own circle: same diameter, same stroke weight, its dashes
     /// gathered into FEWER, longer arcs and turning. That shared geometry is what makes the agent's
     /// states read as a progression instead of a legend, so both numbers are pinned — a drift in
-    /// either splits the family in two. The working ring's dashes tile the circumference exactly at
-    /// EVERY parting frame (whole periods, no seam where the stroke closes).
+    /// either splits the family in two. The working ring's dashes tile the circumference exactly
+    /// (whole periods, no seam where the stroke closes).
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
         let circumference = CGFloat.pi * StatusDot.ringDiameter
-        for split in [CGFloat(0), AgentSweepMark.splitMax / 2, AgentSweepMark.splitMax] {
-            let dash = AgentSweepMark.dash(split: split)
-            XCTAssertEqual(dash.count, 4, "[half, parting, half, gap] at every frame")
-            XCTAssertEqual(
-                Double(dash.reduce(0, +) * CGFloat(AgentSweepMark.dashCount)),
-                Double(circumference), accuracy: 1e-9,
-                "whole periods at parting \(split) — a split may not open a seam",
-            )
-            // A parting spends ink, and there is a floor: below ~40% of the circumference inked the
-            // mark reads as scattered specks rather than a circle (measured on the render sheet — at
-            // 0.45 parting the pairing is gone entirely).
-            XCTAssertGreaterThan(
-                Double((dash[0] + dash[2]) / (dash.reduce(0, +))), 0.4,
-                "at parting \(split) too little of the ring is inked to read as a circle",
-            )
-        }
-        // Knit, the two halves ARE the arc: their sum is the declared fill of one period.
-        let period = CGFloat.pi * StatusDot.ringDiameter / CGFloat(AgentSweepMark.dashCount)
-        let knit = AgentSweepMark.dash(split: 0)
+        let dash = AgentSweepMark.dash
+        XCTAssertEqual(dash.count, 2, "one drawn length, one gap length")
         XCTAssertEqual(
-            Double((knit[0] + knit[2]) / period), Double(AgentSweepMark.dashFill), accuracy: 1e-9,
+            Double((dash[0] + dash[1]) * CGFloat(AgentSweepMark.dashCount)), Double(circumference),
+            accuracy: 1e-9, "whole periods around the ring — no seam where the stroke closes",
+        )
+        XCTAssertGreaterThan(dash[0], dash[1], "drawn beats gap — the ring reads as a circle")
+        XCTAssertEqual(
+            Double(dash[0] / (dash[0] + dash[1])), Double(AgentSweepMark.dashFill), accuracy: 1e-9,
             "the fill is what it says it is",
         )
     }
@@ -455,13 +370,9 @@ final class StatusDotTests: XCTestCase {
             "working gathers the resting ring's dashes into FEWER, longer arcs — more ink, at work",
         )
         XCTAssertGreaterThan(AgentSweepMark.dashCount, 3, "fewer arcs than this reads as a broken ring")
-        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably. Frozen means
-        // fully KNIT — the parting is the one thing Reduce Motion must not leave half-done, because a
-        // half-parted ring frozen forever is just a ring with an odd rhythm.
-        XCTAssertEqual(AgentSweepMark.stillSplit, 0, "a frozen working ring is fully knit")
-        let arc = AgentSweepMark.dash(split: AgentSweepMark.stillSplit)
+        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably.
         XCTAssertGreaterThan(
-            arc[0] + arc[1] + arc[2], StatusDot.ringDash[0],
+            AgentSweepMark.dash[0], StatusDot.ringDash[0],
             "each working arc must be longer than a resting dash, or the cuts read alike",
         )
     }
@@ -528,9 +439,9 @@ final class StatusDotTests: XCTestCase {
     /// REDUCE MOTION freezes both animated marks on a REPRESENTATIVE frame rather than hiding them:
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
-        XCTAssertTrue(
-            AgentSweepMark.stillSplit == 0,
-            "a frozen working ring is fully knit — five long arcs still read as 'not at rest'",
+        XCTAssertGreaterThan(
+            AgentSweepMark.dash[0], StatusDot.ringDash[0],
+            "a frozen working ring still reads as 'not at rest' — its arcs are the longer cut",
         )
         XCTAssertEqual(
             CommandSpinner.stillStep, 0,

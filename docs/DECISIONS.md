@@ -3149,6 +3149,19 @@ render sheet makes plain rather than a stylistic one. Six cuts were drawn at tru
   evenly-spaced short dashes IS the resting ring's cut, which the working mark may not borrow. Reduce
   Motion therefore freezes it fully KNIT (five long arcs), the frame furthest from the resting ring.
 
+**Follow-up 7 — split-and-knit is OUT: one mark, one idea.** *"nhìn cái trò chia ra hơi quê"*. The
+parting worked exactly as specified — continuous, eased, seam-free, bounded — and still read as a
+gimmick, which is the useful part of the finding: **at 12pt a mark can carry ONE idea, and "turning" is
+the one that means "working".** Every second rhythm tried on this mark has now failed the same way (the
+arc-length breath was subliminal, the parting was corny), so the ring is a fixed dash pattern with a
+single eased rotation, and `dashFill` is a constant rather than a function of time.
+
+⚠️ Kept for the next round rather than argued in prose: a **motion study rig** renders nine candidate
+dash-ring motions (turn, chase, runner, pendulum, wave, gyro, breathe, conveyor, inchworm) as a frame
+sequence → animated GIF, because four cuts of this mark have now been rejected on MOTION, which no
+still can settle. The lesson those four share: judge a 12pt animated mark by watching it at 12pt, not
+by reasoning about it magnified.
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes
