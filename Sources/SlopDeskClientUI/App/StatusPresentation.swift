@@ -71,11 +71,12 @@ enum StatusPresentation {
 
     /// A `needsAttention` state's HUE on the hue budget: amber = act-now (a question waits), red
     /// = broken, green = unread-done. `nil` for every non-attention kind. The sidebar row's TITLE
-    /// never recolours — this ink is worn by the row's trailing ring mark
-    /// (``statusDot(working:badge:)``) and the collapsed-group roll-up count
-    /// (``attentionRollupInk(_:)``), so every surface names one
-    /// pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
-    /// in the rail animates).
+    /// never recolours — this ink is worn by the row's trailing mark
+    /// (``statusDot(working:badge:agentIdle:)``, where the SHAPE names the state and this hue rides
+    /// along) and the collapsed-group roll-up count (``attentionRollupInk(_:)``), so every surface
+    /// names one pane's state in the same hue. Every attention mark holds STILL: motion in the rail
+    /// is reserved for the two IN-FLIGHT marks (the working pulse, a command's slot spinner) —
+    /// nothing blinks to say "unread".
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
         // Awaiting input — act-now amber; red stays reserved for broken.
@@ -87,8 +88,8 @@ enum StatusPresentation {
         // badge tokens).
         case .completed,
              .finished: Slate.Status.ok
-        // Running and privilege never recolour the title: busy is the trailing ring's job
-        // (``statusDot(working:badge:)``), and the privilege markers are slot text (``tabBadge(_:)``).
+        // Running and privilege never recolour the title: activity is the mark column's / the slot
+        // spinner's job, and the privilege markers are slot text (``tabBadge(_:)``).
         case .caffeinate,
              .commandBusy,
              .commandRunning,
@@ -112,17 +113,18 @@ enum StatusPresentation {
         return nil
     }
 
-    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: ONE shape (the static dashed
-    /// ring, its `CircleDashedIcon`) and the HUE names the state, T3 Code's own status-hue
-    /// convention. The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working`
-    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads
-    /// identically); a RESTING CODE AGENT rings on the muted secondary ink (present, spending no
-    /// hue); the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
-    /// finish, amber question, red failure), the mark's hue being that state's WHOLE rendering
-    /// now that the title stays neutral. A plain running COMMAND rings NOTHING — the mark is the
-    /// AGENT's column, and a muted ring on every `npm run dev` row spent it on the one thing the
-    /// row's own running title already says. Bare shells and privilege-only rows mount nothing
-    /// either — the resting rail stays bare.
+    /// The row's trailing STATUS MARK. Round 19 (otty parity) makes the SHAPE the grammar and lets
+    /// the hue ride along: a WORKING AGENT breathes the accent PULSE (keyed on the RAW `.working`
+    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads identically);
+    /// a RESTING CODE AGENT keeps the original static dashed RING on the muted secondary ink
+    /// (present, spending no hue); the attention states wear otty's own pictograms on their
+    /// attention ink (``attentionInk(_:)`` — the raised HAND for a question, the filled green DOT
+    /// for an unread finish, the red TRIANGLE for a failure). A plain running COMMAND mounts
+    /// NOTHING here — this column is the AGENT's, and a busy command's motion is the
+    /// ``SpokeSpinner`` that takes the process-label slot instead
+    /// (``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), so no row ever
+    /// carries two activity marks. Bare shells and privilege-only rows mount nothing either — the
+    /// resting rail stays bare.
     ///
     /// - Parameter agentIdle: whether a code agent is present in the pane and AT REST
     ///   (`ClaudeStatus.idle`) — the muted ring's ONLY source. The `claude` process holds the
@@ -132,18 +134,19 @@ enum StatusPresentation {
     static func statusDot(
         working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false,
     ) -> StatusDotStyle? {
-        if working { return StatusDotStyle(ink: Slate.State.accent) }
+        if working { return StatusDotStyle(shape: .pulse, ink: Slate.State.accent) }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
-        let resting = agentIdle ? StatusDotStyle(ink: Slate.Text.secondary) : nil
+        let resting = agentIdle ? StatusDotStyle(shape: .ring, ink: Slate.Text.secondary) : nil
         guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(ink: Slate.State.accent)
+        case .running: return StatusDotStyle(shape: .pulse, ink: Slate.State.accent)
         case .awaitingInput,
              .completed,
              .error,
-             .finished: return attentionInk(badge).map(StatusDotStyle.init)
+             .finished:
+            return attentionInk(badge).map { StatusDotStyle(shape: attentionShape(badge), ink: $0) }
         // A busy shell says nothing of its own (the row's title already names the command) and the
         // privilege modifiers are slot text, not lifecycle — both fall through to whether a code
         // agent is resting in this pane.
@@ -151,6 +154,28 @@ enum StatusPresentation {
              .commandBusy,
              .commandRunning,
              .sudo: return resting
+        }
+    }
+
+    /// The PICTOGRAM an attention state wears in the mark column — otty's own vocabulary, so the
+    /// shape is readable before the hue is (and stays readable to a colour-blind eye): the raised
+    /// HAND for a question waiting on you, the filled DOT for an unread finish (fresh flash and
+    /// settled alike — the split is semantic, never visual), the warning TRIANGLE for a failure.
+    /// Non-attention kinds have no pictogram of their own; the resting ring / working pulse are the
+    /// resolver's own branches, so this map is only ever reached for the four attention kinds.
+    static func attentionShape(_ kind: TabBadgeKind) -> StatusMarkShape {
+        switch kind {
+        case .awaitingInput: .hand
+        case .error: .alert
+        case .completed,
+             .finished: .dot
+        // Unreachable through ``statusDot(working:badge:agentIdle:)`` (the busy tiers mount no mark
+        // and the privilege markers are slot text) — the resting ring is the honest default.
+        case .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .running,
+             .sudo: .ring
         }
     }
 

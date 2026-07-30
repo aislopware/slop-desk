@@ -938,6 +938,12 @@ private struct SidebarLiveRow: View {
             // empty slot reads as missing data. Only an AGENT row leaves it empty: the `✳` marker
             // and the mark already say it, and any trailing text there just repeats them.
             processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
+            // …and while a real command is actually running, that label yields the slot to the
+            // spinner (otty's own row wheel): a still process name reads the same whether the
+            // command is live or long finished, motion doesn't.
+            commandRunning: RailRowsBuilder.showsCommandSpinner(
+                badge: chrome.badge, isAgent: agent, processLabel: chrome.processLabel,
+            ),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
@@ -983,12 +989,13 @@ private struct IOSSidebarLiveRow: View {
                 for: row.id, processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
             )
             : nil
+        let agent = RailRowsBuilder.isAgentSession(
+            status: chrome.status, processLabel: chrome.processLabel,
+        )
         let shownTitle = RailRowsBuilder.liveRowTitle(
             structuralTitle: row.title,
             userRenamed: store.tree.activeSession?.specs[row.id]?.userRenamed == true,
-            isAgent: RailRowsBuilder.isAgentSession(
-                status: chrome.status, processLabel: chrome.processLabel,
-            ),
+            isAgent: agent,
             intent: store.paneAgentIntent[row.id],
             runningCommand: runningCommand,
             programTitle: RailRowsBuilder.strippedProgramTitle(store.liveProgramTitle(for: row.id)),
@@ -1035,9 +1042,16 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            // Only a privilege marker mounts trailing TEXT — lifecycle is the ring mark's hue.
+            // Only a privilege marker mounts trailing TEXT — every lifecycle state is a mark.
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
+            }
+            // A live plain command spins here (the macOS row's slot spinner, same gate) — this row
+            // carries no process label, so the wheel is the only thing that says "still running".
+            if RailRowsBuilder.showsCommandSpinner(
+                badge: chrome.badge, isAgent: agent, processLabel: chrome.processLabel,
+            ) {
+                SpokeSpinner()
             }
             // The same trailing status mark as the macOS row (the T3 Code port) — rightmost, so
             // state reads down one fixed column on iOS too.

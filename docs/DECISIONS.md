@@ -2922,6 +2922,68 @@ No migration, per the standing rule: a persisted `"paper"` / `"dark"` no longer 
 `ThemeChoice`, so the whole `AppearancePreferences` blob decode-fails to its all-`nil` default and the
 app follows the OS onto Monokai Pro Classic / Classic Light. Nothing to write, nothing to version.
 
+### Round 19 — the shape becomes the grammar, and two marks are allowed to move (2026-07-30)
+
+Rounds 9–10's twin verdicts — ONE shape, hue is the whole grammar, and *nothing in the rail
+animates* — are reversed BY REQUEST: the shipped rail read "tĩnh lặng và đơn điệu quá" (too still,
+too samey). Four dashed rings differing only in hue is a legend you have to learn; and with motion
+banned outright, a row that was *working right now* looked exactly like a row that had finished an
+hour ago apart from its tint. The reference is otty's own sidebar, which spends a distinct
+pictogram per state and mounts a real spinner while a command runs.
+
+So the mark column keeps its fixed footprint and its one-mark-per-row rule, and swaps the alphabet:
+
+| state | mark | ink |
+|---|---|---|
+| agent working | the breathing asterisk `· ✢ ✳ ✶ ✻ ✽` (0.15 s/frame, palindrome) | accent |
+| agent at rest | the round-8 static dashed ring — UNCHANGED | muted secondary |
+| agent blocked | `hand.raised` — otty's "answer me" hand | amber |
+| agent done / unread finish | the filled dot (otty's `circlebadge.fill`) | green |
+| failure | `exclamationmark.triangle.fill` (otty's own) | red |
+| plain running command | **not in this column** — see below | — |
+
+Motion is now permitted, but under a rule narrow enough to keep the round-9 lesson: **a mark may
+move only while something is genuinely in flight, and only two marks qualify.** A settled rail is
+still perfectly motionless — nothing pulses to attract the eye, nothing blinks to say "unread"
+(the finish is a still dot; the mail-unread weight bump on the title survives untouched).
+
+The working pulse is not a new spinner: it reads its frames from the pulse `StatusGlyph` has
+spoken on the iOS toolbar and the Peek & Reply header since MERIDIAN. The definition MOVED to
+`StatusDot.pulseFrames` and `StatusGlyph` now reads from there — one breath, so the rail and a
+compact header can never disagree about one pane. Frame-stepped off a fixed wall-clock epoch, so
+every spinning row steps in unison and a re-render lands mid-cycle instead of restarting it.
+
+**The running command's spinner takes the SLOT, not the mark column.** otty's `TabsPanelRowView`
+mounts an `NSProgressIndicator` where the row's right-hand shell label sits, and that is the shape
+of the fix: while a real command runs, the still process name (`swift`) — which looked identical
+whether the command was live or had exited twenty minutes ago — yields to a drawn eight-spoke
+wheel with a comet tail (0.1 s/spoke, one revolution in 0.8 s). Drawn rather than `ProgressView`
+so the ink is a theme token, the footprint is pinned to the mark column's, and the phase comes off
+the same epoch the pulse uses. The command line itself is unchanged in the tooltip, and the row
+title still upgrades to the running command wherever it already did.
+
+Three exclusions on that spinner, each load-bearing:
+
+- **the busy-badge tier is the reveal gate.** No new threshold: the spinner keys on
+  `commandBusy`/`commandRunning`, which `WorkspaceStore.paneShowsBusyDot` already delays by the
+  "Busy reveal delay" (default 1 s), so a fast `ls` never flashes a wheel.
+- **an AGENT pane never spins.** `claude` holds the shell's OSC-133 block open for its whole
+  interactive lifetime, so `isBusy` stays true for HOURS — a naive "busy ⇒ spin" would leave every
+  idle agent row spinning forever. This is the same trap round 14 hit from the other side (the
+  muted ring belongs to the agent, not to every busy shell), and it is why the gate takes
+  `isAgent` rather than reading the badge alone.
+- **the shell is not a command.** A busy pane fronted by a bare login shell keeps its label, as
+  does a pane whose foreground process the host has not reported: with nothing to name, there is
+  nothing to claim is running.
+
+`accessibilityReduceMotion` freezes both moving marks rather than hiding them — the pulse on `✳`
+(the mid-swell frame; `·` would read as a resting dot) and the wheel on its fully-lit step. A
+state that only exists as an animation would be invisible to a user who asked for stillness.
+
+`StatusDotStyle` grows from an ink to a (shape, ink) pair; `attentionInk` is untouched and still
+shared with the collapsed-group roll-up count. Client-only, no wire change, no new setting — the
+existing agent/command badge gates keep governing what the row is allowed to say.
+
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 
 - ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều

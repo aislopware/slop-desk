@@ -72,12 +72,15 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
-    /// Renders `SlateTabRow` in each fused badge state — the neutral title beside the trailing
-    /// STATUS MARK column (one dashed ring: accent for the agent tier, muted for a busy command,
-    /// green/amber/red for the attention states, nothing at rest) plus the resting shell-label slot
-    /// and the active white card — the visual lock for the sidebar row. SAME `ImageRenderer` opt-in idiom
+    /// Renders `SlateTabRow` in each fused badge state — the neutral title beside the trailing MARK
+    /// column, one shape per state (the accent pulse for a working agent, the muted dashed ring for
+    /// one at rest, the raised hand / filled green dot / red triangle for the attention states,
+    /// nothing at rest) plus the shell-label slot, a live command's slot SPINNER, and the active
+    /// white card — the visual lock for the sidebar row. SAME `ImageRenderer` opt-in idiom
     /// as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where
-    /// it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
+    /// it writes `tab-row-badges.png`. The two ANIMATED marks render whatever frame the wall clock
+    /// is on when the snapshot is taken — the image locks layout and ink, never a phase.
+    /// NO video/Metal — a badge is pure SwiftUI.
     @MainActor
     func testRenderTabRowBadges() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -89,6 +92,24 @@ final class SlateSnapshotRender: XCTestCase {
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
             badgeRow("abner@MacBook-AB:…", badge: .finished)
+            // A resting agent's muted ring, and a live command's spinner in the label's own slot.
+            SlateTabRow(
+                title: "Claude Code",
+                active: false,
+                agentMarker: true,
+                agentIdle: true,
+                onSelect: {},
+                onClose: {},
+            )
+            SlateTabRow(
+                title: "swift build",
+                active: false,
+                badge: .commandBusy,
+                processLabel: "swift",
+                commandRunning: true,
+                onSelect: {},
+                onClose: {},
+            )
             badgeRow("swift build", badge: .commandBusy)
             SlateTabRow(
                 title: "abner@MacBook-AB:…",
@@ -101,7 +122,7 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(8)
         .frame(width: 260)
         .background(Slate.Surface.ground)
-        try render(panel, size: CGSize(width: 260, height: 260), to: dir, named: "tab-row-badges.png")
+        try render(panel, size: CGSize(width: 260, height: 320), to: dir, named: "tab-row-badges.png")
     }
 
     /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
@@ -150,10 +171,11 @@ final class SlateSnapshotRender: XCTestCase {
                 title: "Terminal", active: false, badge: .finished,
                 onSelect: {}, onClose: {},
             )
-            // A busy SHELL row: the command title stands still beside the muted dashed ring.
+            // A busy COMMAND row: the command titles the row and the slot spins where its process
+            // label would otherwise stand still.
             SlateTabRow(
                 title: "swift build", active: false, badge: .commandBusy, processLabel: "swift",
-                onSelect: {}, onClose: {},
+                commandRunning: true, onSelect: {}, onClose: {},
             )
             SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
             // Collapsed with the store's rows threaded in: one hides a needs-permission pane, so

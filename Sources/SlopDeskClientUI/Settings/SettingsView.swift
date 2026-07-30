@@ -695,7 +695,7 @@ private struct ShellSettingsTab: View {
                 isOn: $tabBadgeOnCommandAwaitInput,
             )
             // The busy reveal delay (`WorkspaceStore.paneShowsBusyDot`): how long a command must run
-            // before the row shows it as busy (the trailing ring + running-command title) —
+            // before the row shows it as busy (the slot spinner + running-command title) —
             // a fast `ls` never flashes the rail. The stops are the three real intentions; `Instant`
             // (0s) names the behaviour rather than showing a delay that happens to be short.
             SettingsSliderRow(

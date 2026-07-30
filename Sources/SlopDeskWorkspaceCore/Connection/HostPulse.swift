@@ -4,8 +4,9 @@ import SlopDeskProtocol
 /// The DISPLAYED host pulse — what the sidebar footer's second line actually says, which is not
 /// quite what the last `hostVitals` sample said.
 ///
-/// The rail has no animation by design (docs/DECISIONS.md, the badge saga): nothing there moves
-/// unless the movement carries meaning. A raw CPU percent polled every few seconds fails that test —
+/// Nothing in the rail moves unless the movement carries meaning (docs/DECISIONS.md, the badge
+/// saga — round 19 spends motion on exactly two marks, both of which mean "in flight", and the
+/// footer is not one of them). A raw CPU percent polled every few seconds fails that test —
 /// it twitches 31 → 29 → 33 on an idle machine and the eye is pulled to the corner for nothing. So a
 /// new sample only DISPLACES the shown value once it differs by ``deadband`` points; below that the
 /// row holds still. The reading stays honest (no smoothing, no lag — the shown number is always a
