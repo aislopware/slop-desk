@@ -1,8 +1,9 @@
 // StatusDotTests — pins the trailing status MARK: since round 19 the shape is the grammar and the
 // hue rides along, so each state's pin is a (shape, ink) PAIR. The agent's own states are ONE
-// CIRCLE and the pins say so: a resting code agent keeps the static dashed RING (muted), a working
-// one CLOSES that ring and turns it (accent SWEEP, keyed on the same raw-working status liveness
-// uses, outranking every badge), an unread finish fills it as the green DOT; the two states you must
+// CIRCLE and the pins say so: a resting code agent keeps the static finely dashed RING (muted), a
+// working one GATHERS those dashes into five longer arcs and turns them (accent SWEEP, keyed on the
+// same raw-working status liveness uses, outranking every badge), an unread finish fills the circle in
+// as the green DOT; the two states you must
 // act on stay in the SAME circle with a glyph inside — `?` for a question, `!` for a failure. A
 // plain running command mounts nothing HERE (its wheel replaces the process label —
 // ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), and bare idle /
@@ -83,9 +84,9 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(shapes.count, 5, "working, resting, question, alert, dot all resolved")
     }
 
-    /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue,
-    /// distinct from the working ring's closed sweep and from every attention pictogram — the SAME
-    /// circle, spending its ink on eight small gaps instead of one travelling gap. It does NOT move.
+    /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue, distinct
+    /// from the working ring's five turning arcs and from every attention pictogram — the SAME circle,
+    /// cut into eight fine dashes instead of five long ones. It does NOT move.
     @MainActor
     func testRestingAgentRingsMutedAndStatic() {
         // The claude pane at its prompt keeps the shell busy for its whole lifetime, so it
@@ -269,25 +270,29 @@ final class StatusDotTests: XCTestCase {
 
     /// ⚠️ The agent's ring turns CONTINUOUSLY and NOT LINEARLY — the two complaints that killed the
     /// earlier cuts. Discrete hops read as plastic (a hop is the mechanism showing through) and so does
-    /// a constant rate, so the angle leads and lags an even sweep twice per revolution. Pinned:
-    /// strictly increasing when sampled far finer than any frame (a plateau IS a hop), wrapping exactly
-    /// once per revolution, and measurably OFF a straight line.
+    /// a constant rate, so the angle leads and lags an even sweep once per DASH. Pinned: strictly
+    /// increasing when sampled far finer than any frame (a plateau IS a hop), wrapping exactly once per
+    /// revolution, and measurably OFF a straight line.
     func testAgentRingTurnsContinuouslyEasedAndWrapsOncePerRevolution() {
         let revolution = AgentSweepMark.revolution
+        let dashes = Double(AgentSweepMark.dashCount)
         XCTAssertEqual(AgentSweepMark.turns(at: 0), 0, accuracy: 1e-12, "the epoch is 0 turns")
         XCTAssertEqual(
             AgentSweepMark.turns(at: revolution), 0, accuracy: 1e-12, "one period wraps to 0",
         )
-        // NOT linear — sampled at an EIGHTH, where the ease is at full lead. (The quarter points are
-        // exactly on the straight line: `sin(4π·t)` crosses zero at every quarter turn, so testing
-        // there would prove the opposite of what it looks like it proves.)
+        // NOT linear — sampled a QUARTER of a dash period in, where the ease is at full lead. ⚠️ The
+        // ease crosses zero at every HALF dash period (`sin(2πN·t)`), so sampling on one of those
+        // points would sit exactly on the straight line and prove the opposite of what it looks like
+        // it proves. The sample must be an odd quarter.
+        let fullLead = revolution / (4 * dashes)
         XCTAssertEqual(
-            AgentSweepMark.turns(at: revolution / 8), 0.125 + AgentSweepMark.swing, accuracy: 1e-9,
-            "an eighth of the period must LEAD an eighth of a turn by the full swing",
+            AgentSweepMark.turns(at: fullLead), 1 / (4 * dashes) + AgentSweepMark.swing,
+            accuracy: 1e-9,
+            "a quarter dash period in, the ring must LEAD an even sweep by the full swing",
         )
         XCTAssertGreaterThan(
-            abs(AgentSweepMark.turns(at: revolution / 8) - 0.125), 0.02,
-            "a constant rate is the plastic tell — the sweep must lead here",
+            abs(AgentSweepMark.turns(at: fullLead) - 1 / (4 * dashes)), 0.01,
+            "a constant rate is the plastic tell — the ring must lead here",
         )
         // Sampling 400× finer than a 60fps frame must still advance EVERY time: monotonic, no stall,
         // never backwards. This is what `swingCeiling` protects.
@@ -312,12 +317,16 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// ⚠️ The ease amplitude is bounded by ARITHMETIC, not taste: the angle is `t + swing·sin(4πt)`,
-    /// whose derivative is `1 + 4π·swing·cos(4πt)` — so at or above `1/4π` the arc STALLS and then runs
-    /// BACKWARDS once a cycle, which reads as broken rather than eased. Pinned so a later "make it
-    /// bouncier" cannot cross the line unnoticed.
+    /// ⚠️ The ease amplitude is bounded by ARITHMETIC, not taste: the angle is `t + swing·sin(2πN·t)`,
+    /// whose derivative is `1 + 2πN·swing·cos(2πN·t)` — so at or above `1/2πN` the ring STALLS and then
+    /// runs BACKWARDS once a cycle, which reads as broken rather than eased. The ceiling therefore
+    /// TIGHTENS as the dash count rises; pinned against ``AgentSweepMark/dashCount`` so a later
+    /// "make it bouncier" (or a change of cut) cannot cross the line unnoticed.
     func testEaseAmplitudeStaysUnderTheStallCeiling() {
-        XCTAssertEqual(AgentSweepMark.swingCeiling, 1 / (4 * .pi), accuracy: 1e-12)
+        XCTAssertEqual(
+            AgentSweepMark.swingCeiling,
+            1 / (2 * .pi * Double(AgentSweepMark.dashCount)), accuracy: 1e-12,
+        )
         XCTAssertLessThan(
             AgentSweepMark.swing, AgentSweepMark.swingCeiling,
             "above the ceiling the sweep reverses — broken, not eased",
@@ -325,21 +334,22 @@ final class StatusDotTests: XCTestCase {
         XCTAssertGreaterThan(AgentSweepMark.swing, 0, "zero swing is the linear look that was rejected")
     }
 
-    /// The arc's LENGTH breathes on its own slow sine, and the two cycles are deliberately
+    /// The dashes' LENGTH breathes on its own slow sine, and the two cycles are deliberately
     /// incommensurate — so the figure never repeats a silhouette and the motion never reads as a loop.
-    /// The length stays inside its range at every instant (a closed ring shows nothing; a stub reads
-    /// as a dot).
-    func testAgentArcBreathesInsideItsRangeOnAnIncommensurateCycle() {
-        let range = AgentSweepMark.arcRange
-        XCTAssertLessThan(range.upperBound, 1, "never closes — a closed ring has nothing to see")
-        XCTAssertGreaterThan(range.lowerBound, 0.2, "never a stub — that reads as a dot, not an arc")
+    /// The fill stays inside its range at every instant: at 8pt a high fill is a solid ring with
+    /// notches in it, and a low one reads as a dotted line rather than a circle (both measured on the
+    /// render sheet, not guessed).
+    func testAgentDashesBreatheInsideTheirRangeOnAnIncommensurateCycle() {
+        let range = AgentSweepMark.fillRange
+        XCTAssertLessThan(range.upperBound, 0.75, "a fuller ring reads as solid with notches at 8pt")
+        XCTAssertGreaterThan(range.lowerBound, 0.35, "a thinner one reads as dots, not a circle")
         for sample in 0...400 {
             let time = Double(sample) * AgentSweepMark.breath / 100
-            let length = AgentSweepMark.length(at: time)
-            XCTAssertTrue(range.contains(length), "sample \(sample) escaped the arc range")
+            let fill = AgentSweepMark.fill(at: time)
+            XCTAssertTrue(range.contains(fill), "sample \(sample) escaped the fill range")
         }
         // Both extremes are actually reached over a breath — the swing is real, not a rounding wobble.
-        let samples = (0...200).map { AgentSweepMark.length(at: Double($0) * AgentSweepMark.breath / 200) }
+        let samples = (0...200).map { AgentSweepMark.fill(at: Double($0) * AgentSweepMark.breath / 200) }
         XCTAssertEqual(samples.min() ?? 0, range.lowerBound, accuracy: 1e-3, "the breath bottoms out")
         XCTAssertEqual(samples.max() ?? 0, range.upperBound, accuracy: 1e-3, "…and tops out")
         let ratio = AgentSweepMark.breath / AgentSweepMark.revolution
@@ -348,18 +358,62 @@ final class StatusDotTests: XCTestCase {
             "breath must NOT be a multiple of the revolution, or the motion loops visibly",
         )
         XCTAssertTrue(
-            AgentSweepMark.arcRange.contains(AgentSweepMark.stillArc),
-            "the Reduce-Motion arc is one the moving figure actually passes through",
+            AgentSweepMark.fillRange.contains(AgentSweepMark.stillFill),
+            "the Reduce-Motion frame is one the moving figure actually passes through",
         )
     }
 
-    /// The working ring is the RESTING ring's own circle: same diameter, same stroke weight, an arc
-    /// travelling instead of eight static dashes. That shared geometry is what makes the agent's
+    /// The working ring is the RESTING ring's own circle: same diameter, same stroke weight, its dashes
+    /// gathered into FEWER, longer arcs and turning. That shared geometry is what makes the agent's
     /// states read as a progression instead of a legend, so both numbers are pinned — a drift in
-    /// either splits the family in two.
+    /// either splits the family in two. The working ring's dashes tile the circumference exactly at
+    /// EVERY breath frame (whole periods, no seam where the stroke closes).
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
+        let circumference = CGFloat.pi * StatusDot.ringDiameter
+        for fill in [
+            AgentSweepMark.fillRange.lowerBound,
+            AgentSweepMark.stillFill,
+            AgentSweepMark.fillRange.upperBound,
+        ] {
+            let dash = AgentSweepMark.dash(fill: fill)
+            XCTAssertEqual(dash.count, 2, "one drawn length, one gap length")
+            XCTAssertEqual(
+                Double((dash[0] + dash[1]) * CGFloat(AgentSweepMark.dashCount)),
+                Double(circumference), accuracy: 1e-9,
+                "whole periods around the ring at fill \(fill) — the breath may not open a seam",
+            )
+            // Ink never loses to gap at ANY breath frame — at the bottom of the breath they are exactly
+            // even, and that is the floor: past it the mark reads as a dotted line, not a circle.
+            XCTAssertGreaterThanOrEqual(
+                dash[0], dash[1], "at fill \(fill) the ring would read as gaps with dashes in them",
+            )
+        }
+        XCTAssertGreaterThan(
+            AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[0],
+            AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[1],
+            "the frozen frame is one where ink clearly beats gap",
+        )
+    }
+
+    /// ⚠️ The working ring is legible when FROZEN, not only when moving: its cut differs from the
+    /// resting ring's, so Reduce Motion — and a colour-blind eye, which sees neither the accent nor the
+    /// muted grey as itself — still reads two distinct marks. This is the pin that makes the dashed
+    /// working ring safe: identical dashes turning would have collapsed to "same mark, different hue"
+    /// the moment the system asked for stillness.
+    func testFrozenWorkingRingStillDiffersFromTheRestingRing() {
+        XCTAssertLessThan(
+            AgentSweepMark.dashCount, StatusDot.ringDashCount,
+            "working gathers the resting ring's dashes into FEWER, longer arcs — more ink, at work",
+        )
+        XCTAssertGreaterThan(AgentSweepMark.dashCount, 3, "fewer arcs than this reads as a broken ring")
+        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably.
+        let working = AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[0]
+        XCTAssertGreaterThan(
+            working, StatusDot.ringDash[0],
+            "each working arc must be longer than a resting dash, or the cuts read alike",
+        )
     }
 
     /// ⚠️ ONE diameter, no exceptions — including the finish DOT, which used to be drawn smaller on
@@ -425,8 +479,8 @@ final class StatusDotTests: XCTestCase {
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
         XCTAssertTrue(
-            AgentSweepMark.arcRange.contains(AgentSweepMark.stillArc),
-            "a frozen working ring holds a real arc — it still reads as 'not at rest'",
+            AgentSweepMark.fillRange.contains(AgentSweepMark.stillFill),
+            "a frozen working ring holds a real breath frame — it still reads as 'not at rest'",
         )
         XCTAssertEqual(
             CommandSpinner.stillStep, 0,

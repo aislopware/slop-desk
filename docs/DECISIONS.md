@@ -3078,6 +3078,42 @@ findings from the same look, each with a mechanism behind it rather than a taste
    `?`/`!` point size is chosen by where its circle lands (≈0.8× the point size) rather than by type
    scale. All four pinned.
 
+**Follow-up 5 — the working ring is DASHED, and the whole gradient idea was the problem (user's
+proposal).** The eased comet arc was still rejected, and the suggestion that replaced it — *"để ring
+là các nét đứt rồi xoay xoay có đẹp và độc đáo hơn nét liền không"* — is right, for a reason the
+render sheet makes plain rather than a stylistic one. Six cuts were drawn at true size and at 8×:
+
+- ⚠️ **At 12pt, a gradient spends half its length being invisible.** That is what a comet IS — full ink
+  at the head, nothing at the tail — and it is why the arc looked good magnified and generic-to-muddy
+  at the size it actually ships. Every gradient cut on the sheet lost its faded half at 1×. The rule
+  that now covers this column: **flat ink and whole shapes at 12pt; gradients and detail are luxuries
+  of the zoomed-in view.** (Same shape as the round-19 lesson "one stroke scales down, detail does
+  not" — a third instance, so it is written as a rule now.)
+- ✅ **Dashes carry motion that a comet cannot at this size**: several small shapes crossing the ring
+  are legible even though each is barely 2pt long, and no single one has to fade to say "moving". It is
+  also not the arc-spinner every platform already ships, which is what "generic" meant.
+- ✅ **The cut is FIVE dashes, not the resting ring's eight.** Eight at 8pt reads as a nearly solid ring
+  (measured — the dashes stop separating), and identical dashes would have made the working mark the
+  resting mark in a different hue the moment Reduce Motion froze it. Five longer arcs is the same
+  circle carrying MORE INK while it works — a progression — and stays legible frozen and to a
+  colour-blind eye. Pinned: `dashCount` < `ringDashCount`, and each working arc longer than a resting
+  dash.
+- ✅ **The surge is per DASH, not per revolution.** What the eye tracks is one arc crossing into the
+  next slot, so the ease rides `sin(2πN·t)` and the stall ceiling TIGHTENS to `1/2πN` (0.0318 at five
+  dashes, vs `1/4π` for the one-per-half-turn cut) — `swing` = 0.020 gives 0.37×…1.63×. A surge per
+  revolution would read as a wobble with no visible cause. ⚠️ Test trap moves with it: the ease now
+  crosses zero every HALF dash period, so the "not linear" pin samples a QUARTER of one.
+- ✅ **Revolution is 3.6 s, read through the dashes**: one arc reaches the next slot in ~0.7 s. Spinning
+  the RING at that rate would strobe — with rotational symmetry every 1/5 turn, a 1 s revolution is
+  five visual cycles a second.
+- ✅ **The breath moved from the arc's LENGTH to the dashes' FILL** (0.5…0.7 of each period, still on the
+  incommensurate 2.3 s cycle): the arcs lengthen and shorten as they travel. Above ~0.75 the ring is
+  solid with notches in it; at 0.5 ink and gap are exactly even, and that is the floor. Pinned that the
+  dashes tile the circumference exactly at EVERY breath frame — a breath may not open a seam.
+- ✅ **Two problems deleted rather than fixed:** a dashed ring has no ends to cap (so no round-cap tail
+  dot, follow-up 4 №2) and no gradient seam to cross. `AngularGradient` and `lineCap` are gone from
+  this mark entirely.
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes
