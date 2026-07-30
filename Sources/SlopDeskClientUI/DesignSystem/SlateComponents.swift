@@ -20,8 +20,8 @@ import SwiftUI
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
 /// header). The sidebar rows speak the same states through their own mark column
 /// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) — a different alphabet for the
-/// resting/awaiting/done readings (ring, hand, dot), but the SAME breath for `working`: both read
-/// their frames from ``StatusDot/pulseFrames``, so the two surfaces can never disagree.
+/// resting/awaiting/done readings (ring, hand, dot), and a DRAWN twin of this same bloom for
+/// `working` (``AgentPulseMark``, on the shared ``AgentPulseMark/beat``).
 /// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
 /// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
 /// Pure SwiftUI text — no video/capture (hang-safety #6).
@@ -40,11 +40,24 @@ struct StatusGlyph: View {
     /// frames (or states) swap.
     static let box: CGFloat = 16
 
-    /// The agent spinner's frames + cadence — the ONE definition lives on ``StatusDot`` (the rail's
-    /// mark column breathes the same pulse since round 19), read through here so this surface and
-    /// the sidebar can never drift about one pane's `working`.
-    static let agentFrames = StatusDot.pulseFrames
-    static let agentBeat = StatusDot.pulseBeat
+    /// The agent spinner's frames — a dot budding into an asterisk and back (the AI-CLI loading
+    /// pulse). Cycled as hard swaps; the palindrome makes the loop breathe without easing.
+    ///
+    /// ⚠️ Every star carries `\u{FE0E}` (VARIATION SELECTOR-15, text presentation). Bare U+2733 `✳`
+    /// resolves to `AppleColorEmojiUI` on Apple platforms — a COLOUR emoji that ignores `tint` and
+    /// measures 16pt of advance where its Menlo siblings measure 6.62, so that one frame flashed a
+    /// coloured star and jumped this glyph's width mid-cycle (and it is the frame this instrument
+    /// rests on longest). Same trap ``SlateTabRow`` guards for the title's `✳` marker. `·` (U+00B7)
+    /// is the mono face's own glyph and needs nothing.
+    ///
+    /// The rail's mark column breathes the SAME bloom but DRAWN (``AgentPulseMark``) — a vector star
+    /// needs no font installed, which at 11pt in a 12pt box is worth more than sharing a constant.
+    static let agentFrames = [
+        "·", "✢\u{FE0E}", "✳\u{FE0E}", "✶\u{FE0E}", "✻\u{FE0E}",
+        "✽\u{FE0E}", "✻\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢\u{FE0E}",
+    ]
+    /// Seconds per frame — the pulse breathes rather than spins. The drawn twin uses the same beat.
+    static let agentBeat = AgentPulseMark.beat
 
     var body: some View {
         content

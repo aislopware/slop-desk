@@ -2984,30 +2984,44 @@ state that only exists as an animation would be invisible to a user who asked fo
 shared with the collapsed-group roll-up count. Client-only, no wire change, no new setting — the
 existing agent/command badge gates keep governing what the row is allowed to say.
 
-**Follow-up, same day — the wheel is deleted; the spinner is `| / - \`, and a colour-emoji frame
-comes out of the pulse.** On hardware the drawn wheel read as ugly, and the diagnosis is register:
-it was a piece of AppKit-shaped chrome parachuted into a column of mono metadata. The spinner now
-speaks the slot's own voice — `CommandSpinner`, the ASCII line sweep in the instrument face on the
-secondary ink, 4 frames × 0.12 s.
+**Follow-up, same day — BOTH animated marks become drawn geometry, and no typed spinner survives in
+the rail.** The AGENT's pulse read as ugly on hardware (the command wheel was never in question and
+is unchanged — a misread of "the running indicator" briefly swapped it for an ASCII line sweep; that
+detour is reverted). The verdict on the pulse was "drop the ASCII spinner, draw it instead so font
+errors can't happen", and chasing that is what turned up WHY it looked wrong — which had nothing to
+do with the design:
 
-Getting there ruled out braille, which is worth writing down because it is the obvious first
-instinct for a "CLI spinner" and it CANNOT work here. Neither `⠋⠙⠹…` nor the heavy `⣾⣽⣻…` survives:
-**no mono face we can count on carries U+2800…U+28FF.** The terminal's JetBrains Mono is not
-installed on every machine (it is absent on the dev Studio), so `Slate.Typeface.instrument` falls
-back to the system monospaced face — and CoreText then substitutes **AppleBraille**, an embossing
-font that draws sparse little circles, ignores the requested weight, and renders the heavy and light
-cycles almost identically and almost invisibly at 11pt. Two renders looked unchanged before the
-font check explained why. `CommandSpinner.frames` are ASCII precisely so no substitution can happen:
-all four are the font's own glyphs at the same 6.8pt advance, so the slot cannot jitter as they swap.
+**The instrument face is only JetBrains Mono when that font is installed, and it is not.** It is
+absent on the dev Studio, so `Slate.Typeface.instrument` falls back to the system monospaced face,
+and CoreText then substitutes per-character from wherever it likes. Measured:
 
-The same font check caught a REAL defect that predates this round. Bare U+2733 `✳` — a frame of the
-agent pulse — resolves to **AppleColorEmojiUI**: a colour emoji that ignores `foregroundStyle` and
-measures 16pt of advance where its Menlo siblings measure 6.62. So one frame in ten flashed a
-coloured star at the wrong width, and since `pulseStillFrame` is `✳`, that emoji was ALSO what every
-Reduce-Motion mount froze on. Every dingbat frame now carries `\u{FE0E}` (variation selector-15,
-text presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker. This
-fixes `StatusGlyph` on the iOS toolbar and the Peek & Reply header too, which have shipped the bare
-frames since MERIDIAN.
+| frames | resolves to | advance |
+|---|---|---|
+| `·` U+00B7 | the system mono's own | 6.80 |
+| `✢ ✶ ✻ ✽` | Menlo-Bold | 6.62 |
+| **`✳` U+2733** | **AppleColorEmojiUI** | **16.00** |
+| `⠋⠙⠹…` / `⣾⣽⣻…` | **AppleBraille** | — |
+
+So the "asterisk pulse" was never one typeface: nine frames of Menlo plus one **colour emoji** at
+2.4× the advance that ignores `foregroundStyle` — a coloured star that jumped the mark's width
+mid-cycle, and (since the Reduce-Motion frame was `✳`) the ONLY thing a Reduce-Motion user ever saw.
+Braille, tried as a replacement, is worse: **no mono face we can count on carries U+2800…U+28FF**, so
+both the light `⠋⠙⠹…` and the heavy `⣾⣽⣻…` land in **AppleBraille** — an embossing font that draws
+sparse little circles, ignores the requested weight, and renders the two cycles indistinguishable and
+nearly invisible at 11pt. Two renders looked unchanged before the font check explained why.
+
+Hence the rule this round ends on: **in the mark column, animation is VECTOR, never type.**
+`AgentPulseMark` draws the same `· ✢ ✳ ✶ ✻ ✽` bloom as six capsules budding out of a centre dot on a
+palindrome ramp (10 frames × 0.15 s, stepped not eased, centre dot always drawn so the cycle never
+blinks out); `CommandSpinner` keeps its eight-spoke comet wheel. Both step on one shared primitive,
+`StatusDot.frame(at:frames:beat:)`, off the fixed epoch — so they stay in unison and pinned as pure
+numbers. Exact size, exact ink, no font on the machine to get in the way.
+
+The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
+where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
+presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes
+the colour-emoji frame those two surfaces have shipped since MERIDIAN. It shares the BEAT with the
+drawn mark and nothing else; one constant is not worth a font dependency at 11pt.
 
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 

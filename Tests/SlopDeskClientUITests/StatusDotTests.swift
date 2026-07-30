@@ -1,14 +1,19 @@
 // StatusDotTests — pins the trailing status MARK: since round 19 the shape is the grammar and the
 // hue rides along, so each state's pin is a (shape, ink) PAIR. The ladder is the spec: a working
-// agent PULSES on the accent (the asterisk breath the app's own `StatusGlyph` already speaks, the
-// same raw-working key liveness uses, outranking every badge); a resting code agent keeps the
-// static dashed RING, muted; a blocked agent raises the HAND, a finished one holds the filled green
-// DOT, a failure the red TRIANGLE; a plain running command mounts nothing HERE (its spinner
-// replaces the process label — ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``),
-// and bare idle / privilege-only rows stay bare. The two ANIMATED marks are frame-stepped off a
-// fixed wall-clock epoch, so the cadence is pinned headlessly (unison across rows, no restart on
-// re-render). Headless VALUE assertions — no render. Ink identity is asserted SELF-consistently
-// against the presentation maps (never absolute colour values — `Color` equality is provider-fragile).
+// agent PULSES on the accent (the drawn asterisk bloom, keyed on the same raw-working status
+// liveness uses, outranking every badge); a resting code agent keeps the static dashed RING, muted;
+// a blocked agent raises the HAND, a finished one holds the filled green DOT, a failure the red
+// TRIANGLE; a plain running command mounts nothing HERE (its wheel replaces the process label —
+// ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), and bare idle /
+// privilege-only rows stay bare.
+//
+// ⚠️ Both ANIMATED marks are DRAWN GEOMETRY, never glyphs — pinned here as pure numbers (frame
+// counts, a bloom ramp, an opacity ramp, one shared beat) precisely because a TYPED spinner is at
+// the mercy of whichever font the machine substitutes. The typed twin that survives
+// (`StatusGlyph`, 16pt in a text row) keeps its own pin: every dingbat frame must carry `\u{FE0E}`
+// or it renders as a colour emoji. Headless VALUE assertions — no render. Ink identity is asserted
+// SELF-consistently against the presentation maps (never absolute colour values — `Color` equality
+// is provider-fragile).
 
 import SlopDeskWorkspaceCore
 import XCTest
@@ -219,65 +224,108 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    // MARK: Cadence (both animated marks)
+    // MARK: Cadence (both animated marks, both DRAWN)
 
-    /// The command spinner steps ONE braille frame per beat off the SAME fixed epoch the pulse uses
-    /// and wraps at the cycle's end — so every spinning row steps in unison and a re-render lands
-    /// mid-cycle instead of restarting it. Pure function of the date.
-    func testCommandSpinnerStepsOneFramePerBeatAndWraps() {
-        let frames = CommandSpinner.frames
-        let beat = CommandSpinner.beat
+    /// The shared cadence primitive: one frame per beat off a FIXED epoch, wrapping at the frame
+    /// count — so every animating row in the rail steps in unison, and a re-render at the same
+    /// instant lands on the same frame instead of restarting the cycle. Pure function of the date;
+    /// degenerate inputs resolve to frame 0 rather than trapping.
+    func testFrameSteppingAdvancesOnePerBeatAndWraps() {
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        for step in 0..<(frames.count * 2) {
-            let at = epoch.addingTimeInterval(Double(step) * beat + beat / 2)
-            XCTAssertEqual(
-                StatusGlyph.frame(at: at, frames: frames, beat: beat), frames[step % frames.count],
-                "beat \(step) lands on its own frame",
-            )
-        }
-        let mid = epoch.addingTimeInterval(3 * beat + beat / 3)
-        XCTAssertEqual(
-            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
-            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
-            "pure function of the instant — a re-render never restarts the cycle",
-        )
-    }
-
-    /// The command spinner sweeps a LINE and the agent pulse blooms a STAR: the two animated marks
-    /// share no frame, so adjacent rows can never read as the same activity. Every command frame is a
-    /// plain ASCII scalar — braille (`⠋⠙⠹…`, heavy or light) is BANNED here: no mono face we can
-    /// count on carries U+2800…U+28FF, so CoreText substitutes AppleBraille (an embossing font —
-    /// sparse circles, weight ignored, invisible at 11pt).
-    func testCommandSpinnerSweepsAsciiAndSharesNoFrameWithThePulse() {
-        XCTAssertTrue(
-            Set(CommandSpinner.frames).isDisjoint(with: Set(StatusDot.pulseFrames)),
-            "a sweeping command and a breathing agent never wear the same glyph",
-        )
-        for frame in CommandSpinner.frames {
-            guard frame.unicodeScalars.count == 1, let scalar = frame.unicodeScalars.first else {
-                XCTFail("\(frame) must be ONE scalar so the mono slot's advance is stable")
-                return
+        for frames in [AgentPulseMark.bloom.count, CommandSpinner.spokeCount] {
+            let beat = 0.1
+            for step in 0..<(frames * 2) {
+                let at = epoch.addingTimeInterval(Double(step) * beat + beat / 2)
+                XCTAssertEqual(
+                    StatusDot.frame(at: at, frames: frames, beat: beat), step % frames,
+                    "beat \(step) of \(frames) lands on its own frame",
+                )
             }
-            XCTAssertTrue(
-                scalar.isASCII,
-                "\(frame) must be ASCII — a substituted font draws its own idea of the glyph",
+            let mid = epoch.addingTimeInterval(3 * beat + beat / 3)
+            XCTAssertEqual(
+                StatusDot.frame(at: mid, frames: frames, beat: beat),
+                StatusDot.frame(at: mid, frames: frames, beat: beat),
+                "same instant ⇒ same frame — a re-mount can't skip",
             )
+            XCTAssertEqual(StatusDot.frame(at: epoch, frames: frames, beat: 0), 0, "beat 0 ⇒ frame 0")
         }
+        XCTAssertEqual(StatusDot.frame(at: epoch, frames: 0, beat: 0.1), 0, "no frames ⇒ frame 0")
+    }
+
+    /// ⚠️ BOTH animated marks are DRAWN, never typed — the load-bearing lesson of this round. The
+    /// instrument face is only JetBrains Mono when that font is installed (it is NOT, on every
+    /// machine), so a typed spinner gets SUBSTITUTED: braille lands in AppleBraille (embossing dots,
+    /// weight ignored, invisible at 11pt) and a bare dingbat star lands in AppleColorEmojiUI (a
+    /// colour emoji that ignores the ink and is 2.4× the advance). Vector geometry has no such
+    /// failure mode, so these two marks are pinned as PURE NUMBERS: a frame count and a beat, no
+    /// glyph table anywhere.
+    func testBothAnimatedMarksAreDrawnGeometryNotGlyphs() {
+        XCTAssertEqual(AgentPulseMark.bloom.count, 10, "ten bloom frames, stepped not eased")
+        XCTAssertEqual(CommandSpinner.spokeCount, 8, "the AppKit wheel's own spoke count")
+        XCTAssertGreaterThan(AgentPulseMark.beat, 0)
+        XCTAssertGreaterThan(CommandSpinner.beat, 0)
+    }
+
+    /// The bloom is a PALINDROME that opens on a bare centre dot and swells to full — so the star
+    /// breathes out and back without easing, and never blinks out (the centre dot is always drawn).
+    func testAgentBloomIsAPalindromeOpeningOnTheBudAndPeakingAtFull() {
+        let bloom = AgentPulseMark.bloom
+        XCTAssertEqual(bloom.first, 0, "frame 0 is the bud — the `·` the typed cycle opened on")
+        XCTAssertEqual(bloom.max(), 1, "the swell reaches full spoke length exactly once")
+        XCTAssertEqual(bloom[AgentPulseMark.stillFrame], 1, "Reduce Motion freezes at FULL bloom")
+        // Rising to the peak, falling after it — a breath, not a sawtooth.
+        let peak = AgentPulseMark.stillFrame
+        for i in 1...peak {
+            XCTAssertGreaterThan(bloom[i], bloom[i - 1], "frame \(i) still swelling")
+        }
+        for i in (peak + 1)..<bloom.count {
+            XCTAssertLessThan(bloom[i], bloom[i - 1], "frame \(i) settling back")
+        }
+        XCTAssertTrue(bloom.allSatisfy { $0 >= 0 && $0 <= 1 }, "a fraction of full length, always")
+    }
+
+    /// A spoke's opacity ramps DOWN with its distance behind the leading spoke — the AppKit wheel's
+    /// comet tail, so an otherwise symmetric wheel reads as having a direction. Never reaches zero:
+    /// the wheel stays a wheel rather than becoming a broken arc.
+    func testCommandWheelOpacityRampTrailsTheLeadingSpoke() {
+        let lead = CommandSpinner.opacity(spoke: 3, step: 3)
+        XCTAssertEqual(lead, 1, "the leading spoke is fully inked")
+        var previous = lead
+        for behind in 1..<CommandSpinner.spokeCount {
+            let value = CommandSpinner.opacity(
+                spoke: (3 - behind + CommandSpinner.spokeCount) % CommandSpinner.spokeCount,
+                step: 3,
+            )
+            XCTAssertLessThan(value, previous, "spoke \(behind) behind the lead fades further")
+            previous = value
+        }
+        XCTAssertGreaterThan(previous, 0, "even the tail spoke is visible — the ring never breaks")
+    }
+
+    /// REDUCE MOTION freezes both animated marks on a REPRESENTATIVE frame rather than hiding them:
+    /// the state must still be readable when the system asks for stillness.
+    func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
         XCTAssertEqual(
-            Set(CommandSpinner.frames).count, CommandSpinner.frames.count,
-            "a rotation repeats no frame — a repeat reads as a stall",
+            AgentPulseMark.bloom[AgentPulseMark.stillFrame], 1,
+            "a frozen pulse is the FULL star — the bud would read as a resting dot",
+        )
+        XCTAssertEqual(
+            CommandSpinner.stillStep, 0,
+            "a frozen wheel is the evenly-lit one, its comet tail at the top",
         )
     }
 
-    /// ⚠️ Every DINGBAT pulse frame (U+2700…U+27BF — the stars) pins TEXT presentation with
-    /// `\u{FE0E}`. Bare U+2733 `✳` resolves to `AppleColorEmojiUI` on Apple platforms: a colour emoji
-    /// that ignores `foregroundStyle` and measures 16pt of advance where its Menlo siblings measure
-    /// 6.62 — so that one frame flashed a coloured star and jumped the mark's width mid-cycle (and it
-    /// is exactly the frame Reduce Motion freezes on). The selector keeps the whole cycle one
-    /// typeface. `·` (U+00B7) is outside the block and is the mono face's own glyph.
-    func testEveryDingbatPulseFramePinsTextPresentation() {
+    // MARK: The typed twin (StatusGlyph — iOS toolbar / Peek & Reply header)
+
+    /// ⚠️ `StatusGlyph` still TYPES the same bloom (it is a 16pt glyph in a text row, not a 12pt mark),
+    /// so every DINGBAT frame there must pin TEXT presentation with `\u{FE0E}`. Bare U+2733 `✳`
+    /// resolves to `AppleColorEmojiUI`: a colour emoji that ignores `tint` and measures 16pt of advance
+    /// where its Menlo siblings measure 6.62 — one frame in ten flashed a coloured star at the wrong
+    /// width. `·` (U+00B7) is outside the block and is the mono face's own glyph. The rail's mark is
+    /// immune by construction (drawn), and shares only the BEAT.
+    func testEveryDingbatGlyphFramePinsTextPresentation() {
         let selector: Unicode.Scalar = "\u{FE0E}"
-        for frame in StatusDot.pulseFrames {
+        for frame in StatusGlyph.agentFrames {
             guard let first = frame.unicodeScalars.first else {
                 XCTFail("an empty frame renders nothing")
                 return
@@ -293,39 +341,12 @@ final class StatusDotTests: XCTestCase {
             )
         }
         XCTAssertEqual(
-            StatusDot.pulseStillFrame.unicodeScalars.last, selector,
-            "the Reduce-Motion frame is the emoji-prone ✳ — it needs the selector most",
-        )
-    }
-
-    /// The agent PULSE reuses the app's own `StatusGlyph` breath — the rail and the compact agent
-    /// surfaces (iOS toolbar, Peek & Reply header) must speak ONE vocabulary for `working`, so the
-    /// two can never disagree about the same pane.
-    func testAgentPulseReusesTheStatusGlyphBreath() {
-        XCTAssertEqual(
-            StatusDot.pulseFrames, StatusGlyph.agentFrames,
-            "one frame set for the agent's breath, everywhere",
+            StatusGlyph.agentBeat, AgentPulseMark.beat,
+            "typed twin and drawn mark breathe at ONE cadence",
         )
         XCTAssertEqual(
-            StatusDot.pulseBeat, StatusGlyph.agentBeat,
-            "one cadence for the agent's breath, everywhere",
-        )
-    }
-
-    /// REDUCE MOTION freezes both animated marks on a REPRESENTATIVE frame rather than hiding them:
-    /// the state must still be readable when the system asks for stillness.
-    func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
-        XCTAssertEqual(
-            StatusDot.pulseStillFrame, "✳\u{FE0E}",
-            "the frozen breath is the mid-swell asterisk (text-pinned), not the near-invisible dot",
-        )
-        XCTAssertTrue(
-            StatusDot.pulseFrames.contains(StatusDot.pulseStillFrame),
-            "the still frame is one of the real frames",
-        )
-        XCTAssertEqual(
-            CommandSpinner.stillFrame, CommandSpinner.frames[0],
-            "a frozen spinner holds a real frame — every line frame carries the same ink",
+            StatusGlyph.agentFrames.count, AgentPulseMark.bloom.count,
+            "…over the same number of frames, so the two surfaces breathe in step",
         )
     }
 }
