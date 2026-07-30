@@ -3360,10 +3360,24 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   lot — silently, yielding a path, just the wrong one. Pinned by `VectorIconTests`.
 - ⚠️ **Material duotone fills need EVEN-ODD.** The cup punches its inner wall with a second subpath
   wound the same way as the outer one; non-zero winding fills the hole in solid.
+- ⚠️⚠️ **The spinner's APPEARANCE has to be set on the control.** `ProgressView` came out dark grey
+  on a dark theme, and neither obvious fix moved it: `\.colorScheme` in the environment is SwiftUI's
+  own notion, and the WINDOW's `NSAppearance` is pinned by `SlopDeskSplitViewController` but
+  `.preferredColorScheme` does not cross into the column `NSHostingController`s (SlateDesign's
+  header says so for the tokens; it is just as true for system controls). Shipped as an
+  `NSViewRepresentable` over `NSProgressIndicator` with `appearance` set directly — which is the
+  class otty uses anyway. Measured after the fix: the fins land on the SAME grey as the rail's
+  muted marks, which is the register they belong in.
 - ⚠️⚠️ **`ImageRenderer` CANNOT rasterize the spinner** — it silently substitutes the yellow
-  unavailable-placeholder tile for any AppKit-backed view. `SlateSnapshotRender.renderHosted` draws
-  through an `NSHostingView` in a real offscreen `NSWindow` and `cacheDisplay(in:to:)` instead; the
-  WINDOW is not optional, because an `NSProgressIndicator` outside one never starts animating.
+  unavailable-placeholder tile for any AppKit-backed view. `SlateSnapshotRender.renderHosted` hosts
+  the view in a real offscreen `NSWindow` and draws its layer instead. Three details are load-bearing
+  and each one cost a wrong render: the WINDOW is not optional (an `NSProgressIndicator` outside one
+  never starts animating); the window's appearance must be pinned from the theme or the capture lies
+  about every system control; and the layer tree's `contentsScale` must be raised before
+  `CALayer.render(in:)`, which replays cached contents and otherwise photographs 1× tiles. A system
+  SYMBOL additionally has to be re-drawn at the larger point size to magnify — `Image(systemName:)`
+  rasterizes at its point size, so a `scaleEffect` tile is a blown-up 12pt bitmap. `StatusMark`
+  exposes `systemSymbol` so the shipping view and the magnified tile read one source.
 - ✅ **Judged by rendering.** `testRenderStatusMarks` writes the whole vocabulary at true size and 8×.
   A mistyped coordinate parses happily and is invisible in the values.
 

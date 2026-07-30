@@ -73,6 +73,8 @@ enum StatusDot {
     static let handSide: CGFloat = 14
     /// The side otty gives the spinner. Same box as everything else in this column.
     static let spinnerSide: CGFloat = 14
+    /// The platform's own `.small` control side — what ``spinnerSide`` is scaled DOWN from.
+    static let smallControlSide: CGFloat = 16
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -90,6 +92,20 @@ enum StatusMark: Equatable {
     case commandFinish
     /// Something failed — `exclamationmark.triangle.fill`.
     case failure
+
+    /// The system symbol this mark draws and the point size otty configures for it — `nil` for the
+    /// marks that are not system symbols (the ring, the hand, the disc, the spinner). ONE source, so
+    /// a magnified render cannot show a different symbol from the one the rail mounts.
+    var systemSymbol: (symbol: SFSymbol, size: CGFloat)? {
+        switch self {
+        case .agentFinish: (.checkmarkCircleFill, StatusDot.finishSymbolSize)
+        case .failure: (.exclamationmarkTriangleFill, StatusDot.alertSymbolSize)
+        case .agentRing,
+             .awaiting,
+             .commandFinish,
+             .working: nil
+        }
+    }
 }
 
 /// One resolved mark: the ink that names the state, plus WHICH mark carries it. A pure value (no
@@ -117,32 +133,28 @@ struct StatusDotView: View {
 
     @ViewBuilder
     private var mark: some View {
-        switch style.mark {
-        case .working:
-            WorkingSpinner()
-        case .agentRing:
-            DashedRing()
-                .stroke(style.ink, style: StatusDot.ringStroke)
-                .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-        case .awaiting:
-            VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
-        case .agentFinish:
-            symbol(.checkmarkCircleFill, size: StatusDot.finishSymbolSize)
-        case .commandFinish:
-            Circle()
-                .fill(style.ink)
-                .frame(width: StatusDot.dotDiameter, height: StatusDot.dotDiameter)
-        case .failure:
-            symbol(.exclamationmarkTriangleFill, size: StatusDot.alertSymbolSize)
+        if let system = style.mark.systemSymbol {
+            // A system symbol at otty's configuration for it — the artwork is Apple's, so this is
+            // the EXACT drawing otty mounts rather than a redraw of it.
+            Image(systemSymbol: system.symbol)
+                .font(.system(size: system.size, weight: StatusDot.symbolWeight))
+                .foregroundStyle(style.ink)
+        } else {
+            switch style.mark {
+            case .working:
+                WorkingSpinner()
+            case .awaiting:
+                VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
+            case .commandFinish:
+                Circle()
+                    .fill(style.ink)
+                    .frame(width: StatusDot.dotDiameter, height: StatusDot.dotDiameter)
+            default:
+                DashedRing()
+                    .stroke(style.ink, style: StatusDot.ringStroke)
+                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
+            }
         }
-    }
-
-    /// A system symbol at otty's configuration for it — the artwork is Apple's, so this is the
-    /// EXACT drawing otty mounts rather than a redraw of it.
-    private func symbol(_ symbol: SFSymbol, size: CGFloat) -> some View {
-        Image(systemSymbol: symbol)
-            .font(.system(size: size, weight: StatusDot.symbolWeight))
-            .foregroundStyle(style.ink)
     }
 }
 
@@ -162,15 +174,61 @@ struct DashedRing: Shape {
 ///
 /// ⚠️ Reduce Motion is the PLATFORM's call here, not ours. Every other mark in this column is
 /// static, so there is nothing left for us to freeze.
+///
+/// ⚠️⚠️ The COLOUR SCHEME has to be pinned here, on the view. A system control paints itself from
+/// the environment's scheme, and `.preferredColorScheme` does NOT cross the AppKit split-controller
+/// boundary into the column `NSHostingController`s (see `SlateDesign`'s header) — so a spinner in
+/// the rail inherits LIGHT mode and comes out dark grey on a dark theme, which is exactly what it
+/// did the first time this shipped. The window's `NSAppearance` pin does not save it: that governs
+/// AppKit's own drawing, not SwiftUI's semantic colours.
 struct WorkingSpinner: View {
     var body: some View {
+        indicator
+            // The small control is 16pt; otty's box is 14. Scaling the control (rather than clipping
+            // a 16pt spinner into a 14pt frame) keeps the fins whole and the column exact.
+            .scaleEffect(StatusDot.spinnerSide / StatusDot.smallControlSide)
+            .frame(width: StatusDot.spinnerSide, height: StatusDot.spinnerSide)
+    }
+
+    #if canImport(AppKit)
+    private var indicator: some View { AppKitSpinner() }
+    #else
+    private var indicator: some View {
         ProgressView()
             .progressViewStyle(.circular)
             .controlSize(.small)
-            // The small control is 16pt; otty's box is 14. Scaling the VECTOR (rather than clipping
-            // a 16pt spinner into a 14pt frame) keeps the fins crisp and the column exact.
-            .scaleEffect(StatusDot.spinnerSide / 16)
-            .frame(width: StatusDot.spinnerSide, height: StatusDot.spinnerSide)
+            .tint(Slate.Text.secondary)
+    }
+    #endif
+}
+
+#if canImport(AppKit)
+/// The macOS indicator, reached through a representable rather than `ProgressView`.
+///
+/// ⚠️⚠️ `ProgressView` came out DARK GREY on a dark theme, and neither of the obvious fixes moved
+/// it: the environment's `colorScheme` is SwiftUI's own notion, and the WINDOW's `NSAppearance` is
+/// pinned by `SlopDeskSplitViewController` but `.preferredColorScheme` does not cross into the
+/// column `NSHostingController`s (see `SlateDesign`'s header), so the control resolved Aqua. The
+/// appearance has to be set ON THE CONTROL. Reaching for the AppKit class also happens to be
+/// exactly what otty does.
+private struct AppKitSpinner: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSProgressIndicator {
+        let indicator = NSProgressIndicator()
+        indicator.style = .spinning
+        indicator.controlSize = .small
+        indicator.isIndeterminate = true
+        // Nothing in this column may leave a mark behind when its state ends — a stopped spinner
+        // must vanish, not sit there as a static wheel.
+        indicator.isDisplayedWhenStopped = false
+        return indicator
+    }
+
+    func updateNSView(_ indicator: NSProgressIndicator, context _: Context) {
+        indicator.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
+        // Idempotent, and it has to run on UPDATE as well as creation: an indicator only starts
+        // once it has a window, which it does not have when `makeNSView` returns.
+        indicator.startAnimation(nil)
     }
 }
+#endif
 #endif

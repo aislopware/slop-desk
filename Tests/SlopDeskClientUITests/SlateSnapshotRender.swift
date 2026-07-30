@@ -177,11 +177,24 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
     }
 
-    /// A settled mark at the same scale, for the side-by-side that proves the shimmer can't be
-    /// mistaken for one of them.
+    /// One mark at the column's true size, or magnified.
+    ///
+    /// ⚠️ A system symbol is REDRAWN at the larger point size rather than scaled: `Image(systemName:)`
+    /// rasterizes at its point size, so a `scaleEffect` tile is a blown-up 12pt bitmap and reads as
+    /// a blurry mark that is nothing like what the rail draws. The symbol and its size come from
+    /// ``StatusMark/systemSymbol``, the same source the shipping view reads, so the magnified tile
+    /// can never show a different glyph.
     @MainActor
+    @ViewBuilder
     private func still(_ style: StatusDotStyle, zoom: CGFloat = 1) -> some View {
-        zoomed(StatusDotView(style: style), side: StatusDot.footprint, zoom: zoom)
+        if zoom > 1, let system = style.mark.systemSymbol {
+            Image(systemSymbol: system.symbol)
+                .font(.system(size: system.size * zoom, weight: StatusDot.symbolWeight))
+                .foregroundStyle(style.ink)
+                .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+        } else {
+            zoomed(StatusDotView(style: style), side: StatusDot.footprint, zoom: zoom)
+        }
     }
 
     /// Magnify a mark WITHOUT resampling its geometry — `scaleEffect` on the vector, so an 8× frame
@@ -548,29 +561,51 @@ final class SlateSnapshotRender: XCTestCase {
     ///
     /// ⚠️ `ImageRenderer` silently refuses AppKit-backed views — a `ProgressView`, an
     /// `NSViewRepresentable` — and draws the yellow unavailable placeholder in their place. Hosting
-    /// the view and calling `cacheDisplay(in:to:)` draws what the app draws. The WINDOW is not
-    /// optional: an `NSProgressIndicator` outside one never starts animating, so it would rasterize
-    /// blank.
+    /// the view draws what the app draws. Three details are all load-bearing:
+    ///
+    ///  * the WINDOW is not optional: an `NSProgressIndicator` outside one never starts animating.
+    ///  * the window's `NSAppearance` is pinned to the theme, EXACTLY as
+    ///    `SlopDeskSplitViewController.pinWindowAppearance()` does it. Without that an offscreen
+    ///    window is Aqua whatever the tokens say, and every system-drawn control — the spinner
+    ///    above all — comes out in its LIGHT-mode ink on the dark ground. That is a lie about the
+    ///    app, not a fact about the mark.
+    ///  * the capture is @2x, driven by the layer's `contentsScale`. An offscreen window backs at
+    ///    1×, and at 1× a magnified tile is a blown-up 14pt bitmap rather than the vector redrawn.
     @MainActor
     private func renderHosted(
-        _ content: some View, size: CGSize, to dir: String, named name: String,
+        _ content: some View, size: CGSize, to dir: String, named name: String, scale: CGFloat = 2,
     ) throws {
         let host = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false,
         )
+        window.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
         window.contentView = host
         window.orderFront(nil)
         host.layoutSubtreeIfNeeded()
-        // One turn of the run loop so the indicator's first frame exists before we photograph it.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
-            XCTFail("no bitmap rep for \(name)")
+        if let layer = host.layer { Self.pinContentsScale(layer, scale) }
+        // One turn of the run loop so the indicator's first frame exists, and the layers have
+        // redrawn at the scale we just asked for, before we photograph any of it.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0,
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            XCTFail("no bitmap context for \(name)")
             return
         }
-        host.cacheDisplay(in: host.bounds, to: rep)
+        rep.size = size
+        // `CALayer.render(in:)` draws top-left-down; an `NSBitmapImageRep` context is bottom-left-up.
+        context.cgContext.scaleBy(x: scale, y: scale)
+        context.cgContext.translateBy(x: 0, y: size.height)
+        context.cgContext.scaleBy(x: 1, y: -1)
+        host.layer?.render(in: context.cgContext)
         window.orderOut(nil)
+
         guard let png = rep.representation(using: .png, properties: [:]) else {
             XCTFail("no PNG for \(name)")
             return
@@ -578,6 +613,15 @@ final class SlateSnapshotRender: XCTestCase {
         let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
         try png.write(to: out)
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
+    }
+
+    /// Raise the whole layer tree's backing resolution — `CALayer.render(in:)` replays cached
+    /// contents, so a sublayer left at 1× stays 1× however far the context is scaled.
+    private static func pinContentsScale(_ layer: CALayer, _ scale: CGFloat) {
+        layer.contentsScale = scale
+        layer.rasterizationScale = scale
+        layer.setNeedsDisplay()
+        layer.sublayers?.forEach { pinContentsScale($0, scale) }
     }
 
     /// Rasterize `content` at @2x and write a PNG into `dir`. Fails (not skips) if the renderer yields nothing —
