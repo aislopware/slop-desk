@@ -3162,6 +3162,39 @@ sequence → animated GIF, because four cuts of this mark have now been rejected
 still can settle. The lesson those four share: judge a 12pt animated mark by watching it at 12pt, not
 by reasoning about it magnified.
 
+**Follow-up 8 — the fifth cut: the ring stops moving, and the LIGHT travels instead ("chase").** The
+nine-motion study was watched as a GIF and cut 2 was picked. Shipped as `AgentWorkingMark` (renamed from
+`AgentSweepMark`, and `StatusMarkShape.sweep` → `.working` — named for the STATE, because the motion has
+now been recut five times and the type should not be renamed a sixth):
+
+- ✅ **Nothing moves geometrically.** Five arcs sit at fixed angles for the mark's whole life; a gaussian
+  pulse of BRIGHTNESS travels round them, each arc handing the light to its neighbour (lap 1.2 s ⇒ an arc
+  lights every 0.24 s). Pinned by the API's own shape: `start(arc:)` takes an index and no instant, so
+  there is nothing to move the geometry with.
+- ✅ **This is the closest the rail gets to round 9's original verdict** (*nothing in the rail animates*)
+  while still saying "in flight": the figure's silhouette is as still as the resting ring's, and it does
+  not read as any platform's loading spinner, because a spinner is a shape going round.
+- ⚠️ **`dimFloor` = 0.28, not zero.** The comet cut already proved that ink fading to nothing at 12pt
+  simply disappears — a floor of zero would break the ring into a moving arc, i.e. back to the generic
+  spinner. The floor is what holds the SHAPE constant while only the light moves. Pinned both ways
+  (below ~0.15 the dim arcs vanish; above ~0.5 the light stops reading as a light).
+- ⚠️ **The falloff distance is WRAPPED** (measured the short way round). Unwrapped, the chase stalls and
+  jumps at 3 o'clock once per lap, where the seam is — pinned by asserting the two sides of the seam
+  light arc 0 identically.
+- ⚠️ **Reduce Motion parks the light ON an arc, not at 12 o'clock.** With five arcs nothing sits exactly
+  at the top, and a light frozen in a GAP is the one still frame that reads as broken: two half-lit arcs
+  and no subject. `stillPhase` is computed as the middle of the arc nearest the top, so it stays on an
+  arc if the count ever changes. (Both of these were found BY the pins, not by eye.)
+- ✅ **Linear travel, deliberately** — the opposite call from the turning cut, where a constant rate was
+  the tell. A light has no mass, so easing it would be the mechanism showing rather than hidden.
+
+Rejected on the sheet, each for a stated reason rather than taste: **runner** (the discrete cut of chase
+— a hop is what "plastic" meant), **conveyor** (a comet in disguise: half the ring fades to 0.12 and
+disappears at 8pt), **gyro** (two rings fill the gaps at 8pt, so the dashes stop being dashes). Held in
+reserve: **wave** (arc lengths ripple, positions fixed — the same "geometry still, content alive" idea
+expressed in SHAPE rather than ink, and so immune to the dim-arc risk if `dimFloor` turns out too faint
+on real glass) and **inchworm**.
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes

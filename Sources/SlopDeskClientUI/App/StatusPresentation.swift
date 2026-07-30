@@ -75,7 +75,7 @@ enum StatusPresentation {
     /// (``statusDot(working:badge:agentIdle:)``, where the SHAPE names the state and this hue rides
     /// along) and the collapsed-group roll-up count (``attentionRollupInk(_:)``), so every surface
     /// names one pane's state in the same hue. Every attention mark holds STILL: motion in the rail
-    /// is reserved for the two IN-FLIGHT marks (the working ring, a command's slot spinner) —
+    /// is reserved for the two IN-FLIGHT marks (the working ring's travelling light, a command's slot spinner) —
     /// nothing blinks to say "unread".
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
@@ -117,9 +117,10 @@ enum StatusPresentation {
     /// the hue ride along, and the agent's own states are ONE CIRCLE so they read as a progression:
     /// the mark is one circle whose COMPLETENESS rises with how much the row wants from you.
     /// A RESTING CODE AGENT keeps the finely DASHED ring on the muted secondary ink (present,
-    /// spending no hue); a WORKING AGENT gathers those dashes into five longer arcs and turns them —
-    /// the accent SWEEP, keyed on the RAW `.working` status so the badge gate can't kill it (the
-    /// badge-routed `.running` tier reads identically); the two states that need a HUMAN CLOSE the ring
+    /// spending no hue); a WORKING AGENT gathers those dashes into five longer arcs and runs a LIGHT
+    /// through them on the accent — geometry perfectly still, only the ink travelling — keyed on the RAW
+    /// `.working` status so the badge gate can't kill it (the badge-routed `.running` tier reads
+    /// identically); the two states that need a HUMAN CLOSE the ring
     /// and hold still on their attention ink (``attentionInk(_:)`` — amber for a question, red for a
     /// failure); an unread finish FILLS it as the green dot. Three cuts of the two human states have
     /// been pulled to get here: otty's raised hand and warning triangle (a silhouette per state is a
@@ -139,14 +140,14 @@ enum StatusPresentation {
     static func statusDot(
         working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false,
     ) -> StatusDotStyle? {
-        if working { return StatusDotStyle(shape: .sweep, ink: Slate.State.accent) }
+        if working { return StatusDotStyle(shape: .working, ink: Slate.State.accent) }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
         let resting = agentIdle ? StatusDotStyle(shape: .ring, ink: Slate.Text.secondary) : nil
         guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(shape: .sweep, ink: Slate.State.accent)
+        case .running: return StatusDotStyle(shape: .working, ink: Slate.State.accent)
         case .awaitingInput,
              .completed,
              .error,
