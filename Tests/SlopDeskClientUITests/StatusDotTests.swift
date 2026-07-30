@@ -267,30 +267,62 @@ final class StatusDotTests: XCTestCase {
         XCTAssertGreaterThan(AgentSweepMark.breath, 0)
     }
 
-    /// ⚠️ The agent's ring turns CONTINUOUSLY — its angle is a smooth function of the clock, NOT a
-    /// frame index. The first cut hopped through 12 discrete steps and read as plastic: a hop is the
-    /// mechanism showing through. So the rotation is pinned as a monotonic ramp over a revolution
-    /// that wraps exactly once, with no plateaus — a plateau IS a hop.
-    func testAgentRingTurnsContinuouslyAndWrapsOncePerRevolution() {
+    /// ⚠️ The agent's ring turns CONTINUOUSLY and NOT LINEARLY — the two complaints that killed the
+    /// earlier cuts. Discrete hops read as plastic (a hop is the mechanism showing through) and so does
+    /// a constant rate, so the angle leads and lags an even sweep twice per revolution. Pinned:
+    /// strictly increasing when sampled far finer than any frame (a plateau IS a hop), wrapping exactly
+    /// once per revolution, and measurably OFF a straight line.
+    func testAgentRingTurnsContinuouslyEasedAndWrapsOncePerRevolution() {
         let revolution = AgentSweepMark.revolution
         XCTAssertEqual(AgentSweepMark.turns(at: 0), 0, accuracy: 1e-12, "the epoch is 0 turns")
         XCTAssertEqual(
-            AgentSweepMark.turns(at: revolution / 4), 0.25, accuracy: 1e-12,
-            "a quarter of the period is a quarter turn — linear, no easing",
-        )
-        XCTAssertEqual(
             AgentSweepMark.turns(at: revolution), 0, accuracy: 1e-12, "one period wraps to 0",
         )
-        // Sampling far finer than any frame interval must still advance EVERY time.
+        // NOT linear — sampled at an EIGHTH, where the ease is at full lead. (The quarter points are
+        // exactly on the straight line: `sin(4π·t)` crosses zero at every quarter turn, so testing
+        // there would prove the opposite of what it looks like it proves.)
+        XCTAssertEqual(
+            AgentSweepMark.turns(at: revolution / 8), 0.125 + AgentSweepMark.swing, accuracy: 1e-9,
+            "an eighth of the period must LEAD an eighth of a turn by the full swing",
+        )
+        XCTAssertGreaterThan(
+            abs(AgentSweepMark.turns(at: revolution / 8) - 0.125), 0.02,
+            "a constant rate is the plastic tell — the sweep must lead here",
+        )
+        // Sampling 400× finer than a 60fps frame must still advance EVERY time: monotonic, no stall,
+        // never backwards. This is what `swingCeiling` protects.
         var previous = AgentSweepMark.turns(at: 0)
-        for sample in 1...200 {
-            let value = AgentSweepMark.turns(at: Double(sample) * revolution / 400)
-            XCTAssertGreaterThan(value, previous, "sample \(sample) must advance — a plateau is a hop")
+        var minStep = Double.infinity
+        var maxStep = 0.0
+        let samples = 4000
+        for sample in 1..<samples {
+            let value = AgentSweepMark.turns(at: Double(sample) * revolution / Double(samples))
+            let step = value - previous
+            XCTAssertGreaterThan(step, 0, "sample \(sample) must advance — a plateau is a hop")
+            minStep = Double.minimum(minStep, step)
+            maxStep = Double.maximum(maxStep, step)
             previous = value
         }
+        // …and the rate must genuinely VARY, or "eased" is a comment rather than a behaviour.
+        XCTAssertGreaterThan(maxStep / minStep, 2, "the sweep must visibly speed up and coast")
         // Negative clocks (a date before the reference epoch) stay in [0, 1) rather than mirroring.
-        let behind = AgentSweepMark.turns(at: -revolution / 4)
-        XCTAssertTrue((0..<1).contains(behind), "a pre-epoch instant is still a real angle")
+        XCTAssertTrue(
+            (0..<1).contains(AgentSweepMark.turns(at: -revolution / 4)),
+            "a pre-epoch instant is still a real angle",
+        )
+    }
+
+    /// ⚠️ The ease amplitude is bounded by ARITHMETIC, not taste: the angle is `t + swing·sin(4πt)`,
+    /// whose derivative is `1 + 4π·swing·cos(4πt)` — so at or above `1/4π` the arc STALLS and then runs
+    /// BACKWARDS once a cycle, which reads as broken rather than eased. Pinned so a later "make it
+    /// bouncier" cannot cross the line unnoticed.
+    func testEaseAmplitudeStaysUnderTheStallCeiling() {
+        XCTAssertEqual(AgentSweepMark.swingCeiling, 1 / (4 * .pi), accuracy: 1e-12)
+        XCTAssertLessThan(
+            AgentSweepMark.swing, AgentSweepMark.swingCeiling,
+            "above the ceiling the sweep reverses — broken, not eased",
+        )
+        XCTAssertGreaterThan(AgentSweepMark.swing, 0, "zero swing is the linear look that was rejected")
     }
 
     /// The arc's LENGTH breathes on its own slow sine, and the two cycles are deliberately
@@ -328,6 +360,28 @@ final class StatusDotTests: XCTestCase {
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
+    }
+
+    /// ⚠️ ONE diameter, no exceptions — including the finish DOT, which used to be drawn smaller on
+    /// the argument that a solid mark carries more weight per point than an outline one. True in the
+    /// abstract, wrong here: it made the column's sizes wobble row to row, which is the one thing a
+    /// fixed status column may not do. Aliased in the source so it cannot drift again; pinned here so
+    /// the reasoning survives the next person who thinks the dot looks heavy.
+    func testEveryMarkIsDrawnAtTheOneDiameter() {
+        XCTAssertEqual(
+            StatusDot.dotDiameter, StatusDot.ringDiameter,
+            "the finish dot is the SAME circle, filled — never a smaller one",
+        )
+        // The `?`/`!` symbols are sized by point size, whose circle draws at roughly 0.8× — so the
+        // chosen size must land within a point of the ring rather than on a type-scale step.
+        XCTAssertEqual(
+            StatusDot.symbolSize * 0.8, StatusDot.ringDiameter, accuracy: 1,
+            "the symbol circles must land on the ring's diameter, not on a font size that looks tidy",
+        )
+        XCTAssertLessThanOrEqual(
+            StatusDot.ringDiameter, StatusDot.footprint,
+            "…and every one of them fits the fixed column",
+        )
     }
 
     /// ⚠️ EVERY mark in the column is that same circle — including the two states that need a human.

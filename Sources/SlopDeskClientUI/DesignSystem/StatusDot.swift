@@ -63,9 +63,13 @@ enum StatusMarkShape: Equatable, Hashable, CaseIterable {
 /// The mark's geometry + cadence — pure constants, unit-testable.
 enum StatusDot {
     /// The mark's fixed footprint — one column width, so the right edge never wavers between rows
-    /// (nor between shapes: ring, star and symbol all centre in this box).
+    /// (nor between shapes: every mark centres in this box).
     static let footprint: CGFloat = 12
-    /// The ring's diameter within the footprint.
+    /// ⚠️ THE diameter — one number for EVERY mark in the column, no exceptions. The finish dot used
+    /// to be drawn smaller on the argument that a solid mark carries more weight per point than an
+    /// outline one; true in the abstract, and wrong here, because it made the column's sizes wobble
+    /// row to row and that is the one thing a fixed status column may not do. Same circle, same size,
+    /// only the inside changes.
     static let ringDiameter: CGFloat = 8
     static let ringLineWidth: CGFloat = 1.5
     /// Dash segments around the ring — the lucide `circle-dashed` cut T3 Code mounts.
@@ -77,9 +81,9 @@ enum StatusDot {
     /// 0.8× its point size, and the column's whole premise is that every mark is the SAME circle — a
     /// `?` a point wider than the ring above it breaks the family faster than any hue could.
     static let symbolSize: CGFloat = 10
-    /// The filled unread-finish dot's diameter — smaller than the ring it replaced: a solid mark
-    /// carries more weight per point than an outline one.
-    static let dotDiameter: CGFloat = 6
+    /// The filled unread-finish dot — the SAME circle as every other mark, filled in. Aliased rather
+    /// than given its own number so it cannot drift away from the family again.
+    static var dotDiameter: CGFloat { ringDiameter }
 
     /// The dash pattern: ``ringDashCount`` segments spread evenly around the circumference.
     static var ringDash: [CGFloat] {
@@ -178,12 +182,22 @@ struct AgentSweepMark: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Seconds per revolution — a touch under a second: brisk enough to say "working", slow enough to
+    /// Seconds per revolution — a touch over a second: brisk enough to say "working", slow enough to
     /// stay in the corner of the eye rather than pulling it.
-    static let revolution: Double = 0.9
+    static let revolution: Double = 1.1
     /// Seconds per breath of the arc's LENGTH — deliberately not a multiple of ``revolution``, so the
     /// two cycles drift against each other and the motion never looks like a loop.
     static let breath: Double = 2.3
+    /// ⚠️ How far the rotation LEADS and LAGS a constant rate, in turns. This is what stops the motion
+    /// reading as plastic: a constant angular rate is the tell of a mechanism, so the arc accelerates
+    /// through part of the revolution and coasts through the rest, twice per turn.
+    ///
+    /// The ceiling is arithmetic, not taste: the angle is `t + swing·sin(4πt)`, whose derivative is
+    /// `1 + 4π·swing·cos(4πt)`, so anything at or above `1/4π ≈ 0.0796` makes the arc STALL and then
+    /// run BACKWARDS once a cycle — which looks broken, not eased. 0.055 gives roughly 0.3×…1.7× rate.
+    static let swing: Double = 0.055
+    /// The hard ceiling ``swing`` must stay under to keep the rotation monotonic — pinned by test.
+    static let swingCeiling: Double = 1 / (4 * .pi)
     /// The arc's length in turns, sweeping between these two as it breathes. Never long enough to
     /// close (a closed ring has nothing to see) nor short enough to read as a dot.
     static let arcRange: ClosedRange<CGFloat> = 0.45...0.78
@@ -207,12 +221,20 @@ struct AgentSweepMark: View {
         .frame(width: StatusDot.footprint, height: StatusDot.footprint)
     }
 
-    /// The rotation for one instant, in TURNS (fractions of a revolution) — pure, so the cadence is
-    /// unit-pinned headlessly and every mount at the same instant is at the same angle.
+    /// The rotation for one instant, in TURNS (fractions of a revolution) — EASED, not linear: a
+    /// constant rate is what made the first cut read as plastic, so the angle leads and lags an even
+    /// sweep by ``swing`` twice per revolution (fast through a quarter, coasting through the next).
+    /// Always forward, never stalling — see ``swingCeiling``. Pure, so the cadence is unit-pinned
+    /// headlessly and every mount at the same instant sits at the same angle.
     static func turns(at time: TimeInterval) -> Double {
         guard revolution > 0 else { return 0 }
-        let phase = (time / revolution).truncatingRemainder(dividingBy: 1)
-        return phase < 0 ? phase + 1 : phase
+        var phase = (time / revolution).truncatingRemainder(dividingBy: 1)
+        if phase < 0 { phase += 1 }
+        // Keep the multiply and the add separate — never `addingProduct` (CLAUDE.md bit-exactness).
+        let lead = swing * sin(phase * 4 * .pi)
+        let eased = phase + lead
+        // The ease can push the angle past a turn boundary; wrap so the result stays one clean turn.
+        return eased - eased.rounded(.down)
     }
 
     /// The arc's length for one instant, oscillating across ``arcRange`` on a sine of ``breath``.
@@ -235,12 +257,18 @@ struct AgentSweepMark: View {
                 AngularGradient(
                     gradient: Gradient(stops: [
                         .init(color: ink.opacity(0), location: 0),
-                        .init(color: ink.opacity(0.35), location: Double(length) * 0.45),
+                        .init(color: ink.opacity(0.22), location: Double(length) * 0.55),
                         .init(color: ink, location: Double(length)),
                     ]),
                     center: .center,
                 ),
-                style: StrokeStyle(lineWidth: StatusDot.ringLineWidth, lineCap: .round),
+                // ⚠️ BUTT caps, not round. A round cap paints a half-disc beyond each end of the
+                // stroke: at the head that reads as a comet nose (fine), but at the TAIL — where the
+                // gradient has faded almost to nothing and the angular gradient wraps its seam — the
+                // cap picks up ink from the far side of the seam and shows up as a detached DOT
+                // trailing the arc. Butt ends exactly where the stroke ends, so the fade is the only
+                // thing that terminates the tail.
+                style: StrokeStyle(lineWidth: StatusDot.ringLineWidth, lineCap: .butt),
             )
             .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             .rotationEffect(.degrees(turns * 360))

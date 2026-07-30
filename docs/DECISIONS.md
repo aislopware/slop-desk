@@ -3054,6 +3054,30 @@ back to the top, and every working row would drift out of phase with its neighbo
 `length(at:)` are pure and pinned, including that the ramp has **no plateaus** when sampled far finer
 than a frame (a plateau is a hop) and that the two cycles stay incommensurate.
 
+**Follow-up 4 — a constant rate is also plastic; the tail dot; one diameter for everything.** Three
+findings from the same look, each with a mechanism behind it rather than a taste:
+
+1. **Continuous was not enough — a CONSTANT RATE reads as mechanism too.** The angle now leads and
+   lags an even sweep by `swing` = 0.055 turns twice per revolution (roughly 0.3×…1.7× rate), so the
+   arc accelerates and coasts. The amplitude has an ARITHMETIC ceiling, not a stylistic one: the angle
+   is `t + swing·sin(4πt)`, whose derivative is `1 + 4π·swing·cos(4πt)`, so at or above `1/4π ≈ 0.0796`
+   the arc STALLS and then runs BACKWARDS once a cycle — broken, not eased. `swingCeiling` is pinned so
+   a later "make it bouncier" cannot cross that line unnoticed. ⚠️ Note for whoever tests this: the
+   ease crosses zero at every QUARTER turn, so a quarter-period sample sits exactly on the straight
+   line and would "prove" the motion is linear; the pin samples an EIGHTH, where the lead is full.
+2. **The dot trailing the arc was `lineCap: .round`.** A round cap paints a half-disc beyond each end
+   of the stroke; at the tail — where the gradient has faded to nothing and the angular gradient wraps
+   its seam — that cap picks up ink from the far side of the seam and shows as a DETACHED dot chasing
+   the arc. Butt caps end exactly where the stroke ends, so the fade is the only thing terminating the
+   tail. (At a 1.5pt stroke the now-flat head is imperceptible; verified across a full revolution and a
+   full breath on a phase sheet, not on one lucky snapshot.)
+3. **One diameter, no exceptions.** The finish dot was drawn at 6pt against the ring's 8pt, on the
+   reasoning that a solid mark carries more weight per point than an outline one. True in the abstract
+   and wrong here: it made the column's sizes wobble row to row, which is the one thing a fixed status
+   column may not do. `dotDiameter` is now an ALIAS of `ringDiameter` so it cannot drift again, and the
+   `?`/`!` point size is chosen by where its circle lands (≈0.8× the point size) rather than by type
+   scale. All four pinned.
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes
