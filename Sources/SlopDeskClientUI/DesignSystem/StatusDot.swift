@@ -25,42 +25,36 @@
 // capture/codec/Metal anywhere.
 
 #if canImport(SwiftUI)
-import SFSafeSymbols
 import SwiftUI
 
-/// The mark's SHAPE — one per state, so the pictogram reads before its hue does. A pure value
-/// (no view), so the resolver (``StatusPresentation/statusDot(working:badge:agentIdle:)``)
-/// unit-tests without rendering.
+/// The mark's SHAPE. A pure value (no view), so the resolver
+/// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) unit-tests without rendering.
+///
+/// The vocabulary is ONE circle whose COMPLETENESS rises with how much the row wants from you:
+/// broken into fine dashes at rest → gathered into five turning arcs while it works → CLOSED and
+/// still when it is waiting on you → FILLED once it has finished something unread.
+///
+/// ⚠️ ``question`` and ``alert`` draw the SAME closed ring and are told apart by hue alone (amber vs
+/// red). That is a deliberate user ruling — the `?` and `!` glyphs inside the ring were pulled for
+/// looking fussy at 8pt — and it is the one place in this column where hue is load-bearing on its own.
+/// Both states also speak through the row's own copy (title, tooltip, VoiceOver value), so the hue is
+/// the fast read rather than the only one.
 enum StatusMarkShape: Equatable, Hashable, CaseIterable {
     /// The static, finely dashed ring — a code agent PRESENT and at rest.
     case ring
     /// The same ring with its dashes gathered into fewer, longer arcs, TURNING — a WORKING agent. The
     /// one animated mark in this column.
     case sweep
-    /// The ring with a `?` inside — a question waits on you.
+    /// The ring CLOSED and still — a question waits on you. Amber.
     case question
     /// The filled dot — an unread finish.
     case dot
-    /// The ring with a `!` inside — a failure.
+    /// The ring CLOSED and still — a failure. Red. Drawn identically to ``question``: since the
+    /// glyphs came out, these two are told apart by HUE alone (see the enum's own note).
     case alert
 
     /// Whether this shape MOVES. Only the working sweep does: a settled rail is motionless.
     var animates: Bool { self == .sweep }
-
-    /// The SF Symbol a shape draws, for the two states that need a HUMAN. Both are CIRCLE variants —
-    /// pinned, because the obvious symbols for these states are otty's raised hand and warning
-    /// TRIANGLE (which is what shipped first), and a triangle breaks the column's one rule: every
-    /// mark is the same circle, so the marks read as a progression instead of a legend. The glyph
-    /// inside carries the meaning the silhouette no longer can. `nil` for the drawn shapes.
-    var symbol: SFSymbol? {
-        switch self {
-        case .question: .questionmarkCircle
-        case .alert: .exclamationmarkCircle
-        case .ring,
-             .sweep,
-             .dot: nil
-        }
-    }
 }
 
 /// The mark's geometry + cadence — pure constants, unit-testable.
@@ -81,11 +75,6 @@ enum StatusDot {
     static let ringDashCount = 8
     /// The drawn fraction of each dash period — lucide's roughly-even dash/gap rhythm.
     static let ringDashFill: CGFloat = 0.6
-    /// The point size the two SYMBOL marks (`?`, `!`) draw at inside ``footprint``. Chosen so their
-    /// circle lands on ``ringDiameter`` rather than by type scale: an SF Symbol circle draws at roughly
-    /// 0.8× its point size, and the column's whole premise is that every mark is the SAME circle — a
-    /// `?` a point wider than the ring above it breaks the family faster than any hue could.
-    static let symbolSize: CGFloat = 10
     /// The filled unread-finish dot — the SAME circle as every other mark, filled in. Aliased rather
     /// than given its own number so it cannot drift away from the family again.
     static var dotDiameter: CGFloat { ringDiameter }
@@ -141,16 +130,15 @@ struct StatusDotView: View {
                 .frame(width: StatusDot.dotDiameter, height: StatusDot.dotDiameter)
         case .alert,
              .question:
-            if let symbol = style.shape.symbol { self.symbol(symbol) }
+            // The ring CLOSED and still — the two states waiting on a human. No glyph inside: `?`
+            // and `!` shipped here and were pulled for reading as fussy detail at 8pt (the third
+            // time this column has learned that lesson). What remains is the completeness ladder —
+            // dashed at rest, turning at work, CLOSED when it wants you, filled when it is done —
+            // with hue separating amber from red.
+            Circle()
+                .stroke(style.ink, lineWidth: StatusDot.ringLineWidth)
+                .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
         }
-    }
-
-    /// One of the two circle SYMBOLS, drawn to the ring's own optical size so the `?`/`!` circle sits
-    /// at the same diameter as the rings above and below it in the column.
-    private func symbol(_ symbol: SFSymbol) -> some View {
-        Image(systemSymbol: symbol)
-            .font(.system(size: StatusDot.symbolSize, weight: .semibold))
-            .foregroundStyle(style.ink)
     }
 }
 
@@ -180,15 +168,20 @@ struct StatusDotView: View {
 ///     angle is a smooth function of the wall clock that surges and coasts once per DASH (see
 ///     ``swing``), which reads as each arc gliding into its neighbour's place rather than a wheel
 ///     being driven round.
-///   * the dashes BREATHE. Their drawn fraction of each period oscillates on a slow sine against the
-///     rotation, so the arcs lengthen and shorten as they travel and the figure never repeats a
-///     silhouette. A fixed pattern going round at a fixed rate is the definition of a plastic spinner.
+///   * the arcs SPLIT and KNIT. Each one parts down the middle into two short arcs, travels a while as
+///     ten, and closes back up into five, on a cycle incommensurate with the rotation — so the figure
+///     never repeats a silhouette. A fixed pattern going round at a fixed rate is the definition of a
+///     plastic spinner. The parting is a ZERO-length gap when closed, so the merge is one continuous
+///     parameter rather than a swap between two dash patterns, and it is EASED at both ends, so the
+///     ring dwells as five, dwells as ten, and crosses between quickly (an even sine reads as a wobble).
 ///
 /// Both derive from the SAME wall clock, so nothing needs animation STATE: every working row in the
 /// rail is at the identical phase, and a re-render lands mid-rotation instead of snapping the ring
 /// back to the top (which is exactly what a `repeatForever` animation would do on every chrome tick).
-/// REDUCE MOTION freezes it — and it stays legible frozen, because ``dashCount`` differs from the
-/// resting ring's: still or moving, five long arcs are not eight short ones.
+/// REDUCE MOTION freezes it fully KNIT — and it stays legible frozen, because ``dashCount`` differs
+/// from the resting ring's: still or moving, five long arcs are not eight short ones. (That is also
+/// why ``splitMax`` is bounded: split far enough and ten evenly-spaced short dashes IS the resting
+/// ring's cut, so the halves must stay visibly paired.)
 struct AgentSweepMark: View {
     var ink: Color
 
@@ -204,9 +197,11 @@ struct AgentSweepMark: View {
     /// at that rate would strobe: with rotational symmetry every `1/5` turn, a fast spin is eight
     /// visual cycles a second.
     static let revolution: Double = 3.6
-    /// Seconds per breath of the dashes' LENGTH — deliberately not a multiple of ``revolution``, so
-    /// the two cycles drift against each other and the motion never looks like a loop.
-    static let breath: Double = 2.3
+    /// Seconds per SPLIT-AND-KNIT cycle: each long arc parts down the middle into two short ones, the
+    /// ring travels a while as ten, then the halves close back up into five. Deliberately not a
+    /// multiple of ``revolution``, so the two cycles drift against each other and the motion never
+    /// looks like a loop.
+    static let knit: Double = 2.9
     /// ⚠️ How far the rotation LEADS and LAGS a constant rate, in turns. This is what stops the motion
     /// reading as plastic: a constant angular rate is the tell of a mechanism, so the ring accelerates
     /// and coasts once per DASH — the surge is tied to the dash period rather than the revolution
@@ -220,13 +215,24 @@ struct AgentSweepMark: View {
     static let swing: Double = 0.020
     /// The hard ceiling ``swing`` must stay under to keep the rotation monotonic — pinned by test.
     static var swingCeiling: Double { 1 / (2 * .pi * Double(dashCount)) }
-    /// The DRAWN fraction of each dash period, sweeping between these two as the ring breathes. Never
-    /// high enough to close the gaps (at 8pt, a 0.78 fill is a solid ring with notches in it) nor low
-    /// enough to read as a dotted line rather than a circle.
-    static let fillRange: ClosedRange<CGFloat> = 0.5...0.7
-    /// The fill a REDUCE-MOTION mount holds still at — mid-breath, which is a frame the moving figure
-    /// actually passes through.
-    static var stillFill: CGFloat { (fillRange.lowerBound + fillRange.upperBound) / 2 }
+    /// The DRAWN fraction of each dash period — fixed, because the ring already has two motions and a
+    /// third oscillation on an 8pt mark reads as mush. Above ~0.75 the ring is a solid circle with
+    /// notches in it; below ~0.5 it reads as a dotted line rather than a circle.
+    static let dashFill: CGFloat = 0.62
+    /// How much of one arc the SPLIT gap eats at full parting, as a fraction of the arc. Bounded from
+    /// below by legibility, not taste: each half must stay long enough to read as an arc at 8pt (see
+    /// ``splitFloorPoints``), and the two halves must stay closer to each other than to their
+    /// neighbours or the ring just looks like ten evenly-spaced dashes — which is the RESTING ring's
+    /// cut, and the working mark may not borrow it. Walked on a render sheet: 0.16 reads as a clean
+    /// pairing, 0.26 is the most parted the halves stay paired at, and by 0.45 the ring is ten thin
+    /// specks with no pairing left.
+    static let splitMax: CGFloat = 0.26
+    /// The shortest a split half may get before it stops reading as an arc and starts reading as a
+    /// speck. Pinned against ``splitMax``, so widening the parting cannot quietly cross it.
+    static let splitFloorPoints: CGFloat = 0.8
+    /// The parting a REDUCE-MOTION mount holds still at — fully KNIT (five long arcs), which is the
+    /// frame that stays furthest from the resting ring's cut.
+    static let stillSplit: CGFloat = 0
     /// The frame ceiling while turning: 60 fps is smooth for a rotation this size, and bounding it
     /// keeps a rail full of working agents off the display's own 120 Hz treadmill.
     static let maxFrameInterval: Double = 1.0 / 60
@@ -234,11 +240,11 @@ struct AgentSweepMark: View {
     var body: some View {
         Group {
             if reduceMotion {
-                ring(turns: 0, fill: Self.stillFill)
+                ring(turns: 0, split: Self.stillSplit)
             } else {
                 TimelineView(.animation(minimumInterval: Self.maxFrameInterval)) { timeline in
                     let time = timeline.date.timeIntervalSinceReferenceDate
-                    ring(turns: Self.turns(at: time), fill: Self.fill(at: time))
+                    ring(turns: Self.turns(at: time), split: Self.split(at: time))
                 }
             }
         }
@@ -261,32 +267,42 @@ struct AgentSweepMark: View {
         return eased - eased.rounded(.down)
     }
 
-    /// The dashes' drawn fraction for one instant, oscillating across ``fillRange`` on a sine of
-    /// ``breath``. Pure + clock-derived, so it needs no animation state and stays in unison across rows.
-    static func fill(at time: TimeInterval) -> CGFloat {
-        guard breath > 0 else { return stillFill }
+    /// The PARTING for one instant, in [0, ``splitMax``] — how far each arc has opened down its middle.
+    /// A raised cosine put through a smoothstep, which is what makes this read as splitting and knitting
+    /// rather than as a wobble: the eased ends make the figure DWELL as five long arcs and again as ten
+    /// short ones, and cross between quickly. Pure + clock-derived, so it needs no animation state and
+    /// every working row in the rail parts in unison.
+    static func split(at time: TimeInterval) -> CGFloat {
+        guard knit > 0 else { return stillSplit }
+        let raised = (1 - cos(time / knit * 2 * .pi)) / 2
+        // smoothstep — flat at both ends, steep through the middle.
         // Keep the multiply and the add separate — never `addingProduct` (CLAUDE.md bit-exactness).
-        let swing = (sin(time / breath * 2 * .pi) + 1) / 2
-        let span = fillRange.upperBound - fillRange.lowerBound
-        return fillRange.lowerBound + CGFloat(swing) * span
+        let eased = raised * raised * (3 - 2 * raised)
+        return splitMax * CGFloat(eased)
     }
 
-    /// The working ring's dash pattern for one breath frame — ``dashCount`` whole periods around the
-    /// circumference (so the arcs stay evenly spread with no seam where the stroke closes), split into
-    /// drawn/gap by `fill`.
-    static func dash(fill: CGFloat) -> [CGFloat] {
+    /// The working ring's dash pattern for one parting frame. ``dashCount`` whole periods tile the
+    /// circumference (so the arcs stay evenly spread with no seam where the stroke closes) and each
+    /// period is `[half, parting, half, gap]` — one arc opened down the middle by `split` of its own
+    /// length. At `split == 0` the parting is a ZERO-length gap, so the two halves abut and render as
+    /// the single long arc they came from: the merge is CONTINUOUS, never a swap of two patterns.
+    static func dash(split: CGFloat) -> [CGFloat] {
         let period = .pi * StatusDot.ringDiameter / CGFloat(dashCount)
-        return [period * fill, period * (1 - fill)]
+        let drawn = period * dashFill
+        let clamped = CGFloat(Double.maximum(0, Double.minimum(Double(splitMax), Double(split))))
+        let parting = drawn * clamped
+        let half = (drawn - parting) / 2
+        return [half, parting, half, period - drawn]
     }
 
-    private func ring(turns: Double, fill: CGFloat) -> some View {
+    private func ring(turns: Double, split: CGFloat) -> some View {
         Circle()
             // FLAT ink and a dashed stroke: no gradient, no line caps to reason about. The comet cut
             // this replaced needed BOTH — and its round caps painted a half-disc past the stroke end
             // that picked up ink across the angular gradient's seam, showing up as a detached dot
             // chasing the arc. A dashed ring has no ends to cap and no seam to cross.
             .stroke(ink, style: StrokeStyle(
-                lineWidth: StatusDot.ringLineWidth, dash: Self.dash(fill: fill),
+                lineWidth: StatusDot.ringLineWidth, dash: Self.dash(split: split),
             ))
             .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             .rotationEffect(.degrees(turns * 360))

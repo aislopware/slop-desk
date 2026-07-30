@@ -3114,6 +3114,41 @@ render sheet makes plain rather than a stylistic one. Six cuts were drawn at tru
   dot, follow-up 4 №2) and no gradient seam to cross. `AngularGradient` and `lineCap` are gone from
   this mark entirely.
 
+**Follow-up 6 — the glyphs come OUT of the two human states, and the arcs learn to split and knit
+(both user calls).** Two changes, and the second is why the first is affordable:
+
+- ✅ **`?` and `!` are gone from inside the ring** — *"bỏ 2 cái symbol ở trong ring của block và error
+  đi"*. Those two states now draw the ring **CLOSED and still**, on amber and red. That completes a
+  ladder the column had been circling for six follow-ups: the mark's **COMPLETENESS rises with how
+  much the row wants from you** — fine dashes at rest → five turning arcs at work → CLOSED when it
+  wants a human → FILLED when it has finished something unread. Third cut of these two states to be
+  pulled (hand/triangle → `?`/`!` → nothing), each time for the same reason: detail does not survive
+  8pt.
+- ⚠️ **The cost, stated plainly: blocked vs failed is now HUE-ONLY.** `question` and `alert` remain
+  distinct enum cases but draw identically, so amber-vs-red is the whole difference in that column —
+  the exact thing round 19 set out to stop doing. It is a deliberate user ruling, pinned as such
+  (`testTheColumnIsFiveDrawnShapesAndNoGlyphs` asserts the two inks can never collapse together), and
+  it is survivable only because the row's title, tooltip and VoiceOver value still name the state in
+  words. `symbolSize` and `StatusMarkShape.symbol` are deleted — the column now has NO glyph at all.
+- ✅ **The working arcs SPLIT and KNIT** — *"thêm hiệu ứng các dash tách nhỏ hơn, rồi định kì gộp
+  lại"*. Each of the five arcs parts down its middle into two, the ring travels a while as ten, and
+  the halves close back into five, on a 2.9 s cycle incommensurate with the 3.6 s revolution. This
+  REPLACES the fill breath: three oscillations on an 8pt mark is mush, and this one is visible where
+  the breath was subliminal.
+- ✅ **The parting is ONE continuous parameter, not a swap between two dash patterns.** The dash array
+  is `[half, parting, half, gap]`, and at rest the parting is a **zero-length gap** — so the halves
+  abut and render as exactly the arc they came from. A pattern swap would pop; this cannot. Pinned that
+  the four elements still tile the circumference exactly at every parting (a split may not open a seam).
+- ✅ **Eased at BOTH ends (smoothstep of a raised cosine), so it DWELLS as five and dwells as ten** and
+  crosses quickly between. A plain sine spends its time mid-parting and reads as a wobble rather than
+  two states trading. Pinned by the dwell (a tenth of a cycle from an extreme stays within a tenth of
+  it) and by the crossing rate beating a raw cosine's.
+- ⚠️ **`splitMax` = 0.26 is a legibility ceiling, walked on a render sheet rather than guessed**: at
+  0.16 the pairing is clean, 0.26 is the most parted the halves stay visibly PAIRED at, and by 0.45 the
+  ring is ten thin specks. The upper bound matters twice — past it each half is a speck at 8pt, AND ten
+  evenly-spaced short dashes IS the resting ring's cut, which the working mark may not borrow. Reduce
+  Motion therefore freezes it fully KNIT (five long arcs), the frame furthest from the resting ring.
+
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text
 presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker — which fixes

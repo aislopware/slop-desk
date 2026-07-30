@@ -3,8 +3,9 @@
 // CIRCLE and the pins say so: a resting code agent keeps the static finely dashed RING (muted), a
 // working one GATHERS those dashes into five longer arcs and turns them (accent SWEEP, keyed on the
 // same raw-working status liveness uses, outranking every badge), an unread finish fills the circle in
-// as the green DOT; the two states you must
-// act on stay in the SAME circle with a glyph inside — `?` for a question, `!` for a failure. A
+// as the green DOT; and the two states you must act on CLOSE the ring and hold still — amber for a
+// question, red for a failure (⚠️ those two draw ALIKE and are separated by HUE alone, by user
+// ruling: the `?`/`!` glyphs inside the ring came out for reading as fussy detail at 8pt). A
 // plain running command mounts nothing HERE (its wheel replaces the process label —
 // ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), and bare idle /
 // privilege-only rows stay bare.
@@ -42,8 +43,9 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// Each attention kind wears its OWN pictogram — one shape per state, so
-    /// the mark reads before its hue does — on exactly its attention ink.
+    /// Each attention kind resolves to its OWN shape case on exactly its attention ink. `.question`
+    /// and `.alert` are distinct CASES that happen to draw the same closed ring (hue separates them);
+    /// the finish is the filled dot.
     @MainActor
     func testAttentionKindsWearTheirOwnShapeOnTheirAttentionInk() {
         let expected: [TabBadgeKind: StatusMarkShape] = [
@@ -51,7 +53,7 @@ final class StatusDotTests: XCTestCase {
         ]
         for (kind, shape) in expected {
             let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertEqual(dot?.shape, shape, "\(kind) must wear its own pictogram")
+            XCTAssertEqual(dot?.shape, shape, "\(kind) must resolve to its own shape")
             XCTAssertEqual(
                 dot?.ink, StatusPresentation.attentionInk(kind),
                 "\(kind)'s mark must wear its own attention ink",
@@ -59,8 +61,8 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    /// Every state's shape is DISTINCT — no two share a pictogram, so hue is never load-bearing
-    /// alone (the working ring and the resting ring differ in their DRAWING, not their case).
+    /// Every state resolves to a DISTINCT shape case — the resolver never collapses two states onto
+    /// one reading (the working ring and the resting ring differ in their DRAWING, not their case).
     @MainActor
     func testEveryStateWearsADistinctShape() {
         var shapes: [StatusMarkShape] = []
@@ -85,7 +87,7 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue, distinct
-    /// from the working ring's five turning arcs and from every attention pictogram — the SAME circle,
+    /// from the working ring's five turning arcs and from the closed attention ring — the SAME circle,
     /// cut into eight fine dashes instead of five long ones. It does NOT move.
     @MainActor
     func testRestingAgentRingsMutedAndStatic() {
@@ -125,7 +127,7 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// An attention state OUTRANKS the resting-agent ring: a finished/blocked/failed agent keeps
-    /// its attention ink AND its own pictogram even though the same pane is also a resting agent.
+    /// its attention ink AND its own mark even though the same pane is also a resting agent.
     @MainActor
     func testAttentionOutranksTheRestingAgentRing() {
         for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
@@ -134,7 +136,7 @@ final class StatusDotTests: XCTestCase {
                 dot?.ink, StatusPresentation.attentionInk(kind),
                 "\(kind) keeps its attention ink over the muted resting ring",
             )
-            XCTAssertNotEqual(dot?.shape, .ring, "\(kind) keeps its pictogram, not the resting ring")
+            XCTAssertNotEqual(dot?.shape, .ring, "\(kind) keeps its own mark, not the resting ring")
         }
     }
 
@@ -160,16 +162,17 @@ final class StatusDotTests: XCTestCase {
         XCTAssertGreaterThan(dash[0], dash[1], "drawn beats gap — the ring reads as a circle")
     }
 
-    /// Every mark — moving or still, glyph or symbol — renders inside the SAME fixed footprint, so
-    /// a state edge (or a spinner frame) can never move a pixel of the row's trailing edge.
+    /// Every mark — moving or still — renders inside the SAME fixed footprint, so a state edge (or an
+    /// animation frame) can never move a pixel of the row's trailing edge. The command WHEEL shares
+    /// that column too, since a row swaps between spinning and marked.
     func testEveryMarkSharesOneFixedFootprint() {
         XCTAssertGreaterThanOrEqual(
             StatusDot.footprint, StatusDot.ringDiameter,
             "the ring fits its own column",
         )
-        XCTAssertGreaterThanOrEqual(
-            StatusDot.footprint, StatusDot.symbolSize,
-            "the hand / triangle / dot fit the same column the ring does",
+        XCTAssertEqual(
+            CommandSpinner.diameter, StatusDot.footprint,
+            "the command wheel fits the same column the marks do",
         )
     }
 
@@ -265,7 +268,7 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(CommandSpinner.spokeCount, 8, "the AppKit wheel's own spoke count")
         XCTAssertGreaterThan(CommandSpinner.beat, 0)
         XCTAssertGreaterThan(AgentSweepMark.revolution, 0)
-        XCTAssertGreaterThan(AgentSweepMark.breath, 0)
+        XCTAssertGreaterThan(AgentSweepMark.knit, 0)
     }
 
     /// ⚠️ The agent's ring turns CONTINUOUSLY and NOT LINEARLY — the two complaints that killed the
@@ -334,32 +337,76 @@ final class StatusDotTests: XCTestCase {
         XCTAssertGreaterThan(AgentSweepMark.swing, 0, "zero swing is the linear look that was rejected")
     }
 
-    /// The dashes' LENGTH breathes on its own slow sine, and the two cycles are deliberately
-    /// incommensurate — so the figure never repeats a silhouette and the motion never reads as a loop.
-    /// The fill stays inside its range at every instant: at 8pt a high fill is a solid ring with
-    /// notches in it, and a low one reads as a dotted line rather than a circle (both measured on the
-    /// render sheet, not guessed).
-    func testAgentDashesBreatheInsideTheirRangeOnAnIncommensurateCycle() {
-        let range = AgentSweepMark.fillRange
-        XCTAssertLessThan(range.upperBound, 0.75, "a fuller ring reads as solid with notches at 8pt")
-        XCTAssertGreaterThan(range.lowerBound, 0.35, "a thinner one reads as dots, not a circle")
+    /// The arcs SPLIT down the middle and KNIT back on their own cycle, incommensurate with the
+    /// rotation — so the figure never repeats a silhouette and the motion never reads as a loop. The
+    /// parting stays in `[0, splitMax]`, reaches BOTH ends over a cycle, and is EASED at both ends: the
+    /// ring must DWELL as five long arcs and again as ten short ones, because a plain sine spends its
+    /// time mid-parting and reads as a wobble instead of two states trading.
+    func testAgentArcsSplitAndKnitBackWithADwellAtEachEnd() {
+        let cycle = AgentSweepMark.knit
         for sample in 0...400 {
-            let time = Double(sample) * AgentSweepMark.breath / 100
-            let fill = AgentSweepMark.fill(at: time)
-            XCTAssertTrue(range.contains(fill), "sample \(sample) escaped the fill range")
+            let split = AgentSweepMark.split(at: Double(sample) * cycle / 100)
+            XCTAssertTrue(
+                (0...AgentSweepMark.splitMax).contains(split), "sample \(sample) escaped the parting",
+            )
         }
-        // Both extremes are actually reached over a breath — the swing is real, not a rounding wobble.
-        let samples = (0...200).map { AgentSweepMark.fill(at: Double($0) * AgentSweepMark.breath / 200) }
-        XCTAssertEqual(samples.min() ?? 0, range.lowerBound, accuracy: 1e-3, "the breath bottoms out")
-        XCTAssertEqual(samples.max() ?? 0, range.upperBound, accuracy: 1e-3, "…and tops out")
-        let ratio = AgentSweepMark.breath / AgentSweepMark.revolution
+        XCTAssertEqual(AgentSweepMark.split(at: 0), 0, accuracy: 1e-12, "the epoch is fully knit")
+        XCTAssertEqual(
+            AgentSweepMark.split(at: cycle / 2), AgentSweepMark.splitMax, accuracy: 1e-12,
+            "half a cycle in, the arcs are fully parted",
+        )
+        XCTAssertEqual(
+            AgentSweepMark.split(at: cycle), 0, accuracy: 1e-12, "one cycle knits back",
+        )
+        // The DWELL: a tenth of a cycle either side of an extreme must still be within a tenth of that
+        // extreme. A raw sine moves ~19% of its span in that time — this is the eased-ends pin.
+        let tenth = AgentSweepMark.splitMax / 10
+        XCTAssertLessThan(AgentSweepMark.split(at: cycle / 10), tenth, "it dwells knit")
+        XCTAssertGreaterThan(
+            AgentSweepMark.split(at: cycle / 2 + cycle / 10), AgentSweepMark.splitMax - tenth,
+            "…and dwells parted",
+        )
+        // …and it crosses between them FASTER than an even sine would: peak rate beats π/2 × mean.
+        let steps = (1...200).map {
+            abs(AgentSweepMark.split(at: Double($0) * cycle / 200)
+                - AgentSweepMark.split(at: Double($0 - 1) * cycle / 200))
+        }
+        let peak = steps.max() ?? 0
+        let mean = steps.reduce(0, +) / CGFloat(steps.count)
+        XCTAssertGreaterThan(
+            Double(peak / mean), .pi / 2,
+            "the crossing must be steeper than a raw cosine's, or the dwell is imaginary",
+        )
+        let ratio = AgentSweepMark.knit / AgentSweepMark.revolution
         XCTAssertGreaterThan(
             abs(ratio - ratio.rounded()), 0.05,
-            "breath must NOT be a multiple of the revolution, or the motion loops visibly",
+            "the knit cycle must NOT be a multiple of the revolution, or the motion loops visibly",
         )
-        XCTAssertTrue(
-            AgentSweepMark.fillRange.contains(AgentSweepMark.stillFill),
-            "the Reduce-Motion frame is one the moving figure actually passes through",
+    }
+
+    /// ⚠️ The parting is bounded at BOTH ends by legibility. Too far and each half is a speck at 8pt —
+    /// and worse, ten evenly-spaced short dashes IS the resting ring's cut, which the working mark may
+    /// not borrow. Fully KNIT the middle gap must be exactly ZERO, because that is what makes the merge
+    /// one continuous parameter instead of a swap between two dash patterns (a swap would pop).
+    func testPartingStaysLegibleAndClosesToExactlyZero() {
+        let knit = AgentSweepMark.dash(split: 0)
+        XCTAssertEqual(knit.count, 4, "[half, parting, half, gap] at every frame")
+        XCTAssertEqual(knit[1], 0, "fully knit ⇒ a zero-length parting ⇒ the halves abut as one arc")
+        XCTAssertEqual(knit[0], knit[2], "the halves are halves")
+        let parted = AgentSweepMark.dash(split: AgentSweepMark.splitMax)
+        XCTAssertGreaterThan(
+            parted[0], AgentSweepMark.splitFloorPoints,
+            "a fully parted half must still read as an arc, not a speck",
+        )
+        XCTAssertLessThan(
+            parted[1], parted[3],
+            "the parting must stay TIGHTER than the gap between arcs, or the paired halves read as "
+                + "ten evenly-spaced dashes — the resting ring's own cut",
+        )
+        // Out-of-range input is clamped rather than inverting the pattern (a negative half would).
+        XCTAssertEqual(AgentSweepMark.dash(split: -1), knit, "below zero clamps to knit")
+        XCTAssertEqual(
+            AgentSweepMark.dash(split: 9), parted, "above the ceiling clamps to fully parted",
         )
     }
 
@@ -367,33 +414,33 @@ final class StatusDotTests: XCTestCase {
     /// gathered into FEWER, longer arcs and turning. That shared geometry is what makes the agent's
     /// states read as a progression instead of a legend, so both numbers are pinned — a drift in
     /// either splits the family in two. The working ring's dashes tile the circumference exactly at
-    /// EVERY breath frame (whole periods, no seam where the stroke closes).
+    /// EVERY parting frame (whole periods, no seam where the stroke closes).
     func testWorkingRingSharesTheRestingRingsGeometry() {
         XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
         XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
         let circumference = CGFloat.pi * StatusDot.ringDiameter
-        for fill in [
-            AgentSweepMark.fillRange.lowerBound,
-            AgentSweepMark.stillFill,
-            AgentSweepMark.fillRange.upperBound,
-        ] {
-            let dash = AgentSweepMark.dash(fill: fill)
-            XCTAssertEqual(dash.count, 2, "one drawn length, one gap length")
+        for split in [CGFloat(0), AgentSweepMark.splitMax / 2, AgentSweepMark.splitMax] {
+            let dash = AgentSweepMark.dash(split: split)
+            XCTAssertEqual(dash.count, 4, "[half, parting, half, gap] at every frame")
             XCTAssertEqual(
-                Double((dash[0] + dash[1]) * CGFloat(AgentSweepMark.dashCount)),
+                Double(dash.reduce(0, +) * CGFloat(AgentSweepMark.dashCount)),
                 Double(circumference), accuracy: 1e-9,
-                "whole periods around the ring at fill \(fill) — the breath may not open a seam",
+                "whole periods at parting \(split) — a split may not open a seam",
             )
-            // Ink never loses to gap at ANY breath frame — at the bottom of the breath they are exactly
-            // even, and that is the floor: past it the mark reads as a dotted line, not a circle.
-            XCTAssertGreaterThanOrEqual(
-                dash[0], dash[1], "at fill \(fill) the ring would read as gaps with dashes in them",
+            // A parting spends ink, and there is a floor: below ~40% of the circumference inked the
+            // mark reads as scattered specks rather than a circle (measured on the render sheet — at
+            // 0.45 parting the pairing is gone entirely).
+            XCTAssertGreaterThan(
+                Double((dash[0] + dash[2]) / (dash.reduce(0, +))), 0.4,
+                "at parting \(split) too little of the ring is inked to read as a circle",
             )
         }
-        XCTAssertGreaterThan(
-            AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[0],
-            AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[1],
-            "the frozen frame is one where ink clearly beats gap",
+        // Knit, the two halves ARE the arc: their sum is the declared fill of one period.
+        let period = CGFloat.pi * StatusDot.ringDiameter / CGFloat(AgentSweepMark.dashCount)
+        let knit = AgentSweepMark.dash(split: 0)
+        XCTAssertEqual(
+            Double((knit[0] + knit[2]) / period), Double(AgentSweepMark.dashFill), accuracy: 1e-9,
+            "the fill is what it says it is",
         )
     }
 
@@ -408,10 +455,13 @@ final class StatusDotTests: XCTestCase {
             "working gathers the resting ring's dashes into FEWER, longer arcs — more ink, at work",
         )
         XCTAssertGreaterThan(AgentSweepMark.dashCount, 3, "fewer arcs than this reads as a broken ring")
-        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably.
-        let working = AgentSweepMark.dash(fill: AgentSweepMark.stillFill)[0]
+        // Longer arcs at the same stroke weight: the frozen mark is heavier, measurably. Frozen means
+        // fully KNIT — the parting is the one thing Reduce Motion must not leave half-done, because a
+        // half-parted ring frozen forever is just a ring with an odd rhythm.
+        XCTAssertEqual(AgentSweepMark.stillSplit, 0, "a frozen working ring is fully knit")
+        let arc = AgentSweepMark.dash(split: AgentSweepMark.stillSplit)
         XCTAssertGreaterThan(
-            working, StatusDot.ringDash[0],
+            arc[0] + arc[1] + arc[2], StatusDot.ringDash[0],
             "each working arc must be longer than a resting dash, or the cuts read alike",
         )
     }
@@ -426,34 +476,34 @@ final class StatusDotTests: XCTestCase {
             StatusDot.dotDiameter, StatusDot.ringDiameter,
             "the finish dot is the SAME circle, filled — never a smaller one",
         )
-        // The `?`/`!` symbols are sized by point size, whose circle draws at roughly 0.8× — so the
-        // chosen size must land within a point of the ring rather than on a type-scale step.
-        XCTAssertEqual(
-            StatusDot.symbolSize * 0.8, StatusDot.ringDiameter, accuracy: 1,
-            "the symbol circles must land on the ring's diameter, not on a font size that looks tidy",
-        )
         XCTAssertLessThanOrEqual(
             StatusDot.ringDiameter, StatusDot.footprint,
             "…and every one of them fits the fixed column",
         )
     }
 
-    /// ⚠️ EVERY mark in the column is that same circle — including the two states that need a human.
-    /// otty's raised HAND and warning TRIANGLE shipped first and were pulled: a distinct silhouette
-    /// per state is a legend to learn, where one circle whose INSIDE changes is a progression. This
-    /// pins the circle variants, so a triangle cannot creep back in.
-    func testTheTwoHumanStatesStayInsideTheCircleFamily() {
-        XCTAssertEqual(StatusMarkShape.question.symbol, .questionmarkCircle, "a question, in the circle")
-        XCTAssertEqual(StatusMarkShape.alert.symbol, .exclamationmarkCircle, "a failure, in the circle")
-        for shape: StatusMarkShape in [.ring, .sweep, .dot] {
-            XCTAssertNil(shape.symbol, "\(shape) is DRAWN — no symbol may stand in for it")
-        }
-        for shape in StatusMarkShape.allCases {
-            guard let name = shape.symbol?.rawValue else { continue }
-            XCTAssertTrue(
-                name.contains("circle"),
-                "\(name) must be a circle variant — the column has exactly one silhouette",
-            )
+    /// ⚠️ EVERY mark in the column is DRAWN — no glyph, no symbol, nothing typed. Three cuts of the two
+    /// human states have now been pulled from here: otty's raised HAND and warning TRIANGLE (a
+    /// silhouette per state is a legend to learn), then `?` and `!` inside the circle (fussy detail at
+    /// 8pt — the same lesson the animated mark learned twice). What is left is the COMPLETENESS ladder,
+    /// pinned here as the vocabulary itself: dashed at rest → turning at work → CLOSED when a human is
+    /// wanted → FILLED when unread-done. ⚠️ It follows — by the user's own ruling — that `question` and
+    /// `alert` draw ALIKE and are told apart by HUE alone; that is the one place in this column where
+    /// hue is load-bearing on its own, and it is deliberate, not an oversight.
+    @MainActor
+    func testTheColumnIsFiveDrawnShapesAndNoGlyphs() {
+        XCTAssertEqual(StatusMarkShape.allCases.count, 5, "rest, work, wants-you, failure, done")
+        // The two human states are the same closed ring, so ONLY their ink separates them — which makes
+        // the ink pair load-bearing in a way it was not while the glyphs were there.
+        XCTAssertNotEqual(
+            StatusPresentation.attentionInk(.awaitingInput), StatusPresentation.attentionInk(.error),
+            "if these two ever share an ink, the two states become indistinguishable outright",
+        )
+        // …and the closed ring must not collide with the shapes that DO carry their own geometry.
+        for shape: StatusMarkShape in [.question, .alert] {
+            XCTAssertFalse(shape.animates, "a state waiting on a human holds still")
+            XCTAssertNotEqual(shape, .ring, "closed is not dashed")
+            XCTAssertNotEqual(shape, .dot, "closed is not filled")
         }
     }
 
@@ -479,8 +529,8 @@ final class StatusDotTests: XCTestCase {
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
         XCTAssertTrue(
-            AgentSweepMark.fillRange.contains(AgentSweepMark.stillFill),
-            "a frozen working ring holds a real breath frame — it still reads as 'not at rest'",
+            AgentSweepMark.stillSplit == 0,
+            "a frozen working ring is fully knit — five long arcs still read as 'not at rest'",
         )
         XCTAssertEqual(
             CommandSpinner.stillStep, 0,

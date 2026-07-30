@@ -115,15 +115,16 @@ enum StatusPresentation {
 
     /// The row's trailing STATUS MARK. Round 19 (otty parity) makes the SHAPE the grammar and lets
     /// the hue ride along, and the agent's own states are ONE CIRCLE so they read as a progression:
-    /// a RESTING CODE AGENT keeps the static DASHED ring on the muted secondary ink (present,
-    /// spending no hue); a WORKING AGENT closes that ring and turns it — the accent SWEEP, keyed on
-    /// the RAW `.working` status so the badge gate can't kill it (the badge-routed `.running` tier
-    /// reads identically); an unread finish fills it in as the green DOT; and the two states that need
-    /// a HUMAN stay in the same circle with a glyph inside it on their attention ink
-    /// (``attentionInk(_:)`` — `?` amber for a question, `!` red for a failure). EVERY mark in this
-    /// column is that one circle: otty's raised hand and warning triangle shipped first and were
-    /// pulled, because a silhouette per state is a legend, where one circle whose inside changes is a
-    /// progression. A plain running COMMAND mounts
+    /// the mark is one circle whose COMPLETENESS rises with how much the row wants from you.
+    /// A RESTING CODE AGENT keeps the finely DASHED ring on the muted secondary ink (present,
+    /// spending no hue); a WORKING AGENT gathers those dashes into five longer arcs and turns them —
+    /// the accent SWEEP, keyed on the RAW `.working` status so the badge gate can't kill it (the
+    /// badge-routed `.running` tier reads identically); the two states that need a HUMAN CLOSE the ring
+    /// and hold still on their attention ink (``attentionInk(_:)`` — amber for a question, red for a
+    /// failure); an unread finish FILLS it as the green dot. Three cuts of the two human states have
+    /// been pulled to get here: otty's raised hand and warning triangle (a silhouette per state is a
+    /// legend), then the `?`/`!` glyphs that replaced them (fussy detail at 8pt) — which is why those
+    /// two now rely on hue alone, deliberately. A plain running COMMAND mounts
     /// NOTHING here — this column is the AGENT's, and a busy command's motion is the
     /// ``CommandSpinner`` that takes the process-label slot instead
     /// (``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), so no row ever
@@ -161,11 +162,18 @@ enum StatusPresentation {
         }
     }
 
-    /// The PICTOGRAM an attention state wears in the mark column, readable before the hue is (and so
-    /// still readable to a colour-blind eye) — but always INSIDE the column's one circle: `?` for a
-    /// question waiting on you, `!` for a failure, and the filled DOT for an unread finish (fresh
-    /// flash and settled alike — the split is semantic, never visual).
-    /// Non-attention kinds have no pictogram of their own; the resting ring / working sweep are the
+    /// The MARK an attention state wears in the column — always the column's one circle, differing in
+    /// how COMPLETE it is: the ring CLOSED and still for the two states that want a human, the ring
+    /// FILLED for an unread finish (fresh flash and settled alike — the split is semantic, never
+    /// visual).
+    ///
+    /// ⚠️ The two human states return DISTINCT cases that draw ALIKE, so amber vs red is the only thing
+    /// separating them in the column. That is deliberate (user ruling): the `?` and `!` glyphs that
+    /// used to sit inside the ring — themselves the replacements for otty's hand and triangle — came
+    /// out for reading as fussy detail at 8pt. The row's title, tooltip and VoiceOver value still name
+    /// the state in words, so the hue is the FAST read rather than the only one.
+    ///
+    /// Non-attention kinds have no mark of their own; the resting ring / working sweep are the
     /// resolver's own branches, so this map is only ever reached for the four attention kinds.
     static func attentionShape(_ kind: TabBadgeKind) -> StatusMarkShape {
         switch kind {
