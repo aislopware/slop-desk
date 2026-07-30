@@ -5,10 +5,11 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status is the trailing ``StatusDotView`` mark ALONE — one static dashed ring whose HUE names
-// the state (accent = working agent, muted = a code agent at rest, green = unread finish, amber =
-// a question waits, red = failed; a plain shell — busy or not — mounts nothing, the mark being
-// the AGENT's column) — and NOTHING animates. The title NEVER
+// Status is the trailing ``StatusDotView`` mark ALONE — one column where the HUE names the state
+// (accent = working agent, muted = a code agent at rest, green = a clean finish, amber = a question
+// waits, red = failed) and the geometry names the speaker: the static dashed RING is the agent's
+// (closed once its turn ended), the small filled DOT is a command's outcome. A plain shell — busy or
+// not — mounts nothing. NOTHING animates. The title NEVER
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
 // coloured ring" the way a mail row reads unread. No row wash, no tinted
@@ -44,6 +45,10 @@ struct SlateTabRow: View {
     /// source of the trailing mark's muted ring. A plain busy shell never sets it: the ring is
     /// the agent's column, not a generic "something is running" lamp.
     var agentIdle: Bool = false
+    /// Whether a finish badge on this row is the AGENT's turn ending rather than a command's clean
+    /// exit — the bit that decides whether the trailing mark closes the agent's ring or draws the
+    /// command-outcome dot. Resolved by ``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``.
+    var agentFinish: Bool = false
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`), shown only when
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
@@ -195,6 +200,7 @@ struct SlateTabRow: View {
                     // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
                     if let dot = StatusPresentation.statusDot(
                         working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
+                        agentFinish: agentFinish,
                     ) {
                         StatusDotView(style: dot)
                     }

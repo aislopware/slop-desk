@@ -1,14 +1,15 @@
-// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. ONE static circle and
-// the HUE is (almost) the whole grammar — the single exception being that an unread FINISH draws the
-// ring CLOSED where every open state keeps it dashed. The resolver's ladder is the spec: a
-// working agent rings on the accent (the same raw-working key liveness uses, outranking every
-// badge); a RESTING CODE AGENT rings muted; the attention states ring on their attention ink — the
-// title never recolours, so the mark's hue is those states' entire rendering; a plain running
+// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. The HUE names the
+// STATE and the geometry names the SPEAKER: the ring is the AGENT's (dashed while its work is open,
+// CLOSED once its turn ended), the small filled dot is a COMMAND's OUTCOME. The resolver's ladder is
+// the spec: a working agent rings on the accent (the same raw-working key liveness uses, outranking
+// every badge); a RESTING CODE AGENT rings muted; the attention states wear their attention ink —
+// the title never recolours, so the mark's hue is those states' entire rendering; a plain running
 // command, a bare idle shell and privilege-only rows mount nothing. The STATIC contract (nothing
 // in the mark animates) rides the geometry pins. Headless VALUE assertions — no render. Ink
 // identity is asserted SELF-consistently against the presentation maps (never absolute colour
 // values — `Color` equality is provider-fragile).
 
+import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
@@ -33,9 +34,9 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// Each attention kind's ring wears EXACTLY its attention ink — with a neutral title, the
+    /// Each attention kind's mark wears EXACTLY its attention ink — with a neutral title, the
     /// mark's hue is the state's whole rendering, so it can never drift off the hue budget
-    /// (green unread finish, amber question, red failure).
+    /// (green unread finish, amber question, red failure). Ring or dot, the hue is the same one.
     @MainActor
     func testAttentionKindsRingOnTheirAttentionInk() {
         for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
@@ -98,45 +99,118 @@ final class StatusDotTests: XCTestCase {
         XCTAssertNil(StatusPresentation.statusDot(working: false, badge: .caffeinate))
     }
 
-    /// ⚠️ An unread FINISH is the ONLY state that closes the ring — a whole circle for work that
-    /// ended, the broken one for everything still open (working, resting, waiting on a human,
-    /// failed). Both finish tiers close it: the `.completed` flash and the settled `.finished`
-    /// unread are the same reading, since that split is semantic and never visual.
+    /// ⚠️ Only the AGENT's own finish closes the ring — a whole circle for a turn that ended, the
+    /// broken one for everything still open (working, resting, waiting on a human). Both finish
+    /// tiers close it: the `.completed` flash and the settled `.finished` unread are the same
+    /// reading, since that split is semantic and never visual.
     ///
-    /// This is also the only SHAPE distinction the column is allowed. A previous round gave each
-    /// state its own silhouette (raised hand, warning triangle, `?`, `!`, filled dot) and pulled
-    /// every one for reading as fussy detail at 8pt (docs/DECISIONS.md rounds 19–20); closed-versus-
-    /// broken survives because it needs no legend and is legible at any size.
+    /// A shape may only say what a hue cannot — whether the work is over, and who did it. A previous
+    /// round gave each state its own silhouette (raised hand, warning triangle, `?`, `!`) and pulled
+    /// every one for reading as fussy detail at 8pt (docs/DECISIONS.md rounds 19–21).
     @MainActor
-    func testOnlyTheUnreadFinishClosesTheRing() {
+    func testOnlyTheAgentsOwnFinishClosesTheRing() {
         for kind: TabBadgeKind in [.completed, .finished] {
-            XCTAssertTrue(
-                StatusPresentation.closesTheRing(kind), "\(kind) is work that ENDED — whole circle",
+            XCTAssertEqual(
+                StatusPresentation.mark(for: kind, agentFinish: true), .closedRing,
+                "\(kind) from the AGENT is a turn that ENDED — whole circle",
             )
             XCTAssertEqual(
-                StatusPresentation.statusDot(working: false, badge: kind)?.closed, true,
-                "\(kind) must resolve to the closed ring, not merely be classified as one",
+                StatusPresentation.statusDot(working: false, badge: kind, agentFinish: true)?.mark,
+                .closedRing,
+                "\(kind) must RESOLVE to the closed ring, not merely be classified as one",
             )
         }
-        for kind: TabBadgeKind in [.awaitingInput, .error, .running, .commandBusy, .sudo] {
-            XCTAssertFalse(
-                StatusPresentation.closesTheRing(kind), "\(kind) is still open — broken ring",
+        for kind: TabBadgeKind in [.awaitingInput, .running, .commandBusy, .sudo] {
+            XCTAssertEqual(
+                StatusPresentation.mark(for: kind, agentFinish: true), .openRing,
+                "\(kind) is a session still mid-turn — broken ring",
             )
         }
         // The three non-badge routes keep the dashed ring too: working, resting, and the badge-routed
         // agent tier are all "still open".
-        XCTAssertEqual(StatusPresentation.statusDot(working: true, badge: nil)?.closed, false)
-        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.closed, false)
+        XCTAssertEqual(StatusPresentation.statusDot(working: true, badge: nil)?.mark, .openRing)
+        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.mark, .openRing)
         XCTAssertEqual(
-            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.closed, false,
+            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.mark, .openRing,
         )
-        // A closed ring is STILL the same circle — the distinction may cost hue nothing and geometry
-        // nothing. (Its ink is the finish green, exactly as the dashed tiers wear their own.)
+        // A closed ring is STILL the same circle on the same ink — the geometry says the work ended,
+        // never what the state is.
         XCTAssertEqual(
-            StatusPresentation.statusDot(working: false, badge: .finished)?.ink,
+            StatusPresentation.statusDot(working: false, badge: .finished, agentFinish: true)?.ink,
             StatusPresentation.attentionInk(.finished),
             "closing the ring must not change what the mark says",
         )
+    }
+
+    /// ⚠️ A COMMAND's outcome takes the DOT, never the agent's ring: a failure ALWAYS (`.error` can
+    /// only come from a non-zero exit or a held-red `OSC 9;4;2` — `ClaudeStatus` has no error case,
+    /// so the agent never speaks red), and a clean finish whenever the finish is not the agent's.
+    /// The hue is untouched by the split — a command's green is the same green — so the column keeps
+    /// ONE hue budget and the geometry alone says who is speaking.
+    @MainActor
+    func testACommandsOutcomeTakesTheDotOnTheSameInk() {
+        XCTAssertEqual(
+            StatusPresentation.mark(for: .error, agentFinish: true), .dot,
+            "a non-zero exit is a COMMAND's fact even in an agent pane",
+        )
+        for kind: TabBadgeKind in [.completed, .finished] {
+            XCTAssertEqual(
+                StatusPresentation.mark(for: kind, agentFinish: false), .dot,
+                "\(kind) with no agent finish behind it is a background command's receipt",
+            )
+        }
+        // Resolved, not merely classified — and on EXACTLY the ink the ring would have worn.
+        for kind: TabBadgeKind in [.error, .completed, .finished] {
+            let dot = StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false)
+            XCTAssertEqual(dot?.mark, .dot, "\(kind) must resolve to the outcome dot")
+            XCTAssertEqual(
+                dot?.ink, StatusPresentation.attentionInk(kind),
+                "\(kind)'s dot wears the state's own hue — the split costs the hue budget nothing",
+            )
+        }
+        // The dot is the QUIETER of the two marks — a finished `make` must not outshout a live agent
+        // — and it fits inside the RING'S OWN APERTURE (`ringDiameter - ringLineWidth`), so both
+        // marks live in one envelope: the column can never widen depending on which one a row draws.
+        // 4 is the floor at which it stops reading as a stray pixel (measured at true size, round 21).
+        XCTAssertGreaterThanOrEqual(StatusDot.dotDiameter, 4, "below 4pt it reads as a speck")
+        XCTAssertLessThanOrEqual(
+            StatusDot.dotDiameter, StatusDot.ringDiameter - StatusDot.ringLineWidth,
+            "the dot fits within the ring's aperture — one envelope, one column",
+        )
+    }
+
+    /// The finish's OWNER comes from one shared predicate: a live agent `.done` or the client's
+    /// unread latch, and ONLY on a finish badge. The same call gates the row's agent FINAL LINE, so
+    /// the row that shows the agent's last words is exactly the row that draws the closed ring — a
+    /// command's exit can neither borrow the agent's line nor its ring.
+    @MainActor
+    func testTheFinishOwnerIsOnePredicateForLineAndRing() {
+        for status: ClaudeStatus in [.done, .idle] {
+            for unseen in [true, false] {
+                let agents = RailRowsBuilder.finishIsAgents(
+                    badge: .finished, status: status, unseenDone: unseen,
+                )
+                XCTAssertEqual(
+                    agents, status == .done || unseen,
+                    "a live `.done` OR the unread latch owns the finish (\(status), unseen=\(unseen))",
+                )
+                // Whatever the predicate says, the mark must follow it — never diverge.
+                XCTAssertEqual(
+                    StatusPresentation.statusDot(
+                        working: false, badge: .finished, agentFinish: agents,
+                    )?.mark,
+                    agents ? .closedRing : .dot,
+                )
+            }
+        }
+        // A NON-finish badge is never the agent's finish, however done the agent looks — an error or
+        // a busy tier must not be read as a completed turn.
+        for kind: TabBadgeKind? in [.error, .commandBusy, .awaitingInput, .running, nil] {
+            XCTAssertFalse(
+                RailRowsBuilder.finishIsAgents(badge: kind, status: .done, unseenDone: true),
+                "\(String(describing: kind)) is not a finish badge",
+            )
+        }
     }
 
     /// The ring's dash pattern tiles the circumference EXACTLY — `ringDashCount` whole periods,
@@ -154,7 +228,7 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// The CLOSED ring is the same draw with the dash pattern withheld — an empty array is a
-    /// continuous stroke — so there is exactly one geometry and one stroke weight in this column and
+    /// continuous stroke — so the two ring readings share one geometry and one stroke weight, with
     /// no second code path to drift out of alignment with the dashed one.
     func testTheClosedRingIsTheDashedRingWithoutItsPattern() {
         XCTAssertTrue(

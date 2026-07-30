@@ -3309,6 +3309,47 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 21 — the column has TWO speakers: the ring is the agent's, the dot is a command's (2026-07-30)
+
+*"Status của command thường cần khác với agent, ở trạng thái complete và error."* Correct, and the rail
+could not say it: `TabBadgeResolver` FUSES an agent turn ending and a background command's clean exit
+into the same `.completed`/`.finished`, so a finished agent and a finished `make` drew the identical
+green ring. Three facts decided the shape of the fix:
+
+1. **`.error` was already command-only.** `ClaudeStatus` has no error case — red can only come from a
+   non-zero exit or a held-red `OSC 9;4;2`. The rail was spending the agent's mark on a command's fact.
+2. **A command badge is an EVENT, not a state.** `BackgroundCompletionPolicy` records it ONLY for an
+   UNFOCUSED pane (failures always, clean exits only past the ~10s long-running floor, so `ls` never
+   greens the rail) and `clearActiveLeafCompletionBadge` deletes it the instant the pane is visited.
+3. **An agent's state is CONTINUOUS** — working, resting, blocked, done — and survives being looked at.
+
+So the geometry names the SPEAKER and the hue keeps naming the STATE:
+
+| | mark | states |
+|---|---|---|
+| **agent** (a living session) | the dashed RING, closed when its turn ended | accent working · muted resting · amber question · green finish |
+| **command** (an outcome) | a small filled DOT | green clean background finish · red failure |
+
+- ✅ **The split is the data's own, not decoration.** Ring = something is (or was) alive here; dot =
+  something happened here while you were away. That is exactly the state/event line the store already
+  draws, so nothing has to be learned that the rail is not already doing.
+- ✅ **It costs the hue budget nothing** — a command's green is the same green — so the column keeps ONE
+  palette and adding the second alphabet did not add a colour.
+- ✅ **One envelope, one column.** The dot is `5pt` inside the ring's `6.5pt` aperture, both centred in
+  the same 10pt footprint, so the right edge cannot widen depending on which mark a row draws. Diameter
+  picked by RENDERING 3–6pt beside the ring at true size (round 20's technique): below 4 it reads as a
+  stray pixel, at 6 it weighs as much as the ring it must stay quieter than.
+- ✅ **The dot is deliberately the LIGHTER mark.** A finished `make` must not outshout a live agent.
+- ⚠️ **ONE predicate owns "whose finish is this"** — `RailRowsBuilder.finishIsAgents` (a live `.done` or
+  the client's unread latch, and only on a finish badge). It already existed as the gate for the row's
+  agent FINAL LINE; the mark now shares it, so the row that shows the agent's last words is exactly the
+  row that draws the closed ring. Pinned both ways.
+- ⚠️ **Three marks is the CEILING for this column** (open ring, closed ring, dot). A shape here may only
+  say what a hue cannot: whether the work is over, and who did it. Rounds 19–20 killed everything else.
+- ❌ **Rejected: tinting the row's process-label slot** green/red instead. It adds no new shape, but it
+  breaks the property that state reads down ONE column, and a coloured label fights the neutral-title
+  rule the whole rail is built on.
+
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 
 - ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều

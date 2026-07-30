@@ -112,27 +112,35 @@ enum StatusPresentation {
         return nil
     }
 
-    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: ONE shape (the static dashed
-    /// ring, its `CircleDashedIcon`) and the HUE names the state, T3 Code's own status-hue
-    /// convention. The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working`
-    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads
-    /// identically); a RESTING CODE AGENT rings on the muted secondary ink (present, spending no
-    /// hue); the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
-    /// finish, amber question, red failure), the mark's hue being that state's WHOLE rendering
-    /// now that the title stays neutral. The one non-hue distinction: an unread FINISH CLOSES the
-    /// ring (``closesTheRing(_:)``) — a broken circle for work still open, a whole one for work that
-    /// ended. A plain running COMMAND rings NOTHING — the mark is the
-    /// AGENT's column, and a muted ring on every `npm run dev` row spent it on the one thing the
-    /// row's own running title already says. Bare shells and privilege-only rows mount nothing
-    /// either — the resting rail stays bare.
+    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: one column, one hue budget
+    /// (T3 Code's own status-hue convention), nothing animated. The HUE names the STATE and the
+    /// geometry names the SPEAKER (``mark(for:agentFinish:)``): the ring is the AGENT's, the dot is
+    /// a COMMAND's outcome.
+    ///
+    /// The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working` status, so the
+    /// badge gate can't kill it; the badge-routed `.running` tier reads identically); a RESTING CODE
+    /// AGENT rings on the muted secondary ink (present, spending no hue); a waiting question rings
+    /// amber; the agent's own FINISH closes the ring on green. A COMMAND's outcome instead takes the
+    /// small filled DOT on the same inks — green for a clean background finish, red for a failure —
+    /// because it is an unread receipt for an event, not the state of something alive (the store
+    /// records it only for an UNFOCUSED pane and clears it on focus).
+    ///
+    /// A plain RUNNING command still marks NOTHING: the ring is the agent's column, and a muted ring
+    /// on every `npm run dev` row spent it on the one thing the row's own running title already says.
+    /// Bare shells and privilege-only rows mount nothing either — the resting rail stays bare.
     ///
     /// - Parameter agentIdle: whether a code agent is present in the pane and AT REST
     ///   (`ClaudeStatus.idle`) — the muted ring's ONLY source. The `claude` process holds the
     ///   shell's OSC-133 block open for its whole lifetime, so a resting agent's row arrives here
     ///   as a bare ``TabBadgeKind/commandBusy`` (or no badge at all): without this input it is
     ///   indistinguishable from a plain long-running command.
+    /// - Parameter agentFinish: whether a `.completed`/`.finished` badge is the AGENT's turn ending
+    ///   rather than a command's clean exit — the two fuse into one ``TabBadgeKind``, so the badge
+    ///   alone cannot say which. Resolved by ``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``,
+    ///   the SAME predicate that gates showing the agent's final line, so the closed ring and that
+    ///   line can never disagree about whose finish it is.
     static func statusDot(
-        working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false,
+        working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false, agentFinish: Bool = false,
     ) -> StatusDotStyle? {
         if working { return StatusDotStyle(ink: Slate.State.accent) }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
@@ -147,7 +155,7 @@ enum StatusPresentation {
              .error,
              .finished:
             return attentionInk(badge).map {
-                StatusDotStyle(ink: $0, closed: closesTheRing(badge))
+                StatusDotStyle(ink: $0, mark: mark(for: badge, agentFinish: agentFinish))
             }
         // A busy shell says nothing of its own (the row's title already names the command) and the
         // privilege modifiers are slot text, not lifecycle — both fall through to whether a code
@@ -159,25 +167,31 @@ enum StatusPresentation {
         }
     }
 
-    /// Whether a state draws the ring CLOSED rather than dashed — TRUE for the unread finish alone
-    /// (both the fresh `.completed` flash and the settled `.finished` unread; that split is semantic,
-    /// never visual). Everything else is still open in some way — working, resting, waiting on a
-    /// human, failed — and keeps the broken ring, so the closed circle keeps meaning exactly one
-    /// thing. ⚠️ This is the ONLY shape distinction in the column: a previous round spent a day
-    /// giving each state its own silhouette (hand, triangle, `?`, `!`, filled dot) and pulled every
-    /// one of them for reading as fussy detail at 8pt (docs/DECISIONS.md rounds 19–20). One
-    /// closed-versus-broken bit survives that because it is legible at any size and needs no legend.
-    static func closesTheRing(_ kind: TabBadgeKind) -> Bool {
+    /// WHICH mark an attention state draws — the geometry that names the SPEAKER, the hue having
+    /// already named the state:
+    ///
+    ///  * a COMMAND's outcome takes the ``StatusMark/dot`` — a failure (always: `.error` can only
+    ///    come from a non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose status
+    ///    has no error case) and a clean background finish that is NOT the agent's.
+    ///  * the AGENT's own finish CLOSES its ring (both the fresh `.completed` flash and the settled
+    ///    `.finished` unread — that split is semantic, never visual).
+    ///  * everything else keeps the open ring: a question waiting is a live session mid-turn.
+    ///
+    /// ⚠️ Three marks is the CEILING for this column. A previous round gave every state its own
+    /// silhouette (hand, triangle, `?`, `!`) and pulled all of them for reading as fussy detail at
+    /// 8pt (docs/DECISIONS.md rounds 19–20). What survives is only what a shape can say that a hue
+    /// cannot: whether the work is over, and who did it.
+    static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark {
         switch kind {
+        case .error: .dot
         case .completed,
-             .finished: true
+             .finished: agentFinish ? .closedRing : .dot
         case .awaitingInput,
              .caffeinate,
              .commandBusy,
              .commandRunning,
-             .error,
              .running,
-             .sudo: false
+             .sudo: .openRing
         }
     }
 

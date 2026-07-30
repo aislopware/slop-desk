@@ -84,12 +84,17 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the tab-row badge states")
         }
         let panel = VStack(alignment: .leading, spacing: 2) {
-            badgeRow("full-release.sh", badge: .running)
-            badgeRow("running build task", badge: .error)
-            badgeRow("plan next move", badge: .awaitingInput)
-            badgeRow("OpenCode", badge: .completed)
-            badgeRow("abner@MacBook-AB:…", badge: .finished)
-            badgeRow("swift build", badge: .commandBusy)
+            // The AGENT's alphabet — the ring. Dashed while the work is open, CLOSED once the turn
+            // ended; the hue names which open state it is.
+            badgeRow("full-release.sh", badge: .running, agent: true)
+            badgeRow("plan next move", badge: .awaitingInput, agent: true)
+            badgeRow("OpenCode", badge: .completed, agentFinish: true, agent: true)
+            badgeRow("refactor the reassembler", badge: .finished, agentFinish: true, agent: true)
+            // A COMMAND's alphabet — the outcome dot, on the SAME two inks, in the same column.
+            badgeRow("running build task", badge: .error, process: "make")
+            badgeRow("swift test", badge: .finished, process: "swift")
+            // …and the states that mark nothing at all: a running command and a resting shell.
+            badgeRow("swift build", badge: .commandBusy, process: "swift")
             SlateTabRow(
                 title: "abner@MacBook-AB:…",
                 active: true,
@@ -99,15 +104,26 @@ final class SlateSnapshotRender: XCTestCase {
             )
         }
         .padding(8)
-        .frame(width: 260)
+        .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
-        try render(panel, size: CGSize(width: 260, height: 260), to: dir, named: "tab-row-badges.png")
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 260),
+            to: dir, named: "tab-row-badges.png",
+        )
     }
 
-    /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
+    /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase. `agent`
+    /// wears the `✳` title marker (and leaves the slot bare, as the real rail does); `agentFinish`
+    /// says a finish badge is the AGENT's turn ending, which is what closes its ring.
     @MainActor
-    private func badgeRow(_ title: String, badge: TabBadgeKind) -> some View {
-        SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
+    private func badgeRow(
+        _ title: String, badge: TabBadgeKind, agentFinish: Bool = false, agent: Bool = false,
+        process: String? = nil,
+    ) -> some View {
+        SlateTabRow(
+            title: title, active: false, agentMarker: agent, badge: badge,
+            agentFinish: agentFinish, processLabel: process, onSelect: {}, onClose: {},
+        )
     }
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)

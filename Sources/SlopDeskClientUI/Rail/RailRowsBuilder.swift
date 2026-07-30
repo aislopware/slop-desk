@@ -499,6 +499,22 @@ enum RailRowsBuilder {
         return agentProcessNames.contains(name)
     }
 
+    /// Whether a row's finish badge is the AGENT's TURN ENDING rather than a plain command's clean
+    /// exit. The resolver fuses both into one ``TabBadgeKind/completed``/``TabBadgeKind/finished``,
+    /// so the badge alone cannot say which — this pairs it with the agent verdict: a live
+    /// ``ClaudeStatus/done``, or the client's unread latch that outlives the host's own done→idle
+    /// decay (`WorkspaceStore.paneUnseenDone`).
+    ///
+    /// ONE predicate for both consumers, deliberately: it gates the row's agent FINAL LINE (a plain
+    /// command's exit must never surface a stale assistant line) AND the trailing mark's geometry
+    /// (the agent's finish closes its ring; a command's takes the outcome dot). Sharing it means the
+    /// row that shows the agent's last words is exactly the row that draws the closed ring. Pure +
+    /// static so the rule is unit-pinned without a view.
+    static func finishIsAgents(badge: TabBadgeKind?, status: ClaudeStatus, unseenDone: Bool) -> Bool {
+        guard badge == .completed || badge == .finished else { return false }
+        return status == .done || unseenDone
+    }
+
     /// The display folder name of a cwd: its last path component (`/a/b/repo` → `repo`, trailing-slash
     /// tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so the caller falls back
     /// — never an empty title. Delegates to ``PaneSpec/cwdDisplayName(_:)`` (WorkspaceCore, the single

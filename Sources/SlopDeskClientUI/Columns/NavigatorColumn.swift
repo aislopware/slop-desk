@@ -857,12 +857,16 @@ private struct SidebarLiveRow: View {
         let failedBlock = chrome.badge == .error && store.panePendingCompletion[row.id] == .failure
             ? blocks.last(where: \.isFailed)
             : nil
-        // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done`), gated
-        // on the agent verdict — live `.done` or the unread latch that outlives the host's done→idle
-        // decay — so a plain command's completion can never show a stale agent line.
-        let doneLine: String? = (chrome.badge == .completed || chrome.badge == .finished)
-            && (chrome.status == .done || store.paneUnseenDone.contains(row.id))
-            ? store.agentLabel(for: row.id) : nil
+        // Whose finish this is — the agent's turn ending, or a plain command's clean exit. ONE
+        // predicate feeds both consumers (see `RailRowsBuilder.finishIsAgents`): the agent's FINAL
+        // assistant line below (a command's exit must never surface a stale agent line) and the
+        // trailing mark's geometry (the agent's finish closes its ring; a command's takes the dot).
+        let agentFinish = RailRowsBuilder.finishIsAgents(
+            badge: chrome.badge, status: chrome.status,
+            unseenDone: store.paneUnseenDone.contains(row.id),
+        )
+        // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done`).
+        let doneLine: String? = agentFinish ? store.agentLabel(for: row.id) : nil
         // The RUNNING command (busy non-agent shells): the host document's own open block, this
         // client's newest open block, then the coarse foreground-process label — one resolver, so the
         // macOS and iOS rows cannot drift.
@@ -932,6 +936,8 @@ private struct SidebarLiveRow: View {
             // verdict is the detection's own "claude is here, waiting for a prompt"; a plain
             // shell (agent `.none`) never reaches it, however busy it is.
             agentIdle: chrome.status == .idle,
+            // Whose finish it is — the agent's ring closes, a command's takes the outcome dot.
+            agentFinish: agentFinish,
             // The foreground process labels the slot — a real program (`vim`, `make`) AND a bare
             // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
             // metadata slot answers "what is this pane running", and an idle shell row with an
@@ -1044,6 +1050,11 @@ private struct IOSSidebarLiveRow: View {
             if let dot = StatusPresentation.statusDot(
                 working: busyLabel != nil, badge: chrome.badge,
                 agentIdle: chrome.status == .idle,
+                // Same whose-finish predicate as the macOS row — one rule, both platforms.
+                agentFinish: RailRowsBuilder.finishIsAgents(
+                    badge: chrome.badge, status: chrome.status,
+                    unseenDone: store.paneUnseenDone.contains(row.id),
+                ),
             ) {
                 StatusDotView(style: dot)
             }
