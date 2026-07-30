@@ -28,12 +28,10 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(def.scrollbackLines, 10000)
         XCTAssertEqual(def.cursorStyle, .block)
         XCTAssertEqual(def.cursorBlink, .default) // tri-state default = defer to DEC mode 12
-        // Cursor color/text/opacity/animation render-pref defaults (empty colour = follow theme,
-        // opacity 1.0, animation Off — the "Default" state).
+        // Cursor color/text/opacity render-pref defaults (empty colour = follow theme, opacity 1.0).
         XCTAssertEqual(def.cursorColor, "")
         XCTAssertEqual(def.cursorTextColor, "")
         XCTAssertEqual(def.cursorOpacity, 1.0)
-        XCTAssertEqual(def.cursorAnimation, .off)
         // The font-parity defaults — every one is the value that emits NO new libghostty line, so
         // a default-constructed prefs stays byte-identical to the builder output without these fields.
         XCTAssertEqual(def.fontFamilyFallback, "")
@@ -45,18 +43,16 @@ final class PreferencesTests: XCTestCase {
         XCTAssertFalse(def.fontLigaturesAlphabet)
         XCTAssertEqual(def.fontBold, .auto)
         XCTAssertEqual(def.fontItalic, .auto)
-        XCTAssertTrue(def.fontUnderline)
-        XCTAssertFalse(def.fontBlink)
         XCTAssertEqual(def.fontBlending, .default)
         XCTAssertEqual(def.lineHeight, .default)
         let custom = TerminalPreferences(
             fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: "bold", theme: "Light",
             cursorStyle: .bar, cursorBlink: .off, scrollbackLines: 50000,
-            cursorColor: "FF8800", cursorTextColor: "101010", cursorOpacity: 0.75, cursorAnimation: .smooth,
+            cursorColor: "FF8800", cursorTextColor: "101010", cursorOpacity: 0.75,
             fontFamilyFallback: "PingFang SC", fontFamilyBold: "IBM Plex Mono Bold",
             fontFamilyItalic: "IBM Plex Mono Italic", fontFamilyBoldItalic: "IBM Plex Mono Bold Italic",
             autoMatchWeightStyle: false, fontLigatures: .dlig, fontLigaturesAlphabet: true,
-            fontBold: .synthetic, fontItalic: .primaryOnly, fontUnderline: false, fontBlink: true,
+            fontBold: .synthetic, fontItalic: .primaryOnly,
             fontBlending: .macosLike, lineHeight: .custom(1.5),
         )
         XCTAssertEqual(try roundTrip(custom), custom)

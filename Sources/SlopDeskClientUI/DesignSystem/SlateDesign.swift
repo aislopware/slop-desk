@@ -415,17 +415,17 @@ enum Slate {
         /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
         static let monogram: CGFloat = 18
 
-        // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group that replaces a
-        // flat dropdown where the choice has a shape (cursor caret, tab position, key layout, theme).
+        // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group used where the choice
+        // has a SHAPE (cursor caret, tab position, key layout, window geometry, theme). ONE size for all of
+        // them: a card that is bigger in one group than another reads as a different control.
         /// The illustration band inside one option card: the drawing area above the label. Two control
-        /// rungs (2 × `heightControl`) — enough for a legible mini-diagram, still a card not a panel.
+        /// rungs (2 × `heightControl`) — enough for a legible mini-diagram (including the theme swatch's
+        /// title bar + three code lines), still a card and not a panel.
         static let settingsCardArt: CGFloat = heightControl * 2
-        /// One option card's minimum width — the adaptive grid fits as many as the content column allows,
-        /// so a 2-option row reads as a pair and a 9-theme gallery wraps.
-        static let settingsCardWidth: CGFloat = 96
-        /// The theme-gallery card's preview band — taller than `settingsCardArt` because it shows a
-        /// miniature terminal (title bar + three code lines), not a single glyph.
-        static let settingsSwatchArt: CGFloat = heightStrip + heightControl
+        /// One option card's width — FIXED, not a minimum. The grid wraps at this width rather than
+        /// stretching its columns, so every card in Settings is the same size (a theme swatch is exactly as
+        /// wide as a caret card). 116 fits the longest card label ("Classic Light") without truncating.
+        static let settingsCardWidth: CGFloat = 116
 
         // Notification stack (`ToastStackView`) — a notification is a pane speaking from off-screen, so it
         // is a small card in the corner, never a sheet.

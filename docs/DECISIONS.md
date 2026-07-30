@@ -5442,3 +5442,63 @@ takes the scan hostage — the redundancy that justified the effect is exactly w
 → deletes `DesignSystem/Shimmer.swift`, `ShimmerTests`, `SlateTabRow.shimmerPhase` (the pinned-phase
 snapshot seam) and `SlateSnapshotRender.testRenderWorkingRowShimmer` with its GIF writer — the harness
 existed for the one mark whose evidence had to be animated, and there is no longer such a mark.
+
+## Settings speaks the SYSTEM, and every remaining control does something (2026-07-30)
+
+Three complaints about the Settings surface, one root each. It was painted in the active Monokai Pro
+filter, so a preferences window sat dark on a light Mac with theme-tinted labels beside system-blue
+switches; it turned choices into picture-card grids even where the picture was a stand-in SF Symbol; and a
+long tail of its toggles wrote a value nothing ever read.
+
+- ✅ **Settings is OS chrome, not product surface.** Colour + type now come from `SettingsInk` /
+  `SettingsType` — AppKit/UIKit semantic colours and Dynamic-Type text styles — instead of `Slate.*`. The
+  scene no longer sets `.preferredColorScheme`, and `SettingsWindowAppearancePinner` is deleted: the window
+  follows the OS appearance like System Settings does. **The one exception is the theme gallery**, whose
+  swatches must draw from the `SlateTheme` they are PREVIEWING — painted in system colours they would be
+  seven identical cards.
+- ✅ **A card must be earned by its picture.** Cards stay where the illustration IS the difference (cursor
+  caret, tab position, ⌥ key row, window geometry, theme swatch). The glyph-card groups — Right-Click
+  Action, On Launch, Close Confirmation — are `SettingsOptionMenuRow`s: same pinned `SettingsOption` lists,
+  same exhaustiveness test, one row instead of a grid. `SettingsSymbolArt` and `SettingsOption.symbol` are
+  deleted so the shape cannot come back by accident.
+- ✅ **One card size, everywhere.** The grid was `.adaptive(minimum:)`, which STRETCHES columns to fill —
+  a 2-option group rendered two enormous cards while the theme gallery rendered seven small ones. Columns
+  are now fixed at `settingsCardWidth` (96 → 116) and wrap; `settingsSwatchArt` is gone, so the theme
+  swatch shares the one `settingsCardArt` band.
+- ✅ **A setting that only writes to disk is deleted, not disabled.** Same criterion as the 2026-07-29 flag
+  purge: if OFF is not a valid mode but a broken product, it is not a flag — and if neither position does
+  anything, it is not a setting. Removed (control + `SettingsKey` + `Defaults.Key` + accessor + catalog
+  entry + reset lists): **Scroll to Bottom on Output** and **Show command dividers** (ZERO read sites
+  anywhere), **Backspace Deletes Selection**, **Scroll Past First / Last Line**, **Smooth Scroll**, **Cursor
+  Animation**, **Render SGR underlines / blink**, the `srgb-over` / `linear` / `perceptual` **blending**
+  modes and **Title Report** (all wired-but-inert: the code path exists and provably cannot change what you
+  see), and the client-side **IPC — Allow Send Keys / Allow Sensitive Sessions** + **Auto Progress-Bar
+  Commands** keys (see below).
+- ⚠️ **The IPC / auto-progress keys were worse than inert — they were a lie in the doc comment.** Their
+  description claimed a `SLOPDESK_IPC_ALLOW_*` env bridge re-drove the host on its next launch. No such
+  bridge exists: `applyVideoAndAgent()` folds only `video ∪ agent ∪ rawOverrides` into the overlay and the
+  sidecar, so the toggle never left the client. The honest editor for a host-read env key is **Advanced →
+  Raw overrides**, which DOES reach the sidecar — the host resolvers are unchanged.
+- ⚠️⚠️ **`grep Sources Apps` DOES NOT COVER THE CLIENT.** The audit that drove this round first reported
+  Mouse Over to Focus, Undo at Prompt and Backspace-Deletes-Selection as unreferenced, because the live
+  reader of all three is `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — the
+  `TerminalSurface` seam that ONLY the Xcode app target compiles, which is why `swift build` stayed green
+  after deleting them. **Mouse Over to Focus and Undo at Prompt are real and were restored.** Any
+  "is this setting reachable?" sweep must include `ThirdParty/ghostty/integration/` and `Apps/`, and must
+  end at `xcodebuild -scheme ClientApp-macOS`, not at `swift build`.
+- ✅ **Backspace-Deletes-Selection was wired and STILL dead.** `BackspaceSelectionPolicy` was called, but
+  its one interesting leg passed `selectionEndsAtCursor: false` unconditionally (no geometry API), so
+  `leadingDeleteCount` always returned 0 and every branch fell through to the same encoder path — ON and
+  OFF identical by construction, as its own comment admitted. A call site is not evidence of an effect.
+- ⚠️ **Deleting a setting deletes its pure engine too.** `BackspaceSelectionPolicy` and `ScrollPastPolicy`
+  each had a full unit-test file and no reachable effect — a green suite over engines nothing could act on,
+  which is exactly how an inert toggle survives review. Gone with their tests and the `ScrollPastLast` /
+  `ScrollPastFirst` enums. (`FocusFollowsMousePolicy` / `PromptEditPolicy` stay: theirs DO act.)
+- ⚠️ **`CutSelectionPolicy` is uncalled** and was LEFT in place: it is not behind a Settings toggle, so it
+  is out of this round's scope. Wire it to ⌘X or delete it, but do not let it become the next example.
+
+→ adds `Settings/SettingsInk.swift`; touches every file under `Sources/SlopDeskClientUI/Settings/`,
+`SettingsKey.swift`, `AllSettingsCatalog.swift`, `PreferencesStore.swift`, `TerminalControls.swift`,
+`TerminalPreferences.swift`, `TerminalFontSettings.swift`, `SlateDesign.swift`, `HostEnvironment.swift`,
+`AutoProgressMatcher.swift` and `GhosttyTerminalView.swift`. No wire change (golden
+byte-identical) — every removed key was a fire-time `Defaults` flag or a client-only render pref.

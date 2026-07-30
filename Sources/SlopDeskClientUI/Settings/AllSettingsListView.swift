@@ -10,7 +10,9 @@
 //
 // The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings + the
 // cross-tab jump (it sets the shared `selectedSection`). Cross-tab HIGHLIGHT of the target control is
-// deferred (only the jump itself ships here). Slate.* tokens only (no raw font/radius literals).
+// deferred (only the jump itself ships here).
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import Defaults
@@ -54,9 +56,7 @@ struct AllSettingsListView: View {
     @Default(.pasteProtection) private var pasteProtection
     @Default(.mouseHideWhileTyping) private var mouseHideWhileTyping
     @Default(.focusFollowsMouse) private var focusFollowsMouse
-    @Default(.scrollOnOutput) private var scrollOnOutput
     @Default(.scrollMultiplier) private var scrollMultiplier
-    @Default(.showBlockDividers) private var showBlockDividers
     @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
     // The remaining Controls / Mouse / Scroll knobs + the OSC-52 read/write access pickers (the
@@ -64,20 +64,16 @@ struct AllSettingsListView: View {
     // catalog rows here so every `.advancedOnly` entry has an inline editor instead of falling to plain text.
     @Default(.clearSelectionOnTyping) private var clearSelectionOnTyping
     @Default(.clearSelectionOnCopy) private var clearSelectionOnCopy
-    @Default(.backspaceDeletesSelection) private var backspaceDeletesSelection
     @Default(.shiftArrowSelect) private var shiftArrowSelect
     @Default(.pasteBracketedSafe) private var pasteBracketedSafe
     @Default(.allowMouseCapture) private var allowMouseCapture
     @Default(.clickToMove) private var clickToMove
-    @Default(.smoothScroll) private var smoothScroll
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.clipboardRead) private var clipboardRead
     @Default(.clipboardWrite) private var clipboardWrite
     @Default(.allowShiftClick) private var allowShiftClick
     @Default(.rightClickAction) private var rightClickAction
     @Default(.optionAsAlt) private var optionAsAlt
-    @Default(.scrollPastLastLine) private var scrollPastLastLine
-    @Default(.scrollPastFirstLine) private var scrollPastFirstLine
     // Path/link detection (Settings → Controls → Open With / Link Schemes). Client-side link
     // knobs, so no `refresh:` config rebuild on change.
     @Default(.linkDetection) private var linkDetection
@@ -99,15 +95,10 @@ struct AllSettingsListView: View {
     @Default(.soundOnErrorExit) private var soundOnErrorExit
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
-    // The privilege surface (title gates + OSC-52 master) + IPC guards + auto-progress list — these are the
-    // genuinely advanced-only keys (Advanced → Privileges); the IPC + auto-progress keys have NO other edit
-    // surface, so the inline control here is their ONLY editor.
+    // The privilege surface (title gate + OSC-52 master) — the genuinely advanced-only keys
+    // (Advanced → Privileges).
     @Default(.titleShellControlled) private var titleShellControlled
-    @Default(.titleReport) private var titleReport
     @Default(.clipboardShellControlled) private var clipboardShellControlled
-    @Default(.ipcAllowSendKeys) private var ipcAllowSendKeys
-    @Default(.ipcAllowSensitiveSessions) private var ipcAllowSensitiveSessions
-    @Default(.autoProgressCommands) private var autoProgressCommands
 
     private var filtered: [AllSettingsCatalog.SettingEntry] { AllSettingsCatalog.filter(query) }
 
@@ -123,17 +114,17 @@ struct AllSettingsListView: View {
 
                 if filtered.isEmpty {
                     Text("No settings match “\(query)”.")
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.tertiary)
                 } else {
                     ForEach(filtered) { entry in row(for: entry) }
                 }
             } header: {
                 HStack {
                     Text("ALL SETTINGS")
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                        .font(SettingsType.subtitle.weight(.medium))
                         .tracking(1)
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .foregroundStyle(SettingsInk.tertiary)
                     Spacer()
                     TextField("Search", text: $query)
                         .textFieldStyle(.roundedBorder)
@@ -171,14 +162,14 @@ struct AllSettingsListView: View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             HStack(alignment: .firstTextBaseline) {
                 Text(entry.key)
-                    .font(.system(size: Slate.Typeface.body, design: .monospaced))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(SettingsType.mono)
+                    .foregroundStyle(SettingsInk.primary)
                 Spacer(minLength: Slate.Metric.space2)
                 control(for: entry)
             }
             Text("\(entry.description) · Default: \(entry.defaultText)")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, Slate.Metric.space1)
@@ -203,11 +194,11 @@ struct AllSettingsListView: View {
         } label: {
             HStack(spacing: Slate.Metric.space1) {
                 Text(dedicatedValue(for: entry))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .foregroundStyle(SettingsInk.secondary)
                 Image(systemSymbol: .pencil)
-                    .foregroundStyle(Slate.Text.icon)
+                    .foregroundStyle(SettingsInk.icon)
             }
-            .font(.system(size: Slate.Typeface.footnote))
+            .font(SettingsType.subtitle)
         }
         .buttonStyle(.borderless)
     }
@@ -238,8 +229,8 @@ struct AllSettingsListView: View {
         case SettingsKey.longCommandNotifications: boolControl($longCommandNotifications)
         case SettingsKey.redactSecrets: boolControl($redactSecrets)
         // Controls / Mouse / Scroll knobs that feed the libghostty config passthrough (`TerminalControls`)
-        // refresh the live surface on change (`refresh: true`); the client-fire-time-only knobs (right-click,
-        // scroll-past, smooth-scroll, undo, backspace, focus-follows) persist without a config rebuild.
+        // refresh the live surface on change (`refresh: true`); the knobs the SURFACE reads live off
+        // `Defaults` instead (right-click, focus-follows-mouse, undo-at-prompt) persist without a rebuild.
         case SettingsKey.copyOnSelect: boolControl($copyOnSelect, refresh: true)
         case SettingsKey.trimTrailingSpacesOnCopy: boolControl($trimTrailingSpacesOnCopy, refresh: true)
         case SettingsKey.clearSelectionOnTyping: boolControl($clearSelectionOnTyping, refresh: true)
@@ -250,12 +241,8 @@ struct AllSettingsListView: View {
         case SettingsKey.allowMouseCapture: boolControl($allowMouseCapture, refresh: true)
         case SettingsKey.clickToMove: boolControl($clickToMove, refresh: true)
         case SettingsKey.shiftArrowSelect: boolControl($shiftArrowSelect, refresh: true)
-        case SettingsKey.backspaceDeletesSelection: boolControl($backspaceDeletesSelection)
-        case SettingsKey.smoothScroll: boolControl($smoothScroll)
-        case SettingsKey.undoAtPrompt: boolControl($undoAtPrompt)
         case SettingsKey.focusFollowsMouse: boolControl($focusFollowsMouse)
-        case SettingsKey.scrollOnOutput: boolControl($scrollOnOutput)
-        case SettingsKey.showBlockDividers: boolControl($showBlockDividers)
+        case SettingsKey.undoAtPrompt: boolControl($undoAtPrompt)
         case SettingsKey.autoSwitchLayouts: boolControl($autoSwitchLayouts)
         case SettingsKey.recordClipboardHistory: boolControl($recordClipboardHistory)
         // OSC-52 clipboard access gates (allow / deny / ask) — live under Advanced → All Settings; feed the
@@ -290,25 +277,11 @@ struct AllSettingsListView: View {
                 Text("Left Option Only").tag(OptionAsAlt.left)
                 Text("Right Option Only").tag(OptionAsAlt.right)
             }
-        case SettingsKey.scrollPastLastLineKey:
-            menuPicker($scrollPastLastLine) {
-                Text("Disabled").tag(ScrollPastLast.disabled)
-                Text("Last Line With Content").tag(ScrollPastLast.lastLineWithContent)
-                Text("Last Line In Middle").tag(ScrollPastLast.lastLineInMiddle)
-                Text("Cursor Line").tag(ScrollPastLast.cursorLine)
-            }
-        case SettingsKey.scrollPastFirstLineKey:
-            menuPicker($scrollPastFirstLine) {
-                Text("Disabled").tag(ScrollPastFirst.disabled)
-                Text("Same as Last Line").tag(ScrollPastFirst.sameAsLast)
-                Text("First Line With Content").tag(ScrollPastFirst.firstLineWithContent)
-                Text("First Line In Middle").tag(ScrollPastFirst.firstLineInMiddle)
-            }
         case SettingsKey.scrollMultiplier:
             AnyView(HStack(spacing: Slate.Metric.space1) {
                 Text(String(format: "%.2f×", scrollMultiplier))
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .monospacedDigit()
                 Stepper("", value: refreshing($scrollMultiplier), in: 0.25...5, step: 0.25).labelsHidden()
             })
@@ -349,8 +322,8 @@ struct AllSettingsListView: View {
         case SettingsKey.customLinkSchemes:
             // Read-only live summary here — the full editor lives on the Controls → Link Schemes section.
             AnyView(Text(customLinkSchemes.isEmpty ? "None" : customLinkSchemes.joined(separator: ", "))
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
                 .lineLimit(1))
         // Notifications / sounds / agent-notify (Shell groups) — plain live toggles, no config rebuild.
         case SettingsKey.notifyOnFinish: boolControl($notifyOnFinish)
@@ -368,25 +341,15 @@ struct AllSettingsListView: View {
         case SettingsKey.agentNotifyTaskComplete: boolControl($agentNotifyTaskComplete)
         case SettingsKey.agentNotifyAwaitInput: boolControl($agentNotifyAwaitInput)
         // The privilege surface. `clipboardShellControlled` is the OSC-52 master gate that feeds the libghostty
-        // clipboard-read/write tokens, so it refreshes the live config; the title gates + IPC guards are read
-        // fire-time (no config rebuild).
+        // clipboard-read/write tokens, so it refreshes the live config; the title gate is read fire-time
+        // (no config rebuild).
         case SettingsKey.titleShellControlled: boolControl($titleShellControlled)
-        case SettingsKey.titleReport: boolControl($titleReport)
         case SettingsKey.clipboardShellControlled: boolControl($clipboardShellControlled, refresh: true)
-        case SettingsKey.ipcAllowSendKeys: boolControl($ipcAllowSendKeys)
-        case SettingsKey.ipcAllowSensitiveSessions: boolControl($ipcAllowSensitiveSessions)
-        case SettingsKey.autoProgressCommands:
-            // Read-only live summary — the list shows what the host's auto-progress matcher is driven from;
-            // editing the prefix list is a power-user JSON / env action (no inline list editor by design).
-            AnyView(Text(autoProgressCommands.isEmpty ? "None" : "\(autoProgressCommands.count) commands")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
-                .lineLimit(1))
         default:
             // No inline editor wired (should not happen for an `.advancedOnly` entry) — show the default.
             AnyView(Text(entry.defaultText)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary))
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.tertiary))
         }
     }
 

@@ -11,14 +11,18 @@
 // invisible in a card grid — there is no "…" to hint at what's missing).
 //
 // CAPTIONS ARE THE HONESTY CHANNEL: where a choice is deferred, aliased, or caveated, the caveat rides the
-// card's caption rather than a paragraph elsewhere on the page — `auto` new-tab position IS `end` today
-// (`NewTabPosition.insertionIndex` returns `tabCount` for both), so its card says so.
+// option's caption rather than a paragraph elsewhere on the page — `auto` new-tab position IS `end` today
+// (`NewTabPosition.insertionIndex` returns `tabCount` for both), so its card says so. A card hangs the
+// caption under the label; a menu folds it in after an en dash (`SettingsOption.menuLabel`).
+//
+// NOT EVERY LIST IS A CARD GRID. Lists whose options differ only by which WORD names them (right-click
+// action, on-launch behaviour, close-confirmation scope) render as a `SettingsOptionMenuRow` — same list,
+// same exhaustiveness pin, no picture frames. See `SettingsControls`' header for the rule.
 //
 // The scalar ladders (scrollback depth, scroll multiplier, busy-reveal delay) live here too: their presets and
 // readout formatting are pure functions, pinned rather than eyeballed.
 
 #if canImport(SwiftUI)
-import SFSafeSymbols
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -68,30 +72,31 @@ enum SettingsOptionCatalog {
         SettingsOption(.right, "Right only"),
     ]
 
-    /// Controls → Mouse → Right-click action. Symbol art: five actions with no shared geometry to diagram.
-    /// Ctrl+right-click always opens the menu regardless — that lives in the group's subtitle, not per card.
+    /// Controls → Mouse → Right-click action. A MENU, not cards: five actions with no shared geometry to
+    /// diagram, told apart by their verb. Ctrl+right-click always opens the menu regardless — that lives in
+    /// the row's subtitle, not per option.
     static let rightClickActions: [SettingsOption<RightClickAction>] = [
-        SettingsOption(.contextMenu, "Context menu", symbol: .listBullet),
-        SettingsOption(.copy, "Copy", symbol: .docOnDoc),
-        SettingsOption(.paste, "Paste", symbol: .docOnClipboard),
-        SettingsOption(.copyOrPaste, "Copy or paste", symbol: .arrowLeftArrowRight),
-        SettingsOption(.ignore, "Ignore", symbol: .nosign),
+        SettingsOption(.contextMenu, "Context menu"),
+        SettingsOption(.copy, "Copy"),
+        SettingsOption(.paste, "Paste"),
+        SettingsOption(.copyOrPaste, "Copy or paste"),
+        SettingsOption(.ignore, "Ignore"),
     ]
 
     // MARK: - General
 
-    /// General → On launch. Symbol art.
+    /// General → On launch. A menu — two behaviours, distinguished by their sentence.
     static let onLaunch: [SettingsOption<OnLaunchBehavior>] = [
-        SettingsOption(.restoreLastSession, "Restore session", symbol: .clockArrowCirclepath),
-        SettingsOption(.newWindow, "New window", symbol: .macwindow),
+        SettingsOption(.restoreLastSession, "Restore session"),
+        SettingsOption(.newWindow, "New window"),
     ]
 
     /// General → Close confirmation (rendered TWICE — once for a closing tab, once for a closing window — off
-    /// the one list, so the two rows can never offer different policies). Symbol art.
+    /// the one list, so the two rows can never offer different policies). A menu.
     static let closeConfirmation: [SettingsOption<CloseConfirmationPolicy>] = [
-        SettingsOption(.process, "Running process", caption: "Only if busy", symbol: .gearshape),
-        SettingsOption(.always, "Always", symbol: .exclamationmarkTriangle),
-        SettingsOption(.multipleTabs, "Multiple tabs", symbol: .squareOnSquare),
+        SettingsOption(.process, "Running process", caption: "only if busy"),
+        SettingsOption(.always, "Always"),
+        SettingsOption(.multipleTabs, "Multiple tabs"),
     ]
 
     // MARK: - Appearance → Window (macOS-only)

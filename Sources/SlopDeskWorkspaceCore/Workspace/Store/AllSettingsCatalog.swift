@@ -29,7 +29,7 @@ public enum AllSettingsCatalog {
             ///
             /// NOTE: this bucket is a pure RENDERING hint for the All-Settings list ("inline editor vs
             /// jump-to-tab button") — it is NOT a "reset bucket". Many `.advancedOnly`-rendered keys (e.g.
-            /// `copyOnSelect`, `oscNotifications`, `showBlockDividers`) ALSO have a dedicated tab and are
+            /// `copyOnSelect`, `oscNotifications`, `newTabPosition`) ALSO have a dedicated tab and are
             /// therefore tab-reachable, so they are PRESERVED by ``PreferencesStore/resetAdvancedOnly()``.
             /// Do not conflate "rendered inline here" with "is an advanced-only key" — the reset scope lives
             /// in ``PreferencesStore``, not in this bucket.
@@ -330,14 +330,6 @@ public enum AllSettingsCatalog {
             keywords: "focus follows mouse hover pane pointer",
         ),
         SettingEntry(
-            key: SettingsKey.scrollOnOutput,
-            label: "Scroll on Output",
-            description: "Scroll the viewport to the bottom when new output arrives.",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "scroll output bottom autoscroll follow",
-        ),
-        SettingEntry(
             key: SettingsKey.scrollMultiplier,
             label: "Scroll Multiplier",
             description: "Multiply the scroll-wheel delta.",
@@ -363,15 +355,6 @@ public enum AllSettingsCatalog {
             defaultText: "Off",
             bucket: .advancedOnly,
             keywords: "selection clear copy clipboard",
-        ),
-        SettingEntry(
-            key: SettingsKey.backspaceDeletesSelection,
-            label: "Backspace Deletes Selection",
-            description: "Not yet functional — the renderer exposes no selection-geometry API, so Backspace "
-                + "deletes one character whether on or off.",
-            defaultText: "Off",
-            bucket: .advancedOnly,
-            keywords: "backspace delete selection prompt edit",
         ),
         SettingEntry(
             key: SettingsKey.shiftArrowSelect,
@@ -430,47 +413,20 @@ public enum AllSettingsCatalog {
             keywords: "cursor click move prompt arrow keys soft wrap",
         ),
         SettingEntry(
+            key: SettingsKey.undoAtPrompt,
+            label: "Undo at Prompt",
+            description: "Cmd-Z at the shell prompt emits the readline undo sequence.",
+            defaultText: "On",
+            bucket: .advancedOnly,
+            keywords: "undo prompt readline cmd z line edit",
+        ),
+        SettingEntry(
             key: SettingsKey.rightClickActionKey,
             label: "Right-Click Action",
             description: "What right-click does in the viewport (Ctrl+right-click always opens the menu).",
             defaultText: "Context Menu",
             bucket: .advancedOnly,
             keywords: "right click action menu copy paste ignore mouse",
-        ),
-        SettingEntry(
-            key: SettingsKey.scrollPastLastLineKey,
-            label: "Scroll Past Last Line",
-            description: "Overscroll mode past the last content row. Preference saved; the overscroll "
-                + "rendering is deferred (the renderer owns the viewport).",
-            defaultText: "Disabled",
-            bucket: .advancedOnly,
-            keywords: "scroll past last line overscroll bottom content",
-        ),
-        SettingEntry(
-            key: SettingsKey.scrollPastFirstLineKey,
-            label: "Scroll Past First Line",
-            description: "Overscroll mode past the first (oldest) line of history. Preference saved; the "
-                + "overscroll rendering is deferred (same renderer ceiling as Scroll Past Last).",
-            defaultText: "Disabled",
-            bucket: .advancedOnly,
-            keywords: "scroll past first line overscroll top oldest history",
-        ),
-        SettingEntry(
-            key: SettingsKey.smoothScroll,
-            label: "Smooth Scroll",
-            description: "Scrolling already runs at pixel granularity; the whole-row snap when off is "
-                + "deferred (the renderer exposes no row-snap hook).",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "smooth scroll pixel gesture snap row",
-        ),
-        SettingEntry(
-            key: SettingsKey.undoAtPrompt,
-            label: "Undo at Prompt",
-            description: "Press Cmd-Z at the shell prompt to emit the readline undo sequence.",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "undo prompt readline command z edit",
         ),
         SettingEntry(
             key: SettingsKey.optionAsAltKey,
@@ -529,15 +485,6 @@ public enum AllSettingsCatalog {
         ),
         // Auto Progress-Bar Commands (terminal-features__progress-state.md). Advanced list key;
         // the host enforces its own copy via the SLOPDESK_AUTO_PROGRESS_COMMANDS env bridge.
-        SettingEntry(
-            key: SettingsKey.autoProgressCommands,
-            label: "Auto Progress-Bar Commands",
-            description: "Commands that auto-show an indeterminate progress spinner while running. "
-                + "Whitespace-delimited prefixes (git push matches git push origin main); clear to disable.",
-            defaultText: "Built-in list",
-            bucket: .advancedOnly,
-            keywords: "auto progress bar spinner slow command curl git npm brew docker osc 9;4 shell integration",
-        ),
 
         // Privilege surface (terminal-features__notifications.md → Settings → Advanced). The
         // OSC-52 read/write tri-state pickers (clipboardReadKey/clipboardWriteKey, above) are gated by the
@@ -552,15 +499,6 @@ public enum AllSettingsCatalog {
             keywords: "title shell controlled osc 0 2 window tab name privilege",
         ),
         SettingEntry(
-            key: SettingsKey.titleReport,
-            label: "Title Report",
-            description: "Allow programs to read the window title back via OSC 21 / XTWINOPS. Persisted but "
-                + "not yet enforced — the terminal renderer answers the query itself (see release notes).",
-            defaultText: "Off",
-            bucket: .advancedOnly,
-            keywords: "title report osc 21 xtwinops read window exfiltration privilege security",
-        ),
-        SettingEntry(
             key: SettingsKey.clipboardShellControlled,
             label: "Clipboard — Shell Controlled",
             description: "Master switch for OSC 52 clipboard access. When off, both clipboard read and write "
@@ -573,24 +511,6 @@ public enum AllSettingsCatalog {
         // IPC guards on the agent-control ctl socket (privilege surface → Settings → Advanced). The
         // ENFORCEMENT is HOST-side (the guard runs on the host's NDJSON ctl socket); these client toggles are
         // the edit surface and re-drive the host via the SLOPDESK_IPC_ALLOW_* env bridge on the next launch.
-        SettingEntry(
-            key: SettingsKey.ipcAllowSendKeys,
-            label: "IPC — Allow Send Keys",
-            description: "Let the agent-control socket write input, run commands, or spawn / kill / resize "
-                + "panes. Read-only control (list, read, wait) is always allowed. Enforced on the host.",
-            defaultText: "Off",
-            bucket: .advancedOnly,
-            keywords: "ipc agent control socket send keys write run spawn kill resize privilege ctl security",
-        ),
-        SettingEntry(
-            key: SettingsKey.ipcAllowSensitiveSessions,
-            label: "IPC — Allow Sensitive Sessions",
-            description: "Let the agent-control socket target a pane running a sensitive command (ssh, sudo, "
-                + "login). Off refuses send-keys into a password prompt. Enforced on the host.",
-            defaultText: "Off",
-            bucket: .advancedOnly,
-            keywords: "ipc agent control sensitive ssh sudo login password session privilege ctl security",
-        ),
 
         // MARK: Appearance (New Tab Position + chrome orphan toggles)
 
@@ -602,14 +522,6 @@ public enum AllSettingsCatalog {
             defaultText: "Automatic",
             bucket: .advancedOnly,
             keywords: "tab position new placement order end after current appearance",
-        ),
-        SettingEntry(
-            key: SettingsKey.showBlockDividers,
-            label: "Show Command Dividers",
-            description: "Show the per-block sticky command header over terminal panes.",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "block divider command header terminal sticky shell",
         ),
         // The DOCK ICON group lives under **Appearance** (terminal-features__progress-state.md). macOS-only
         // NSDockTile behaviour (inert on iOS); the live toggles live under Appearance → Dock Icon, so the
@@ -747,22 +659,19 @@ public enum AllSettingsCatalog {
         // Controls — selection / copy / paste
         SettingsKey.copyOnSelect, SettingsKey.trimTrailingSpacesOnCopy, SettingsKey.pasteProtection,
         SettingsKey.pasteBracketedSafe, SettingsKey.clearSelectionOnTyping, SettingsKey.clearSelectionOnCopy,
-        SettingsKey.backspaceDeletesSelection, SettingsKey.shiftArrowSelect,
+        SettingsKey.shiftArrowSelect,
         // Controls — mouse / scroll
-        SettingsKey.mouseHideWhileTyping, SettingsKey.focusFollowsMouse, SettingsKey.scrollOnOutput,
-        SettingsKey.scrollMultiplier, SettingsKey.allowMouseCapture, SettingsKey.allowShiftClickKey,
-        SettingsKey.clickToMove, SettingsKey.rightClickActionKey, SettingsKey.scrollPastLastLineKey,
-        SettingsKey.scrollPastFirstLineKey, SettingsKey.smoothScroll, SettingsKey.undoAtPrompt,
-        SettingsKey.optionAsAltKey,
+        SettingsKey.mouseHideWhileTyping, SettingsKey.focusFollowsMouse, SettingsKey.scrollMultiplier,
+        SettingsKey.allowMouseCapture, SettingsKey.allowShiftClickKey, SettingsKey.clickToMove,
+        SettingsKey.rightClickActionKey, SettingsKey.optionAsAltKey, SettingsKey.undoAtPrompt,
         // Controls — links
         SettingsKey.linkDetection, SettingsKey.linkCmdClickKey, SettingsKey.linkCmdShiftClickKey,
         SettingsKey.autoDetectLinkSchemesKey, SettingsKey.customLinkSchemes,
-        // Advanced — privilege gates + OSC-52 master + read/write + IPC + auto-progress
+        // Advanced — privilege gates + OSC-52 master + read/write
         SettingsKey.clipboardReadKey, SettingsKey.clipboardWriteKey, SettingsKey.titleShellControlled,
-        SettingsKey.titleReport, SettingsKey.clipboardShellControlled, SettingsKey.ipcAllowSendKeys,
-        SettingsKey.ipcAllowSensitiveSessions, SettingsKey.autoProgressCommands,
+        SettingsKey.clipboardShellControlled,
         // Appearance + Agents
-        SettingsKey.newTabPositionKey, SettingsKey.showBlockDividers,
+        SettingsKey.newTabPositionKey,
         SettingsKey.autoSwitchLayouts, SettingsKey.recordClipboardHistory,
     ]
 

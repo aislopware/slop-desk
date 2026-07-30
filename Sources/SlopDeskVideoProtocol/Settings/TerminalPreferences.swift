@@ -67,16 +67,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// Scrollback buffer size in lines (libghostty `scrollback-limit`, rows).
     public var scrollbackLines: Int
 
-    /// Cursor body-glide animation (`cursor.animation`).
-    public enum CursorAnimation: String, Codable, Sendable, CaseIterable {
-        /// No animation — the caret jumps discretely (the libghostty default; also the default here).
-        case off
-        /// Glide the caret on same-row moves and add a small elastic overshoot on click / focus. A
-        /// CLIENT-side render layer (the pinned libghostty fork exposes no cursor-animation key, so the
-        /// glide is the documented ceiling, deferred — see `DECISIONS.md`); the value persists + surfaces today.
-        case smooth
-    }
-
     // Cursor color / text-under / opacity / animation render prefs (Appearance → Cursor). These
     // are render prefs with real defaults — applied live exactly like `cursorStyle` / `cursorBlink` — NOT
     // env overrides, so they never reach the EnvConfig overlay. Empty colour strings mean "follow the
@@ -89,8 +79,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     public var cursorTextColor: String
     /// Cursor body opacity (libghostty `cursor-opacity`, `0.0`…`1.0`), default `1.0` (fully opaque).
     public var cursorOpacity: Double
-    /// Cursor glide animation (`cursor.animation`), default ``CursorAnimation/off``.
-    public var cursorAnimation: CursorAnimation
 
     // FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
     // pure-chrome prefs with real defaults — applied live via `TerminalConfigBuilder` → libghostty — NEVER
@@ -121,14 +109,8 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     public var fontBold: FontStyleMode
     /// Italic face mode (`font-italic`), default ``FontStyleMode/auto`` (no line).
     public var fontItalic: FontStyleMode
-    /// SGR underline rendering (`font-underline`), default `true` (on). PERSISTED + surfaced but NOT
-    /// emitted — there is no verified stock libghostty key (deferred-apply; see ``TerminalFontSettings``).
-    public var fontUnderline: Bool
-    /// SGR 5/6 blink rendering (`font-blink`), default `false` (off — an accessibility concern).
-    /// PERSISTED + surfaced but NOT emitted — no verified stock libghostty key (deferred-apply).
-    public var fontBlink: Bool
-    /// Glyph anti-aliasing blend mode (`font-blending`), default ``FontBlending/default``. Only
-    /// ``FontBlending/macosLike`` maps (→ `font-thicken = true`); the others persist but are not emitted.
+    /// Glyph anti-aliasing blend mode (`font-blending`), default ``FontBlending/default``.
+    /// ``FontBlending/macosLike`` maps to `font-thicken = true`.
     public var fontBlending: FontBlending
     /// Cell-height mode (`line-height`), default ``LineHeightMode/default`` (no `adjust-cell-height`
     /// line — the theme/font decides).
@@ -147,7 +129,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         cursorColor: String = "",
         cursorTextColor: String = "",
         cursorOpacity: Double = 1.0,
-        cursorAnimation: CursorAnimation = .off,
         fontFamilyFallback: String = "",
         fontFamilyBold: String = "",
         fontFamilyItalic: String = "",
@@ -157,8 +138,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         fontLigaturesAlphabet: Bool = false,
         fontBold: FontStyleMode = .auto,
         fontItalic: FontStyleMode = .auto,
-        fontUnderline: Bool = true,
-        fontBlink: Bool = false,
         fontBlending: FontBlending = .default,
         lineHeight: LineHeightMode = .default,
     ) {
@@ -174,7 +153,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.cursorColor = cursorColor
         self.cursorTextColor = cursorTextColor
         self.cursorOpacity = cursorOpacity
-        self.cursorAnimation = cursorAnimation
         self.fontFamilyFallback = fontFamilyFallback
         self.fontFamilyBold = fontFamilyBold
         self.fontFamilyItalic = fontFamilyItalic
@@ -184,8 +162,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.fontLigaturesAlphabet = fontLigaturesAlphabet
         self.fontBold = fontBold
         self.fontItalic = fontItalic
-        self.fontUnderline = fontUnderline
-        self.fontBlink = fontBlink
         self.fontBlending = fontBlending
         self.lineHeight = lineHeight
     }
@@ -203,7 +179,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         case cursorColor
         case cursorTextColor
         case cursorOpacity
-        case cursorAnimation
         case fontFamilyFallback
         case fontFamilyBold
         case fontFamilyItalic
@@ -213,8 +188,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         case fontLigaturesAlphabet
         case fontBold
         case fontItalic
-        case fontUnderline
-        case fontBlink
         case fontBlending
         case lineHeight
     }
@@ -244,7 +217,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
             cursorColor: c.decodeIfPresent(String.self, forKey: .cursorColor) ?? d.cursorColor,
             cursorTextColor: c.decodeIfPresent(String.self, forKey: .cursorTextColor) ?? d.cursorTextColor,
             cursorOpacity: c.decodeIfPresent(Double.self, forKey: .cursorOpacity) ?? d.cursorOpacity,
-            cursorAnimation: c.decodeIfPresent(CursorAnimation.self, forKey: .cursorAnimation) ?? d.cursorAnimation,
             fontFamilyFallback: c.decodeIfPresent(String.self, forKey: .fontFamilyFallback) ?? d.fontFamilyFallback,
             fontFamilyBold: c.decodeIfPresent(String.self, forKey: .fontFamilyBold) ?? d.fontFamilyBold,
             fontFamilyItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyItalic) ?? d.fontFamilyItalic,
@@ -257,8 +229,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
                 ?? d.fontLigaturesAlphabet,
             fontBold: c.decodeIfPresent(FontStyleMode.self, forKey: .fontBold) ?? d.fontBold,
             fontItalic: c.decodeIfPresent(FontStyleMode.self, forKey: .fontItalic) ?? d.fontItalic,
-            fontUnderline: c.decodeIfPresent(Bool.self, forKey: .fontUnderline) ?? d.fontUnderline,
-            fontBlink: c.decodeIfPresent(Bool.self, forKey: .fontBlink) ?? d.fontBlink,
             fontBlending: c.decodeIfPresent(FontBlending.self, forKey: .fontBlending) ?? d.fontBlending,
             lineHeight: c.decodeIfPresent(LineHeightMode.self, forKey: .lineHeight) ?? d.lineHeight,
         )

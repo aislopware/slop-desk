@@ -33,7 +33,8 @@
 // fire-time toggles are live; the video/agent HOST flags are reconnect-only; SYMMETRIC keys (FEC) also carry
 // a "set on both ends" warning.
 //
-// Slate.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import Defaults
@@ -83,10 +84,11 @@ public struct SlopDeskSettingsScene: Scene {
             SettingsView(store: store)
                 .agentHooksController(agentHooks)
                 .workspaceStore(workspace)
-                // Native chrome → SYSTEM accent (not the theme accent) so toggles/steppers/radios read as
-                // native System-Settings controls; appearance still tracks the theme below.
+                // SYSTEM chrome, end to end: the tint is reset to the system accent AND no colour scheme is
+                // pinned, so the window follows the OS appearance like System Settings does. Pinning it to
+                // the terminal theme used to put a Monokai-dark preferences window on a light Mac (and a
+                // theme-tinted label beside a system-blue switch). See `SettingsInk`.
                 .tint(nil)
-                .preferredColorScheme(Slate.colorScheme)
         }
     }
 }
@@ -176,8 +178,8 @@ enum ApplyTiming {
     }
 }
 
-/// A small inline timing chip (symbol + label). The tint reads the `@MainActor` `Slate.Status` tokens in
-/// the view body (not on the nonisolated enum).
+/// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
+/// nonisolated `ApplyTiming` enum.
 private struct TimingChip: View {
     let timing: ApplyTiming
     var body: some View {
@@ -185,14 +187,14 @@ private struct TimingChip: View {
             Image(systemName: timing.symbol)
             Text(timing.label)
         }
-        .font(.system(size: Slate.Typeface.small))
+        .font(SettingsType.caption)
         .foregroundStyle(tint)
     }
 
     private var tint: Color {
         switch timing {
-        case .live: Slate.Status.ok
-        case .reconnect: Slate.Status.warn
+        case .live: SettingsInk.ok
+        case .reconnect: SettingsInk.warn
         }
     }
 }
@@ -217,9 +219,8 @@ struct SettingsView: View {
     var body: some View {
         // NATIVE macOS settings chrome: a `NavigationSplitView` with a system `List(selection:)` sidebar +
         // native `.searchable` and the `Form`-based section content as detail — instead of a bespoke
-        // two-column `HStack` + custom `SettingsSidebarRow` buttons. Window appearance is pinned to the active
-        // theme so native controls render consistently with the workspace (the scene also applies
-        // `.preferredColorScheme(Slate.colorScheme)`).
+        // two-column `HStack` + custom `SettingsSidebarRow` buttons. Nothing pins the window's appearance:
+        // it follows the OS, like every other preferences window.
         NavigationSplitView {
             List(selection: selectionBinding) {
                 ForEach(filteredSections) { section in
@@ -240,9 +241,6 @@ struct SettingsView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         #if os(macOS)
-            // Pin the Settings NSWindow to the theme appearance (macOS only — iOS has no NSWindow; its settings
-            // surface is `SettingsSheet`, which adopts `.preferredColorScheme` directly).
-            .background { SettingsWindowAppearancePinner(isLight: Slate.theme.isLight) }
             // Esc closes the window. A stock `Settings` scene has NO Esc behaviour of its own, so ⌘, otherwise
             // opened a window the keyboard could not dismiss; the monitor is window-scoped and defers to a
             // field editor (see `SettingsEscapeDismiss`).
@@ -270,23 +268,6 @@ struct SettingsView: View {
         SettingsSectionContent(section: section, store: store, selectedSection: $selectedSection)
     }
 }
-
-// MARK: - Settings window appearance pin
-
-#if os(macOS)
-/// Pins the Settings `NSWindow`'s appearance to the active Slate theme so native chrome + AppKit-hosted
-/// controls match the workspace, not the OS default. `isLight` is passed IN (from `Slate.theme.isLight` in
-/// `SettingsView.body`), so a live theme switch re-renders → re-runs `updateNSView` → re-pins, with NO
-/// `NotificationCenter` observer to leak. The scene's `.preferredColorScheme` covers the SwiftUI side; this
-/// covers the window itself.
-private struct SettingsWindowAppearancePinner: NSViewRepresentable {
-    let isLight: Bool
-    func makeNSView(context _: Context) -> NSView { NSView() }
-    func updateNSView(_ nsView: NSView, context _: Context) {
-        nsView.window?.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
-    }
-}
-#endif
 
 // MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
 
@@ -373,7 +354,7 @@ private struct GeneralSettingsTab: View {
     var body: some View {
         Form {
             slateFormSection(GeneralSettingsLayout.general) {
-                SettingsOptionCards(
+                SettingsOptionMenuRow(
                     "On Launch",
                     subtitle: "What a cold start opens.",
                     options: SettingsOptionCatalog.onLaunch,
@@ -385,14 +366,13 @@ private struct GeneralSettingsTab: View {
             // Both rows read the ONE `closeConfirmation` list, so a tab and a window can never be offered
             // different policies.
             slateFormSection(GeneralSettingsLayout.closeConfirmation) {
-                SettingsOptionCards(
+                SettingsOptionMenuRow(
                     "Closing a tab",
                     subtitle: "When to ask before a tab goes away.",
                     options: SettingsOptionCatalog.closeConfirmation,
                     selection: $closeConfirmTab,
                 )
-                Divider()
-                SettingsOptionCards(
+                SettingsOptionMenuRow(
                     "Closing a window",
                     subtitle: "When to ask before a window goes away.",
                     options: SettingsOptionCatalog.closeConfirmation,
@@ -462,7 +442,7 @@ private struct GeneralSettingsTab: View {
                 "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
             ) {
                 if isDefaultTerminal {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
+                    Label("Default", systemImage: "checkmark").foregroundStyle(SettingsInk.ok)
                 } else {
                     Button("Set as Default Terminal") {
                         Task {
@@ -479,7 +459,7 @@ private struct GeneralSettingsTab: View {
                     + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
                     + "in the remote model.",
             ) {
-                Text("Unavailable").foregroundStyle(Slate.Text.tertiary)
+                Text("Unavailable").foregroundStyle(SettingsInk.tertiary)
             }
             osIntegrationRow(
                 "Finder Integration",
@@ -513,8 +493,8 @@ private struct GeneralSettingsTab: View {
             VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text(title)
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -764,8 +744,8 @@ private struct ShellSettingsTab: View {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -776,8 +756,8 @@ private struct ShellSettingsTab: View {
     private func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> some View {
         HStack(alignment: .top, spacing: Slate.Metric.space2) {
             Image(systemSymbol: symbol)
-                .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.Text.icon)
+                .font(SettingsType.label)
+                .foregroundStyle(SettingsInk.icon)
                 .frame(width: Slate.Metric.iconSize)
                 .padding(.top, Slate.Metric.space1 / 2)
             rowLabel(title, subtitle)
@@ -830,8 +810,8 @@ private struct NotificationPermissionRow: View {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                     Text("System Permission")
                     Text(dotSubtitle)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -841,9 +821,9 @@ private struct NotificationPermissionRow: View {
 
     private var dotColor: Color {
         switch dot {
-        case .green: Slate.Status.ok
-        case .amber: Slate.Status.warn
-        case .red: Slate.Status.err
+        case .green: SettingsInk.ok
+        case .amber: SettingsInk.warn
+        case .red: SettingsInk.err
         }
     }
 
@@ -898,17 +878,12 @@ private struct ControlsSettingsTab: View {
     @Default(.shiftArrowSelect) private var shiftArrowSelect
     @Default(.clearSelectionOnTyping) private var clearSelectionOnTyping
     @Default(.clearSelectionOnCopy) private var clearSelectionOnCopy
-    @Default(.backspaceDeletesSelection) private var backspaceDeletesSelection
     // Copy & Paste.
     @Default(.copyOnSelect) private var copyOnSelect
     @Default(.trimTrailingSpacesOnCopy) private var trimTrailingSpacesOnCopy
     @Default(.pasteProtection) private var pasteProtection
     @Default(.pasteBracketedSafe) private var pasteBracketedSafe
     // Scroll.
-    @Default(.scrollOnOutput) private var scrollOnOutput
-    @Default(.scrollPastLastLine) private var scrollPastLastLine
-    @Default(.scrollPastFirstLine) private var scrollPastFirstLine
-    @Default(.smoothScroll) private var smoothScroll
     @Default(.scrollMultiplier) private var scrollMultiplier
     // Mouse (`mouse-option.png` order).
     @Default(.focusFollowsMouse) private var focusFollowsMouse
@@ -917,7 +892,7 @@ private struct ControlsSettingsTab: View {
     @Default(.allowShiftClick) private var allowShiftClick
     @Default(.clickToMove) private var clickToMove
     @Default(.allowMouseCapture) private var allowMouseCapture
-    // Keyboard / System.
+    // Keyboard.
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.optionAsAlt) private var optionAsAlt
     // Links (Settings → Controls → Open With / Link Schemes). Client-side link interaction —
@@ -951,12 +926,6 @@ private struct ControlsSettingsTab: View {
                     "Clear Selection on Copy",
                     "Drop the highlight after an explicit copy (does not apply when Copy on Select fires).",
                     symbol: .docOnDoc, isOn: $clearSelectionOnCopy,
-                )
-                toggleRow(
-                    "Backspace Deletes Selection",
-                    "Not yet functional — the terminal renderer exposes no selection-geometry API, so "
-                        + "Backspace deletes a single character whether this is on or off. Off by default.",
-                    symbol: .deleteLeft, isOn: $backspaceDeletesSelection,
                 )
                 timingFooter(.live)
             }
@@ -1039,39 +1008,6 @@ private struct ControlsSettingsTab: View {
     /// Settings → Controls → Scroll. Extracted to keep the `Form` closure under `closure_body_length`.
     private var scrollSection: some View {
         slateFormSection("Scroll") {
-            toggleRow(
-                "Scroll to Bottom on Output",
-                "Snap the viewport to the bottom when new output arrives.",
-                symbol: .arrowDownToLine, isOn: $scrollOnOutput,
-            )
-            pickerRow(
-                "Scroll Past Last Line",
-                "Overscroll mode past the last content row. Preference saved; the overscroll rendering "
-                    + "is not yet active (the terminal renderer owns the viewport — deferred).",
-                selection: $scrollPastLastLine,
-            ) {
-                Text("Disabled").tag(ScrollPastLast.disabled)
-                Text("Last Line With Content").tag(ScrollPastLast.lastLineWithContent)
-                Text("Last Line In Middle").tag(ScrollPastLast.lastLineInMiddle)
-                Text("Cursor Line").tag(ScrollPastLast.cursorLine)
-            }
-            pickerRow(
-                "Scroll Past First Line",
-                "Overscroll mode past the first (oldest) scrollback row. Preference saved; the overscroll "
-                    + "rendering is not yet active (deferred — same renderer ceiling as Scroll Past Last).",
-                selection: $scrollPastFirstLine,
-            ) {
-                Text("Disabled").tag(ScrollPastFirst.disabled)
-                Text("Same as Last Line").tag(ScrollPastFirst.sameAsLast)
-                Text("First Line With Content").tag(ScrollPastFirst.firstLineWithContent)
-                Text("First Line In Middle").tag(ScrollPastFirst.firstLineInMiddle)
-            }
-            toggleRow(
-                "Smooth Scroll",
-                "Scrolling already runs at pixel granularity. The whole-row snap when this is off is not "
-                    + "yet active (the renderer exposes no row-snap hook — deferred).",
-                symbol: .arrowUpArrowDown, isOn: $smoothScroll,
-            )
             // The stops name the values that MEAN something (half speed, the 1× identity, double, triple), so
             // "put it back to normal" is one tap rather than a drag hunt for exactly 1.00.
             SettingsSliderRow(
@@ -1106,9 +1042,10 @@ private struct ControlsSettingsTab: View {
                 "Focus the pane under the mouse cursor automatically.",
                 symbol: .cursorarrowRays, isOn: $focusFollowsMouse,
             )
-            // Symbol cards, not a diagram: five actions with no shared geometry to draw (see
-            // `SettingsSymbolArt`'s note on when a glyph is the honest choice).
-            SettingsOptionCards(
+            // A MENU, not cards: five actions with no shared geometry to draw. Their difference is the verb
+            // ("Copy" vs "Paste" vs "Ignore"), and a glyph standing in for a verb adds a picture frame, not
+            // information.
+            SettingsOptionMenuRow(
                 "Right-Click Action",
                 subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
                     + "menu).",
@@ -1187,8 +1124,8 @@ private struct ControlsSettingsTab: View {
                     + "panes are not available here — paths reveal or open on the host and URLs open in your "
                     + "client browser.",
             )
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
+            .font(SettingsType.subtitle)
+            .foregroundStyle(SettingsInk.secondary)
             timingFooter(.live)
         }
     }
@@ -1215,7 +1152,7 @@ private struct ControlsSettingsTab: View {
                     )
                     TextField("codex, ssh, vscode", text: customSchemesText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: Slate.Typeface.body, design: .monospaced))
+                        .font(SettingsType.mono)
                 }
             }
             timingFooter(.live)
@@ -1310,8 +1247,8 @@ private struct ControlsSettingsTab: View {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1336,17 +1273,17 @@ private struct EditorSettingsTab: View {
                 // that enum's typed causes are the pane area's connection states, with pinned copy per case.
                 VStack(spacing: Slate.Metric.space2) {
                     Image(systemSymbol: .docText)
-                        .font(.system(size: Slate.Typeface.display))
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .font(SettingsType.placeholderGlyph)
+                        .foregroundStyle(SettingsInk.tertiary)
                     Text("No File Editor Yet")
-                        .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                        .font(SettingsType.body.weight(.semibold))
                     Text(
                         "Soft Wrap, Line Numbers, and Tab Size configure a built-in file editor slopdesk "
                             + "does not have. Terminal font and cursor live under Appearance; scrollback "
                             + "under Controls.",
                     )
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1373,7 +1310,6 @@ private struct AppearanceSettingsTab: View {
     // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
     // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`, which drives `chrome.sidebarCollapsed`.
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
-    @Default(.showBlockDividers) private var showBlockDividers
     #if os(macOS)
     // window-size (`window-size`) — macOS-only: the initial dimensions are an `NSWindow`
     // concept (iOS has no resizable window), so the keys are bound only where the `Window` section renders.
@@ -1498,7 +1434,7 @@ private struct AppearanceSettingsTab: View {
                     options: SettingsOptionCatalog.cursorStyles,
                     selection: $store.terminal.cursorStyle,
                 ) { option in
-                    SettingsCaretArt(style: option.value, color: Slate.Text.primary)
+                    SettingsCaretArt(style: option.value, color: SettingsInk.primary)
                 }
                 Picker("Blink", selection: $store.terminal.cursorBlink) {
                     Text("Default").tag(TerminalPreferences.CursorBlink.default)
@@ -1507,15 +1443,6 @@ private struct AppearanceSettingsTab: View {
                 }
             }
             #endif
-
-            slateFormSection("Chrome") {
-                SettingsGlyphToggleRow(
-                    .textAlignleft,
-                    "Show command dividers",
-                    "Rule off each command's output block in the terminal.",
-                    isOn: $showBlockDividers,
-                )
-            }
 
             // DOCK ICON: under **Appearance** (terminal-features__progress-state.md).
             // macOS-only (no Dock on iOS — the group is `#if os(macOS)`). Both toggles actuate
@@ -1611,8 +1538,8 @@ private struct AppearanceSettingsTab: View {
                 Stepper("Height: \(windowHeightPx) px", value: $windowHeightPx, in: 64...16384, step: 50)
             }
             Text("Applied to the next window opened.")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
             // REMOTE DESKTOP (`desktop-window`): how the dedicated desktop window opens (⌥⌘N) —
             // a regular window, straight into native fullscreen (the Parsec model), or a borderless
             // cover of the current Space whose LOCAL menu bar needs a top-edge DWELL to reveal (the
@@ -1636,8 +1563,8 @@ private struct AppearanceSettingsTab: View {
             Text(
                 "Point, click, and scroll in a remote desktop window without focusing it — typing stays in the window you're working in.",
             )
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
+            .font(SettingsType.subtitle)
+            .foregroundStyle(SettingsInk.secondary)
         }
     }
     #endif
@@ -1686,8 +1613,8 @@ private struct AppearanceSettingsTab: View {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1774,8 +1701,8 @@ private struct AgentsSettingsTab: View {
             )
             if !behaviorEnabled {
                 Text("Install an integration above to configure agent behaviour.")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.tertiary)
             }
             timingFooter(.live)
         }
@@ -1816,8 +1743,8 @@ private struct AgentsSettingsTab: View {
 
             if state == .disconnected || state == .unknown {
                 Text("Connect a session to manage hooks")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.tertiary)
             }
 
             // installed-but-INACTIVE — hooks are in settings.json but the host daemon's hook listener isn't
@@ -1830,8 +1757,8 @@ private struct AgentsSettingsTab: View {
                     "Hooks are installed but the host isn't listening — its socket failed to bind, or "
                         + "the host daemon is an older build. Restart it, then open new panes.",
                 )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Status.warn)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.warn)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1839,8 +1766,8 @@ private struct AgentsSettingsTab: View {
             // — an agent-restart caveat, not a host-reconnect sidecar flag (hence a plain caption, not the
             // `.reconnect` chip, which would mislead).
             Text("Hooks take effect after the agent restarts.")
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(SettingsType.caption)
+                .foregroundStyle(SettingsInk.tertiary)
         }
     }
 
@@ -1873,17 +1800,17 @@ private struct AgentsSettingsTab: View {
         switch state {
         case .installed:
             Label("Installed", systemImage: "checkmark")
-                .foregroundStyle(Slate.Status.ok)
+                .foregroundStyle(SettingsInk.ok)
         case .installedInactive:
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Slate.Status.warn)
+                .foregroundStyle(SettingsInk.warn)
         case .notInstalled:
-            Text("Not Installed").foregroundStyle(Slate.Text.secondary)
+            Text("Not Installed").foregroundStyle(SettingsInk.secondary)
         case .working:
-            Text("Working…").foregroundStyle(Slate.Text.secondary)
+            Text("Working…").foregroundStyle(SettingsInk.secondary)
         case .disconnected,
              .unknown:
-            Text("—").foregroundStyle(Slate.Text.tertiary)
+            Text("—").foregroundStyle(SettingsInk.tertiary)
         }
     }
 
@@ -1894,8 +1821,8 @@ private struct AgentsSettingsTab: View {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1968,7 +1895,6 @@ private struct AdvancedSettingsTab: View {
     // Privilege surface (terminal-features__notifications.md → Settings → Advanced). Cross-platform
     // — these gate what a remote OSC sequence may do client-side, so they apply on macOS AND iOS.
     @Default(.titleShellControlled) private var titleShellControlled
-    @Default(.titleReport) private var titleReport
     @Default(.clipboardShellControlled) private var clipboardShellControlled
     @Default(.clipboardRead) private var clipboardRead
     @Default(.clipboardWrite) private var clipboardWrite
@@ -1990,18 +1916,18 @@ private struct AdvancedSettingsTab: View {
                 Text(
                     "One SLOPDESK_KEY=value per line. Folded last, so a key here overrides the matching typed setting.",
                 )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
                 TextEditor(text: $text)
-                    .font(.system(size: Slate.Typeface.footnote, design: .monospaced))
+                    .font(SettingsType.monoSubtitle)
                     .frame(minHeight: 120)
                     .onChange(of: text) { _, new in commit(new) }
                 HStack(spacing: Slate.Metric.space1) {
                     Image(systemSymbol: .infoCircle)
                     Text("A real environment variable set on the process still wins over any value here.")
                 }
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(SettingsType.caption)
+                .foregroundStyle(SettingsInk.tertiary)
             }
 
             VideoHostSettingsView(store: store)
@@ -2024,23 +1950,15 @@ private struct AdvancedSettingsTab: View {
 
     // MARK: - Privileges (title gates + OSC-52 master + read/write tri-state)
 
-    /// The privilege surface (Settings → Advanced, `terminal-features__notifications.md`): title gates + the
-    /// OSC-52 master switch + read/write tri-state pickers. The pickers are DISABLED while the master is off
-    /// (the whole OSC-52 path resolves to Deny). Title Report is a documented ceiling — it persists/surfaces
-    /// but doesn't yet actuate (the libghostty fork owns XTWINOPS; docs/DECISIONS.md).
+    /// The privilege surface (Settings → Advanced, `terminal-features__notifications.md`): the title gate +
+    /// the OSC-52 master switch + read/write tri-state pickers. The pickers are DISABLED while the master is
+    /// off (the whole OSC-52 path resolves to Deny).
     private var privilegesSection: some View {
         slateFormSection("Privileges") {
             Toggle(isOn: $titleShellControlled) {
                 privilegeLabel(
                     "Title — Shell Controlled",
                     "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
-                )
-            }
-            Toggle(isOn: $titleReport) {
-                privilegeLabel(
-                    "Title Report",
-                    "Allow programs to read the window title back via OSC 21 / XTWINOPS. Persisted but not "
-                        + "yet enforced — the terminal renderer answers this query itself.",
                 )
             }
             Toggle(isOn: refreshingControls($clipboardShellControlled)) {
@@ -2084,8 +2002,8 @@ private struct AdvancedSettingsTab: View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text(title)
             Text(subtitle)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -2124,8 +2042,8 @@ private struct AdvancedSettingsTab: View {
                 // `resolvePath(override:nil)` respects `SLOPDESK_CONFIG_FILE` env override so the
                 // displayed path always matches the file the app actually honours (not just the XDG default).
                 Text(CLIConfig.resolvePath(override: nil))
-                    .font(.system(size: Slate.Typeface.footnote, design: .monospaced))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.monoSubtitle)
+                    .foregroundStyle(SettingsInk.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -2205,8 +2123,8 @@ private struct VideoHostSettingsView: View {
                     Image(systemSymbol: .exclamationmarkTriangleFill)
                     Text("FEC must be set IDENTICALLY on both ends or the host and client disagree.")
                 }
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Status.warn)
+                .font(SettingsType.caption)
+                .foregroundStyle(SettingsInk.warn)
                 timingFooter(.reconnect)
             }
 
@@ -2243,10 +2161,10 @@ private struct VideoHostSettingsView: View {
             if let value = binding.wrappedValue {
                 Stepper("\(value)", value: nonOptional(binding, default: def), in: range)
                     .labelsHidden()
-                Text("\(value)").foregroundStyle(Slate.Text.secondary)
+                Text("\(value)").foregroundStyle(SettingsInk.secondary)
             } else {
-                Text("default").foregroundStyle(Slate.Text.tertiary)
-                    .font(.system(size: Slate.Typeface.footnote))
+                Text("default").foregroundStyle(SettingsInk.tertiary)
+                    .font(SettingsType.subtitle)
             }
         }
     }

@@ -29,6 +29,9 @@ final class TerminalPreferencesDecodeTests: XCTestCase {
           "cursorAnimation": "off"
         }
         """
+        // `cursorAnimation` is a RETIRED key (the smooth-glide setting the renderer could never actuate).
+        // It stays in this fixture on purpose: prefs written by an older build still carry it, and decoding
+        // must ignore it rather than throw. Do not "tidy" it out.
         let decoded = try JSONDecoder().decode(TerminalPreferences.self, from: Data(json.utf8))
 
         // The OLD fields survive verbatim …
@@ -45,7 +48,6 @@ final class TerminalPreferencesDecodeTests: XCTestCase {
         XCTAssertEqual(decoded.fontLigatures, d.fontLigatures)
         XCTAssertEqual(decoded.fontBold, d.fontBold)
         XCTAssertEqual(decoded.fontItalic, d.fontItalic)
-        XCTAssertEqual(decoded.fontUnderline, d.fontUnderline)
         XCTAssertEqual(decoded.fontBlending, d.fontBlending)
         XCTAssertEqual(decoded.lineHeight, d.lineHeight)
     }

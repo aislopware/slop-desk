@@ -137,12 +137,17 @@ final class SettingsOptionCatalogTests: XCTestCase {
         XCTAssertEqual(SettingsOptionCatalog.densityCompact, "compact")
     }
 
-    /// Every symbol-art option must actually CARRY a symbol — a `nil` falls back to a bare question mark, i.e.
-    /// a card that shows nothing about its own choice.
-    func testSymbolArtGroupsAllCarryASymbol() {
-        assertAllCarrySymbols(SettingsOptionCatalog.rightClickActions)
-        assertAllCarrySymbols(SettingsOptionCatalog.closeConfirmation)
-        assertAllCarrySymbols(SettingsOptionCatalog.onLaunch)
+    /// A menu item has no second line, so ``SettingsOption/menuLabel`` folds the caption in after an en dash
+    /// — otherwise the honesty a caption carries (`auto` IS `end`; "Running process" means "only if busy")
+    /// would simply vanish when a group renders as a dropdown instead of as cards.
+    func testMenuLabelFoldsTheCaptionIn() {
+        let auto = SettingsOptionCatalog.newTabPositions.first { $0.value == .auto }
+        XCTAssertEqual(auto?.menuLabel, "Automatic — Appends, like End")
+        let process = SettingsOptionCatalog.closeConfirmation.first { $0.value == .process }
+        XCTAssertEqual(process?.menuLabel, "Running process — only if busy")
+        // No caption ⇒ the label alone, with no dangling dash.
+        let always = SettingsOptionCatalog.closeConfirmation.first { $0.value == .always }
+        XCTAssertEqual(always?.menuLabel, "Always")
     }
 
     // MARK: - Scalar ladders
@@ -206,19 +211,6 @@ final class SettingsOptionCatalogTests: XCTestCase {
         XCTAssertEqual(
             listed.count, Set(listed).count, "duplicate \(what) card", file: file, line: line,
         )
-    }
-
-    /// Every option in a symbol-art group carries a glyph (a `nil` degrades to a bare question mark).
-    private func assertAllCarrySymbols(
-        _ options: [SettingsOption<some Hashable & Sendable>],
-        file: StaticString = #filePath,
-        line: UInt = #line,
-    ) {
-        for option in options {
-            XCTAssertNotNil(
-                option.symbol, "\(option.label) renders as symbol art with no symbol", file: file, line: line,
-            )
-        }
     }
 
     private func assertPresetsInRange(

@@ -10,20 +10,35 @@
 // This file adds the three shapes that were missing, and NOTHING that carries state of its own (every control
 // is a pure function of a `Binding`, so the store stays the single owner):
 //
-//   * ``SettingsOptionCards`` — an illustrated radio GROUP: one card per option, each drawing its own choice
-//     (`SettingsIllustrations`), the selected card ringed in the theme accent. Replaces a `.menu` picker
-//     wherever the option set is small AND visually distinguishable.
+//   * ``SettingsOptionCards`` — an illustrated radio GROUP: one card per option, each DRAWING its own choice
+//     (`SettingsIllustrations`), the selected card ringed in the system accent.
+//   * ``SettingsOptionMenuRow`` — the same pinned option LIST rendered as a native `.menu` `Picker`.
 //   * ``SettingsSliderRow`` — a slider with PRESET stops (tap a stop to jump) and a monospaced readout, for
 //     ranges where the useful values are a handful of magnitudes, not a continuum (scrollback depth: a
 //     1000-step `Stepper` needed ~99 clicks to cross its own range).
 //   * ``SettingsGlyphToggleRow`` — a toggle row with a leading glyph, so a 9-row group is scannable by icon
 //     instead of being an undifferentiated wall of sentences.
 //
+// WHEN A CARD, WHEN A MENU. A card costs a whole grid row and asks the eye to compare pictures; it earns
+// that only when the picture IS the difference — a caret silhouette, a tab column with the new row wedged in,
+// a keyboard with the armed ⌥ lit, a miniature of a theme. Where the "illustration" was only an SF Symbol
+// standing in for a word (Right-Click Action, On Launch, Close Confirmation), the card was a dropdown wearing
+// picture frames: `nosign` and `doc.on.clipboard` say nothing "Ignore" and "Paste" don't, and the grid pushed
+// the rest of the page down to say it. Those groups are ``SettingsOptionMenuRow``s now — same
+// `SettingsOption` lists, same exhaustiveness pin, one row each.
+//
+// ONE CARD SIZE. Every card is `Slate.Metric.settingsCardWidth` wide over a `Slate.Metric.settingsCardArt`
+// art band — theme swatches included. The grid used to be `.adaptive(minimum:)`, which STRETCHES its columns
+// to fill the width: a 2-option group rendered two enormous cards while the theme gallery rendered seven
+// small ones, so cards in the same window disagreed about how big a card is. Fixed columns WRAP instead of
+// stretching, so a card is a card wherever it appears.
+//
 // SELECTION IS ONE SHAPE (the badge-saga lesson, `slopdesk-one-shape-status-circle`): a selected card is
 // stated ONCE — accent border + accent wash + semibold label. No checkmark, no shimmer, no second marker.
 //
-// CROSS-PLATFORM: pure SwiftUI, so the iOS settings sheet renders the same cards (no `#if os(macOS)` here).
-// Slate.* tokens only (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// CROSS-PLATFORM: pure SwiftUI, so the iOS settings sheet renders the same controls (no `#if os(macOS)`).
+// Colour + type come from ``SettingsInk`` / ``SettingsType`` (system semantics, not the terminal theme);
+// geometry rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -31,31 +46,80 @@ import SwiftUI
 
 // MARK: - SettingsOption (the pure option descriptor)
 
-/// One choice in a ``SettingsOptionCards`` group: the value it writes, its label, an optional one-line caption,
-/// and — for the choices a diagram can't carry legibly — its glyph. Pure data: declaring the options as a LIST
-/// (rather than inline `Text(…).tag(…)` children) is what lets a test pin the labels, captions, and order of a
-/// section's choices without rendering it (`SettingsOptionCatalogTests`).
+/// One choice in a ``SettingsOptionCards`` group or a ``SettingsOptionMenuRow``: the value it writes, its
+/// label, and an optional one-line caption. Pure data: declaring the options as a LIST (rather than inline
+/// `Text(…).tag(…)` children) is what lets a test pin the labels, captions, and order of a section's choices
+/// without rendering it (`SettingsOptionCatalogTests`).
 ///
-/// `symbol` is an `SFSymbol`, not a `String`: a mistyped symbol NAME renders as an invisible blank image, so
-/// the type-safe spelling turns a silently-empty card into a build error.
 /// `Sendable` (over a `Sendable` value) because the catalog holds these as top-level `static let` lists: pure,
 /// immutable option data, reachable from any isolation without a `@MainActor` hop.
 struct SettingsOption<Value: Hashable & Sendable>: Identifiable, Sendable {
     let value: Value
     let label: String
-    /// A short qualifier under the label — where a card needs to be honest about a caveat ("same as End
-    /// today", "saved, not yet active"). `nil` for the common case.
+    /// A short qualifier on the label — where a choice needs to be honest about a caveat ("same as End
+    /// today", "only if busy"). `nil` for the common case.
     let caption: String?
-    /// The glyph for a symbol-art card. `nil` when the group draws its own diagram instead.
-    let symbol: SFSymbol?
 
     var id: Value { value }
 
-    init(_ value: Value, _ label: String, caption: String? = nil, symbol: SFSymbol? = nil) {
+    init(_ value: Value, _ label: String, caption: String? = nil) {
         self.value = value
         self.label = label
         self.caption = caption
-        self.symbol = symbol
+    }
+
+    /// The one-line form a `.menu` `Picker` shows: the label, with the caveat folded in after an en dash
+    /// (a menu item has no second line to hang a caption on, and dropping the caption would drop the
+    /// honesty it carries).
+    var menuLabel: String {
+        guard let caption, !caption.isEmpty else { return label }
+        return "\(label) — \(caption)"
+    }
+}
+
+// MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)
+
+/// A native `.menu` `Picker` row over a pinned ``SettingsOption`` list — the shape a choice takes when its
+/// options differ by WORDS, not by picture. Title + optional subtitle lead; the dropdown trails.
+struct SettingsOptionMenuRow<Value: Hashable & Sendable>: View {
+    let title: String
+    let subtitle: String?
+    let options: [SettingsOption<Value>]
+    @Binding var selection: Value
+
+    init(
+        _ title: String,
+        subtitle: String? = nil,
+        options: [SettingsOption<Value>],
+        selection: Binding<Value>,
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.options = options
+        _selection = selection
+    }
+
+    var body: some View {
+        LabeledContent {
+            Picker("", selection: $selection) {
+                ForEach(options) { option in
+                    Text(option.menuLabel).tag(option.value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        } label: {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                Text(title)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 }
 
@@ -63,8 +127,8 @@ struct SettingsOption<Value: Hashable & Sendable>: Identifiable, Sendable {
 
 extension EnvironmentValues {
     /// Whether the option card CURRENTLY BEING DRAWN is the selected one — injected by
-    /// ``SettingsOptionCard`` around its art, so a diagram can join the selection statement (the caret and the
-    /// symbol arts tint to the accent) without every call site threading the comparison itself.
+    /// ``SettingsOptionCard`` around its art, so a diagram can join the selection statement (the caret tints
+    /// to the accent) without every call site threading the comparison itself.
     @Entry var settingsOptionIsSelected: Bool = false
 }
 
@@ -73,8 +137,8 @@ extension EnvironmentValues {
 /// An illustrated radio group: a title + optional subtitle over a wrapping grid of option cards, each drawing
 /// its own choice. The selected card carries the accent ring; tapping a card writes `selection`.
 ///
-/// Sized by an ADAPTIVE grid rather than a fixed column count, so the same call site reads as a pair of wide
-/// cards for a 2-option enum and as a wrapping gallery for the 9 themes — with no per-site layout tuning.
+/// Laid out in FIXED-width columns that wrap: every card in Settings is the same size, whether its group has
+/// two options or seven (see the file header — an adaptive grid stretched them apart).
 struct SettingsOptionCards<Value: Hashable & Sendable, Illustration: View>: View {
     let title: String
     let subtitle: String?
@@ -83,23 +147,18 @@ struct SettingsOptionCards<Value: Hashable & Sendable, Illustration: View>: View
     /// The card art for one option. A closure over the OPTION (not a stored view per option) so each call site
     /// draws its own diagram family — a caret shape, a key row, a theme swatch — from one component.
     let illustration: (SettingsOption<Value>) -> Illustration
-    /// The art band's height. Defaults to the one-diagram card rung; the theme gallery raises it because its
-    /// art is a miniature terminal, not a single mark.
-    let artHeight: CGFloat
 
     init(
         _ title: String,
         subtitle: String? = nil,
         options: [SettingsOption<Value>],
         selection: Binding<Value>,
-        artHeight: CGFloat = Slate.Metric.settingsCardArt,
         @ViewBuilder illustration: @escaping (SettingsOption<Value>) -> Illustration,
     ) {
         self.title = title
         self.subtitle = subtitle
         self.options = options
         _selection = selection
-        self.artHeight = artHeight
         self.illustration = illustration
     }
 
@@ -109,8 +168,8 @@ struct SettingsOptionCards<Value: Hashable & Sendable, Illustration: View>: View
                 Text(title)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -119,7 +178,6 @@ struct SettingsOptionCards<Value: Hashable & Sendable, Illustration: View>: View
                     SettingsOptionCard(
                         option: option,
                         isSelected: option.value == selection,
-                        artHeight: artHeight,
                         select: { selection = option.value },
                     ) {
                         illustration(option)
@@ -133,24 +191,18 @@ struct SettingsOptionCards<Value: Hashable & Sendable, Illustration: View>: View
         .accessibilityLabel(title)
     }
 
+    /// FIXED (not adaptive) columns: `.adaptive` stretches its columns to fill the row, which is what made a
+    /// 2-option group's cards twice the size of the theme gallery's. `.flexible` bounded to the same min and
+    /// max holds every card at exactly one width and wraps the overflow.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: Slate.Metric.settingsCardWidth), spacing: Slate.Metric.space2)]
-    }
-}
-
-extension SettingsOptionCards where Illustration == SettingsSymbolArt {
-    /// The symbol-art group: every card draws its option's own ``SettingsOption/symbol``. For choices whose
-    /// diagram would need more marks than a card can carry legibly (right-click actions, close-confirmation
-    /// scopes, launch behaviour) — see ``SettingsSymbolArt``.
-    init(
-        _ title: String,
-        subtitle: String? = nil,
-        options: [SettingsOption<Value>],
-        selection: Binding<Value>,
-    ) {
-        self.init(title, subtitle: subtitle, options: options, selection: selection) { option in
-            SettingsSymbolArt(symbol: option.symbol ?? .questionmark)
-        }
+        [GridItem(
+            .adaptive(
+                minimum: Slate.Metric.settingsCardWidth,
+                maximum: Slate.Metric.settingsCardWidth,
+            ),
+            spacing: Slate.Metric.space2,
+            alignment: .top,
+        )]
     }
 }
 
@@ -161,7 +213,6 @@ extension SettingsOptionCards where Illustration == SettingsSymbolArt {
 private struct SettingsOptionCard<Value: Hashable & Sendable, Illustration: View>: View {
     let option: SettingsOption<Value>
     let isSelected: Bool
-    let artHeight: CGFloat
     let select: () -> Void
     @ViewBuilder let illustration: () -> Illustration
 
@@ -172,23 +223,30 @@ private struct SettingsOptionCard<Value: Hashable & Sendable, Illustration: View
             VStack(spacing: Slate.Metric.space2) {
                 illustration()
                     .environment(\.settingsOptionIsSelected, isSelected)
-                    .frame(height: artHeight)
+                    .frame(height: Slate.Metric.settingsCardArt)
                     .frame(maxWidth: .infinity)
                 VStack(spacing: 0) {
                     Text(option.label)
-                        .font(.system(size: Slate.Typeface.footnote, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(Slate.Text.primary)
+                        .font(SettingsType.subtitle.weight(isSelected ? .semibold : .regular))
+                        .foregroundStyle(SettingsInk.primary)
                         .multilineTextAlignment(.center)
                     if let caption = option.caption, !caption.isEmpty {
                         Text(caption)
-                            .font(.system(size: Slate.Typeface.small))
-                            .foregroundStyle(Slate.Text.tertiary)
+                            .font(SettingsType.caption)
+                            .foregroundStyle(SettingsInk.tertiary)
                             .multilineTextAlignment(.center)
                     }
                 }
+                // Push the label block to the TOP of whatever height the row settles on, so a captionless
+                // card's art still lines up with its captioned neighbour's.
+                Spacer(minLength: 0)
             }
             .padding(Slate.Metric.space2)
-            .frame(maxWidth: .infinity)
+            // Fill the grid row in BOTH axes. A `LazyVGrid` row is as tall as its tallest item, and only
+            // some options carry a caption (`auto` new-tab position does, `end` doesn't) — without this the
+            // captioned card would draw a taller plate than the one beside it, which is the "one big one
+            // small" the fixed column width was meant to end.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)
                     .fill(fill),
@@ -208,13 +266,13 @@ private struct SettingsOptionCard<Value: Hashable & Sendable, Illustration: View
     /// Selected ⇒ the accent wash; hovered ⇒ the hover plate; otherwise the inset surface. The selected state
     /// is stated by wash + ring + weight only (no extra marker).
     private var fill: Color {
-        if isSelected { return Slate.State.accentMuted }
-        return hovered ? Slate.State.hover : Slate.Surface.raised
+        if isSelected { return SettingsInk.accentWash }
+        return hovered ? SettingsInk.hover : SettingsInk.inset
     }
 
     private var border: Color {
-        if isSelected { return Slate.State.accent }
-        return hovered ? Slate.Line.active : Slate.Line.subtle
+        if isSelected { return SettingsInk.accent }
+        return hovered ? SettingsInk.strongLine : SettingsInk.hairline
     }
 }
 
@@ -264,15 +322,15 @@ struct SettingsSliderRow: View {
                     Text(title)
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.secondary)
+                            .font(SettingsType.subtitle)
+                            .foregroundStyle(SettingsInk.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: Slate.Metric.space2)
                 Text(readout(value))
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.primary)
                     .monospacedDigit()
             }
             Slider(value: $value, in: range, step: step)
@@ -300,19 +358,19 @@ struct SettingsSliderRow: View {
             value = preset.value
         } label: {
             Text(preset.label)
-                .font(.system(size: Slate.Typeface.small))
+                .font(SettingsType.caption)
                 .monospacedDigit()
-                .foregroundStyle(active ? Slate.State.accent : Slate.Text.secondary)
+                .foregroundStyle(active ? SettingsInk.accent : SettingsInk.secondary)
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.vertical, Slate.Metric.space1)
                 .background(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                        .fill(active ? Slate.State.accentMuted : Slate.Surface.raised),
+                        .fill(active ? SettingsInk.accentWash : SettingsInk.inset),
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
                         .strokeBorder(
-                            active ? Slate.State.accent : Slate.Line.subtle,
+                            active ? SettingsInk.accent : SettingsInk.hairline,
                             lineWidth: Slate.Metric.hairline,
                         ),
                 )
@@ -345,8 +403,8 @@ struct SettingsGlyphToggleRow: View {
         Toggle(isOn: $isOn) {
             HStack(alignment: .top, spacing: Slate.Metric.space2) {
                 Image(systemSymbol: symbol)
-                    .font(.system(size: Slate.Typeface.base))
-                    .foregroundStyle(isOn ? Slate.State.accent : Slate.Text.icon)
+                    .font(SettingsType.label)
+                    .foregroundStyle(isOn ? SettingsInk.accent : SettingsInk.icon)
                     .frame(width: Slate.Metric.iconSize)
                     // Hold the glyph on the title's baseline row while the subtitle wraps below it.
                     .padding(.top, Slate.Metric.space1 / 2)
@@ -354,8 +412,8 @@ struct SettingsGlyphToggleRow: View {
                     Text(title)
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.secondary)
+                            .font(SettingsType.subtitle)
+                            .foregroundStyle(SettingsInk.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

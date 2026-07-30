@@ -34,7 +34,8 @@
 // The decision itself is the pure, headless-pinned ``SettingsEscapePolicy`` (`SettingsEscapePolicyTests`); this
 // file's AppKit half only measures the inputs and performs the action.
 //
-// Slate.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SwiftUI

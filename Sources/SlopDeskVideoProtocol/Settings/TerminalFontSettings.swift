@@ -124,21 +124,15 @@ public enum LineHeightMode: Codable, Sendable, Equatable {
 
 // MARK: - FontBlending (`font-blending`)
 
-/// Glyph anti-aliasing blend mode (`font-blending`, five values). Only ``macosLike`` has a verified
-/// libghostty key (`font-thicken = true`); ``default`` and the remaining three (`srgb-over` / `linear` /
-/// `perceptual`) are PERSISTED + surfaced but NOT emitted (no verified key — deferred-apply, like
-/// `cursorAnimation = .smooth`). Raw values are the config tokens 1:1 (for persistence + the UI).
+/// Glyph anti-aliasing blend mode (`font-blending`). Two values, because two is all libghostty can
+/// actuate: `srgb-over` / `linear` / `perceptual` used to be offered too, but none has a verified stock
+/// key, so picking one changed nothing on screen — a control that only writes to disk. Raw values are the
+/// config tokens 1:1 (for persistence + the UI).
 public enum FontBlending: String, Codable, Sendable, Equatable, CaseIterable {
-    /// Defer to the active theme (falls back to `srgb-over`) — NO line.
+    /// Defer to the active theme — NO line.
     case `default`
-    /// Default baseline (`srgb-over`) — persisted, NOT emitted (no verified libghostty key).
-    case srgbOver = "srgb-over"
-    /// macOS-native Display-P3 path → `font-thicken = true` (the one mode that maps).
+    /// macOS-native Display-P3 path → `font-thicken = true`.
     case macosLike = "macos-like"
-    /// Physically-correct linear-light blend — persisted, NOT emitted.
-    case linear
-    /// Like ``linear`` but boosts thin dark text — persisted, NOT emitted.
-    case perceptual
 
     /// `true` iff this mode maps to an emitted libghostty key (only ``macosLike`` → `font-thicken = true`).
     public var thickens: Bool { self == .macosLike }

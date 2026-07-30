@@ -446,30 +446,27 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertFalse(nanValue?.lowercased().contains("nan") ?? true, "a NaN multiplier never emits `nan%`")
     }
 
-    /// Blending → `font-thicken`: only `macos-like` maps; `default` and the three deferred modes emit
-    /// nothing (no verified libghostty key — the documented deferral).
+    /// Blending → `font-thicken`: only `macos-like` maps; `default` emits nothing. The enum is now just
+    /// these two — the three unverified modes were removed rather than shipped as inert picks.
     func testFontBlendingOnlyMacosLikeEmitsFontThicken() {
         XCTAssertEqual(
             parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontBlending: .macosLike)))["font-thicken"],
             "true",
         )
-        for mode in [FontBlending.default, .srgbOver, .linear, .perceptual] {
-            XCTAssertNil(
-                parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontBlending: mode)))["font-thicken"],
-                "\(mode) does not map to font-thicken",
-            )
-        }
+        XCTAssertNil(
+            parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontBlending: .default)))["font-thicken"],
+            "default does not map to font-thicken",
+        )
+        XCTAssertEqual(FontBlending.allCases, [.default, .macosLike], "no unactuatable blending mode ships")
     }
 
-    /// The DEFERRED controls (underline-off, SGR blink, the non-mapping blending modes) are PERSISTED but
-    /// emit NO libghostty line — we only emit keys verified to exist. FAILS if a future change leaks an
-    /// unverified `font-underline` / `font-blink` / `font-blending` key.
-    func testDeferredUnderlineBlinkBlendingEmitNoLine() {
-        let config = TerminalConfigBuilder.string(for: TerminalPreferences(
-            fontUnderline: false, fontBlink: true, fontBlending: .perceptual,
-        ))
-        XCTAssertFalse(config.contains("font-underline"), "underline-off has no verified key (deferred)")
-        XCTAssertFalse(config.contains("font-blink"), "SGR blink has no verified key (deferred)")
-        XCTAssertFalse(config.contains("font-blending"), "the blending mode itself is never emitted as a key")
+    /// The blending MODE itself is never emitted as a key — only its `font-thicken` projection is.
+    func testBlendingModeIsNeverEmittedAsAKey() {
+        for mode in FontBlending.allCases {
+            let config = TerminalConfigBuilder.string(for: TerminalPreferences(fontBlending: mode))
+            XCTAssertFalse(config.contains("font-blending"), "\(mode) must not emit a `font-blending` key")
+            XCTAssertFalse(config.contains("font-underline"), "no unverified `font-underline` key")
+            XCTAssertFalse(config.contains("font-blink"), "no unverified `font-blink` key")
+        }
     }
 }

@@ -16,11 +16,11 @@
 // ``FontScopeResolver/lightSlotSlug(_:)`` / `darkSlotSlug(_:)`); the read-only Computed tab shows
 // ``FontScopeResolver/resolvedFamily(global:themeFonts:slug:fallback:)`` for the active OS-appearance slot.
 //
-// DEFERRED-APPLY: the underline-off and SGR-blink toggles, and the `srgb-over` / `linear` /
-// `perceptual` blending modes, have no verified stock libghostty key — they PERSIST + surface here with a
-// note but are NOT emitted (the same precedent as `cursorAnimation = .smooth`). Ligatures, fallback,
-// per-face families, bold/italic mode, line-height, and `macos-like` blending (→ `font-thicken`) DO map and
-// re-render live.
+// EVERY CONTROL HERE ACTUATES. Ligatures, fallback, per-face families, bold/italic mode, line-height and
+// `macos-like` blending (→ `font-thicken`) all map to a verified libghostty key and re-render live. The
+// controls that did NOT — an underline-off toggle, an SGR-blink toggle, and the `srgb-over` / `linear` /
+// `perceptual` blending modes — used to sit here behind a "saved but deferred" note; they are gone
+// (2026-07-30). A note admitting a control does nothing is still a control that does nothing.
 //
 // HOST-FONT REALITY (`spec/customization__fonts.md` mapping notes): the terminal renders on the HOST inside
 // libghostty, so font INSTALLATION is a host concern — there is no client "font folder" to open. The Font
@@ -30,7 +30,9 @@
 //
 // PLATFORM: cross-platform (compiled on iOS too). The installed-font enumeration goes through CoreText
 // (`CTFontManagerCopyAvailableFontFamilyNames`), nonisolated + cross-platform — no AppKit/UIKit, no
-// MainActor hop. Slate.* tokens only (no raw font/radius literals — `scripts/check-ds-leaks.sh`).
+// MainActor hop.
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import CoreText
@@ -79,8 +81,8 @@ struct FontSettingsView: View {
     private var scopeTabs: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text("Settings for")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
             HStack(spacing: Slate.Metric.space2) {
                 ForEach(FontScope.allCases) { tab in scopePill(tab) }
             }
@@ -91,12 +93,12 @@ struct FontSettingsView: View {
         let selected = tab == scope
         return Button { scope = tab } label: {
             Text(tab.label)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(selected ? Slate.Surface.ground : Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(selected ? SettingsInk.ground : SettingsInk.secondary)
                 .padding(.horizontal, Slate.Metric.space3)
                 .padding(.vertical, Slate.Metric.space1)
-                .background(Capsule().fill(selected ? Slate.Text.primary : Color.clear))
-                .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: selected ? 0 : 1))
+                .background(Capsule().fill(selected ? SettingsInk.primary : Color.clear))
+                .overlay(Capsule().strokeBorder(SettingsInk.hairline, lineWidth: selected ? 0 : 1))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -130,8 +132,8 @@ struct FontSettingsView: View {
         case .computed:
             LabeledContent("Font Family") {
                 Text(computedFamily)
-                    .font(.system(size: Slate.Typeface.body, design: .monospaced))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.mono)
+                    .foregroundStyle(SettingsInk.secondary)
             }
         case .global:
             globalFamilyEditors
@@ -200,7 +202,7 @@ struct FontSettingsView: View {
                     HStack(spacing: Slate.Metric.space2) {
                         Slider(value: customMultiplierBinding, in: 0.8...2.0, step: 0.05)
                         Text(String(format: "%.2f×", customMultiplier))
-                            .foregroundStyle(Slate.Text.secondary)
+                            .foregroundStyle(SettingsInk.secondary)
                             .monospacedDigit()
                     }
                 }
@@ -224,29 +226,14 @@ struct FontSettingsView: View {
         }
     }
 
-    // MARK: - Style & Rendering section (bold / italic / underline / blink / blending + deferral notes)
+    // MARK: - Style & Rendering section (bold / italic / blending)
 
     private var styleSection: some View {
         slateFormSection("Style & Rendering") {
             Picker("Bold", selection: $store.terminal.fontBold) { styleModeOptions }
             Picker("Italic", selection: $store.terminal.fontItalic) { styleModeOptions }
 
-            Toggle("Render SGR underlines", isOn: $store.terminal.fontUnderline)
-            if !store.terminal.fontUnderline {
-                note("Underline-off is saved but deferred — no verified renderer key, so SGR underlines still "
-                    + "draw. OSC 8 link underlines and strikethrough are unaffected either way.")
-            }
-
-            Toggle("Render SGR blink", isOn: $store.terminal.fontBlink)
-            if store.terminal.fontBlink {
-                note("Blink is saved but deferred — no verified renderer key, so SGR 5/6 cells do not yet blink.")
-            }
-
             Picker("Blending", selection: $store.terminal.fontBlending) { blendingOptions }
-            if isDeferredBlending(store.terminal.fontBlending) {
-                note("This blending mode is saved but deferred — only Default and macOS-like apply (macOS-like "
-                    + "maps to font-thicken). sRGB Over, Linear, and Perceptual have no verified renderer key.")
-            }
         }
     }
 
@@ -259,22 +246,7 @@ struct FontSettingsView: View {
 
     @ViewBuilder private var blendingOptions: some View {
         Text("Default").tag(FontBlending.default)
-        Text("sRGB Over").tag(FontBlending.srgbOver)
         Text("macOS-like").tag(FontBlending.macosLike)
-        Text("Linear").tag(FontBlending.linear)
-        Text("Perceptual").tag(FontBlending.perceptual)
-    }
-
-    /// Whether a blending mode is one of the persisted-but-not-emitted modes (everything except `default` and
-    /// `macos-like`, which is the one mode that maps to a verified `font-thicken` key).
-    private func isDeferredBlending(_ mode: FontBlending) -> Bool {
-        switch mode {
-        case .default,
-             .macosLike: false
-        case .srgbOver,
-             .linear,
-             .perceptual: true
-        }
     }
 
     // MARK: - Scope slug resolution + bindings
@@ -357,8 +329,8 @@ struct FontSettingsView: View {
     /// A muted footnote note (a gray contextual line).
     private func note(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
+            .font(SettingsType.subtitle)
+            .foregroundStyle(SettingsInk.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -369,18 +341,18 @@ struct FontSettingsView: View {
             Image(systemSymbol: .exclamationmarkTriangle)
             Text(text)
         }
-        .font(.system(size: Slate.Typeface.footnote))
-        .foregroundStyle(Slate.Status.warn)
+        .font(SettingsType.subtitle)
+        .foregroundStyle(SettingsInk.warn)
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .fill(Slate.Status.warn.opacity(0.12)),
+                .fill(SettingsInk.warn.opacity(0.12)),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(Slate.Status.warn.opacity(0.4), lineWidth: 1),
+                .strokeBorder(SettingsInk.warn.opacity(0.4), lineWidth: 1),
         )
     }
 }
@@ -455,7 +427,7 @@ private struct FontFamilyComboBox: View {
         HStack(spacing: Slate.Metric.space1) {
             TextField(placeholder, text: draftCommit ? $draft : $selection)
                 .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
+                .font(SettingsType.body)
                 .frame(minWidth: 150, alignment: .leading)
                 .focused($fieldFocused)
                 .onSubmit { commitDraftNow() }
@@ -463,8 +435,8 @@ private struct FontFamilyComboBox: View {
                 showingList.toggle()
             } label: {
                 Image(systemSymbol: .chevronUpChevronDown)
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(SettingsType.caption)
+                    .foregroundStyle(SettingsInk.tertiary)
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showingList, arrowEdge: .bottom) { specimenList }
@@ -473,11 +445,11 @@ private struct FontFamilyComboBox: View {
         .padding(.vertical, Slate.Metric.space1)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
-                .fill(Slate.Surface.raised),
+                .fill(SettingsInk.inset),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
-                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+                .strokeBorder(SettingsInk.hairline, lineWidth: 1),
         )
         .onAppear { draft = selection }
         .onChange(of: selection) { _, external in
@@ -515,14 +487,14 @@ private struct FontFamilyComboBox: View {
         VStack(spacing: 0) {
             HStack(spacing: Slate.Metric.space2) {
                 Image(systemSymbol: .magnifyingglass)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.tertiary)
                 TextField("Search fonts", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: Slate.Typeface.base))
+                    .font(SettingsType.label)
             }
             .padding(Slate.Metric.space2)
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            Rectangle().fill(SettingsInk.hairline).frame(height: Slate.Metric.hairline)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered, id: \.self) { family in
@@ -530,15 +502,15 @@ private struct FontFamilyComboBox: View {
                     }
                     if filtered.isEmpty {
                         Text("No matching fonts on this device.")
-                            .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.tertiary)
+                            .font(SettingsType.subtitle)
+                            .foregroundStyle(SettingsInk.tertiary)
                             .padding(Slate.Metric.space2)
                     }
                 }
             }
         }
         .frame(width: 280, height: 320)
-        .background(Slate.Surface.ground)
+        .background(SettingsInk.ground)
     }
 
     private func specimenRow(_ family: String) -> some View {
@@ -548,16 +520,16 @@ private struct FontFamilyComboBox: View {
         } label: {
             HStack(spacing: Slate.Metric.space2) {
                 Text("Aa")
-                    .font(.custom(family, size: Slate.Typeface.body))
+                    .font(.custom(family, size: SettingsMetric.resolvedBodyPointSize))
                     .frame(width: 28, alignment: .leading)
                 Text(family)
-                    .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(SettingsType.body)
+                    .foregroundStyle(SettingsInk.primary)
                 Spacer(minLength: 0)
                 if family == selection {
                     Image(systemSymbol: .checkmark)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.State.accent)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.accent)
                 }
             }
             .padding(.horizontal, Slate.Metric.space2)
@@ -594,20 +566,20 @@ private struct FallbackListEditor: View {
         VStack(alignment: .leading, spacing: Slate.Metric.space2) {
             if entries.isEmpty {
                 Text("No fallback fonts.")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.tertiary)
             } else {
                 ForEach(Array(entries.enumerated()), id: \.offset) { index, family in
                     HStack(spacing: Slate.Metric.space2) {
                         Text("Aa")
-                            .font(.custom(family, size: Slate.Typeface.body))
+                            .font(.custom(family, size: SettingsMetric.resolvedBodyPointSize))
                             .frame(width: 28, alignment: .leading)
                         Text(family)
-                            .font(.system(size: Slate.Typeface.body))
+                            .font(SettingsType.body)
                         Spacer(minLength: 0)
                         Button { remove(at: index) } label: {
                             Image(systemSymbol: .minusCircle)
-                                .foregroundStyle(Slate.Text.tertiary)
+                                .foregroundStyle(SettingsInk.tertiary)
                         }
                         .buttonStyle(.plain)
                         .help("Remove fallback font")

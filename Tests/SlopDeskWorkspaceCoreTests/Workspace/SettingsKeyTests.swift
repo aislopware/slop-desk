@@ -31,38 +31,28 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.autoSwitchLayouts,
             SettingsKey.redactSecrets,
             SettingsKey.recordClipboardHistory,
-            SettingsKey.showBlockDividers,
             SettingsKey.onLaunchKey,
             SettingsKey.copyOnSelect,
             SettingsKey.trimTrailingSpacesOnCopy,
             SettingsKey.pasteProtection,
             SettingsKey.mouseHideWhileTyping,
             SettingsKey.focusFollowsMouse,
-            SettingsKey.scrollOnOutput,
             SettingsKey.scrollMultiplier,
             // The remaining Controls / Mouse / Scroll knobs.
             SettingsKey.clearSelectionOnTyping,
             SettingsKey.clearSelectionOnCopy,
-            SettingsKey.backspaceDeletesSelection,
             SettingsKey.shiftArrowSelect,
             SettingsKey.pasteBracketedSafe,
             SettingsKey.allowMouseCapture,
             SettingsKey.clickToMove,
-            SettingsKey.smoothScroll,
-            SettingsKey.undoAtPrompt,
             SettingsKey.clipboardReadKey,
             SettingsKey.clipboardWriteKey,
             // Privilege surface (title gates + OSC-52 master switch).
             SettingsKey.titleShellControlled,
-            SettingsKey.titleReport,
             SettingsKey.clipboardShellControlled,
             // IPC guards on the agent-control ctl socket.
-            SettingsKey.ipcAllowSendKeys,
-            SettingsKey.ipcAllowSensitiveSessions,
             SettingsKey.allowShiftClickKey,
             SettingsKey.rightClickActionKey,
-            SettingsKey.scrollPastLastLineKey,
-            SettingsKey.scrollPastFirstLineKey,
             // Link & status-bar config keys.
             SettingsKey.linkDetection,
             SettingsKey.linkCmdClickKey,
@@ -108,17 +98,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
     }
 
-    /// Chrome toggle `showBlockDividers` defaults ON (dividers shown) and respects a persisted explicit value —
-    /// the toggle-persistence proof. The wire key strings are pinned so a rename can't split-brain the Settings
-    /// UI from the SplitWorkspaceView / TerminalScreenView consumers.
-    func testChromeTogglesDefaultsAndPersistence() {
-        // Default when unset.
-        XCTAssertTrue(SettingsKey.showBlockDividersEnabled, "block dividers show by default")
-        // An explicit persisted value is respected (the toggle persists across reads).
-        SettingsKey.store.set(false, forKey: SettingsKey.showBlockDividers)
-        XCTAssertFalse(SettingsKey.showBlockDividersEnabled)
-        // The wire keys are the single source of truth shared with the @AppStorage consumers.
-        XCTAssertEqual(SettingsKey.showBlockDividers, "terminal.showBlockDividers")
+    /// The chrome key strings are pinned so a rename can't split-brain the Settings UI from its consumers.
+    func testChromeKeyStringsAreStable() {
         XCTAssertEqual(SettingsKey.density, "appearance.density")
     }
 
@@ -275,14 +256,11 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.pasteProtectionEnabled, "paste protection defaults ON")
         XCTAssertTrue(SettingsKey.mouseHideWhileTypingEnabled, "mouse-hide-while-typing defaults ON")
         XCTAssertFalse(SettingsKey.focusFollowsMouseEnabled, "focus-follows-mouse defaults OFF")
-        XCTAssertTrue(SettingsKey.scrollOnOutputEnabled, "scroll-on-output defaults ON")
         XCTAssertEqual(SettingsKey.scrollMultiplierValue, 1.0, "scroll multiplier defaults to 1.0")
         // An explicit persisted value is respected (the toggle persists across reads).
         SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect)
-        SettingsKey.store.set(false, forKey: SettingsKey.scrollOnOutput)
         SettingsKey.store.set(2.5, forKey: SettingsKey.scrollMultiplier)
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
-        XCTAssertFalse(SettingsKey.scrollOnOutputEnabled)
         XCTAssertEqual(SettingsKey.scrollMultiplierValue, 2.5)
     }
 
@@ -295,7 +273,6 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.pasteProtection, "controls.pasteProtection")
         XCTAssertEqual(SettingsKey.mouseHideWhileTyping, "controls.mouseHideWhileTyping")
         XCTAssertEqual(SettingsKey.focusFollowsMouse, "controls.focusFollowsMouse")
-        XCTAssertEqual(SettingsKey.scrollOnOutput, "controls.scrollOnOutput")
         XCTAssertEqual(SettingsKey.scrollMultiplier, "controls.scrollMultiplier")
     }
 
@@ -307,23 +284,18 @@ final class SettingsKeyTests: XCTestCase {
     func testE8BoolToggleDefaults() {
         XCTAssertTrue(SettingsKey.clearSelectionOnTypingEnabled, "clear-on-typing defaults ON")
         XCTAssertFalse(SettingsKey.clearSelectionOnCopyEnabled, "clear-on-copy defaults OFF")
-        // Backspace-deletes-selection ships default OFF: with no libghostty selection-geometry API it cannot
-        // faithfully delete the run (it degrades to a single-char Backspace, indistinguishable from OFF), so
-        // it is NOT presented as a default-ON toggle that does nothing (honest-disclosure, docs/DECISIONS).
-        XCTAssertFalse(SettingsKey.backspaceDeletesSelectionEnabled, "backspace-deletes-selection defaults OFF")
         XCTAssertTrue(SettingsKey.shiftArrowSelectEnabled, "shift-arrow-select defaults ON")
         XCTAssertTrue(SettingsKey.pasteBracketedSafeEnabled, "paste-bracketed-safe defaults ON")
         XCTAssertTrue(SettingsKey.allowMouseCaptureEnabled, "allow-mouse-capture defaults ON")
         XCTAssertTrue(SettingsKey.clickToMoveEnabled, "click-to-move defaults ON")
-        XCTAssertTrue(SettingsKey.smoothScrollEnabled, "smooth-scroll defaults ON")
         XCTAssertTrue(SettingsKey.undoAtPromptEnabled, "undo-at-prompt defaults ON")
         // An explicit persisted value is respected.
         SettingsKey.store.set(false, forKey: SettingsKey.clearSelectionOnTyping)
         SettingsKey.store.set(true, forKey: SettingsKey.clearSelectionOnCopy)
-        SettingsKey.store.set(false, forKey: SettingsKey.smoothScroll)
+        SettingsKey.store.set(false, forKey: SettingsKey.clickToMove)
         XCTAssertFalse(SettingsKey.clearSelectionOnTypingEnabled)
         XCTAssertTrue(SettingsKey.clearSelectionOnCopyEnabled)
-        XCTAssertFalse(SettingsKey.smoothScrollEnabled)
+        XCTAssertFalse(SettingsKey.clickToMoveEnabled)
     }
 
     /// The enum-valued knobs default to the declared value when unset, round-trip the alternative case via
@@ -337,22 +309,13 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.clipboardWrite, .allow, "clipboard-write defaults Allow")
         XCTAssertEqual(SettingsKey.allowShiftClick, .enabled, "allow-shift-click defaults Enabled")
         XCTAssertEqual(SettingsKey.rightClickAction, .contextMenu, "right-click-action defaults Context Menu")
-        XCTAssertEqual(SettingsKey.scrollPastLastLine, .disabled, "scroll-past-last defaults Disabled")
-        XCTAssertEqual(SettingsKey.scrollPastFirstLine, .disabled, "scroll-past-first defaults Disabled")
         // Round-trip the alternative case from its persisted raw value.
         SettingsKey.store.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardReadKey)
         SettingsKey.store.set(MouseShiftCapture.always.rawValue, forKey: SettingsKey.allowShiftClickKey)
         SettingsKey.store.set(RightClickAction.copyOrPaste.rawValue, forKey: SettingsKey.rightClickActionKey)
-        SettingsKey.store.set(ScrollPastLast.cursorLine.rawValue, forKey: SettingsKey.scrollPastLastLineKey)
-        SettingsKey.store.set(
-            ScrollPastFirst.firstLineInMiddle.rawValue,
-            forKey: SettingsKey.scrollPastFirstLineKey,
-        )
         XCTAssertEqual(SettingsKey.clipboardRead, .deny)
         XCTAssertEqual(SettingsKey.allowShiftClick, .always)
         XCTAssertEqual(SettingsKey.rightClickAction, .copyOrPaste)
-        XCTAssertEqual(SettingsKey.scrollPastLastLine, .cursorLine)
-        XCTAssertEqual(SettingsKey.scrollPastFirstLine, .firstLineInMiddle)
         // A stale / hostile persisted raw value repairs to the default rather than trapping.
         SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.clipboardReadKey)
         SettingsKey.store.set("garbage", forKey: SettingsKey.rightClickActionKey)
@@ -366,19 +329,15 @@ final class SettingsKeyTests: XCTestCase {
     func testE8SettingsKeyStringsAreStable() {
         XCTAssertEqual(SettingsKey.clearSelectionOnTyping, "controls.clearSelectionOnTyping")
         XCTAssertEqual(SettingsKey.clearSelectionOnCopy, "controls.clearSelectionOnCopy")
-        XCTAssertEqual(SettingsKey.backspaceDeletesSelection, "controls.backspaceDeletesSelection")
         XCTAssertEqual(SettingsKey.shiftArrowSelect, "controls.shiftArrowSelect")
         XCTAssertEqual(SettingsKey.pasteBracketedSafe, "controls.pasteBracketedSafe")
         XCTAssertEqual(SettingsKey.allowMouseCapture, "controls.allowMouseCapture")
         XCTAssertEqual(SettingsKey.clickToMove, "controls.clickToMove")
-        XCTAssertEqual(SettingsKey.smoothScroll, "controls.smoothScroll")
         XCTAssertEqual(SettingsKey.undoAtPrompt, "controls.undoAtPrompt")
         XCTAssertEqual(SettingsKey.clipboardReadKey, "controls.clipboardRead")
         XCTAssertEqual(SettingsKey.clipboardWriteKey, "controls.clipboardWrite")
         XCTAssertEqual(SettingsKey.allowShiftClickKey, "controls.allowShiftClick")
         XCTAssertEqual(SettingsKey.rightClickActionKey, "controls.rightClickAction")
-        XCTAssertEqual(SettingsKey.scrollPastLastLineKey, "controls.scrollPastLastLine")
-        XCTAssertEqual(SettingsKey.scrollPastFirstLineKey, "controls.scrollPastFirstLine")
     }
 
     // MARK: - Link & status-bar config keys
@@ -442,24 +401,20 @@ final class SettingsKeyTests: XCTestCase {
     // MARK: - Privilege surface (title gates + OSC-52 master switch)
 
     /// The privilege keys read their notification-setting.png defaults when unset (Title — Shell
-    /// Controlled ON, Title Report OFF, Clipboard — Shell Controlled ON), respect an explicit persisted value,
+    /// Controlled ON, Clipboard — Shell Controlled ON), respect an explicit persisted value,
     /// and their wire key strings are the single source of truth shared with the navigator + the All-Settings
     /// catalog (a rename that would split-brain them fails this pin).
     func testPrivilegeKeyDefaultsAndStrings() {
         // Defaults when unset.
         XCTAssertTrue(SettingsKey.titleShellControlledEnabled, "Title — Shell Controlled defaults ON")
-        XCTAssertFalse(SettingsKey.titleReportEnabled, "Title Report defaults OFF")
         XCTAssertTrue(SettingsKey.clipboardShellControlledEnabled, "Clipboard — Shell Controlled defaults ON")
         // An explicit persisted value is respected (the toggle persists across reads).
         SettingsKey.store.set(false, forKey: SettingsKey.titleShellControlled)
-        SettingsKey.store.set(true, forKey: SettingsKey.titleReport)
         SettingsKey.store.set(false, forKey: SettingsKey.clipboardShellControlled)
         XCTAssertFalse(SettingsKey.titleShellControlledEnabled)
-        XCTAssertTrue(SettingsKey.titleReportEnabled)
         XCTAssertFalse(SettingsKey.clipboardShellControlledEnabled)
         // The wire key strings are the single source of truth.
         XCTAssertEqual(SettingsKey.titleShellControlled, "controls.titleShellControlled")
-        XCTAssertEqual(SettingsKey.titleReport, "controls.titleReport")
         XCTAssertEqual(SettingsKey.clipboardShellControlled, "controls.clipboardShellControlled")
     }
 
@@ -481,26 +436,6 @@ final class SettingsKeyTests: XCTestCase {
         let offControls = TerminalControls.from(defaults: SettingsKey.store)
         XCTAssertEqual(offControls.clipboardRead, .deny, "master OFF denies clipboard read")
         XCTAssertEqual(offControls.clipboardWrite, .deny, "master OFF denies clipboard write")
-    }
-
-    // MARK: - IPC guards on the agent-control ctl socket (client edit surface)
-
-    /// The two IPC-guard keys are the CLIENT edit/display surface for the HOST ctl-socket guards
-    /// (enforced host-side via the SLOPDESK_IPC_ALLOW_* env bridge). They default OFF (conservative —
-    /// mutation / sensitive-session access is opt-in), respect an explicit persisted value, and their wire
-    /// strings are the single source of truth shared with the All-Settings catalog.
-    func testIPCGuardKeyDefaultsAndStrings() {
-        // Defaults when unset — both OFF.
-        XCTAssertFalse(SettingsKey.ipcAllowSendKeysEnabled, "IPC — Allow Send Keys defaults OFF")
-        XCTAssertFalse(SettingsKey.ipcAllowSensitiveSessionsEnabled, "IPC — Allow Sensitive Sessions defaults OFF")
-        // An explicit persisted value is respected.
-        SettingsKey.store.set(true, forKey: SettingsKey.ipcAllowSendKeys)
-        SettingsKey.store.set(true, forKey: SettingsKey.ipcAllowSensitiveSessions)
-        XCTAssertTrue(SettingsKey.ipcAllowSendKeysEnabled)
-        XCTAssertTrue(SettingsKey.ipcAllowSensitiveSessionsEnabled)
-        // The wire key strings are the single source of truth.
-        XCTAssertEqual(SettingsKey.ipcAllowSendKeys, "advanced.ipcAllowSendKeys")
-        XCTAssertEqual(SettingsKey.ipcAllowSensitiveSessions, "advanced.ipcAllowSensitiveSessions")
     }
 
     // MARK: - Window-size + auto-hide-tabs-panel keys (surfaced by the Appearance rows)

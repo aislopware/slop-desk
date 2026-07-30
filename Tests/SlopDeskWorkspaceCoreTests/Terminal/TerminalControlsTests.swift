@@ -104,10 +104,6 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(ClipboardAccess.allCases.map(\.rawValue), ["allow", "deny", "ask"])
         XCTAssertEqual(RightClickAction.contextMenu.rawValue, "context-menu")
         XCTAssertEqual(RightClickAction.copyOrPaste.rawValue, "copy-or-paste")
-        XCTAssertEqual(ScrollPastLast.lastLineWithContent.rawValue, "last-line-with-content")
-        XCTAssertEqual(ScrollPastLast.cursorLine.rawValue, "cursor-line")
-        XCTAssertEqual(ScrollPastFirst.sameAsLast.rawValue, "same-as-last")
-        XCTAssertEqual(ScrollPastFirst.firstLineInMiddle.rawValue, "first-line-in-middle")
         XCTAssertEqual(
             MouseShiftCapture.allCases.map(\.rawValue),
             ["disabled", "enabled", "always", "never"],
@@ -122,10 +118,6 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(ClipboardAccess(rawValue: "garbage"), .ask)
         XCTAssertEqual(RightClickAction(rawValue: "copy-or-paste"), .copyOrPaste)
         XCTAssertEqual(RightClickAction(rawValue: ""), .contextMenu)
-        XCTAssertEqual(ScrollPastLast(rawValue: "cursor-line"), .cursorLine)
-        XCTAssertEqual(ScrollPastLast(rawValue: "nope"), .disabled)
-        XCTAssertEqual(ScrollPastFirst(rawValue: "same-as-last"), .sameAsLast)
-        XCTAssertEqual(ScrollPastFirst(rawValue: "nope"), .disabled)
         XCTAssertEqual(MouseShiftCapture(rawValue: "always"), .always)
         XCTAssertEqual(MouseShiftCapture(rawValue: "nope"), .enabled)
     }

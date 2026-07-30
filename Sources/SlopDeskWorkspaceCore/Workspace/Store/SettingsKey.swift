@@ -217,11 +217,8 @@ public enum SettingsKey {
     /// elsewhere.**
     public static let mouseHideWhileTyping = "controls.mouseHideWhileTyping"
     /// `focus-follows-mouse` — focus the pane the pointer is over without a click (default OFF).
-    /// **The behaviour lives elsewhere.**
+    /// Read live by the libghostty surface's `mouseMoved` via ``FocusFollowsMousePolicy``.
     public static let focusFollowsMouse = "controls.focusFollowsMouse"
-    /// `scroll-on-output` — scroll the viewport to the bottom on new output (default ON). **The behaviour lives
-    /// elsewhere.**
-    public static let scrollOnOutput = "controls.scrollOnOutput"
     /// `mouse-scroll-multiplier` — multiply the scroll-wheel delta (default `1.0`). **The behaviour lives
     /// elsewhere.**
     public static let scrollMultiplier = "controls.scrollMultiplier"
@@ -234,9 +231,6 @@ public enum SettingsKey {
     public static let clearSelectionOnTyping = "controls.clearSelectionOnTyping"
     /// `selection-clear-on-copy` — clear the selection after an explicit copy (default OFF).
     public static let clearSelectionOnCopy = "controls.clearSelectionOnCopy"
-    /// backspace-deletes-selection — Backspace with an active prompt-line selection deletes the
-    /// whole selection (default ON). Read by `BackspaceSelectionPolicy`.
-    public static let backspaceDeletesSelection = "controls.backspaceDeletesSelection"
     /// "Shift+Arrow Select" — ⇧+arrows drive native selection instead of forwarding the arrow
     /// escapes (default ON). Emits the four `adjust_selection` keybinds.
     public static let shiftArrowSelect = "controls.shiftArrowSelect"
@@ -262,16 +256,8 @@ public enum SettingsKey {
     /// `mouse.rightClickAction` — what a bare right-click does in the viewport (stored
     /// ``RightClickAction`` rawValue, default `context-menu`).
     public static let rightClickActionKey = "controls.rightClickAction"
-    /// "Scroll Past Last Line" — overscroll past the last content row (stored ``ScrollPastLast``
-    /// rawValue, default `disabled`).
-    public static let scrollPastLastLineKey = "controls.scrollPastLastLine"
-    /// "Scroll Past First Line" — overscroll past the first scrollback row (stored ``ScrollPastFirst``
-    /// rawValue, default `disabled`).
-    public static let scrollPastFirstLineKey = "controls.scrollPastFirstLine"
-    /// "Smooth Scroll" — pixel-granularity scrolling during the gesture, snap-to-row on end (default
-    /// ON).
-    public static let smoothScroll = "controls.smoothScroll"
     /// undo-at-prompt — ⌘Z emits the readline undo (`0x1f`) when in the prompt zone (default ON).
+    /// Read live by the libghostty surface's `keyDown` via ``PromptEditPolicy``.
     public static let undoAtPrompt = "controls.undoAtPrompt"
     /// `auto-secure-input` — automatically engage macOS Secure Keyboard Entry while the
     /// remote shell is at a no-echo (hidden-password) prompt (default ON; macOS-only). **The behaviour lives
@@ -287,11 +273,6 @@ public enum SettingsKey {
     /// "Title — Shell Controlled" — allow apps to set the tab/window title via `OSC 0` / `OSC 2`
     /// (default ON). Read fire-time by ``TerminalViewModel`` at the `.title` event: OFF drops the title update.
     public static let titleShellControlled = "controls.titleShellControlled"
-    /// "Title Report" — allow apps to read the window title back via `OSC 21` / XTWINOPS (default OFF —
-    /// a program that can both set and read the title can exfiltrate data through a pane). **CEILING:** the
-    /// pinned libghostty fork answers XTWINOPS itself with no enable/disable hook on the ``TerminalSurface``
-    /// seam, so this persists/surfaces but does NOT yet actuate — see docs/DECISIONS.md.
-    public static let titleReport = "controls.titleReport"
     /// "Clipboard — Shell Controlled" — the master switch for the whole `OSC 52` clipboard path (default
     /// ON). When OFF, ``TerminalControls/from(defaults:)`` resolves BOTH read + write to ``ClipboardAccess/deny``
     /// ahead of the per-direction gate, so the libghostty config emits `clipboard-read/write = deny`.
@@ -327,36 +308,16 @@ public enum SettingsKey {
     public static let autoSwitchLayouts = "features.autoSwitchLayouts"
     public static let redactSecrets = "features.redactSecrets"
     public static let recordClipboardHistory = "features.recordClipboardHistory"
-    /// "Auto Progress-Bar Commands" — the whitespace-delimited command PREFIX list that
-    /// auto-emits an INDETERMINATE OSC-9;4 progress spinner while running (Settings → Advanced). Default =
-    /// the built-in slow-command list (``autoProgressCommandsBuiltIn``); clearing the list disables
-    /// auto-progress entirely. The CLIENT setting is the EDIT/DISPLAY surface; the HOST resolves its own
-    /// copy from `SLOPDESK_AUTO_PROGRESS_COMMANDS` at launch (set identically host+client, like
-    /// `SLOPDESK_FEC_M`) — a live edit re-drives the host on the NEXT launch. Stored `[String]`.
-    public static let autoProgressCommands = "advanced.autoProgressCommands" // [String]
-    // (IPC guards on the agent-control ctl socket — terminal-features__notifications.md privilege
-    // surface → Settings → Advanced). Fire-time flags, never folded into a typed prefs model → golden-safe.
-    // CLIENT-displayed toggles whose ENFORCEMENT is HOST-side: the guard runs on the host's NDJSON ctl socket,
-    // so a live client edit applies on the NEXT host launch via the env bridge (set identically host+client,
-    // like `SLOPDESK_FEC_M`). The guards exist because the WireGuard mesh, not app-layer auth, is the security
-    // boundary; this maps the toggles onto the host agent-control socket. See docs/DECISIONS.md.
-    /// "IPC — Allow Send Keys" — whether the agent-control ctl socket may run the MUTATING verbs
-    /// (`write`/`run`/`spawn`/`kill`/`resize`, the "send keys" equivalents). Default OFF. The host ENFORCES
-    /// via `HostEnvironment.ipcAllowSendKeys()` (`SLOPDESK_IPC_ALLOW_SEND_KEYS`); read-only verbs
-    /// (`list-panes`/`read`/`wait`/`report`) are ALWAYS allowed. Stored Bool.
-    public static let ipcAllowSendKeys = "advanced.ipcAllowSendKeys"
-    /// "IPC — Allow Sensitive Sessions" — whether a mutating ctl verb may target a pane whose
-    /// foreground process is a SENSITIVE command (`ssh`/`sudo`/`login`/…). Default OFF — OFF refuses
-    /// send-keys into a live password prompt. Host-enforced via `SLOPDESK_IPC_ALLOW_SENSITIVE`; same
-    /// next-launch env-bridge discipline as ``ipcAllowSendKeys``. Stored Bool.
-    public static let ipcAllowSensitiveSessions = "advanced.ipcAllowSensitiveSessions"
+    // The host-side auto-progress prefix list and the agent-control IPC guards used to carry CLIENT keys
+    // here. They were removed: nothing serialised them into the env overlay or the `video-prefs.json`
+    // sidecar, so the toggles wrote a value the host never read. The host still resolves
+    // `SLOPDESK_AUTO_PROGRESS_COMMANDS` / `SLOPDESK_IPC_ALLOW_SEND_KEYS` / `SLOPDESK_IPC_ALLOW_SENSITIVE`,
+    // and Settings → Advanced → Raw overrides DOES reach the sidecar — so that box is the honest editor.
     // Appearance / chrome
     /// The active ``DSDensity`` tier rawValue. Mirrors ``DSDensity/storageKey`` (the SAME `UserDefaults`
     /// key ``DSThemeStore`` reads at init + on a Settings change) so the picker, persistence, and the live
     /// `DSScale`/height tokens all agree on one source.
     public static let density = "appearance.density"
-    /// Whether the per-block sticky command divider/header is shown over terminal panes. Default ON.
-    public static let showBlockDividers = "terminal.showBlockDividers"
     // (terminal-features__progress-state.md "DOCK ICON" group). macOS-only NSDockTile behaviour;
     // the keys compile + round-trip on iOS, inert there (no Dock). Fire-time flags, never folded into a typed
     // prefs model → golden-safe.
@@ -587,60 +548,6 @@ public enum SettingsKey {
     /// cleared from the pill's "Clear History".
     public static var recordClipboardHistoryEnabled: Bool { Defaults[.recordClipboardHistory] }
 
-    /// The built-in slow-command prefix list — the DEFAULT for ``autoProgressCommands``
-    /// and the value pre-populated in the field. CLIENT-SIDE mirror of the host's
-    /// `AutoProgressMatcher.builtInPrefixes` (the two live in different modules — `SlopDeskWorkspaceCore`
-    /// cannot import `SlopDeskHost` — so the canonical list is duplicated; this copy is the DISPLAY/edit
-    /// default, the host copy is the ENFORCEMENT fallback). Keep the two in sync; see docs/DECISIONS.md.
-    public static let autoProgressCommandsBuiltIn: [String] = [
-        "curl",
-        "wget",
-        "rsync",
-        "scp",
-        "git fetch",
-        "git pull",
-        "git push",
-        "git clone",
-        "brew install",
-        "brew update",
-        "brew upgrade",
-        "npm install",
-        "pnpm install",
-        "yarn install",
-        "bun install",
-        "pip install",
-        "cargo build",
-        "cargo install",
-        "cargo update",
-        "docker pull",
-        "docker push",
-        "docker build",
-        "apt install",
-        "apt update",
-        "apt upgrade",
-        "apt-get install",
-        "apt-get update",
-        "apt-get upgrade",
-    ]
-
-    /// The configured auto-progress slow-command prefix list, default ``autoProgressCommandsBuiltIn``.
-    /// The read seam the client→host env bridge serialises into `SLOPDESK_AUTO_PROGRESS_COMMANDS`; an
-    /// empty list disables auto-progress entirely. Read at fire-time.
-    public static var autoProgressCommandsList: [String] { Defaults[.autoProgressCommands] }
-
-    /// "IPC — Allow Send Keys" (default OFF) — the CLIENT edit/display surface for the host
-    /// ctl-socket send-keys guard. The host ENFORCES via `HostEnvironment.ipcAllowSendKeys()`; this toggle
-    /// round-trips today + bridges to the host env on the next launch. Read at fire-time.
-    public static var ipcAllowSendKeysEnabled: Bool { Defaults[.ipcAllowSendKeys] }
-
-    /// "IPC — Allow Sensitive Sessions" (default OFF) — the CLIENT edit/display surface for the
-    /// host ctl-socket sensitive-session guard. Host-enforced via `HostEnvironment.ipcAllowSensitiveSessions()`.
-    /// Read at fire-time.
-    public static var ipcAllowSensitiveSessionsEnabled: Bool { Defaults[.ipcAllowSensitiveSessions] }
-
-    /// Whether the per-block command divider/header is shown (default ON). Read at fire-time.
-    public static var showBlockDividersEnabled: Bool { Defaults[.showBlockDividers] }
-
     /// Whether the macOS Dock tile animates during OSC 9;4 progress (`dock-icon-animate-progress`),
     /// default OFF (macOS-only; inert on iOS). Read fire-time by ``DockProgressController`` via ``DockTintPolicy``.
     public static var dockIconAnimateProgressEnabled: Bool { Defaults[.dockIconAnimateProgress] }
@@ -778,13 +685,9 @@ public enum SettingsKey {
     /// lives elsewhere.**
     public static var mouseHideWhileTypingEnabled: Bool { Defaults[.mouseHideWhileTyping] }
 
-    /// Whether focus follows the mouse pointer without a click (`focus-follows-mouse`), default OFF.
-    /// **The behaviour lives elsewhere.**
+    /// Whether focus follows the mouse pointer without a click (`focus-follows-mouse`), default OFF. Read
+    /// fire-time by the libghostty surface's `mouseMoved` via ``FocusFollowsMousePolicy``.
     public static var focusFollowsMouseEnabled: Bool { Defaults[.focusFollowsMouse] }
-
-    /// Whether the viewport scrolls to the bottom on new output (`scroll-on-output`), default ON.
-    /// **The behaviour lives elsewhere.**
-    public static var scrollOnOutputEnabled: Bool { Defaults[.scrollOnOutput] }
 
     /// The scroll-wheel delta multiplier (`mouse-scroll-multiplier`), default `1.0`. **The behaviour lives
     /// elsewhere.**
@@ -798,12 +701,6 @@ public enum SettingsKey {
     /// Whether the selection clears after an explicit copy (`selection-clear-on-copy`), default OFF.
     public static var clearSelectionOnCopyEnabled: Bool { Defaults[.clearSelectionOnCopy] }
 
-    /// Whether Backspace deletes the whole prompt-line selection (backspace-deletes-selection),
-    /// default **OFF — not yet functional**: the pinned libghostty fork exposes no selection-geometry C API,
-    /// so even ON it cannot faithfully delete the run (it degrades to a single-character Backspace,
-    /// indistinguishable from OFF). Read by `BackspaceSelectionPolicy`; see docs/DECISIONS.md.
-    public static var backspaceDeletesSelectionEnabled: Bool { Defaults[.backspaceDeletesSelection] }
-
     /// Whether ⇧+arrows drive native selection ("Shift+Arrow Select"), default ON.
     public static var shiftArrowSelectEnabled: Bool { Defaults[.shiftArrowSelect] }
 
@@ -816,10 +713,8 @@ public enum SettingsKey {
     /// Whether clicking in the prompt moves the shell cursor (`cursor-click-to-move`), default ON.
     public static var clickToMoveEnabled: Bool { Defaults[.clickToMove] }
 
-    /// Whether smooth (pixel-granularity) scrolling is on ("Smooth Scroll"), default ON.
-    public static var smoothScrollEnabled: Bool { Defaults[.smoothScroll] }
-
-    /// Whether ⌘Z at the prompt emits the readline undo (undo-at-prompt), default ON.
+    /// Whether ⌘Z at the prompt emits the readline undo (undo-at-prompt), default ON. Read fire-time by
+    /// the libghostty surface's `keyDown` via ``PromptEditPolicy``.
     public static var undoAtPromptEnabled: Bool { Defaults[.undoAtPrompt] }
 
     /// Whether macOS Secure Keyboard Entry engages AUTOMATICALLY on a host no-echo password prompt
@@ -846,11 +741,6 @@ public enum SettingsKey {
     /// (default ON). Read fire-time by ``TerminalViewModel`` at the `.title` event (OFF drops the update).
     public static var titleShellControlledEnabled: Bool { Defaults[.titleShellControlled] }
 
-    /// "Title Report" — whether apps may read the window title back via `OSC 21` / XTWINOPS (default
-    /// OFF). **CEILING:** persists/surfaces but does not yet actuate (the libghostty fork owns XTWINOPS with
-    /// no enable hook — see docs/DECISIONS.md). Read fire-time for forward-compatibility.
-    public static var titleReportEnabled: Bool { Defaults[.titleReport] }
-
     /// "Clipboard — Shell Controlled" — the master switch gating the whole `OSC 52` path (default ON).
     /// When OFF, ``TerminalControls/from(defaults:)`` resolves read + write to ``ClipboardAccess/deny``.
     public static var clipboardShellControlledEnabled: Bool { Defaults[.clipboardShellControlled] }
@@ -866,14 +756,6 @@ public enum SettingsKey {
     /// How the macOS Option key is treated ("Option as Alt", libghostty `macos-option-as-alt`), default
     /// ``OptionAsAlt/off``. A stale / invalid raw value repairs to `.off`.
     public static var optionAsAlt: OptionAsAlt { Defaults[.optionAsAlt] }
-
-    /// Overscroll past the last content row ("Scroll Past Last Line"), default ``ScrollPastLast/disabled``.
-    /// A stale / invalid raw value repairs to `.disabled`. The render policy suppresses it on the alt screen.
-    public static var scrollPastLastLine: ScrollPastLast { Defaults[.scrollPastLastLine] }
-
-    /// Overscroll past the first scrollback row ("Scroll Past First Line"), default
-    /// ``ScrollPastFirst/disabled``. A stale / invalid raw value repairs to `.disabled`.
-    public static var scrollPastFirstLine: ScrollPastFirst { Defaults[.scrollPastFirstLine] }
 
     // MARK: Link interaction (declared + persisted here; the behaviour lives elsewhere)
 
@@ -990,18 +872,6 @@ public extension Defaults.Keys {
     static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
     static let recordClipboardHistory = Key<Bool>(slopDesk: SettingsKey.recordClipboardHistory, default: true)
-    // The "Auto Progress-Bar Commands" list. Fire-time `[String]` key → golden-safe. Default = the
-    // built-in slow-command list; the host enforces its own copy from `SLOPDESK_AUTO_PROGRESS_COMMANDS`.
-    static let autoProgressCommands = Key<[String]>(
-        slopDesk: SettingsKey.autoProgressCommands,
-        default: SettingsKey.autoProgressCommandsBuiltIn,
-    )
-    // The IPC guards on the agent-control ctl socket. Fire-time flags → golden-safe. Both default OFF
-    // (mutation/sensitive access is opt-in); the host enforces its own copy via SLOPDESK_IPC_ALLOW_SEND_KEYS /
-    // _SENSITIVE on the next launch.
-    static let ipcAllowSendKeys = Key<Bool>(slopDesk: SettingsKey.ipcAllowSendKeys, default: false)
-    static let ipcAllowSensitiveSessions = Key<Bool>(slopDesk: SettingsKey.ipcAllowSensitiveSessions, default: false)
-    static let showBlockDividers = Key<Bool>(slopDesk: SettingsKey.showBlockDividers, default: true)
     // Dock-icon toggles (macOS-only NSDockTile; the keys compile + round-trip on iOS, inert there).
     // Fire-time flags, never folded into a typed prefs model → golden-safe. Animate default OFF, error-tint ON.
     static let dockIconAnimateProgress = Key<Bool>(slopDesk: SettingsKey.dockIconAnimateProgress, default: false)
@@ -1077,7 +947,6 @@ public extension Defaults.Keys {
     static let pasteProtection = Key<Bool>(slopDesk: SettingsKey.pasteProtection, default: true)
     static let mouseHideWhileTyping = Key<Bool>(slopDesk: SettingsKey.mouseHideWhileTyping, default: true)
     static let focusFollowsMouse = Key<Bool>(slopDesk: SettingsKey.focusFollowsMouse, default: false)
-    static let scrollOnOutput = Key<Bool>(slopDesk: SettingsKey.scrollOnOutput, default: true)
     static let scrollMultiplier = Key<Double>(slopDesk: SettingsKey.scrollMultiplier, default: 1.0)
     // The remaining Controls / Mouse / Scroll knobs. Same fire-time-only discipline → golden-safe. The
     // enum-valued keys store the bare enum rawValue via the `RawRepresentableBridge` (the
@@ -1085,17 +954,10 @@ public extension Defaults.Keys {
     // `closeConfirmTab` / `onLaunch`.
     static let clearSelectionOnTyping = Key<Bool>(slopDesk: SettingsKey.clearSelectionOnTyping, default: true)
     static let clearSelectionOnCopy = Key<Bool>(slopDesk: SettingsKey.clearSelectionOnCopy, default: false)
-    // Default OFF — NOT YET FUNCTIONAL: the pinned libghostty fork exposes no set-selection / cursor-geometry
-    // C API, so a faithful "Backspace deletes the whole selection wherever it sits" cannot be actuated (a blind
-    // DEL run would delete the WRONG characters for a mid-line selection — default-on data loss). ON is
-    // INDISTINGUISHABLE from OFF (one char deleted + selection cleared), so it ships OFF. See
-    // `BackspaceSelectionPolicy` + docs/DECISIONS.md — the policy stays wired for a future geometry API.
-    static let backspaceDeletesSelection = Key<Bool>(slopDesk: SettingsKey.backspaceDeletesSelection, default: false)
     static let shiftArrowSelect = Key<Bool>(slopDesk: SettingsKey.shiftArrowSelect, default: true)
     static let pasteBracketedSafe = Key<Bool>(slopDesk: SettingsKey.pasteBracketedSafe, default: true)
     static let allowMouseCapture = Key<Bool>(slopDesk: SettingsKey.allowMouseCapture, default: true)
     static let clickToMove = Key<Bool>(slopDesk: SettingsKey.clickToMove, default: true)
-    static let smoothScroll = Key<Bool>(slopDesk: SettingsKey.smoothScroll, default: true)
     static let undoAtPrompt = Key<Bool>(slopDesk: SettingsKey.undoAtPrompt, default: true)
     // Secure input — both default ON (macOS-only behaviour; the keys still compile +
     // round-trip on iOS, where the feature is inert). Fire-time flags, never folded into the env overlay.
@@ -1108,7 +970,6 @@ public extension Defaults.Keys {
     // Shell Controlled default ON; Title Report defaults OFF (the conservative exfiltration-safe default, and
     // it cannot yet actuate — see docs/DECISIONS.md).
     static let titleShellControlled = Key<Bool>(slopDesk: SettingsKey.titleShellControlled, default: true)
-    static let titleReport = Key<Bool>(slopDesk: SettingsKey.titleReport, default: false)
     static let clipboardShellControlled = Key<Bool>(slopDesk: SettingsKey.clipboardShellControlled, default: true)
     static let allowShiftClick = Key<MouseShiftCapture>(slopDesk: SettingsKey.allowShiftClickKey, default: .enabled)
     static let rightClickAction = Key<RightClickAction>(
@@ -1116,11 +977,6 @@ public extension Defaults.Keys {
         default: .contextMenu,
     )
     static let optionAsAlt = Key<OptionAsAlt>(slopDesk: SettingsKey.optionAsAltKey, default: .off)
-    static let scrollPastLastLine = Key<ScrollPastLast>(slopDesk: SettingsKey.scrollPastLastLineKey, default: .disabled)
-    static let scrollPastFirstLine = Key<ScrollPastFirst>(
-        slopDesk: SettingsKey.scrollPastFirstLineKey,
-        default: .disabled,
-    )
     // (Path/link detection — Settings → Controls → Open With / Link Schemes). Fire-time flags, never
     // folded into a typed prefs model → golden-safe. The enum keys store the bare enum rawValue via the
     // `RawRepresentableBridge` (repairing a stale value to the default exactly like `rightClickAction`); the
@@ -1194,8 +1050,6 @@ extension NotifyWhileForeground: Defaults.Serializable, Defaults.PreferRawRepres
 /// value can never trap the bridge.
 extension ClipboardAccess: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension RightClickAction: Defaults.Serializable, Defaults.PreferRawRepresentable {}
-extension ScrollPastLast: Defaults.Serializable, Defaults.PreferRawRepresentable {}
-extension ScrollPastFirst: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension MouseShiftCapture: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension OptionAsAlt: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 

@@ -386,9 +386,9 @@ public final class PreferencesStore {
     /// keybinding choices intact."
     ///
     /// The advanced-only surface: the `video` / `agent` host flags, the raw `SLOPDESK_*` overrides, AND the
-    /// privilege/IPC `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` —
-    /// title gates, the OSC-52 master + read/write tri-state, the agent-control IPC guards, the auto-progress
-    /// command list). EVERY key in ``tabReachableDefaultsKeys`` IS reachable from a dedicated tab, so this
+    /// privilege `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` — the
+    /// title gate and the OSC-52 master + read/write tri-state). EVERY key in ``tabReachableDefaultsKeys``
+    /// IS reachable from a dedicated tab, so this
     /// must NOT touch any of them, or it destroys the user's other-tab choices — which Reset-Advanced-Only
     /// promises to leave intact.
     public func resetAdvancedOnly() {
@@ -400,13 +400,12 @@ public final class PreferencesStore {
 
     /// The `.standard`-backed global `Defaults.Keys` settings that ONLY surface in the Advanced panel (no
     /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. The privilege gates
-    /// (`title*` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state), the agent-control IPC
-    /// guards, and the auto-progress command list — all edited solely from the Advanced → Privileges section
-    /// / the All-Settings inline list, so resetting them never destroys a tab choice.
+    /// (`title-shell-controlled` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state) — all
+    /// edited solely from the Advanced → Privileges section / the All-Settings inline list, so resetting
+    /// them never destroys a tab choice.
     nonisolated static let advancedOnlyDefaultsKeys: [Defaults.Keys] = [
-        .titleShellControlled, .titleReport, .clipboardShellControlled,
+        .titleShellControlled, .clipboardShellControlled,
         .clipboardRead, .clipboardWrite,
-        .autoProgressCommands, .ipcAllowSendKeys, .ipcAllowSensitiveSessions,
     ]
 
     /// The `.standard`-backed global `Defaults.Keys` settings reachable from a DEDICATED tab — reset by
@@ -431,18 +430,18 @@ public final class PreferencesStore {
         .omitCLIPrefix, .allowPrefixOverwrite,
         // Controls — selection / copy / paste
         .copyOnSelect, .trimTrailingSpacesOnCopy, .pasteProtection, .pasteBracketedSafe,
-        .clearSelectionOnTyping, .clearSelectionOnCopy, .backspaceDeletesSelection, .shiftArrowSelect,
+        .clearSelectionOnTyping, .clearSelectionOnCopy, .shiftArrowSelect,
         // Controls — mouse / scroll
-        .mouseHideWhileTyping, .focusFollowsMouse, .scrollOnOutput, .scrollMultiplier,
+        .mouseHideWhileTyping, .focusFollowsMouse, .scrollMultiplier,
         .allowMouseCapture, .allowShiftClick, .clickToMove, .rightClickAction, .optionAsAlt,
-        .scrollPastLastLine, .scrollPastFirstLine, .smoothScroll, .undoAtPrompt,
+        .undoAtPrompt,
         // Controls — link detection + hint patterns
         .linkDetection, .linkCmdClick, .linkCmdShiftClick, .autoDetectLinkSchemes, .customLinkSchemes,
         .hintPatterns, .hintPatternActions,
         // Controls — secure input
         .autoSecureInput, .secureInputIndicator,
         // Appearance
-        .newTabPosition, .showBlockDividers, .autoHideTabsPanel,
+        .newTabPosition, .autoHideTabsPanel,
         .dockIconAnimateProgress, .dockIconErrorBadge,
         // Agents
         .autoSwitchLayouts, .recordClipboardHistory,

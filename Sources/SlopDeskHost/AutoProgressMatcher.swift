@@ -15,10 +15,10 @@ import Foundation
 /// entirely (clearing the field turns it off), and an unmatched command emits NOTHING (no phantom progress).
 public enum AutoProgressMatcher {
     /// The built-in slow-command prefix list — the default when the operator has not overridden
-    /// `SLOPDESK_AUTO_PROGRESS_COMMANDS`. Mirrors `terminal-features__progress-state.md`'s built-in
-    /// set (and the client-side display default `SettingsKey.autoProgressCommandsBuiltIn`, which lives
-    /// in `SlopDeskWorkspaceCore` and CANNOT import this host module — the two literals are kept in
-    /// sync; see docs/DECISIONS.md "E14 progress + notifications + privilege parity").
+    /// `SLOPDESK_AUTO_PROGRESS_COMMANDS`. Mirrors `terminal-features__progress-state.md`'s built-in set.
+    /// This is now the ONLY copy: the client used to hold a display mirror behind a Settings row, but
+    /// nothing serialised that row into the overlay or the sidecar, so the host never saw it. Override the
+    /// env key (Settings → Advanced → Raw overrides reaches the sidecar).
     public static let builtInPrefixes: [String] = [
         "curl",
         "wget",

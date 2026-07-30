@@ -1278,62 +1278,14 @@ final class GhosttyLayerBackedView: NSView {
         // ⌘D/⌘⇧D against the override-aware `resolvedChordTable` and routes `.splitRight`/`.splitDown`), so a
         // user rebind takes effect and the live dispatcher owns the chord. Nothing to do here.
 
-        // E8 WI-10 (I7, ES-E8-2): BACKSPACE-DELETES-SELECTION. A PLAIN Backspace (keyCode 51, no
-        // ⌘/⌃/⌥ — the modified variants are word/line-delete and forward unchanged) on a pane with an
-        // active selection deletes the WHOLE selected run instead of one character. The PURE, headless-
-        // tested `BackspaceSelectionPolicy` makes the 3-way decision; this view is the thin actuator that
-        // applies the documented geometry ceiling. The gate state is read LIVE from the model (no CGhostty
-        // import, no host round-trip):
-        //   • a full-screen / foreground program owns the screen ⇒ the REAL alt-screen flag
-        //     `model.isAlternateScreen` (DECSET 1049/47/1047 tracked by the client `TerminalModeTracker`),
-        //     NOT the coarse `shellActivity == .running` proxy (true for ANY foreground command, which would
-        //     suppress the gate while editing a non-TUI running command's line) → NEVER intercept (the
-        //     "repeat inside vim → single-char passthrough" leg); the policy's `isAlternateScreen` gate.
-        //   • the editable prompt zone ⇒ connected AND `shellActivity == .idle` AND NOT on the alternate
-        //     screen — the only place DEL bytes faithfully erase the selected run; the policy's `isPromptZone`
-        //     gate.
-        // The setting is read live off `Defaults` (the same idiom WI-7/WI-8 use) so a Settings toggle takes
-        // effect on the very next Backspace.
-        if event.keyCode == 51,
-           !event.modifierFlags.contains(.command),
-           !event.modifierFlags.contains(.control),
-           !event.modifierFlags.contains(.option),
-           let model
-        {
-            let decision = BackspaceSelectionPolicy.action(
-                hasSelection: surface?.hasSelection() ?? false,
-                setting: SettingsKey.backspaceDeletesSelectionEnabled,
-                // REAL alt-screen flag (DECSET 1049/47/1047 via the client `TerminalModeTracker`), NOT the
-                // coarse `shellActivity == .running` proxy — which is true for ANY foreground command, so it
-                // would suppress the gate while editing a non-TUI running command's line.
-                isAlternateScreen: model.isAlternateScreen,
-                isPromptZone: model.connectionStatus.isLive
-                    && model.shellActivity == .idle
-                    && !model.isAlternateScreen,
-            )
-            if decision == .deleteSelection {
-                // GEOMETRY CEILING (ES-E8-2): the pinned libghostty fork exposes no set-selection /
-                // cursor-geometry API, so we CANNOT prove the selection ends at the cursor. DEL bytes always
-                // erase the chars immediately BEFORE the cursor, so pre-sending (count − 1) DELs for a run
-                // that does NOT end at the cursor (e.g. a word selected in the MIDDLE of a typed command)
-                // would delete the WRONG characters and silently corrupt the line — default-on data loss.
-                // We therefore pass `selectionEndsAtCursor: false` to the pure ``leadingDeleteCount``, which
-                // returns 0 → we pre-send NOTHING and degrade to the safe clear-then-single path. The
-                // fall-through Backspace below still erases one char + clears the highlight (clear-on-typing),
-                // so the worst case is a one-character delete, never wrong-character deletion. (The call is
-                // kept wired so a FUTURE libghostty geometry API that can prove the trailing run lights up the
-                // faithful whole-run delete with no further change here.)
-                let leading = BackspaceSelectionPolicy.leadingDeleteCount(
-                    selection: surface?.readSelection() ?? "",
-                    selectionEndsAtCursor: false,
-                )
-                if leading > 0 { model.sendInput(Data(repeating: 0x7F, count: leading)) }
-            }
-            // `.forward` / `.clearThenSingle` / the `.deleteSelection` tail all FALL THROUGH to the libghostty
-            // encoder below: it sends one DEL and (clear-on-typing) clears the selection. With no
-            // `clear_selection` binding action in the pinned fork, `clearThenSingle` currently maps to this
-            // same path — the distinction is preserved in the policy for a future libghostty API.
-        }
+        // BACKSPACE-DELETES-SELECTION is GONE — setting, policy and this actuator. It was a 3-way
+        // decision whose one interesting leg (`.deleteSelection`) could never fire a byte: the pinned
+        // libghostty fork exposes no set-selection / cursor-geometry API, so `selectionEndsAtCursor` was
+        // hard-coded `false`, `leadingDeleteCount` therefore always returned 0, and every leg fell through
+        // to the same encoder path below. ON and OFF were indistinguishable by construction — a setting
+        // that only wrote to disk. A plain Backspace deletes one character and (clear-on-typing) drops the
+        // highlight, which is what it already did. Re-introduce the whole path together with the geometry
+        // API, not before.
 
         // E8 WI-11 (I18): UNDO AT PROMPT. ⌘Z at an editable shell prompt emits the readline UNDO control byte
         // (Ctrl-_, 0x1F) so the remote shell's line editor rolls back the last prompt edit; ⌘⇧Z / ⌘Y (redo)
@@ -2053,22 +2005,17 @@ final class GhosttyLayerBackedView: NSView {
         // later ⌘-click / right-click-menu hit-test would otherwise resolve against the pre-scroll rows.
         detectedLinksCache = nil
 
-        // E8 WI-12 (I14/I15, ES-E8-5): SCROLL-PAST overscroll + SMOOTH-SCROLL — DOCUMENTED RENDERING CEILING.
         // The delta above is handed straight to libghostty, which OWNS the viewport: on the primary screen it
-        // navigates scrollback (auto-snapping to the bottom on new output / typing, native),
-        // and in an alt-screen mouse-mode TUI it is encoded as a mouse-scroll report — both handled internally.
-        //   • SMOOTH SCROLL: the precision-delta path above already scrolls at sub-row (pixel) granularity, so
-        //     `smoothScroll` ON ≈ the native behaviour. The OFF variant (snap each gesture to a whole-row
-        //     boundary) would need to quantise the delta to the cell height — the pinned libghostty fork
-        //     (`Config.zig`) exposes no `smooth-scroll` / row-snap viewport hook, so OFF is not actuated here.
-        //   • SCROLL PAST LAST/FIRST: the overscroll ANCHOR is the PURE, headless-tested `ScrollPastPolicy`
-        //     (`targetTopRow` / `minTopRow`) — it computes where the last/first content row should float and
-        //     SUPPRESSES on the alternate screen (returns nil) so a full-screen TUI keeps its own edge. But
-        //     RENDERING that float (blank terminal-background overscroll above/below the content) needs an
-        //     overscroll-margin / sub-row-render API the pinned fork also lacks. So the SETTINGS + the policy +
-        //     the alt-screen gate land (and `mouse-scroll-multiplier` rides the WI-2 config passthrough); the
-        //     blank-overscroll rendering + pixel-snap are DEFERRED pending a libghostty viewport hook (recorded
-        //     in `docs/DECISIONS.md`). The same ceiling applies to the iOS `handlePanToScroll` path below.
+        // navigates scrollback (auto-snapping to the bottom on new output / typing, native), and in an
+        // alt-screen mouse-mode TUI it is encoded as a mouse-scroll report — both handled internally.
+        // `mouse-scroll-multiplier` rides the config passthrough, so the one knob that CAN reach the
+        // viewport does.
+        //
+        // The Smooth-Scroll and Scroll-Past-First/Last SETTINGS are gone (2026-07-30). They were shipped
+        // ahead of their renderer: the fork exposes no row-snap hook and no overscroll-margin API, so
+        // `smoothScroll` OFF rendered exactly like ON and the scroll-past anchors (`ScrollPastPolicy`, now
+        // deleted with them) computed a float nothing could draw. Add the settings back with the viewport
+        // hook that actuates them, not before.
     }
 
     override func pressureChange(with event: NSEvent) {

@@ -85,63 +85,6 @@ public enum RightClickAction: String, Codable, Sendable, CaseIterable {
     // ⌃-right-always-menu override; there is no client-side effect model to keep in sync.
 }
 
-/// Overscroll behaviour past the LAST line of content ("Scroll Past Last Line", default Disabled).
-/// Suppressed on the alternate screen (`ScrollPastPolicy` returns `nil` there so full-screen TUIs
-/// keep their bottom edge).
-///
-/// - ``disabled``: clamp at the buffer bottom (the default).
-/// - ``lastLineWithContent``: the bottom-most content row lands at the viewport top.
-/// - ``lastLineInMiddle``: that row lands at the vertical centre.
-/// - ``cursorLine``: the cursor row lands at the top, even if it is on a blank line.
-///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side render policy (no libghostty key).
-/// ``init(rawValue:)`` is validate-then-repair to ``disabled``.
-public enum ScrollPastLast: String, Codable, Sendable, CaseIterable {
-    case disabled
-    case lastLineWithContent = "last-line-with-content"
-    case lastLineInMiddle = "last-line-in-middle"
-    case cursorLine = "cursor-line"
-
-    /// Validate-then-repair to ``disabled`` (clamp), never trapping; non-failable for the `Defaults` bridge.
-    public init(rawValue: String) {
-        switch rawValue {
-        case "disabled": self = .disabled
-        case "last-line-with-content": self = .lastLineWithContent
-        case "last-line-in-middle": self = .lastLineInMiddle
-        case "cursor-line": self = .cursorLine
-        default: self = .disabled
-        }
-    }
-}
-
-/// Overscroll behaviour past the FIRST (oldest) line of scrollback ("Scroll Past First Line", default
-/// Disabled). Symmetric with ``ScrollPastLast``.
-///
-/// - ``disabled``: clamp at the scrollback top (the default).
-/// - ``sameAsLast``: mirror the ``ScrollPastLast`` setting.
-/// - ``firstLineWithContent``: the topmost history row lands at the viewport bottom.
-/// - ``firstLineInMiddle``: that row lands at the vertical centre.
-///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side render policy (no libghostty key).
-/// ``init(rawValue:)`` is validate-then-repair to ``disabled``.
-public enum ScrollPastFirst: String, Codable, Sendable, CaseIterable {
-    case disabled
-    case sameAsLast = "same-as-last"
-    case firstLineWithContent = "first-line-with-content"
-    case firstLineInMiddle = "first-line-in-middle"
-
-    /// Validate-then-repair to ``disabled`` (clamp), never trapping; non-failable for the `Defaults` bridge.
-    public init(rawValue: String) {
-        switch rawValue {
-        case "disabled": self = .disabled
-        case "same-as-last": self = .sameAsLast
-        case "first-line-with-content": self = .firstLineWithContent
-        case "first-line-in-middle": self = .firstLineInMiddle
-        default: self = .disabled
-        }
-    }
-}
-
 /// Whether ⇧+click / ⇧+drag bypasses a program's mouse capture to make a native selection ("Allow Shift
 /// with Mouse Click", libghostty `mouse-shift-capture`).
 ///

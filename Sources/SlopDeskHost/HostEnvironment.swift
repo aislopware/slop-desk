@@ -180,9 +180,9 @@ public enum HostEnvironment {
     /// The env-bridge key carrying the client's "Auto Progress-Bar Commands" list to the
     /// host's synthetic OSC-9;4 spinner matcher (``AutoProgressMatcher``). Value is NEWLINE-separated
     /// prefix entries (each a whitespace-delimited command prefix, e.g. `git push`). Resolved at THIS ONE
-    /// shared site — set IDENTICALLY on host + client (like ``SLOPDESK_FEC_M``): the client setting
-    /// `autoProgressCommands` is the edit surface; a live edit re-drives the host only on its NEXT launch
-    /// (env read at start). See docs/DECISIONS.md.
+    /// shared site and read at host START. The edit surface is Settings → Advanced → **Raw overrides**
+    /// (which folds into the `video-prefs.json` sidecar the host reads); the dedicated client toggle that
+    /// used to claim this bridge never actually reached it and was removed. See docs/DECISIONS.md.
     public static let autoProgressCommandsEnvKey = "SLOPDESK_AUTO_PROGRESS_COMMANDS"
 
     /// Resolves the host's auto-progress prefix list. UNSET ⇒ ``AutoProgressMatcher/builtInPrefixes``
@@ -201,10 +201,10 @@ public enum HostEnvironment {
     /// The env-bridge keys gating the agent-control ctl socket's MUTATING verbs. Default idiom =
     /// DEFAULT-OFF via `env[key] == "1"` (same as ``agentControlEnvKey``): injecting keys into a live PTY,
     /// spawning / killing a pane, or reaching a `sudo`/`ssh` prompt is not something to enable silently. The
-    /// CLIENT toggles (`SettingsKey.ipcAllowSendKeys` / `ipcAllowSensitiveSessions`) are the edit surface,
-    /// re-driving the host on its NEXT launch — set IDENTICALLY host+client, like ``SLOPDESK_FEC_M``. The
-    /// guard ENFORCES host-side on the existing NDJSON ctl socket (no new socket, no tokens, no crypto — the
-    /// WireGuard mesh is the security boundary). See docs/DECISIONS.md.
+    /// edit surface is Settings → Advanced → **Raw overrides** (which folds into the sidecar the host
+    /// reads); the dedicated client toggles that used to claim this bridge never reached it and were
+    /// removed. The guard ENFORCES host-side on the existing NDJSON ctl socket (no new socket, no tokens,
+    /// no crypto — the WireGuard mesh is the security boundary). See docs/DECISIONS.md.
     public static let ipcAllowSendKeysEnvKey = "SLOPDESK_IPC_ALLOW_SEND_KEYS"
     public static let ipcAllowSensitiveEnvKey = "SLOPDESK_IPC_ALLOW_SENSITIVE"
 

@@ -12,7 +12,9 @@
 // macOS-only: the full Cursor section (`ColorPicker` + live preview) is macOS; the Appearance tab keeps a
 // simpler Style/Blink section on iOS (see `AppearanceSettingsTab`). The pure hex helper (`CursorColorHex`) is
 // cross-platform + headlessly testable (`CursorColorHexTests`); the `Color`↔hex glue below is pure SwiftUI
-// (`Color.resolve(in:)`, NO `NSColor`). Slate.* tokens only (no raw font/radius literals — `check-ds-leaks.sh`).
+// (`Color.resolve(in:)`, NO `NSColor`).
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -94,8 +96,8 @@ struct CursorPreviewView: View {
     var body: some View {
         slateFormSection("Cursor") {
             Text("Live preview of your cursor color, style, opacity and blink behavior.")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
 
             previewCard
 
@@ -113,7 +115,7 @@ struct CursorPreviewView: View {
             LabeledContent("Cursor opacity") {
                 HStack(spacing: Slate.Metric.space2) {
                     Text(String(format: "%.2f", store.terminal.cursorOpacity))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .foregroundStyle(SettingsInk.secondary)
                         .monospacedDigit()
                     Slider(value: $store.terminal.cursorOpacity, in: 0...1)
                 }
@@ -141,27 +143,8 @@ struct CursorPreviewView: View {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                     Text("Cursor blink style")
                     Text("The `Default` option defers to DEC mode 12 to determine blinking state.")
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            LabeledContent {
-                Picker("", selection: $store.terminal.cursorAnimation) {
-                    Text("Off").tag(TerminalPreferences.CursorAnimation.off)
-                    Text("Smooth").tag(TerminalPreferences.CursorAnimation.smooth)
-                }
-                .labelsHidden()
-                .fixedSize()
-            } label: {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("Cursor Animation")
-                    Text("Smooth would glide the caret on same-row moves and overshoot on click/focus — "
-                        + "preference saved, but deferred: the renderer exposes no cursor-animation hook, so "
-                        + "the caret does not yet animate.")
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -173,27 +156,27 @@ struct CursorPreviewView: View {
     /// The `john@doe-pc$ git commit -m "│"` mock — a monospaced prompt line with the live caret between the
     /// quotes, on the inset element surface (the preview card). Per `cursor-style.png`'s visual spec the
     /// prompt colours are `john` in green, `@doe-pc` in muted blue-gray (the host run, distinct from the user),
-    /// and `$ git commit -m "` in the default foreground — so the host part maps to the blue `Slate.Status.info`
+    /// and `$ git commit -m "` in the default foreground — so the host part maps to the blue `SettingsInk.info`
     /// token (the closest theme-aware blue-gray), NOT the same green as `john`.
     private var previewCard: some View {
         HStack(spacing: 0) {
-            Text("john").foregroundStyle(Slate.Status.ok)
-            Text("@doe-pc").foregroundStyle(Slate.Status.info)
-            Text("$ git commit -m \"").foregroundStyle(Slate.Text.primary)
+            Text("john").foregroundStyle(SettingsInk.ok)
+            Text("@doe-pc").foregroundStyle(SettingsInk.info)
+            Text("$ git commit -m \"").foregroundStyle(SettingsInk.primary)
             cursorGlyph
-            Text("\"").foregroundStyle(Slate.Text.primary)
+            Text("\"").foregroundStyle(SettingsInk.primary)
         }
-        .font(.system(size: Slate.Typeface.body, design: .monospaced))
+        .font(SettingsType.mono)
         .padding(.vertical, Slate.Metric.space2)
         .padding(.horizontal, Slate.Metric.space3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)
-                .fill(Slate.Surface.raised),
+                .fill(SettingsInk.inset),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)
-                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+                .strokeBorder(SettingsInk.hairline, lineWidth: 1),
         )
     }
 
@@ -211,10 +194,11 @@ struct CursorPreviewView: View {
         CursorCaret(style: store.terminal.cursorStyle, color: cursorPreviewColor, cell: previewCellSize)
     }
 
-    /// The approximate monospace cell for the preview font (advance ≈ 0.62 em, line height ≈ 1.3 em). A
-    /// preview-only estimate — the real surface metrics come from libghostty.
+    /// The approximate monospace cell for the preview font (advance ≈ 0.62 em, line height ≈ 1.3 em),
+    /// measured off the LIVE resolved `.body` size so the caret keeps its proportions when the user changes
+    /// the system text size. A preview-only estimate — the real surface metrics come from libghostty.
     private var previewCellSize: CGSize {
-        let em = Slate.Typeface.body
+        let em = SettingsMetric.resolvedBodyPointSize
         return CGSize(width: em * 0.62, height: em * 1.3)
     }
 
@@ -222,7 +206,7 @@ struct CursorPreviewView: View {
     private var cursorPreviewColor: Color {
         Color(cursorHex: store.terminal.cursorColor)
             ?? Color(cursorHex: store.terminal.foreground)
-            ?? Slate.Text.primary
+            ?? SettingsInk.primary
     }
 
     /// Whether the cosmetic preview caret blinks: `.on` (and `.default`, which defers to DEC mode 12 — the
@@ -250,7 +234,7 @@ struct CursorPreviewView: View {
         Binding(
             get: {
                 let hex = store.terminal[keyPath: keyPath]
-                return Color(cursorHex: hex) ?? Color(cursorHex: fallbackHex) ?? Slate.Text.primary
+                return Color(cursorHex: hex) ?? Color(cursorHex: fallbackHex) ?? SettingsInk.primary
             },
             set: { store.terminal[keyPath: keyPath] = $0.cursorHexString(in: environment) },
         )

@@ -28,7 +28,8 @@
 // the iOS settings host is unit-testable on the headless macOS `swift test` host — iOS view code otherwise
 // rots silently (CLAUDE.md). It is referenced only inside `WorkspaceRootView`'s `#if os(iOS)` branch.
 //
-// Slate.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
+// Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
+// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -99,10 +100,11 @@ struct SettingsSheet: View {
                 }
             }
         }
-        // Native settings sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read as
-        // native controls; appearance still tracks the theme via `preferredColorScheme`.
+        // Native settings sheet → SYSTEM accent AND system appearance: the tint is reset (dropping the
+        // inherited theme accent) and NO `preferredColorScheme` is pinned, so a stock `Form` of stock
+        // controls renders exactly as iOS Settings does. The terminal theme is the workspace's subject,
+        // not this sheet's — see `SettingsInk`.
         .tint(nil)
-        .preferredColorScheme(Slate.colorScheme)
     }
 }
 

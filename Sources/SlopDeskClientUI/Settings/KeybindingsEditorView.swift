@@ -58,7 +58,7 @@ struct KeybindingsEditorView: View {
                                 }
                             } header: {
                                 SlateSectionHeader(category.rawValue)
-                                    .background(Slate.Surface.ground)
+                                    .background(SettingsInk.ground)
                             }
                         }
                     }
@@ -98,11 +98,11 @@ struct KeybindingsEditorView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text("Keyboard Shortcuts")
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(SettingsType.body.weight(.semibold))
+                    .foregroundStyle(SettingsInk.primary)
                 Text("Click a shortcut to record a replacement; Backspace clears it, Esc cancels.")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
             }
             Spacer(minLength: Slate.Metric.space2)
             // The "Reset to Default" button appears in the top-right ONLY once a binding has been
@@ -110,8 +110,8 @@ struct KeybindingsEditorView: View {
             if KeybindingsEditorModel.hasCustomizations(store.keybindings) {
                 Button("Reset to Default") { showResetConfirm = true }
                     .buttonStyle(.plain)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.State.accent)
+                    .font(SettingsType.subtitle.weight(.medium))
+                    .foregroundStyle(SettingsInk.accent)
                     .help("Reset every customized shortcut to its default")
             }
         }
@@ -122,17 +122,17 @@ struct KeybindingsEditorView: View {
     private var searchField: some View {
         HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
             TextField("Search key bindings", text: $searchQuery)
                 .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.Text.primary)
+                .font(SettingsType.label)
+                .foregroundStyle(SettingsInk.primary)
             if !searchQuery.isEmpty {
                 Button { searchQuery = "" } label: {
                     Image(systemSymbol: .xmarkCircleFill)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Clear search")
@@ -141,12 +141,12 @@ struct KeybindingsEditorView: View {
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .background(
-            Slate.Surface.raised,
+            SettingsInk.inset,
             in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+                .strokeBorder(SettingsInk.hairline, lineWidth: 1),
         )
     }
 
@@ -158,12 +158,12 @@ struct KeybindingsEditorView: View {
         }.sorted()
         return VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Label("Shortcut conflicts", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(Slate.Status.warn)
+                .font(SettingsType.subtitle.weight(.semibold))
+                .foregroundStyle(SettingsInk.warn)
             ForEach(lines, id: \.self) { line in
                 Text(line)
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(SettingsType.caption)
+                    .foregroundStyle(SettingsInk.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,16 +176,16 @@ struct KeybindingsEditorView: View {
         return HStack(spacing: Slate.Metric.space2) {
             Image(systemName: binding.symbol)
                 .font(.system(size: Slate.Metric.iconSize))
-                .foregroundStyle(Slate.Text.icon)
+                .foregroundStyle(SettingsInk.icon)
                 .frame(width: 18)
             Text(binding.title)
-                .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.Text.primary)
+                .font(SettingsType.label)
+                .foregroundStyle(SettingsInk.primary)
                 .lineLimit(1)
             if isConflicting {
                 Image(systemSymbol: .exclamationmarkTriangleFill)
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Status.warn)
+                    .font(SettingsType.caption)
+                    .foregroundStyle(SettingsInk.warn)
                     .help("This shortcut conflicts with another command")
             }
             Spacer(minLength: Slate.Metric.space2)
@@ -203,19 +203,19 @@ struct KeybindingsEditorView: View {
             toggleRecording(binding.id)
         } label: {
             Text(isRecording ? "Press a key…" : effectiveGlyph(for: binding))
-                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                .foregroundStyle(isRecording ? Slate.State.accent : Slate.Text.secondary)
+                .font(SettingsType.subtitle.weight(.medium))
+                .foregroundStyle(isRecording ? SettingsInk.accent : SettingsInk.secondary)
                 .lineLimit(1)
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.vertical, 2)
                 .frame(minWidth: 64)
                 .background(
-                    isRecording ? Slate.State.accentMuted : Slate.Surface.raised,
+                    isRecording ? SettingsInk.accentWash : SettingsInk.inset,
                     in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                        .strokeBorder(isRecording ? Slate.State.accent : Slate.Line.subtle, lineWidth: 1),
+                        .strokeBorder(isRecording ? SettingsInk.accent : SettingsInk.hairline, lineWidth: 1),
                 )
         }
         .buttonStyle(.plain)

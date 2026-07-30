@@ -6,9 +6,11 @@
 // row wedged under the active one; a theme shows a miniature of its own terminal. A reader who can't name the
 // option can still recognise it.
 //
-// LEGIBLE-OR-ABSENT (`slopdesk-imagery-legible-or-absent-feedback`): at card size a diagram is ~40pt tall, so
-// each one carries at most three marks. Anything that would need four is a symbol instead
-// (``SettingsSymbolArt``) — a squinting-illegible diagram is worse than an honest glyph.
+// LEGIBLE-OR-ABSENT (`slopdesk-imagery-legible-or-absent-feedback`): at card size a diagram is ~48pt tall, so
+// each one carries at most three marks. A choice that would need four marks — or whose options differ only by
+// which WORD names them — does not get a card at all: it gets a `SettingsOptionMenuRow`. (There used to be a
+// `SettingsSymbolArt` fallback that put one SF Symbol on a card for those groups; it was a dropdown wearing
+// picture frames, and it is gone.)
 //
 // GEOMETRY: the mark dimensions live in the private `Art` table below, NOT as inline literals — the diagrams
 // share one visual beat (bar thickness, gap, dot size) so a row of cards reads as one system, and
@@ -17,7 +19,6 @@
 // Cross-platform (pure SwiftUI shapes — no AppKit), so the iOS settings sheet draws the same cards.
 
 #if canImport(SwiftUI)
-import SFSafeSymbols
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -111,7 +112,7 @@ struct SettingsCaretArt: View {
         HStack(alignment: .bottom, spacing: Art.gap) {
             ForEach(0..<2, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                    .fill(Slate.Text.tertiary)
+                    .fill(SettingsInk.tertiary)
                     .frame(width: Art.cap * 0.6, height: Art.bar * 3)
             }
             CursorCaret(
@@ -168,9 +169,9 @@ struct SettingsTabPositionArt: View {
 
     private func fill(for row: Row) -> Color {
         switch row {
-        case .existing: Slate.Line.subtle
-        case .active: Slate.State.selected
-        case .incoming: Slate.State.accent
+        case .existing: SettingsInk.hairline
+        case .active: SettingsInk.selected
+        case .incoming: SettingsInk.accent
         }
     }
 
@@ -179,9 +180,9 @@ struct SettingsTabPositionArt: View {
     /// "second row" rather than "after the CURRENT tab"). The outline is what makes the anchor legible.
     private func stroke(for row: Row) -> Color {
         switch row {
-        case .existing: Slate.Line.subtle
-        case .active: Slate.Line.active
-        case .incoming: Slate.State.accent
+        case .existing: SettingsInk.hairline
+        case .active: SettingsInk.strongLine
+        case .incoming: SettingsInk.accent
         }
     }
 }
@@ -197,7 +198,7 @@ struct SettingsDensityArt: View {
         VStack(spacing: compact ? Art.gap / 2 : Art.gap * 1.5) {
             ForEach(0..<(compact ? 5 : 3), id: \.self) { _ in
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                    .fill(Slate.Text.tertiary)
+                    .fill(SettingsInk.tertiary)
                     .frame(height: Art.bar)
             }
         }
@@ -220,7 +221,7 @@ struct SettingsOptionKeyArt: View {
             cap("⌘", lit: false)
             // The space bar — the anchor that makes the row read as a keyboard rather than four chips.
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .fill(Slate.Line.subtle)
+                .fill(SettingsInk.hairline)
                 .frame(width: Art.cap * 1.6, height: Art.cap)
             cap("⌘", lit: false)
             cap("⌥", lit: mode == .both || mode == .right)
@@ -229,16 +230,16 @@ struct SettingsOptionKeyArt: View {
 
     private func cap(_ glyph: String, lit: Bool) -> some View {
         Text(glyph)
-            .font(.system(size: Slate.Typeface.small))
-            .foregroundStyle(lit ? Slate.State.accent : Slate.Text.tertiary)
+            .font(SettingsType.caption)
+            .foregroundStyle(lit ? SettingsInk.accent : SettingsInk.tertiary)
             .frame(width: Art.cap, height: Art.cap)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                    .fill(lit ? Slate.State.accentMuted : Slate.Surface.raised),
+                    .fill(lit ? SettingsInk.accentWash : SettingsInk.inset),
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                    .strokeBorder(lit ? Slate.State.accent : Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                    .strokeBorder(lit ? SettingsInk.accent : SettingsInk.hairline, lineWidth: Slate.Metric.hairline),
             )
     }
 }
@@ -259,7 +260,7 @@ struct SettingsWindowArt<Content: View>: View {
         ZStack {
             // The screen bezel — present in every card so "fills the screen" is a visible relationship.
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline)
+                .strokeBorder(SettingsInk.hairline, lineWidth: Slate.Metric.hairline)
             window
                 .padding(fills ? 0 : Slate.Metric.space2)
         }
@@ -271,7 +272,7 @@ struct SettingsWindowArt<Content: View>: View {
             if titled {
                 HStack(spacing: Art.gap / 2) {
                     ForEach(0..<3, id: \.self) { _ in
-                        Circle().fill(Slate.Text.tertiary).frame(width: Art.dot / 2, height: Art.dot / 2)
+                        Circle().fill(SettingsInk.tertiary).frame(width: Art.dot / 2, height: Art.dot / 2)
                     }
                     Spacer(minLength: 0)
                 }
@@ -283,11 +284,11 @@ struct SettingsWindowArt<Content: View>: View {
         }
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .fill(Slate.Surface.face),
+                .fill(SettingsInk.face),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(Slate.Line.active, lineWidth: Slate.Metric.hairline),
+                .strokeBorder(SettingsInk.strongLine, lineWidth: Slate.Metric.hairline),
         )
     }
 }
@@ -299,7 +300,7 @@ struct SettingsGridArt: View {
             ForEach(0..<3, id: \.self) { _ in
                 HStack(spacing: Slate.Metric.hairline) {
                     ForEach(0..<4, id: \.self) { _ in
-                        Rectangle().fill(Slate.Line.subtle)
+                        Rectangle().fill(SettingsInk.hairline)
                     }
                 }
             }
@@ -313,9 +314,9 @@ struct SettingsGridArt: View {
 struct SettingsPixelArt: View {
     var body: some View {
         VStack(spacing: Art.gap) {
-            Rectangle().fill(Slate.State.accent).frame(height: Slate.Metric.hairline)
+            Rectangle().fill(SettingsInk.accent).frame(height: Slate.Metric.hairline)
             HStack(spacing: Art.gap) {
-                Rectangle().fill(Slate.State.accent).frame(width: Slate.Metric.hairline)
+                Rectangle().fill(SettingsInk.accent).frame(width: Slate.Metric.hairline)
                 Spacer(minLength: 0)
             }
         }
@@ -328,7 +329,7 @@ struct SettingsRememberArt: View {
     var body: some View {
         RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
             .strokeBorder(
-                Slate.State.accent,
+                SettingsInk.accent,
                 style: StrokeStyle(lineWidth: Slate.Metric.hairline, dash: [2, 2]),
             )
             .padding(Slate.Metric.space1)
@@ -355,7 +356,7 @@ struct SettingsThemeSwatch: View {
         .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                .strokeBorder(SettingsInk.hairline, lineWidth: Slate.Metric.hairline),
         )
     }
 
@@ -440,23 +441,4 @@ struct SettingsThemeSwatch: View {
     }
 }
 
-// MARK: - SettingsSymbolArt (the honest fallback)
-
-/// A centred SF Symbol, for choices whose diagram would need more marks than a 40pt card can carry legibly
-/// (right-click actions, close-confirmation scopes, launch behaviour). Deliberately NOT the default — a symbol
-/// names a choice, a diagram shows it — but better than an unreadable four-mark drawing.
-struct SettingsSymbolArt: View {
-    let symbol: SFSymbol
-
-    /// Injected by the enclosing card: the SELECTED card's symbol draws in the accent, so the glyph joins the
-    /// one selection statement instead of sitting inert inside it.
-    @Environment(\.settingsOptionIsSelected) private var isSelected
-
-    var body: some View {
-        Image(systemSymbol: symbol)
-            .font(.system(size: Slate.Typeface.display / 2))
-            .foregroundStyle(isSelected ? Slate.State.accent : Slate.Text.icon)
-            .symbolRenderingMode(.hierarchical)
-    }
-}
 #endif

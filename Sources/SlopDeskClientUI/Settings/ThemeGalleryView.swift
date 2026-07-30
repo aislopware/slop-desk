@@ -17,7 +17,9 @@
 // other, since `.system` FOLLOWS the OS appearance (`ThemeResolution.builtinID(for:osIsDark:)`) rather than
 // pinning a palette.
 //
-// Slate.* tokens only (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// COLOUR EXCEPTION: everything else in Settings is painted in system semantics (`SettingsInk`), but a
+// theme swatch MUST draw from the theme it previews — in system colours the gallery would be seven
+// identical cards. Geometry rides `Slate.Metric` (`scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -61,7 +63,6 @@ struct ThemeGalleryView: View {
             subtitle: subtitle,
             options: SettingsThemeGallery.entries,
             selection: $selection,
-            artHeight: Slate.Metric.settingsSwatchArt,
         ) { option in
             ThemeSwatchArt(choice: option.value)
         }
@@ -94,10 +95,10 @@ private struct ThemeSwatchArt: View {
             SettingsThemeSwatch(theme: theme)
         } else {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .fill(Slate.Surface.raised)
+                .fill(SettingsInk.inset)
                 .overlay(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                        .strokeBorder(SettingsInk.hairline, lineWidth: Slate.Metric.hairline),
                 )
         }
     }
