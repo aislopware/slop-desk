@@ -2935,7 +2935,7 @@ So the mark column keeps its fixed footprint and its one-mark-per-row rule, and 
 
 | state | mark | ink |
 |---|---|---|
-| agent working | the breathing asterisk `· ✢ ✳ ✶ ✻ ✽` (0.15 s/frame, palindrome) | accent |
+| agent working | the breathing asterisk `· ✢ ✳ ✶ ✻ ✽` (0.15 s/frame, palindrome) — ⚠️ **superseded twice by the follow-up below; shipped as the closed turning RING** | accent |
 | agent at rest | the round-8 static dashed ring — UNCHANGED | muted secondary |
 | agent blocked | `hand.raised` — otty's "answer me" hand | amber |
 | agent done / unread finish | the filled dot (otty's `circlebadge.fill`) | green |
@@ -3010,12 +3010,26 @@ both the light `⠋⠙⠹…` and the heavy `⣾⣽⣻…` land in **AppleBraill
 sparse little circles, ignores the requested weight, and renders the two cycles indistinguishable and
 nearly invisible at 11pt. Two renders looked unchanged before the font check explained why.
 
-Hence the rule this round ends on: **in the mark column, animation is VECTOR, never type.**
-`AgentPulseMark` draws the same `· ✢ ✳ ✶ ✻ ✽` bloom as six capsules budding out of a centre dot on a
-palindrome ramp (10 frames × 0.15 s, stepped not eased, centre dot always drawn so the cycle never
-blinks out); `CommandSpinner` keeps its eight-spoke comet wheel. Both step on one shared primitive,
-`StatusDot.frame(at:frames:beat:)`, off the fixed epoch — so they stay in unison and pinned as pure
+Hence the first rule this round ends on: **in the mark column, animation is VECTOR, never type.**
+`CommandSpinner` keeps its eight-spoke comet wheel; both animated marks step on one shared primitive,
+`StatusDot.frame(at:frames:beat:)`, off the fixed epoch — so they stay in unison and pin as pure
 numbers. Exact size, exact ink, no font on the machine to get in the way.
+
+**The asterisk did not survive being drawn either, and that gave the second rule.** Redrawn faithfully
+as six capsules budding out of a centre dot, the star was still judged ugly — and rendering the
+candidates at true size next to a 4× blow-up showed why, in pixels rather than prose: at 12pt a
+radiating star is a burr of spikes, and magnified it reads as a cogwheel. **One stroke scales down;
+detail does not.**
+
+So the working mark becomes the RESTING RING, closed: `AgentSweepMark` draws the same circle at the
+same diameter and stroke weight with `drawnFraction` 0.82 — one gap instead of the dashed ring's
+eight — turning 12 steps × 0.08 s ≈ a second a revolution. Which turns the agent's column into ONE
+CIRCLE with three readings: **dashed while it waits at its prompt, closed and turning while it works,
+filled once it has finished something you haven't read.** A progression, not a legend to learn — and
+the two states that need a HUMAN (`✋` question, `⚠` failure) step outside that circle on purpose,
+which is now the mark column's whole grammar. The choice was made from a rendered comparison sheet of
+four drawn candidates (star bloom, arc sweep, travelling gap, orbiting dot); the rig was deleted once
+it had done its job.
 
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text

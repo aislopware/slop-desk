@@ -20,8 +20,8 @@ import SwiftUI
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
 /// header). The sidebar rows speak the same states through their own mark column
 /// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) — a different alphabet for the
-/// resting/awaiting/done readings (ring, hand, dot), and a DRAWN twin of this same bloom for
-/// `working` (``AgentPulseMark``, on the shared ``AgentPulseMark/beat``).
+/// resting/awaiting/done readings (ring, hand, dot) and a DRAWN turning ring for `working`
+/// (``AgentSweepMark`` — a 12pt mark cannot afford a star's spikes, where this 16pt glyph row can).
 /// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
 /// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
 /// Pure SwiftUI text — no video/capture (hang-safety #6).
@@ -50,14 +50,15 @@ struct StatusGlyph: View {
     /// rests on longest). Same trap ``SlateTabRow`` guards for the title's `✳` marker. `·` (U+00B7)
     /// is the mono face's own glyph and needs nothing.
     ///
-    /// The rail's mark column breathes the SAME bloom but DRAWN (``AgentPulseMark``) — a vector star
-    /// needs no font installed, which at 11pt in a 12pt box is worth more than sharing a constant.
+    /// The rail's mark column does NOT share these frames — it draws a turning ring
+    /// (``AgentSweepMark``) because a 12pt mark cannot carry a star's detail. This instrument is 16pt
+    /// in a text row, which can, so the typed bloom stays exactly here.
     static let agentFrames = [
         "·", "✢\u{FE0E}", "✳\u{FE0E}", "✶\u{FE0E}", "✻\u{FE0E}",
         "✽\u{FE0E}", "✻\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢\u{FE0E}",
     ]
-    /// Seconds per frame — the pulse breathes rather than spins. The drawn twin uses the same beat.
-    static let agentBeat = AgentPulseMark.beat
+    /// Seconds per frame — the pulse breathes rather than spins.
+    static let agentBeat: Double = 0.15
 
     var body: some View {
         content

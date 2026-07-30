@@ -1,15 +1,16 @@
 // StatusDotTests — pins the trailing status MARK: since round 19 the shape is the grammar and the
-// hue rides along, so each state's pin is a (shape, ink) PAIR. The ladder is the spec: a working
-// agent PULSES on the accent (the drawn asterisk bloom, keyed on the same raw-working status
-// liveness uses, outranking every badge); a resting code agent keeps the static dashed RING, muted;
-// a blocked agent raises the HAND, a finished one holds the filled green DOT, a failure the red
-// TRIANGLE; a plain running command mounts nothing HERE (its wheel replaces the process label —
+// hue rides along, so each state's pin is a (shape, ink) PAIR. The agent's own states are ONE
+// CIRCLE and the pins say so: a resting code agent keeps the static dashed RING (muted), a working
+// one CLOSES that ring and turns it (accent SWEEP, keyed on the same raw-working status liveness
+// uses, outranking every badge), an unread finish fills it as the green DOT; the two states you must
+// act on step outside the circle on purpose — the HAND for a question, the red TRIANGLE for a
+// failure. A plain running command mounts nothing HERE (its wheel replaces the process label —
 // ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), and bare idle /
 // privilege-only rows stay bare.
 //
-// ⚠️ Both ANIMATED marks are DRAWN GEOMETRY, never glyphs — pinned here as pure numbers (frame
-// counts, a bloom ramp, an opacity ramp, one shared beat) precisely because a TYPED spinner is at
-// the mercy of whichever font the machine substitutes. The typed twin that survives
+// ⚠️ Both ANIMATED marks are DRAWN GEOMETRY, never glyphs — pinned here as pure numbers (step
+// counts, a drawn fraction, an opacity ramp) precisely because a TYPED spinner is at the mercy of
+// whichever font the machine substitutes. The typed twin that survives
 // (`StatusGlyph`, 16pt in a text row) keeps its own pin: every dingbat frame must carry `\u{FE0E}`
 // or it renders as a colour emoji. Headless VALUE assertions — no render. Ink identity is asserted
 // SELF-consistently against the presentation maps (never absolute colour values — `Color` equality
@@ -20,18 +21,18 @@ import XCTest
 @testable import SlopDeskClientUI
 
 final class StatusDotTests: XCTestCase {
-    /// A WORKING AGENT's mark is the accent PULSE and outranks every badge underneath it — keyed
+    /// A WORKING AGENT's mark is the accent turning RING and outranks every badge underneath it — keyed
     /// on the raw working status, so the badge gate can never kill the mark. The `.running`
     /// badge route (gate ON) must read identically to the raw route.
     @MainActor
-    func testWorkingAgentPulsesAndOutranksEveryBadge() {
+    func testWorkingAgentTurnsAndOutranksEveryBadge() {
         let raw = StatusPresentation.statusDot(working: true, badge: nil)
-        XCTAssertEqual(raw?.shape, .pulse, "a thinking agent's mark is the breathing asterisk")
+        XCTAssertEqual(raw?.shape, .sweep, "a thinking agent's mark is the turning ring")
         XCTAssertEqual(raw?.ink, Slate.State.accent, "working rides the in-motion accent")
         for badge: TabBadgeKind? in [.commandBusy, .error, .awaitingInput, .finished, .sudo] {
             XCTAssertEqual(
                 StatusPresentation.statusDot(working: true, badge: badge), raw,
-                "working outranks \(String(describing: badge)) — one accent pulse, always",
+                "working outranks \(String(describing: badge)) — one accent ring, always",
             )
         }
         XCTAssertEqual(
@@ -40,7 +41,7 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// Each attention kind wears its OWN pictogram — the round-12 vocabulary, one shape per state so
+    /// Each attention kind wears its OWN pictogram — one shape per state, so
     /// the mark reads before its hue does — on exactly its attention ink.
     @MainActor
     func testAttentionKindsWearTheirOwnShapeOnTheirAttentionInk() {
@@ -57,8 +58,8 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    /// The four attention shapes are DISTINCT from each other and from the two agent-activity
-    /// marks — no two states share a pictogram, so hue is never load-bearing alone.
+    /// Every state's shape is DISTINCT — no two share a pictogram, so hue is never load-bearing
+    /// alone (the working ring and the resting ring differ in their DRAWING, not their case).
     @MainActor
     func testEveryStateWearsADistinctShape() {
         var shapes: [StatusMarkShape] = []
@@ -83,8 +84,8 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// A RESTING CODE AGENT keeps the STATIC dashed ring, muted — present, spending no hue,
-    /// distinct from the working pulse and from every attention pictogram. The ring is the
-    /// agent's alone, and it is the one mark that does NOT move.
+    /// distinct from the working ring's closed sweep and from every attention pictogram — the SAME
+    /// circle, spending its ink on eight small gaps instead of one travelling gap. It does NOT move.
     @MainActor
     func testRestingAgentRingsMutedAndStatic() {
         // The claude pane at its prompt keeps the shell busy for its whole lifetime, so it
@@ -99,11 +100,11 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    /// Exactly TWO marks animate — the working pulse and (outside this column) the command
-    /// spinner. Every other shape holds still, so a settled rail is motionless.
+    /// Exactly TWO marks animate — the working ring and (outside this column) the command wheel.
+    /// Every other shape holds still, so a settled rail is motionless.
     @MainActor
-    func testOnlyTheWorkingPulseAnimatesInTheMarkColumn() {
-        XCTAssertTrue(StatusMarkShape.pulse.animates, "the agent's breath is the moving mark")
+    func testOnlyTheWorkingRingAnimatesInTheMarkColumn() {
+        XCTAssertTrue(StatusMarkShape.sweep.animates, "the agent's turning ring is the moving mark")
         for shape: StatusMarkShape in [.ring, .hand, .dot, .alert] {
             XCTAssertFalse(shape.animates, "\(shape) is a still mark")
         }
@@ -232,7 +233,7 @@ final class StatusDotTests: XCTestCase {
     /// degenerate inputs resolve to frame 0 rather than trapping.
     func testFrameSteppingAdvancesOnePerBeatAndWraps() {
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        for frames in [AgentPulseMark.bloom.count, CommandSpinner.spokeCount] {
+        for frames in [AgentSweepMark.steps, CommandSpinner.spokeCount] {
             let beat = 0.1
             for step in 0..<(frames * 2) {
                 let at = epoch.addingTimeInterval(Double(step) * beat + beat / 2)
@@ -260,28 +261,26 @@ final class StatusDotTests: XCTestCase {
     /// failure mode, so these two marks are pinned as PURE NUMBERS: a frame count and a beat, no
     /// glyph table anywhere.
     func testBothAnimatedMarksAreDrawnGeometryNotGlyphs() {
-        XCTAssertEqual(AgentPulseMark.bloom.count, 10, "ten bloom frames, stepped not eased")
+        XCTAssertEqual(AgentSweepMark.steps, 12, "twelve steps a turn — the gap glides, never hops")
         XCTAssertEqual(CommandSpinner.spokeCount, 8, "the AppKit wheel's own spoke count")
-        XCTAssertGreaterThan(AgentPulseMark.beat, 0)
+        XCTAssertGreaterThan(AgentSweepMark.beat, 0)
         XCTAssertGreaterThan(CommandSpinner.beat, 0)
     }
 
-    /// The bloom is a PALINDROME that opens on a bare centre dot and swells to full — so the star
-    /// breathes out and back without easing, and never blinks out (the centre dot is always drawn).
-    func testAgentBloomIsAPalindromeOpeningOnTheBudAndPeakingAtFull() {
-        let bloom = AgentPulseMark.bloom
-        XCTAssertEqual(bloom.first, 0, "frame 0 is the bud — the `·` the typed cycle opened on")
-        XCTAssertEqual(bloom.max(), 1, "the swell reaches full spoke length exactly once")
-        XCTAssertEqual(bloom[AgentPulseMark.stillFrame], 1, "Reduce Motion freezes at FULL bloom")
-        // Rising to the peak, falling after it — a breath, not a sawtooth.
-        let peak = AgentPulseMark.stillFrame
-        for i in 1...peak {
-            XCTAssertGreaterThan(bloom[i], bloom[i - 1], "frame \(i) still swelling")
-        }
-        for i in (peak + 1)..<bloom.count {
-            XCTAssertLessThan(bloom[i], bloom[i - 1], "frame \(i) settling back")
-        }
-        XCTAssertTrue(bloom.allSatisfy { $0 >= 0 && $0 <= 1 }, "a fraction of full length, always")
+    /// The working ring is the RESTING ring's own circle, closed: same diameter, same stroke weight,
+    /// one travelling gap instead of eight static dashes. That shared geometry is what makes the
+    /// agent's states read as a progression instead of a legend, so it is pinned — a drift in either
+    /// number would split the family in two.
+    func testWorkingRingSharesTheRestingRingsGeometryAndOnlyItsGapDiffers() {
+        XCTAssertGreaterThan(AgentSweepMark.drawnFraction, 0.5, "the ring reads as CLOSED, not as an arc")
+        XCTAssertLessThan(AgentSweepMark.drawnFraction, 1, "…but a gap must remain, or nothing turns")
+        // The resting ring spends the same ink in eight pieces: `ringDashFill` of every dash period.
+        XCTAssertGreaterThan(
+            AgentSweepMark.drawnFraction, StatusDot.ringDashFill,
+            "the working ring is the MORE solid of the two — closing is what says 'now working'",
+        )
+        XCTAssertEqual(StatusDot.ringDiameter, 8, "one diameter for the whole circle family")
+        XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "one stroke weight for the whole circle family")
     }
 
     /// A spoke's opacity ramps DOWN with its distance behind the leading spoke — the AppKit wheel's
@@ -306,8 +305,8 @@ final class StatusDotTests: XCTestCase {
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
         XCTAssertEqual(
-            AgentPulseMark.bloom[AgentPulseMark.stillFrame], 1,
-            "a frozen pulse is the FULL star — the bud would read as a resting dot",
+            AgentSweepMark.stillStep, 0,
+            "a frozen working ring is still a CLOSED ring with a gap — it reads as 'not at rest'",
         )
         XCTAssertEqual(
             CommandSpinner.stillStep, 0,
@@ -317,12 +316,12 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: The typed twin (StatusGlyph — iOS toolbar / Peek & Reply header)
 
-    /// ⚠️ `StatusGlyph` still TYPES the same bloom (it is a 16pt glyph in a text row, not a 12pt mark),
+    /// ⚠️ `StatusGlyph` still TYPES the asterisk bloom (it is a 16pt glyph in a text row, not a 12pt mark),
     /// so every DINGBAT frame there must pin TEXT presentation with `\u{FE0E}`. Bare U+2733 `✳`
     /// resolves to `AppleColorEmojiUI`: a colour emoji that ignores `tint` and measures 16pt of advance
     /// where its Menlo siblings measure 6.62 — one frame in ten flashed a coloured star at the wrong
     /// width. `·` (U+00B7) is outside the block and is the mono face's own glyph. The rail's mark is
-    /// immune by construction (drawn), and shares only the BEAT.
+    /// immune by construction: it is drawn, and shares no frame table with this surface at all.
     func testEveryDingbatGlyphFramePinsTextPresentation() {
         let selector: Unicode.Scalar = "\u{FE0E}"
         for frame in StatusGlyph.agentFrames {
@@ -340,13 +339,6 @@ final class StatusDotTests: XCTestCase {
                 "\(frame) is one star plus the selector — nothing else belongs in a frame",
             )
         }
-        XCTAssertEqual(
-            StatusGlyph.agentBeat, AgentPulseMark.beat,
-            "typed twin and drawn mark breathe at ONE cadence",
-        )
-        XCTAssertEqual(
-            StatusGlyph.agentFrames.count, AgentPulseMark.bloom.count,
-            "…over the same number of frames, so the two surfaces breathe in step",
-        )
+        XCTAssertGreaterThan(StatusGlyph.agentBeat, 0, "the typed twin keeps its own breath")
     }
 }

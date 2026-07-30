@@ -1,18 +1,22 @@
 // StatusDot — the sidebar row's trailing status mark. Round 19 (otty parity) makes the SHAPE the
-// grammar and lets the hue ride along: the states you act on wear otty's own pictograms (`✋` a
-// question waits, `●` an unread finish, `⚠` a failure), a WORKING agent breathes a DRAWN asterisk,
-// and a resting code agent keeps the original static dashed ring (lucide `circle-dashed`) — present,
-// spending no hue. An idle row renders null, so the resting rail stays bare, and the only thing that
-// MOVES here is the agent's breath: motion means "in flight", never decoration. A plain running
-// COMMAND mounts nothing in this column — its ``CommandSpinner`` wheel takes the process-label slot
-// instead (``SlateTabRow``), so no row ever carries two activity marks.
+// grammar and lets the hue ride along. The agent's states are ONE CIRCLE at one diameter and one
+// stroke weight, so they read as a progression instead of a legend: the ring is DASHED at rest
+// (lucide `circle-dashed`), CLOSES with a gap travelling around it while the agent works, and becomes
+// a FILLED dot once it has finished something unread. The two states you must ACT on step outside that
+// circle deliberately, wearing otty's own pictograms — `✋` a question waits, `⚠` a failure. An idle
+// row renders null, so the resting rail stays bare, and the only thing that MOVES here is the working
+// ring: motion means "in flight", never decoration. A plain running COMMAND mounts nothing in this
+// column — its ``CommandSpinner`` wheel takes the process-label slot instead (``SlateTabRow``), so no
+// row ever carries two activity marks.
 //
-// ⚠️ Both animated marks are DRAWN, never typed. A glyph spinner here was tried and abandoned: the
-// instrument face is only JetBrains Mono when that font is installed (it is not, on every machine),
-// so anything outside the system monospaced face's own coverage gets SUBSTITUTED — braille lands in
-// AppleBraille (embossing dots, weight ignored, invisible at 11pt) and a bare dingbat star lands in
-// AppleColorEmojiUI (a colour emoji that ignores `foregroundStyle` and is 2.4× the advance). Vector
-// strokes have none of that: exact size, exact ink, no font on the machine to get in the way.
+// ⚠️ Both animated marks are DRAWN, never typed. A glyph spinner here was tried twice and abandoned:
+// the instrument face is only JetBrains Mono when that font is installed (it is not, on every
+// machine), so anything outside the system monospaced face's own coverage gets SUBSTITUTED — braille
+// lands in AppleBraille (embossing dots, weight ignored, invisible at 11pt) and a bare dingbat star
+// lands in AppleColorEmojiUI (a colour emoji that ignores `foregroundStyle` and is 2.4× the advance).
+// Vector strokes have none of that: exact size, exact ink, no font on the machine to get in the way.
+// A drawn asterisk was then tried and rejected too — at 12pt a radiating star is a burr of spikes.
+// The rule that survives: ONE STROKE scales down, DETAIL does not.
 //
 // Every mark renders inside ONE fixed footprint, so a state edge — or an animation frame — can never
 // move a pixel of the row's trailing edge. Hang-safety (CLAUDE.md #6): pure SwiftUI drawing, no
@@ -28,8 +32,9 @@ import SwiftUI
 enum StatusMarkShape: Equatable, Hashable, CaseIterable {
     /// The static dashed ring — a code agent PRESENT and at rest.
     case ring
-    /// The breathing asterisk — a WORKING agent. The one animated mark in this column.
-    case pulse
+    /// The same ring CLOSED, with a gap travelling around it — a WORKING agent. The one animated
+    /// mark in this column.
+    case sweep
     /// The raised hand — a question waits on you.
     case hand
     /// The filled dot — an unread finish.
@@ -37,8 +42,8 @@ enum StatusMarkShape: Equatable, Hashable, CaseIterable {
     /// The warning triangle — a failure.
     case alert
 
-    /// Whether this shape MOVES. Only the working pulse does: a settled rail is motionless.
-    var animates: Bool { self == .pulse }
+    /// Whether this shape MOVES. Only the working sweep does: a settled rail is motionless.
+    var animates: Bool { self == .sweep }
 }
 
 /// The mark's geometry + cadence — pure constants, unit-testable.
@@ -103,8 +108,8 @@ struct StatusDotView: View {
                     lineWidth: StatusDot.ringLineWidth, dash: StatusDot.ringDash,
                 ))
                 .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-        case .pulse:
-            AgentPulseMark(ink: style.ink)
+        case .sweep:
+            AgentSweepMark(ink: style.ink)
         case .hand:
             symbol(.handRaised)
         case .dot:
@@ -123,46 +128,47 @@ struct StatusDotView: View {
     }
 }
 
-/// The WORKING-AGENT mark — the AI-CLI asterisk pulse, DRAWN: six spokes budding out of a centre dot
-/// and settling back, the `· ✢ ✳ ✶ ✻ ✽` bloom as vector strokes. The same figure was first typed in
-/// the instrument face and it looked wrong for reasons that had nothing to do with the design — the
-/// mono face on this machine has no star of its own, so Menlo drew some frames and AppleColorEmojiUI
-/// drew others as a COLOUR emoji at 2.4× the advance. Drawn, the bloom is exact at any size, wears
-/// the accent ink it is handed, and depends on no font being installed.
+/// The WORKING-AGENT mark — the RESTING RING, closed, with a gap travelling around it. That is the
+/// whole idea: the agent's column is ONE circle at the same diameter and stroke weight throughout, so
+/// its states read as a progression rather than as a legend to learn — the ring is DASHED while the
+/// agent waits at its prompt, CLOSES and turns while it works, and becomes a FILLED dot once it has
+/// finished something you haven't read.
 ///
-/// Stepped (not eased) on ``StatusDot/frame(at:frames:beat:)`` so it breathes in hard swaps like a
-/// terminal spinner and stays in unison across rows. REDUCE MOTION freezes it at full bloom — the
-/// frame that reads "an agent is here and busy" while standing still.
-struct AgentPulseMark: View {
+/// Two earlier cuts of this mark are retired, both for looking bad at 12pt rather than in principle:
+/// the asterisk bloom TYPED in the instrument face (the mono face has no star of its own, so Menlo
+/// drew some frames and AppleColorEmojiUI drew `✳` as a COLOUR emoji at 2.4× the advance), and the
+/// same bloom DRAWN as six capsules — at this size a radiating star is a burr of spikes, and blown up
+/// it reads as a cogwheel. A single stroke survives scaling; detail does not.
+///
+/// Stepped (not eased) on ``StatusDot/frame(at:frames:beat:)`` off the fixed epoch, so every working
+/// row turns in unison and a re-render lands mid-rotation instead of restarting it. REDUCE MOTION
+/// freezes it at step 0 — still a closed ring with a gap, which reads as "not at rest" while
+/// standing still.
+struct AgentSweepMark: View {
     var ink: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Spokes of the star — six, the asterisk's own count. Eight muddies into a blob at 12pt.
-    static let spokeCount = 6
-    /// The bloom, as each frame's fraction of full spoke length. A PALINDROME, so the star swells and
-    /// settles without easing; frame 0 is bare centre dot (the `·` the cycle used to open on).
-    static let bloom: [CGFloat] = [0, 0.35, 0.55, 0.75, 0.9, 1, 0.9, 0.75, 0.55, 0.35]
-    /// Seconds per frame — the pulse breathes rather than spins.
-    static let beat: Double = 0.15
-    /// The frame a REDUCE-MOTION mount freezes on — full bloom, the widest reading of "busy".
-    static let stillFrame = 5
-
-    private static let centreDiameter: CGFloat = 2.6
-    private static let innerRadius: CGFloat = 1.9
-    private static let spokeLength: CGFloat = 3.6
-    private static let spokeWidth: CGFloat = 1.4
+    /// Steps per revolution — 12 × ``beat`` ≈ one turn per second. Enough that the gap glides rather
+    /// than hops, without paying for a frame nobody can see.
+    static let steps = 12
+    static let beat: Double = 0.08
+    /// The step a REDUCE-MOTION mount freezes on — the gap at the top of the ring.
+    static let stillStep = 0
+    /// The drawn fraction of the circumference: the ring closes except for one gap. Distinct from the
+    /// resting ring at a glance, which spends the SAME ink on eight small gaps instead of one.
+    static let drawnFraction: CGFloat = 0.82
 
     var body: some View {
         Group {
             if reduceMotion {
-                star(frame: Self.stillFrame)
+                ring(step: Self.stillStep)
             } else {
                 TimelineView(.periodic(
                     from: Date(timeIntervalSinceReferenceDate: 0), by: Self.beat,
                 )) { timeline in
-                    star(frame: StatusDot.frame(
-                        at: timeline.date, frames: Self.bloom.count, beat: Self.beat,
+                    ring(step: StatusDot.frame(
+                        at: timeline.date, frames: Self.steps, beat: Self.beat,
                     ))
                 }
             }
@@ -170,24 +176,14 @@ struct AgentPulseMark: View {
         .frame(width: StatusDot.footprint, height: StatusDot.footprint)
     }
 
-    private func star(frame: Int) -> some View {
-        let scale = Self.bloom[min(max(frame, 0), Self.bloom.count - 1)]
-        let length = Self.spokeLength * scale
-        return ZStack {
-            // The centre dot is always drawn: at scale 0 it IS the mark, so the cycle never blinks out.
-            Circle()
-                .fill(ink)
-                .frame(width: Self.centreDiameter, height: Self.centreDiameter)
-            ForEach(0..<Self.spokeCount, id: \.self) { spoke in
-                Capsule()
-                    .fill(ink)
-                    .frame(width: Self.spokeWidth, height: length)
-                    .offset(y: -(Self.innerRadius + length / 2))
-                    .rotationEffect(.degrees(360 / Double(Self.spokeCount) * Double(spoke)))
-            }
-            // A zero-length capsule still paints its own cap; hide the spokes outright at the bud.
-            .opacity(scale > 0 ? 1 : 0)
-        }
+    private func ring(step: Int) -> some View {
+        Circle()
+            .trim(from: 0, to: Self.drawnFraction)
+            .stroke(ink, style: StrokeStyle(
+                lineWidth: StatusDot.ringLineWidth, lineCap: .round,
+            ))
+            .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
+            .rotationEffect(.degrees(360 / Double(Self.steps) * Double(step)))
     }
 }
 

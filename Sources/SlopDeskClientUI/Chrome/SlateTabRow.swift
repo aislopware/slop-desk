@@ -6,7 +6,7 @@
 // under hover.
 //
 // Status is the trailing ``StatusDotView`` mark plus, for a live command, the slot's
-// ``CommandSpinner``. The mark column is the AGENT's: the working pulse (accent), the resting dashed
+// ``CommandSpinner``. The mark column is the AGENT's: the working ring (accent), the resting dashed
 // ring (muted), the raised hand (amber question), the filled dot (green unread finish), the warning
 // triangle (red failure) — a plain shell mounts nothing there, and a busy COMMAND says it in the
 // slot instead, so no row carries two activity marks. Motion means IN FLIGHT and nothing else: a
