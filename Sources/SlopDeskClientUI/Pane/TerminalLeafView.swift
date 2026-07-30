@@ -379,8 +379,13 @@ struct TerminalLeafView: View {
                 overlay?.pushToast(Toast(
                     id: "host-path-action",
                     flavor: .error,
-                    title: action == .open ? "Couldn't open on host" : "Couldn't reveal on host",
+                    // The subject is the ACTION that failed, not a sentence about failing: the `FAILED`
+                    // eyebrow already carries that, and lower-case keeps the instrument register the rest
+                    // of the card is set in.
+                    title: action == .open ? "open on host" : "reveal on host",
                     body: path,
+                    // No `paneKey`: this reports a FAILED host action the user just took in the pane they
+                    // are looking at — there is nowhere else to go, so the card stays a plain notice.
                 ))
             },
         )

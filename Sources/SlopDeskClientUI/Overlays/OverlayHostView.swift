@@ -23,6 +23,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel // PaneID — the notification jump target
 import SwiftUI
 
 struct OverlayHostView: View {
@@ -46,7 +47,7 @@ struct OverlayHostView: View {
         // The always-mounted toast stack is the host's only in-tree content (it renders nothing when empty);
         // every modal overlay is a native `.sheet`/`.alert` presented over the window. Transparent to hits
         // unless a toast is up so the workspace beneath stays interactive.
-        ToastStackView(coordinator: coordinator)
+        ToastStackView(coordinator: coordinator, onJump: jumpToNotifiedPane)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
             // The bottom-center transient chips, stacked so they can't overlap: the window-level
@@ -114,6 +115,17 @@ struct OverlayHostView: View {
     /// observation on each pane's `ConnectionViewModel.status`, so the chip appears / updates / disappears as
     /// panes drop and recover.
     private var connectionAlert: WorkspaceConnectionAlert? { store.connectionAlert() }
+
+    /// Lands on the pane a notification came from. This is what makes a toast a DOOR rather than a dead
+    /// end: every push site is gated on the source pane NOT being focused, so the card always names
+    /// somewhere else. Routed through `jumpToPaneTree` (not `focusPaneTree`) for the same reason
+    /// ``ConnectionAlertChip`` is — an undirected landing that CROSSES a tab swaps the whole viewport, and
+    /// that seam fires the "JUMPED · session ▸ tab" orientation breadcrumb. An unparseable key (a toast
+    /// whose pane is long gone) is a silent no-op, never a crash on attacker/host-shaped text.
+    private func jumpToNotifiedPane(_ paneKey: String) {
+        guard let raw = UUID(uuidString: paneKey) else { return }
+        store.jumpToPaneTree(PaneID(raw: raw))
+    }
 
     // MARK: - Active sheet (single robust presentation seam)
 

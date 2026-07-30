@@ -431,7 +431,17 @@ public struct SlopDeskClientApp: App {
                 overlay?.pushToast(Toast(
                     id: "pane.\(paneIDKey)",
                     flavor: needsInput ? .attention : .success,
-                    title: Toast.redactSecretsIfEnabled(name), body: Toast.redactSecretsIfEnabled(body),
+                    // `.agent` is what earns this card the `NEEDS INPUT` / `DONE` eyebrow instead of a
+                    // command's `FINISHED` — flavour alone cannot tell "the agent finished its turn" from
+                    // "the command exited 0".
+                    source: .agent,
+                    title: Toast.redactSecretsIfEnabled(name),
+                    // The toast's detail line is the DETAIL ONLY. The eyebrow already says "NEEDS INPUT" /
+                    // "DONE", so passing `body` (which prefixes that same headline for the OS banner) would
+                    // print the state twice on one card. The OS banner still gets the full sentence below —
+                    // it has no eyebrow to carry the headline for it.
+                    body: detail.map { Toast.redactSecretsIfEnabled($0) },
+                    paneKey: paneIDKey,
                 ))
             }
             #if os(macOS)

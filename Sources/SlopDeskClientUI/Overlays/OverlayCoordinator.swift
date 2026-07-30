@@ -227,6 +227,10 @@ public final class OverlayCoordinator {
     /// The live toast stack (newest last). Bounded; auto-dismissed by the view's timers.
     public private(set) var toasts: [Toast] = []
     private static let toastCap = 4
+    /// Monotonic dwell-timer identity handed to each pushed toast (``Toast/epoch``). A same-id replace keeps
+    /// the id (so the card is REUSED, not re-inserted) but takes a FRESH epoch, which is what makes the
+    /// card's `.task(id:)` restart its dwell instead of inheriting the replaced toast's spent time.
+    private var toastEpoch = 0
 
     // MARK: Recents (mirrors the store's recent commands into palette item ids)
 
@@ -640,8 +644,11 @@ public final class OverlayCoordinator {
     /// Push a toast (newest last); evicts the oldest beyond the cap and de-dupes by id (a newer same-id
     /// toast replaces the old one, warp `object_id` discipline).
     public func pushToast(_ toast: Toast) {
-        toasts.removeAll { $0.id == toast.id }
-        toasts.append(toast)
+        toastEpoch += 1
+        var stamped = toast
+        stamped.epoch = toastEpoch
+        toasts.removeAll { $0.id == stamped.id }
+        toasts.append(stamped)
         if toasts.count > Self.toastCap {
             toasts.removeFirst(toasts.count - Self.toastCap)
         }

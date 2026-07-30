@@ -84,8 +84,12 @@ final class ToastSecretRedactionTests: XCTestCase {
         XCTAssertFalse(toast.title.contains(secretValue), "the PASSWORD value must not appear verbatim in the title")
         XCTAssertTrue(toast.title.contains(SecretRedactor.mask), "the secret is replaced by the redaction mask")
         XCTAssertEqual(toast.flavor, .success, "a clean (exit 0) long command is a success toast")
-        // The body is a fixed exit-code + duration template — no untrusted text to leak.
-        XCTAssertEqual(toast.body, "command finished (exit 0, 42s)")
+        // The body is a fixed exit-code + duration template — no untrusted text to leak. Set in the card's
+        // INSTRUMENT register (mono, secondary ink), so it is a `·`-joined readout, not a sentence about one.
+        XCTAssertEqual(toast.body, "exit 0 · 42s")
+        // A command's clean exit is the outcome DOT, never the agent's ring — `.success` alone cannot say
+        // which, so the factory must stamp the speaker (docs/DECISIONS.md round 21).
+        XCTAssertEqual(toast.source, .command)
     }
 
     /// With the opt-out OFF the long-command title passes through verbatim — proving the new factory HONORS the

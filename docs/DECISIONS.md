@@ -5143,3 +5143,124 @@ has already left.
 the unarmed switcher), but the held ⌃⇥ gesture itself is fixed. Accepted: expressing "hold this
 modifier, tap that key, commit on release" in the recorder UI is a larger change than the gesture is
 worth, and `unbind:` already covers the user who needs the chord back.
+
+## The notification is a pane speaking from off-screen: the rail's mark, and a door (2026-07-30)
+
+**Decision.** The in-app notification stack is redesigned. It keeps the CARD register (it is not migrated
+to the `NoticeChip` one-liner), but the card is rebuilt around one reading: every push site is gated on
+the source pane NOT being focused, so a toast always names a place the user is not looking at. That makes
+it three things — WHO spoke, WHAT happened, and the WAY BACK.
+
+**There is NO LEADING GLYPH — the event class is an EYEBROW.** A caps micro-label in the instrument voice,
+letterspaced with `instrumentTracking` and inked with the flavour hue, then `·`, then the subject, all on
+one line. This is MERIDIAN L2 taken literally ("typography is the only ornament") and it is the DS's
+existing engraving treatment (`SlateRow`, `SlatePopover`, `InstrumentChip`, `NavigatorColumn`), not a new
+device. With no glyph column, every line starts on ONE left rail.
+
+**Two leading elements were built and cut to get here.** First the SF Symbol quartet (`bell` /
+`checkmark.circle` / `exclamationmark.triangle` / `asterisk`) — four glyphs from four families that never
+shared a stroke weight, and the very pictograms rounds 19–21 pulled off the rail. Then the rail's own
+`StatusDotView` ring/dot, which the user rejected with the decisive observation: **the ring/dot pair is
+right in a 10pt sidebar column and wrong in a notification**, where it is a tiny abstract speck and the eye
+expects something concrete. Borrowing the rail's vocabulary looked like consistency and was actually a
+category error — the rail is a dense scannable column, a notification is a single interruption.
+
+**Liquid Glass was considered and dropped.** The package floor is macOS 26 / iOS 26 (`Package.swift`
+`.v26`), so `glassEffect` is available with no `#available` gate and no fallback path — it was a real
+option, and a floating transient card is Apple's own canonical use for it. Rejected on system coherence:
+`SlopDeskClientUI` contains **zero** materials anywhere (MERIDIAN L5 — depth by light, not lines; v5 already
+deleted `GlassPanel`), so one glass card would be the single alien surface in the app.
+
+**A monogram identity plate was probed and rejected.** `SlateMonogram` (MERIDIAN C2) was the closest
+DS-native equivalent of a real notification's app-icon tile. It fails on the hue budget: the plate's
+per-identity colour is designed to be a PERSISTENT identifier for a host, and in a transient notification it
+puts a SECOND colour system on the card, fighting the status hue — four notifications become four unrelated
+hues, exactly the chromatic spread the v5 bar calls slop. **Colour lives in exactly one place: the eyebrow.**
+The surface is never tinted by flavour and there is no coloured edge rail.
+
+**Flavour alone could not pick the eyebrow**, and that is why `Toast` grew a second bit, `source`
+(`.agent` / `.command`). `.success` says `DONE` for an agent and `FINISHED` for a command; a resolver keyed
+on flavour would have announced a finished `make` as an agent turn. This is the same fusion
+`TabBadgeResolver` had (round 21) — pinned by `testEyebrowSplitsAgentFromCommand`. A factory may override
+with `Toast.eyebrow` when it knows a truer word than the derivation can reach: the reconnect verdict is
+`REATTACHED` vs `RECONNECTED`, a distinction no flavour encodes.
+
+**`.attention` is AMBER, not the theme accent — and the old pin was hiding the bug.** The user asked why
+needs-input was cyan rather than yellow, and the codebase already had the answer: ``StatusDot`` fixes the
+rail's mapping as "green = an unread finish, **amber = a question waiting**, red = failed", so an agent
+waiting on a human has to be amber here too or the app contradicts itself about what amber means. Worse, the
+accent was not even *distinguishable*: every Monokai seed sets `info == accent`, so `.attention` (needs
+input, the highest-signal event) and `.default` (a routine OSC notice) rendered in the SAME cyan — the one
+pair that most needs to differ. The previous test explicitly declined to assert those two apart, documenting
+the collision as acceptable instead of failing on it. `.attention` now takes the status quartet's unused
+amber rung, which also leaves the accent free for its single job (active state). Pinned by
+`testEveryFlavorInkIsDistinct`, which asserts all four flavours PAIRWISE distinct — the real invariant, since
+a flavour that cannot be told from another conveys nothing.
+
+**Card corner → `Slate.Metric.radiusPanel` (12), a new rung.** `radiusCard` (8) is tuned for content INSET
+into a surface; at the notification's 320 × ~46pt it reads boxy, and 16 slides toward `radiusPill`. Picked by
+rendering 8 / 10 / 12 / 16 at true size side by side.
+
+**The card is a door.** `Toast.paneKey` carries the pane, and the mount site routes a tap through
+`jumpToPaneTree` — the seam `ConnectionAlertChip` already used, so a landing that crosses a tab fires the
+"JUMPED · session ▸ tab" breadcrumb. Before this the toast was strictly LESS capable than the chip beside
+it: it named somewhere else and could not take you there. The two window-level notices with nowhere to go
+(the failed host-path action, the dropped-folder cwd advisory) pass no `paneKey` and stay inert.
+
+**The dwell pauses on hover, and NOTHING draws it.** A pointer resting on a card freezes its clock, so a
+notification can no longer be yanked away mid-read — the 4s timer used to do exactly that. The countdown is
+therefore SAMPLED (a 10 Hz tick that simply does not advance while hovered) rather than a single
+`Task.sleep`, which could not be paused.
+
+**A visible dwell track was built and CUT — the user judged it AI slop.** The first cut of this round put a
+capsule hairline of the flavour hue along the card's bottom edge, depleting over `autoDismiss` and freezing
+on hover, argued for as a READOUT in the same family as the long-command elapsed chip and the OSC 9;4
+percent ring that the v5 restraint pass kept. The ruling: it reads as decoration on the resting card, and
+the v5 bar ("permanent per-item ornament reads as AI slop") applies. `Slate.Anim.drain` and
+`Slate.Metric.trackThickness` were added for it and are deleted with it. **The fix for "it vanished while I
+was reading" is that it STOPS, not that it announces how long it has left.** Do not propose a progress
+bar / ring / countdown on a notification again.
+
+**The spine.** Only the newest two cards carry a detail line; older ones collapse to the eyebrow + subject
+row alone, so a four-deep burst costs about a third of the corner instead of blanketing the prompt line.
+Hovering a collapsed row expands just it, and rows are promoted as the cards below them expire — so no
+information is stranded on iOS, which has no hover.
+
+**The ✕ is hover-only** (unconditional on a sticky card, whose only exit it is). Four permanent ✕ marching
+down the corner was chrome for something that leaves by itself. Hidden it is also not a hit target, so a
+stray click cannot kill a card the user never saw a ✕ on.
+
+**Uniform width, NOT content-hugging — reversed after rendering it.** Cards that hugged their own content
+were built first and photographed as a ragged staircase: right-aligned in the corner with every left edge
+landing somewhere different, and the width tracking TITLE LENGTH rather than importance. `toastWidth` is
+one column edge at 320 (down from 340, affordable because the ✕ no longer holds a permanent slot).
+
+**Surface + voice.** The fill moves from `Surface.face` — the EXACT tone of the terminal behind it, leaving
+a dark-on-dark shadow as the only separation — to `Surface.raised`, the rung every other floating chip
+already used. Typography moves to the INSTRUMENT voice (MERIDIAN L2): a body like `exit 1 · 42s` is a
+technical readout, and setting it in proportional system text was the single thing that made the stack read
+as a web toast pasted into a terminal app. The three factory bodies are re-cut as `·`-joined readout
+fragments rather than sentences.
+
+**Bonus fix: a same-id re-push now RESTARTS the dwell.** The card's timer was keyed on `Toast.id`, which a
+replace does not change, so the replacement inherited the replaced toast's nearly-elapsed dwell and could
+vanish almost at once. `Toast.epoch`, stamped by `pushToast`, is the `ChipNotice` remedy applied here —
+pinned by `testSameIDRepushTakesAFreshEpoch`.
+
+→ `Overlays/Toast.swift`, `Overlays/ToastStackView.swift`, `Overlays/OverlayCoordinator.swift`,
+`Overlays/OverlayHostView.swift`, `DesignSystem/SlateDesign.swift`, `SlopDeskClientApp.swift`,
+`Pane/PaneDropReceiver.swift`, `Pane/TerminalLeafView.swift`; pinned by `ToastStackViewTests`
+(mark split, spine rule, epoch, render smoke over the PANE tone so card-vs-pane separation is
+actually visible), `ToastSessionResumeTests`, `ToastSecretRedactionTests`. No wire change (golden
+byte-identical).
+
+**The states are PHOTOGRAPHABLE, and that is how this round was decided.** `ToastStateGalleryTests` dumps
+the whole state space — every (source, flavour) eyebrow, rest vs hover, both stack tiers, sticky, the
+content edges, the real 4-deep stack, and a light-theme pass — as PNGs:
+
+    SLOPDESK_TOAST_GALLERY_DIR=/tmp/toast swift test --filter ToastStateGalleryTests
+
+`ToastCardView` is internal (not file-private) with a seedable `hovering`, purely so the hovered states can
+be captured at all: `ImageRenderer` never delivers a hover. Two decisions in this round were REVERSED by
+looking at the output rather than at the code (content-hugging width, the dwell track), and the leading
+mark was rejected the same way — which is the argument for keeping the harness.

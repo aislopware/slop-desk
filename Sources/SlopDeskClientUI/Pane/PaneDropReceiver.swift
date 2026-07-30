@@ -268,6 +268,8 @@ struct PaneDropReceiver: DropDelegate {
             flavor: .attention,
             title: "cd'd on host",
             body: "\(path) is resolved on the host; it may not exist there.",
+            // No `paneKey`: the drop just FOCUSED the pane this advises about, so a jump door would land
+            // where the user already is. Renders as a plain, non-interactive notice.
         )
     }
 }

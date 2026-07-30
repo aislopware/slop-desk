@@ -348,6 +348,11 @@ enum Slate {
     enum Metric {
         // Radii (from design-tokens.css)
         static let radiusCard: CGFloat = 8
+        /// A FLOATING panel's corner — the notification card, and any future free-standing panel. One rung
+        /// softer than ``radiusCard``, which is tuned for content INSET into a surface: at the notification's
+        /// 320pt × ~46pt an 8pt corner reads boxy, and 16 starts sliding toward ``radiusPill``. 12 was picked
+        /// by rendering 8 / 10 / 12 / 16 at true size side by side.
+        static let radiusPanel: CGFloat = 12
         static let radiusTab: CGFloat = 6 // tab / sidebar-row card — rides the control-radius family
         static let radiusControl: CGFloat = 6
         static let radiusItem: CGFloat = 6
@@ -421,6 +426,17 @@ enum Slate {
         /// The theme-gallery card's preview band — taller than `settingsCardArt` because it shows a
         /// miniature terminal (title bar + three code lines), not a single glyph.
         static let settingsSwatchArt: CGFloat = heightStrip + heightControl
+
+        // Notification stack (`ToastStackView`) — a notification is a pane speaking from off-screen, so it
+        // is a small card in the corner, never a sheet.
+        /// One notification card's width — UNIFORM across the stack, and deliberately so. Cards that hug
+        /// their own content were tried first (a short notice as a small chip, a long one as a wide card)
+        /// and rendered as a ragged staircase: right-aligned in the corner, every left edge landing
+        /// somewhere different, and the width tracking TITLE LENGTH rather than importance — the widest
+        /// card in a burst was whichever happened to have the longest name. A single column edge is what
+        /// lets a stack read as one stack. 320 (down from the old 340) with the ✕ no longer holding a
+        /// permanent slot, so a short title no longer stares across a gutter at a button.
+        static let toastWidth: CGFloat = 320
     }
 
     /// Typography scale — one named role per size; UI = system, instrument/rail = JetBrains Mono (SF Mono
