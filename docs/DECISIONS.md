@@ -5419,3 +5419,26 @@ content edges, the real 4-deep stack, and a light-theme pass — as PNGs:
 be captured at all: `ImageRenderer` never delivers a hover. Two decisions in this round were REVERSED by
 looking at the output rather than at the code (content-hugging width, the dwell track), and the leading
 mark was rejected the same way — which is the argument for keeping the harness.
+
+## The working row's title shimmer is removed; the mark column speaks alone (2026-07-30)
+
+The generating agent's title no longer sweeps a highlight band across its own glyphs. Round 23 shipped
+the shimmer as a SECOND voice on a fact the trailing spinner already states, on the argument that a rail
+running several agents at once wants the signal where the eye already is. Looked at on hardware, the
+second voice is the problem: the rail is a column the eye SCANS, and a row whose text is in motion
+takes the scan hostage — the redundancy that justified the effect is exactly what makes it noise.
+
+- ✅ **One row-level signal, in the mark column.** `ProgressView`/`NSProgressIndicator` on the raw
+  `.working` row (round 23) is the whole statement. The title is back to still ink at every state,
+  which restores the round 19 rule the shimmer had carved an exception into: a settled rail does not
+  move, and the ONLY thing that moves is the mark for work in flight.
+- ⚠️ **Text motion is not available as a "free" second channel.** The shimmer cost no hue and moved no
+  layout, which is what made it look cheap on paper; the cost it actually charges is attention, and it
+  charges it on the surface least able to pay. Do not re-propose a travelling highlight, a pulsing
+  title, or a stepped title weight for liveness — the mark column is where liveness lives.
+- ✅ Everything else round 23 decided stands: otty's 14×14 badge box, the SVG path reader, the raw
+  `.working` gate (never `isBusy`), and the two speakers (agent check / command disc).
+
+→ deletes `DesignSystem/Shimmer.swift`, `ShimmerTests`, `SlateTabRow.shimmerPhase` (the pinned-phase
+snapshot seam) and `SlateSnapshotRender.testRenderWorkingRowShimmer` with its GIF writer — the harness
+existed for the one mark whose evidence had to be animated, and there is no longer such a mark.
