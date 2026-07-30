@@ -3293,6 +3293,22 @@ mark, every one rejected on looks:
   glyphs, the filled finish dot). Every one of them was pulled during round 19 itself for reading as
   fussy detail at this size, so the revert loses nothing that survived its own round.
 
+**Follow-up — one shape distinction survives after all: the unread FINISH closes the ring** (*"để done
+indicator là nét liền cho tôi đi"*). Every open state keeps the dashed circle — working, resting, waiting
+on a human, failed — and the finish draws it as one continuous stroke. It earns the exception that the
+otty pictograms did not:
+
+- ✅ **It needs no legend.** "Broken = still open, whole = it ended" is readable the first time it is
+  seen, where a raised hand or a `!` has to be learned.
+- ✅ **It survives 8pt**, which is what killed every previous shape distinction: there is no detail in
+  it — the same circle, the same diameter, the same stroke weight, with the dash pattern withheld. The
+  implementation is literally the one draw call with `dash: []`, so there is no second code path to
+  drift out of alignment with the dashed one.
+- ✅ **Both finish tiers close it** (`.completed` flash and settled `.finished`), because that split is
+  semantic — freshness machinery and control-backend badge tokens — and has never been visual.
+- ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
+  the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
+
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 
 - ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều

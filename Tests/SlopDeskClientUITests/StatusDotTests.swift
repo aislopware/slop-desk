@@ -1,5 +1,6 @@
-// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. ONE shape (the
-// static dashed ring) and the HUE is the whole grammar, the resolver's ladder being the spec: a
+// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. ONE static circle and
+// the HUE is (almost) the whole grammar — the single exception being that an unread FINISH draws the
+// ring CLOSED where every open state keeps it dashed. The resolver's ladder is the spec: a
 // working agent rings on the accent (the same raw-working key liveness uses, outranking every
 // badge); a RESTING CODE AGENT rings muted; the attention states ring on their attention ink — the
 // title never recolours, so the mark's hue is those states' entire rendering; a plain running
@@ -97,6 +98,47 @@ final class StatusDotTests: XCTestCase {
         XCTAssertNil(StatusPresentation.statusDot(working: false, badge: .caffeinate))
     }
 
+    /// ⚠️ An unread FINISH is the ONLY state that closes the ring — a whole circle for work that
+    /// ended, the broken one for everything still open (working, resting, waiting on a human,
+    /// failed). Both finish tiers close it: the `.completed` flash and the settled `.finished`
+    /// unread are the same reading, since that split is semantic and never visual.
+    ///
+    /// This is also the only SHAPE distinction the column is allowed. A previous round gave each
+    /// state its own silhouette (raised hand, warning triangle, `?`, `!`, filled dot) and pulled
+    /// every one for reading as fussy detail at 8pt (docs/DECISIONS.md rounds 19–20); closed-versus-
+    /// broken survives because it needs no legend and is legible at any size.
+    @MainActor
+    func testOnlyTheUnreadFinishClosesTheRing() {
+        for kind: TabBadgeKind in [.completed, .finished] {
+            XCTAssertTrue(
+                StatusPresentation.closesTheRing(kind), "\(kind) is work that ENDED — whole circle",
+            )
+            XCTAssertEqual(
+                StatusPresentation.statusDot(working: false, badge: kind)?.closed, true,
+                "\(kind) must resolve to the closed ring, not merely be classified as one",
+            )
+        }
+        for kind: TabBadgeKind in [.awaitingInput, .error, .running, .commandBusy, .sudo] {
+            XCTAssertFalse(
+                StatusPresentation.closesTheRing(kind), "\(kind) is still open — broken ring",
+            )
+        }
+        // The three non-badge routes keep the dashed ring too: working, resting, and the badge-routed
+        // agent tier are all "still open".
+        XCTAssertEqual(StatusPresentation.statusDot(working: true, badge: nil)?.closed, false)
+        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.closed, false)
+        XCTAssertEqual(
+            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.closed, false,
+        )
+        // A closed ring is STILL the same circle — the distinction may cost hue nothing and geometry
+        // nothing. (Its ink is the finish green, exactly as the dashed tiers wear their own.)
+        XCTAssertEqual(
+            StatusPresentation.statusDot(working: false, badge: .finished)?.ink,
+            StatusPresentation.attentionInk(.finished),
+            "closing the ring must not change what the mark says",
+        )
+    }
+
     /// The ring's dash pattern tiles the circumference EXACTLY — `ringDashCount` whole periods,
     /// so the dashes stay evenly spread with no seam where the stroke closes.
     func testRingDashTilesTheCircumferenceEvenly() {
@@ -109,5 +151,20 @@ final class StatusDotTests: XCTestCase {
             accuracy: 1e-9, "whole periods around the ring — no seam",
         )
         XCTAssertGreaterThan(dash[0], dash[1], "drawn beats gap — the ring reads as a circle")
+    }
+
+    /// The CLOSED ring is the same draw with the dash pattern withheld — an empty array is a
+    /// continuous stroke — so there is exactly one geometry and one stroke weight in this column and
+    /// no second code path to drift out of alignment with the dashed one.
+    func testTheClosedRingIsTheDashedRingWithoutItsPattern() {
+        XCTAssertTrue(
+            StatusDot.ringDash.count == 2 && !StatusDot.ringDash.isEmpty,
+            "the open state has a pattern…",
+        )
+        XCTAssertEqual(StatusDot.ringDiameter, 8, "…and the closed state shares its diameter")
+        XCTAssertEqual(StatusDot.ringLineWidth, 1.5, "…and its stroke weight")
+        XCTAssertGreaterThanOrEqual(
+            StatusDot.footprint, StatusDot.ringDiameter, "…inside one fixed column",
+        )
     }
 }

@@ -119,7 +119,9 @@ enum StatusPresentation {
     /// identically); a RESTING CODE AGENT rings on the muted secondary ink (present, spending no
     /// hue); the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
     /// finish, amber question, red failure), the mark's hue being that state's WHOLE rendering
-    /// now that the title stays neutral. A plain running COMMAND rings NOTHING — the mark is the
+    /// now that the title stays neutral. The one non-hue distinction: an unread FINISH CLOSES the
+    /// ring (``closesTheRing(_:)``) — a broken circle for work still open, a whole one for work that
+    /// ended. A plain running COMMAND rings NOTHING — the mark is the
     /// AGENT's column, and a muted ring on every `npm run dev` row spent it on the one thing the
     /// row's own running title already says. Bare shells and privilege-only rows mount nothing
     /// either — the resting rail stays bare.
@@ -143,7 +145,10 @@ enum StatusPresentation {
         case .awaitingInput,
              .completed,
              .error,
-             .finished: return attentionInk(badge).map(StatusDotStyle.init)
+             .finished:
+            return attentionInk(badge).map {
+                StatusDotStyle(ink: $0, closed: closesTheRing(badge))
+            }
         // A busy shell says nothing of its own (the row's title already names the command) and the
         // privilege modifiers are slot text, not lifecycle — both fall through to whether a code
         // agent is resting in this pane.
@@ -151,6 +156,28 @@ enum StatusPresentation {
              .commandBusy,
              .commandRunning,
              .sudo: return resting
+        }
+    }
+
+    /// Whether a state draws the ring CLOSED rather than dashed — TRUE for the unread finish alone
+    /// (both the fresh `.completed` flash and the settled `.finished` unread; that split is semantic,
+    /// never visual). Everything else is still open in some way — working, resting, waiting on a
+    /// human, failed — and keeps the broken ring, so the closed circle keeps meaning exactly one
+    /// thing. ⚠️ This is the ONLY shape distinction in the column: a previous round spent a day
+    /// giving each state its own silhouette (hand, triangle, `?`, `!`, filled dot) and pulled every
+    /// one of them for reading as fussy detail at 8pt (docs/DECISIONS.md rounds 19–20). One
+    /// closed-versus-broken bit survives that because it is legible at any size and needs no legend.
+    static func closesTheRing(_ kind: TabBadgeKind) -> Bool {
+        switch kind {
+        case .completed,
+             .finished: true
+        case .awaitingInput,
+             .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .error,
+             .running,
+             .sudo: false
         }
     }
 
