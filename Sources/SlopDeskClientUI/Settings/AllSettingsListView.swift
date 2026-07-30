@@ -296,7 +296,7 @@ struct AllSettingsListView: View {
                 Text("End").tag(NewTabPosition.end)
                 Text("After Current").tag(NewTabPosition.afterCurrent)
             }
-        case SettingsKey.closeConfirmTabKey: menuPicker($closeConfirmTab) { closeConfirmOptions }
+        case SettingsKey.closeConfirmTabKey: menuPicker($closeConfirmTab) { closeConfirmTabOptions }
         case SettingsKey.closeConfirmWindowKey: menuPicker($closeConfirmWindow) { closeConfirmOptions }
         case SettingsKey.workingDirectoryNewWindowKey: workingDirControl($workingDirNewWindow)
         case SettingsKey.workingDirectoryNewTabKey: workingDirControl($workingDirNewTab)
@@ -388,9 +388,15 @@ struct AllSettingsListView: View {
     }
 
     @ViewBuilder private var closeConfirmOptions: some View {
+        closeConfirmTabOptions
+        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
+    }
+
+    /// The TAB row's policies — the window set MINUS `multiple_tabs`, which can never fire for a tab (closing
+    /// one tab loses exactly one tab). Composed INTO `closeConfirmOptions` so the shared rows stay identical.
+    @ViewBuilder private var closeConfirmTabOptions: some View {
         Text("Running Process").tag(CloseConfirmationPolicy.process)
         Text("Always").tag(CloseConfirmationPolicy.always)
-        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
     }
 
     /// The two working-dir choices, bridged onto the `WorkingDirectoryPolicy.rawConfig` String key (any

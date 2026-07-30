@@ -913,36 +913,37 @@ public final class WorkspaceStore {
     }
 
     /// Whether a close in `scope` must park behind a confirmation prompt, evaluating the scope's
-    /// configured ``CloseConfirmationPolicy`` against the live tree state. `.pane` / `.tab` read
-    /// ``SettingsKey/closeConfirmTab``; `.window` reads ``SettingsKey/closeConfirmWindow``. The BUSY input is
-    /// the busy-shell signal (`pane` for `.pane`; ANY pane in the active tab for `.tab`; ANY pane in the
-    /// active session for `.window`); the tab-count input is the active session's `tabs.count`. The pure
-    /// truth table lives in ``CloseConfirmationPolicy/shouldConfirm(_:isBusy:tabCount:)``. Under the default
-    /// `.process` policy this collapses to "confirm iff busy".
+    /// configured ``CloseConfirmationPolicy`` against the live tree state.
+    ///
+    /// - `.pane` (⌘W) reads ``CloseConfirmationPolicy/process`` — the busy-shell guard ALONE. ⌘W is a PANE
+    ///   gesture: it never inherits the Tab / Window policy, not even when the pane is its tab's last leaf and
+    ///   the emptied tab goes with it (there is no such thing as a pane-less tab, so that cascade is a
+    ///   consequence of the pane close, not a tab close the user asked to confirm). The Tab / Window policies
+    ///   belong to the Close Tab and ⌘⇧W Close Window affordances.
+    /// - `.tab` reads ``SettingsKey/closeConfirmTab``; `.window` reads ``SettingsKey/closeConfirmWindow``.
+    ///
+    /// The BUSY input is the busy-shell signal (`pane` for `.pane`; ANY pane in the active tab for `.tab`; ANY
+    /// pane in the active session for `.window`). The TAB-COUNT input is how many tabs the close would
+    /// DESTROY — the whole point of `multiple_tabs` ("this would lose more than one tab") — so a `.tab` close
+    /// feeds `1` (closing one tab loses exactly one) and only `.window` feeds the session's `tabs.count`.
+    /// Feeding the window's count to a tab/pane close is what made a lone-pane ⌘W claim "this window has
+    /// multiple tabs". The pure truth table lives in
+    /// ``CloseConfirmationPolicy/shouldConfirm(_:isBusy:tabCount:)``. Under the default `.process` policy every
+    /// scope collapses to "confirm iff busy".
     func closeConfirmationNeeded(scope: CloseScope, pane: PaneID? = nil) -> Bool {
-        let tabCount = tree.activeSession?.tabs.count ?? 0
         switch scope {
         case .pane:
             let busy = pane.map { registry[$0]?.isShellBusy == true } ?? false
-            // A mid-tab pane close that leaves its tab alive must NOT inherit the Tab/Window
-            // close-confirmation policy (a pane close is only confirmed when it drops a tab/window). Gate by the
-            // EFFECTIVE pane policy — the Tab/Window policy ONLY when the close cascades a tab/window away, else
-            // the `.process` busy-shell guard alone (so a non-cascading idle pane closes immediately even under
-            // `.always`/`.multiple_tabs`).
-            return CloseConfirmationPolicy.shouldConfirm(
-                effectivePanePolicy(for: pane),
-                isBusy: busy,
-                tabCount: tabCount,
-            )
+            return CloseConfirmationPolicy.shouldConfirm(.process, isBusy: busy, tabCount: 0)
         case .tab:
             let busy = anyShellBusy(tree.activeSession?.activeTab?.allPaneIDs() ?? [])
-            return CloseConfirmationPolicy.shouldConfirm(SettingsKey.closeConfirmTab, isBusy: busy, tabCount: tabCount)
+            return CloseConfirmationPolicy.shouldConfirm(SettingsKey.closeConfirmTab, isBusy: busy, tabCount: 1)
         case .window:
             let busy = anyShellBusy(tree.activeSession?.allPaneIDs() ?? [])
             return CloseConfirmationPolicy.shouldConfirm(
                 SettingsKey.closeConfirmWindow,
                 isBusy: busy,
-                tabCount: tabCount,
+                tabCount: tree.activeSession?.tabs.count ?? 0,
             )
         }
     }
@@ -951,27 +952,6 @@ public final class WorkspaceStore {
     /// tab- / window-scope busy input for ``closeConfirmationNeeded(scope:pane:)``.
     private func anyShellBusy(_ ids: [PaneID]) -> Bool {
         ids.contains { registry[$0]?.isShellBusy == true }
-    }
-
-    /// The close-confirmation policy a PANE close is GOVERNED by — the single source the
-    /// `.pane` guard AND the in-app panel's subtitle (``pendingCloseReasonPolicy``) read:
-    /// - the close does NOT cascade a tab away (a mid-tab leaf with tiled siblings) → ``CloseConfirmationPolicy/process``
-    ///   (the busy-shell guard alone — a non-cascading pane close is never confirmed under the Tab policy);
-    /// - the close cascades its tab away (``tabRemovedByClosing(_:)`` ≠ nil) → ``SettingsKey/closeConfirmTab``,
-    ///   ESCALATED to ``SettingsKey/closeConfirmWindow`` when that tab is its session's LAST (the whole window /
-    ///   ``Session`` goes with it).
-    /// A `nil` pane (no target) is treated as non-cascading → `.process`.
-    func effectivePanePolicy(for pane: PaneID?) -> CloseConfirmationPolicy {
-        guard let pane, tabRemovedByClosing(pane) != nil else { return .process }
-        // Cascading close. Resolve the OWNING session's tab count (the pane may live in a non-active session)
-        // so "last tab → window scope" is keyed on the right session; fall back to the active session.
-        let owningTabCount: Int =
-            if let (sIdx, _) = WorkspaceTreeOps.locate(pane, in: tree) {
-                tree.sessions[sIdx].tabs.count
-            } else {
-                tree.activeSession?.tabs.count ?? 0
-            }
-        return owningTabCount <= 1 ? SettingsKey.closeConfirmWindow : SettingsKey.closeConfirmTab
     }
 
     /// The WINDOW-close GATE (the macOS `windowShouldClose` route). A macOS window maps to an
@@ -2600,18 +2580,6 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
-    /// The ``TabID`` that closing leaf `target` would REMOVE — i.e. `target` is the only leaf in its tab,
-    /// so the close empties the tree and cascades the tab away. `nil` when the tab survives the close
-    /// (more than one leaf) or `target` is absent. Read by the close-confirmation policy, which has to
-    /// know whether a ⌘W is about to take a whole tab with it.
-    func tabRemovedByClosing(_ target: PaneID) -> TabID? {
-        guard let (sIdx, tIdx) = WorkspaceTreeOps.locate(target, in: tree) else { return nil }
-        let tab = tree.sessions[sIdx].tabs[tIdx]
-        // The tab is removed only when `target` is the SOLE leaf (the tree prunes to empty).
-        guard tab.root.leafCount == 1 else { return nil }
-        return tab.id
-    }
-
     /// Detaches the active tab's active pane (the chord / menu routing target). No-op without one.
     public func detachActivePane() {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
@@ -2749,7 +2717,8 @@ public final class WorkspaceStore {
     /// there is no active tab. The tree ops cascade an emptied session / re-seed a default like
     /// `closeTab(_:)` does. Routed through ``closeConfirmationNeeded(scope:pane:)`` — under the default
     /// ``CloseConfirmationPolicy/process`` policy this closes immediately unless a pane in the tab is busy,
-    /// while `.always` / `.multipleTabs` park the close behind a confirmation.
+    /// while `.always` parks the close behind a confirmation. (`.multipleTabs` cannot fire here: closing one
+    /// tab loses exactly one tab, so the Settings tab row does not offer it.)
     public func closeActiveTab() {
         guard let tab = tree.activeSession?.activeTab else { return }
         if closeConfirmationNeeded(scope: .tab) {

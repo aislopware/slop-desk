@@ -51,14 +51,15 @@ public extension WorkspaceStore {
 
     /// The close-confirmation policy that GATED the currently-parked close — drives the in-app
     /// ``CloseConfirmationPanel`` subtitle so it reads accurately (a `.process` park says "a
-    /// process is still running", an `.always`/`.multiple_tabs` park does not). A parked PANE close reports its
-    /// EFFECTIVE gating policy (``WorkspaceStore/effectivePanePolicy(for:)`` — `.process` for a non-cascading
-    /// mid-tab close, else the Tab/Window policy); a parked TAB close reports
+    /// process is still running", an `.always` park does not). A parked PANE close is ALWAYS a
+    /// ``CloseConfirmationPolicy/process`` park — ⌘W is gated by the busy-shell guard alone (see
+    /// ``WorkspaceStore/closeConfirmationNeeded(scope:pane:)``), so the subtitle names the running command
+    /// rather than a tab/window consequence the user did not ask about. A parked TAB close reports
     /// ``SettingsKey/closeConfirmTab``. `nil` when nothing is parked.
     var pendingCloseReasonPolicy: CloseConfirmationPolicy? {
         if pendingTabCloseID != nil { return SettingsKey.closeConfirmTab }
-        guard let pane = pendingClose else { return nil }
-        return effectivePanePolicy(for: pane)
+        guard pendingClose != nil else { return nil }
+        return .process
     }
 
     /// Arms a single-PANE close confirmation, clearing any parked tab close so exactly one confirmation

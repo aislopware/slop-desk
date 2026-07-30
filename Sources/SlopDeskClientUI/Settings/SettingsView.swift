@@ -363,13 +363,14 @@ private struct GeneralSettingsTab: View {
                 timingFooter(.live)
             }
 
-            // Both rows read the ONE `closeConfirmation` list, so a tab and a window can never be offered
-            // different policies.
+            // The tab row drops `multiple_tabs` (a tab close loses exactly one tab, so the policy could never
+            // fire) but otherwise shares the window row's wording — `closeConfirmationTab` is a prefix of the
+            // one list, so the two rows can never describe the same policy differently.
             slateFormSection(GeneralSettingsLayout.closeConfirmation) {
                 SettingsOptionMenuRow(
                     "Closing a tab",
-                    subtitle: "When to ask before a tab goes away.",
-                    options: SettingsOptionCatalog.closeConfirmation,
+                    subtitle: "When to ask before a tab goes away. ⌘W closes a pane and only ever asks mid-command.",
+                    options: SettingsOptionCatalog.closeConfirmationTab,
                     selection: $closeConfirmTab,
                 )
                 SettingsOptionMenuRow(

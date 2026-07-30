@@ -209,18 +209,26 @@ final class CloseConfirmationStoreTests: XCTestCase {
         XCTAssertEqual(Set(store.tree.allPaneIDs()), Set(panes), "cancel leaves the session intact")
     }
 
-    // MARK: - pane-close guard honours the tab policy, not just a busy shell
+    // MARK: - the pane-close guard is the busy shell ALONE; the Tab policy governs the Close TAB gesture
 
-    func testAlwaysTabPolicyParksAnIdlePaneClose() {
-        // With the tab policy = always, an idle close parks behind `pendingClose`, not just a busy-shell close.
+    /// ⌘W is a PANE gesture: an idle pane closes immediately even with the Tab policy set to `.always`. The
+    /// same `.always` Tab policy DOES park the Close Tab gesture — the two affordances read different gates,
+    /// which is the whole point of scoping them.
+    func testAlwaysTabPolicyParksCloseTabButNotAnIdlePaneClose() {
         SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
-        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let (tree, panes) = multiTabWorkspace(tabCount: 3)
         let store = makeTreeStore(restoringTree: tree)
 
         store.requestCloseActivePaneTree() // the active pane is idle
 
-        XCTAssertEqual(store.pendingClose, panes[0], "always policy parks even an idle pane close")
-        XCTAssertEqual(Set(store.tree.allPaneIDs()), Set(panes), "the parked pane is not yet closed")
+        XCTAssertNil(store.pendingClose, "⌘W does not inherit the Tab policy — an idle pane just closes")
+        XCTAssertFalse(store.tree.contains(panes[0]), "the pane closed immediately")
+
+        // The SAME policy still gates the explicit Close Tab gesture.
+        store.closeActiveTab()
+
+        XCTAssertNotNil(store.pendingTabCloseID, "the .always Tab policy parks an explicit Close Tab")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "nothing closed while the tab park is up")
     }
 
     func testDefaultProcessPolicyIdlePaneClosesImmediately() {
@@ -254,10 +262,11 @@ final class CloseConfirmationStoreTests: XCTestCase {
         )
     }
 
-    /// A CASCADING pane close (the pane is its tab's SOLE leaf, so closing it drops the whole tab) DOES gate by
-    /// the Tab policy — under `.always` an idle sole-leaf pane close confirms. The complement of the
-    /// non-cascading case: the cascade branch still honours the configured Tab policy.
-    func testCascadingPaneCloseUsesTabPolicy() {
+    /// A CASCADING pane close (the pane is its tab's SOLE leaf, so closing it drops the whole tab) is STILL
+    /// gated by the `.process` busy-shell guard ALONE — ⌘W is a PANE gesture, and an emptied tab simply goes
+    /// with its last pane (there is no such thing as a pane-less tab). The Tab policy belongs to the Close Tab
+    /// affordance, not to ⌘W.
+    func testCascadingPaneCloseStillUsesProcessGuardOnly() {
         SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
         // Two single-pane tabs; the active tab's pane is its tab's sole leaf → closing it cascades the tab away.
         let (tree, panes) = multiTabWorkspace(tabCount: 2)
@@ -267,9 +276,37 @@ final class CloseConfirmationStoreTests: XCTestCase {
             "the active tab's pane is its sole (cascading) leaf",
         )
 
-        XCTAssertTrue(
+        XCTAssertFalse(
             store.closeConfirmationNeeded(scope: .pane, pane: panes[0]),
-            "a cascading sole-leaf pane close confirms under the .always Tab policy",
+            "an idle cascading pane close does not inherit the Tab policy — ⌘W closes the pane, the empty tab follows",
+        )
+    }
+
+    /// The REPORTED bug: a tab holding ONE pane, closed with ⌘W in a window that holds several tabs, popped
+    /// "Close “Terminal”? / This window has multiple tabs." — the `multiple_tabs` Tab policy was evaluated
+    /// against the WINDOW's tab count, and a pane close inherited the Tab policy at all. Closing one pane
+    /// drops at most one tab, so neither input justifies a prompt: the pane must close immediately.
+    func testMultipleTabsTabPolicyDoesNotPromptOnSolePaneCloseInMultiTabWindow() {
+        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmTabKey)
+        let (tree, panes) = multiTabWorkspace(tabCount: 3)
+        let store = makeTreeStore(restoringTree: tree)
+
+        store.requestCloseActivePaneTree() // the sole pane of the active tab, idle
+
+        XCTAssertNil(store.pendingClose, "a sole-pane ⌘W must not prompt just because the WINDOW has more tabs")
+        XCTAssertFalse(store.tree.contains(panes[0]), "the pane closed immediately")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "its now-empty tab went with it")
+    }
+
+    /// The `.tab` scope's tab-count input is the number of tabs the close DESTROYS (one), not the window's
+    /// tab count — so `multiple_tabs` never fires on a Close Tab either (closing one tab loses one tab).
+    func testMultipleTabsTabPolicyDoesNotPromptOnCloseTab() {
+        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmTabKey)
+        let store = makeTreeStore(restoringTree: multiTabWorkspace(tabCount: 3).0)
+
+        XCTAssertFalse(
+            store.closeConfirmationNeeded(scope: .tab),
+            "closing ONE tab never drops more than one tab, whatever the window holds",
         )
     }
 

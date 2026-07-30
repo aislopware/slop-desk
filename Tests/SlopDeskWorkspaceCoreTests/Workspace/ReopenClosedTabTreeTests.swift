@@ -96,8 +96,8 @@ final class ReopenClosedTabTreeTests: XCTestCase {
     }
 
     /// Closing ONE pane of a multi-pane tab leaves the tab alive, so NOTHING is captured — guards against
-    /// the naive "record on every `closePaneTree`" that would falsely stack a still-open tab. (Reverting
-    /// the `tabRemovedByClosing` guard to "always record" makes this assertion FAIL.)
+    /// the naive "record on every `closePaneTree`" that would falsely stack a still-open tab. (Relaxing the
+    /// sole-leaf guard to "always record" makes this assertion FAIL.)
     func testClosingOneOfSeveralPanesDoesNotCaptureTab() {
         let a = PaneID(), b = PaneID()
         let children = [a, b].map { WeightedChild(weight: .flex(1), node: .leaf($0)) }

@@ -91,13 +91,18 @@ enum SettingsOptionCatalog {
         SettingsOption(.newWindow, "New window"),
     ]
 
-    /// General → Close confirmation (rendered TWICE — once for a closing tab, once for a closing window — off
-    /// the one list, so the two rows can never offer different policies). A menu.
+    /// General → Close confirmation, WINDOW row. The full policy set: a window is the only unit that can hold
+    /// more than one tab, so it is the only one `multiple_tabs` can speak about. A menu.
     static let closeConfirmation: [SettingsOption<CloseConfirmationPolicy>] = [
         SettingsOption(.process, "Running process", caption: "only if busy"),
         SettingsOption(.always, "Always"),
         SettingsOption(.multipleTabs, "Multiple tabs"),
     ]
+
+    /// General → Close confirmation, TAB row — the window list MINUS `multiple_tabs`. Closing one tab loses
+    /// exactly one tab, so "ask when this would lose more than one tab" can never fire here; offering it
+    /// would be a control that does nothing. The shared prefix keeps the two rows' wording identical.
+    static let closeConfirmationTab: [SettingsOption<CloseConfirmationPolicy>] = Array(closeConfirmation.prefix(2))
 
     // MARK: - Appearance → Window (macOS-only)
 

@@ -139,7 +139,7 @@ public enum AllSettingsCatalog {
         SettingEntry(
             key: SettingsKey.closeConfirmTabKey,
             label: "Close Confirmation · Tab",
-            description: "When to confirm before closing a tab or pane.",
+            description: "When to confirm before closing a tab. ⌘W closes a pane and only asks mid-command.",
             defaultText: "Running Process",
             bucket: .advancedOnly,
             keywords: "close confirm tab pane prompt quit running process always",

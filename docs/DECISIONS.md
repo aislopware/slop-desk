@@ -5502,3 +5502,36 @@ long tail of its toggles wrote a value nothing ever read.
 `TerminalPreferences.swift`, `TerminalFontSettings.swift`, `SlateDesign.swift`, `HostEnvironment.swift`,
 `AutoProgressMatcher.swift` and `GhosttyTerminalView.swift`. No wire change (golden
 byte-identical) — every removed key was a fire-time `Defaults` flag or a client-only render pref.
+
+## ⌘W is a PANE gesture: an emptied tab just goes, it is not a tab close to confirm (2026-07-30)
+
+⌘W on a tab holding ONE pane popped *"Close “Terminal”? / This window has multiple tabs."* Two independent
+faults stacked, both dating to the E7 carry-over #8 fix, which corrected WHICH policy a pane close reads but
+not what that policy is fed.
+
+- ✅ **A pane close reads the busy-shell guard ALONE.** E7 made a pane close inherit the Tab policy whenever
+  it cascaded its tab away (`tabRemovedByClosing ≠ nil`), escalating to the Window policy on the session's
+  last tab. **Ruling: it inherits neither.** A tab is a container for panes; there is no pane-less tab, so a
+  tab vanishing with its last pane is a CONSEQUENCE of the pane close, not a second close the user asked
+  about. `closeConfirmationNeeded(scope: .pane)` is now `shouldConfirm(.process, isBusy:)` — ⌘W asks only
+  mid-command. The Tab and Window policies belong to their own affordances (Close Tab, ⌘⇧W Close Window).
+  `effectivePanePolicy(for:)` and `tabRemovedByClosing(_:)` are deleted with it, and
+  `pendingCloseReasonPolicy` returns `.process` for any parked PANE close.
+- ✅ **`multiple_tabs` counts the tabs the close DESTROYS, not the tabs the window happens to hold.** All
+  three scopes were fed `tree.activeSession?.tabs.count`, so "ask when this would lose more than one tab"
+  fired on a unit that loses exactly one — and then narrated it in window-scope copy. `.tab` now feeds `1`,
+  `.pane` is `.process` (count irrelevant), and only `.window` feeds the session's `tabs.count`.
+- ✅ **That makes `multiple_tabs` window-only, so the tab row stops offering it.** Same criterion as the
+  2026-07-30 Settings purge: a control position that provably cannot change anything is not a choice.
+  `SettingsOptionCatalog.closeConfirmationTab` is the window list's first two entries (a prefix, so the two
+  rows can never word the same policy differently); `AllSettingsListView` composes its tab picker into the
+  window one. A persisted `multiple_tabs` on `shell.closeConfirm.tab` stays decodable and is simply inert.
+- ⚠️ **The old test pinned the behaviour being removed.** `testAlwaysTabPolicyParksAnIdlePaneClose` and
+  `testCascadingPaneCloseUsesTabPolicy` both asserted a pane close inheriting the Tab policy. Rewritten to
+  assert the complement — and to assert the SAME `.always` policy still parks an explicit Close Tab, which is
+  the pin that keeps this from collapsing into "nothing ever confirms".
+
+→ touches `WorkspaceStore.swift`, `WorkspaceStore+CloseConfirmation.swift`, `SettingsOptionCatalog.swift`,
+`SettingsView.swift`, `AllSettingsListView.swift`, `AllSettingsCatalog.swift`,
+`CloseConfirmationPolicyTests.swift`. No wire change (golden byte-identical) — both keys are fire-time
+`Defaults` and `CloseConfirmationPolicy` keeps all three cases.
