@@ -1051,7 +1051,7 @@ private struct IOSSidebarLiveRow: View {
             if RailRowsBuilder.showsCommandSpinner(
                 badge: chrome.badge, isAgent: agent, processLabel: chrome.processLabel,
             ) {
-                SpokeSpinner()
+                CommandSpinner()
             }
             // The same trailing status mark as the macOS row (the T3 Code port) — rightmost, so
             // state reads down one fixed column on iOS too.

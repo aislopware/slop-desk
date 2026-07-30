@@ -6,7 +6,7 @@
 // under hover.
 //
 // Status is the trailing ``StatusDotView`` mark plus, for a live command, the slot's
-// ``SpokeSpinner``. The mark column is the AGENT's: the working pulse (accent), the resting dashed
+// ``CommandSpinner``. The mark column is the AGENT's: the working pulse (accent), the resting dashed
 // ring (muted), the raised hand (amber question), the filled dot (green unread finish), the warning
 // triangle (red failure) — a plain shell mounts nothing there, and a busy COMMAND says it in the
 // slot instead, so no row carries two activity marks. Motion means IN FLIGHT and nothing else: a
@@ -51,7 +51,7 @@ struct SlateTabRow: View {
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
     /// Whether a plain COMMAND is running in this pane past the busy reveal — the slot swaps its
-    /// still ``processLabel`` for the ``SpokeSpinner`` (otty's own row spinner), so "running" reads
+    /// still ``processLabel`` for the ``CommandSpinner`` (otty's own row spinner), so "running" reads
     /// as motion instead of as a process name that looks identical whether the command is live or
     /// long finished. The command line itself stays in the row's tooltip. Resolved by
     /// ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)`` — never set for an
@@ -192,7 +192,7 @@ struct SlateTabRow: View {
                         } else if commandRunning {
                             // A live command takes the slot as MOTION (otty's row spinner) — the
                             // process name it displaces is the thing the wheel is already saying.
-                            SpokeSpinner()
+                            CommandSpinner()
                         } else if let processLabel {
                             // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
                             // in the instrument mono at the caption size on the tertiary ink — one

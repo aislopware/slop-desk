@@ -121,7 +121,7 @@ enum StatusPresentation {
     /// attention ink (``attentionInk(_:)`` — the raised HAND for a question, the filled green DOT
     /// for an unread finish, the red TRIANGLE for a failure). A plain running COMMAND mounts
     /// NOTHING here — this column is the AGENT's, and a busy command's motion is the
-    /// ``SpokeSpinner`` that takes the process-label slot instead
+    /// ``CommandSpinner`` that takes the process-label slot instead
     /// (``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), so no row ever
     /// carries two activity marks. Bare shells and privilege-only rows mount nothing either — the
     /// resting rail stays bare.

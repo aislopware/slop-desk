@@ -2984,6 +2984,31 @@ state that only exists as an animation would be invisible to a user who asked fo
 shared with the collapsed-group roll-up count. Client-only, no wire change, no new setting — the
 existing agent/command badge gates keep governing what the row is allowed to say.
 
+**Follow-up, same day — the wheel is deleted; the spinner is `| / - \`, and a colour-emoji frame
+comes out of the pulse.** On hardware the drawn wheel read as ugly, and the diagnosis is register:
+it was a piece of AppKit-shaped chrome parachuted into a column of mono metadata. The spinner now
+speaks the slot's own voice — `CommandSpinner`, the ASCII line sweep in the instrument face on the
+secondary ink, 4 frames × 0.12 s.
+
+Getting there ruled out braille, which is worth writing down because it is the obvious first
+instinct for a "CLI spinner" and it CANNOT work here. Neither `⠋⠙⠹…` nor the heavy `⣾⣽⣻…` survives:
+**no mono face we can count on carries U+2800…U+28FF.** The terminal's JetBrains Mono is not
+installed on every machine (it is absent on the dev Studio), so `Slate.Typeface.instrument` falls
+back to the system monospaced face — and CoreText then substitutes **AppleBraille**, an embossing
+font that draws sparse little circles, ignores the requested weight, and renders the heavy and light
+cycles almost identically and almost invisibly at 11pt. Two renders looked unchanged before the
+font check explained why. `CommandSpinner.frames` are ASCII precisely so no substitution can happen:
+all four are the font's own glyphs at the same 6.8pt advance, so the slot cannot jitter as they swap.
+
+The same font check caught a REAL defect that predates this round. Bare U+2733 `✳` — a frame of the
+agent pulse — resolves to **AppleColorEmojiUI**: a colour emoji that ignores `foregroundStyle` and
+measures 16pt of advance where its Menlo siblings measure 6.62. So one frame in ten flashed a
+coloured star at the wrong width, and since `pulseStillFrame` is `✳`, that emoji was ALSO what every
+Reduce-Motion mount froze on. Every dingbat frame now carries `\u{FE0E}` (variation selector-15,
+text presentation) — the same guard `SlateTabRow` already applies to the title's `✳` marker. This
+fixes `StatusGlyph` on the iOS toolbar and the Peek & Reply header too, which have shipped the bare
+frames since MERIDIAN.
+
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 
 - ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều

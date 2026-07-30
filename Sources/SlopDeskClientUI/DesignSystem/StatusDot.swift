@@ -5,7 +5,7 @@
 // vocabulary), and a resting code agent keeps the original static dashed ring (lucide
 // `circle-dashed`) — present, spending no hue. An idle row renders null, so the resting rail stays
 // bare, and the only thing that MOVES here is the agent's breath: motion means "in flight", never
-// decoration. A plain running COMMAND mounts nothing in this column — its ``SpokeSpinner`` takes
+// decoration. A plain running COMMAND mounts nothing in this column — its ``CommandSpinner`` takes
 // the process-label slot instead (``SlateTabRow``), so no row ever carries two activity marks.
 //
 // Every mark renders inside ONE fixed footprint, so a state edge — or a spinner frame — can never
@@ -65,12 +65,22 @@ enum StatusDot {
     /// pulse). Cycled as hard swaps; the palindrome makes the loop breathe without easing. The ONE
     /// definition: ``StatusGlyph`` (the iOS toolbar / Peek & Reply header) reads its `agentFrames`
     /// from here, so no two surfaces can disagree about one pane's `working`.
-    static let pulseFrames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
+    ///
+    /// ⚠️ Every star frame carries `\u{FE0E}` (VARIATION SELECTOR-15, text presentation). Bare
+    /// U+2733 `✳` resolves to `AppleColorEmojiUI` on Apple platforms — a COLOUR emoji that ignores
+    /// `foregroundStyle` and measures 16pt of advance where its Menlo siblings measure 6.62, so that
+    /// one frame flashed a coloured star and jumped the mark's width mid-cycle. Same trap
+    /// ``SlateTabRow`` already guards for the title's `✳` marker. `·` (U+00B7) is the font's own
+    /// glyph and needs nothing; the selector is harmless on the frames that were already text.
+    static let pulseFrames = [
+        "·", "✢\u{FE0E}", "✳\u{FE0E}", "✶\u{FE0E}", "✻\u{FE0E}",
+        "✽\u{FE0E}", "✻\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢\u{FE0E}",
+    ]
     /// Seconds per frame — the pulse breathes rather than spins.
     static let pulseBeat: Double = 0.15
     /// The frame a REDUCE-MOTION mount freezes on — the mid-swell asterisk, the one frame that
     /// reads as "an agent is here and busy" while standing still (`·` would read as a resting dot).
-    static let pulseStillFrame = "✳"
+    static let pulseStillFrame = "✳\u{FE0E}"
 }
 
 /// One resolved mark: the SHAPE that names the state plus the ink it wears.
@@ -142,78 +152,68 @@ struct StatusDotView: View {
     }
 }
 
-/// The RUNNING-COMMAND spinner — otty's `TabsPanelRowView` mounts an `NSProgressIndicator` in the
-/// row's right slot while a command runs, and this is that wheel drawn on the house tokens: eight
-/// tapered spokes with a comet tail, stepping ONE spoke per beat so the eye reads direction. Drawn
-/// (not `ProgressView`) for three reasons: the ink is a theme token rather than the system accent,
-/// the footprint is pinned to the mark column's, and the phase comes off the same fixed wall-clock
-/// epoch the pulse uses — so every spinning row in the rail steps in unison and a re-render never
-/// restarts the wheel. REDUCE MOTION freezes it on ``stillStep``.
+/// The RUNNING-COMMAND spinner — otty mounts an `NSProgressIndicator` where its row's shell label
+/// sits, and this is that slot behaviour in the row's OWN VOICE: the ASCII line spinner `| / - \`,
+/// set in the instrument mono on the secondary ink, exactly the register of the `zsh` it displaces.
+/// A drawn AppKit-style wheel was the first cut and read as foreign — system chrome parachuted into
+/// a column of mono metadata.
 ///
-/// It replaces the row's process-label text (the otty behaviour: the wheel says "running", the
-/// title says what), so a busy row never carries two activity marks.
-struct SpokeSpinner: View {
-    var ink: Color = Slate.Text.tertiary
+/// Frame-stepped off the same fixed wall-clock epoch the agent pulse uses (via
+/// ``StatusGlyph/frame(at:frames:beat:)``), so every spinning row in the rail steps in unison and a
+/// re-render lands mid-cycle instead of restarting the cycle. REDUCE MOTION freezes it on
+/// ``stillFrame``.
+///
+/// Distinct from the agent's breath by CHARACTER as well as by cadence: the agent blooms a star in
+/// place, a command sweeps a line around — the two never read as the same thing on adjacent rows,
+/// and neither can be mistaken for the still marks (ring, dot, hand, triangle).
+struct CommandSpinner: View {
+    /// One step up from the label's tertiary ink: a single thin stroke needs the extra contrast to
+    /// read as motion where a whole word did not.
+    var ink: Color = Slate.Text.secondary
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Spokes around the wheel — the AppKit spinner's own count.
-    static let spokeCount = 8
-    /// Seconds per spoke step: 8 × 0.1 s = one revolution in 0.8 s (otty's own indeterminate cadence).
-    static let beat: Double = 0.1
-    /// The step a REDUCE-MOTION mount freezes on — spoke 0, the fully-lit wheel.
-    static let stillStep = 0
-    /// The wheel's diameter — the mark column's footprint, so a spinning row and a marked row keep
-    /// the same trailing edge.
-    static let diameter = StatusDot.footprint
-    private static let spokeLength: CGFloat = 3.5
-    private static let spokeWidth: CGFloat = 1.5
+    /// The classic ASCII line spinner — the oldest one in the terminal, and the only cycle here that
+    /// draws from the mono face's OWN glyphs. Braille (`⠋⠙⠹…` and the heavy `⣾⣽⣻…`) was tried first
+    /// and BOTH are unusable in this slot: no mono face we can count on carries U+2800…U+28FF (the
+    /// terminal's JetBrains Mono is not installed on every machine and the fallback is the system
+    /// monospaced face), so CoreText substitutes **AppleBraille** — an embossing font that draws
+    /// sparse little circles, ignores the weight, and makes the heavy and light cycles look
+    /// identical and nearly invisible at 11pt. These four are the font's own, all at the SAME 6.8pt
+    /// advance, so the slot cannot jitter as frames swap.
+    static let frames = ["|", "/", "-", "\\"]
+    /// Seconds per frame: 4 × 0.12 s = one rotation per 0.48 s — brisk enough to read as motion at a
+    /// glance, slower than a terminal's own 80 ms spin. The rail is glanced at, not watched.
+    static let beat: Double = 0.12
+    /// The frame a REDUCE-MOTION mount freezes on — a rotation has no "complete" frame, so this is
+    /// simply the first; every frame carries the same weight of ink.
+    static let stillFrame = frames[0]
+    /// The glyph's point size — the mark column's, so the spinner reads level with the marks down
+    /// the trailing edge rather than a size below them.
+    static let size = StatusDot.symbolSize
 
     var body: some View {
         Group {
             if reduceMotion {
-                wheel(step: Self.stillStep)
+                glyph(Self.stillFrame)
             } else {
                 TimelineView(.periodic(
                     from: Date(timeIntervalSinceReferenceDate: 0), by: Self.beat,
                 )) { timeline in
-                    wheel(step: Self.step(at: timeline.date))
+                    glyph(StatusGlyph.frame(
+                        at: timeline.date, frames: Self.frames, beat: Self.beat,
+                    ))
                 }
             }
         }
-        .frame(width: Self.diameter, height: Self.diameter)
         .accessibilityHidden(true)
     }
 
-    private func wheel(step: Int) -> some View {
-        ZStack {
-            ForEach(0..<Self.spokeCount, id: \.self) { spoke in
-                Capsule()
-                    .fill(ink)
-                    .frame(width: Self.spokeWidth, height: Self.spokeLength)
-                    .opacity(Self.opacity(spoke: spoke, step: step))
-                    .offset(y: -(Self.diameter / 2 - Self.spokeLength / 2))
-                    .rotationEffect(.degrees(360 / Double(Self.spokeCount) * Double(spoke)))
-            }
-        }
-    }
-
-    /// The lit spoke for one wall-clock instant — pure + static so the cadence is unit-pinned
-    /// headlessly (one spoke per beat, wraps at ``spokeCount``, never skips on a re-render).
-    static func step(at date: Date) -> Int {
-        guard beat > 0 else { return stillStep }
-        let phase = date.timeIntervalSinceReferenceDate / beat
-        let index = Int(phase.rounded(.down)) % spokeCount
-        return index < 0 ? index + spokeCount : index
-    }
-
-    /// A spoke's opacity: full at the LEADING spoke, ramping down with each step behind it — the
-    /// comet tail that gives an otherwise symmetric wheel a direction. Never reaches zero, so the
-    /// ring reads as a complete wheel rather than a broken arc.
-    static func opacity(spoke: Int, step: Int) -> Double {
-        let behind = ((step - spoke) % spokeCount + spokeCount) % spokeCount
-        let fade = Double(behind) / Double(spokeCount)
-        return 1 - fade * 0.75
+    private func glyph(_ text: String) -> some View {
+        Text(text)
+            .font(Slate.Typeface.instrument(Self.size))
+            .foregroundStyle(ink)
+            .fixedSize()
     }
 }
 #endif

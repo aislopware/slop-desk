@@ -221,41 +221,81 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: Cadence (both animated marks)
 
-    /// The spoke spinner steps ONE spoke per beat off a FIXED epoch and wraps at the spoke count —
-    /// so every spinning row steps in unison and a re-render lands mid-cycle instead of restarting
-    /// it. Pure function of the date: the same instant always resolves to the same step.
-    func testSpokeSpinnerStepsOneSpokePerBeatAndWraps() {
-        let beat = SpokeSpinner.beat
+    /// The command spinner steps ONE braille frame per beat off the SAME fixed epoch the pulse uses
+    /// and wraps at the cycle's end — so every spinning row steps in unison and a re-render lands
+    /// mid-cycle instead of restarting it. Pure function of the date.
+    func testCommandSpinnerStepsOneFramePerBeatAndWraps() {
+        let frames = CommandSpinner.frames
+        let beat = CommandSpinner.beat
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        for step in 0..<(SpokeSpinner.spokeCount * 2) {
+        for step in 0..<(frames.count * 2) {
             let at = epoch.addingTimeInterval(Double(step) * beat + beat / 2)
             XCTAssertEqual(
-                SpokeSpinner.step(at: at), step % SpokeSpinner.spokeCount,
-                "beat \(step) lands on spoke \(step % SpokeSpinner.spokeCount)",
+                StatusGlyph.frame(at: at, frames: frames, beat: beat), frames[step % frames.count],
+                "beat \(step) lands on its own frame",
             )
         }
         let mid = epoch.addingTimeInterval(3 * beat + beat / 3)
         XCTAssertEqual(
-            SpokeSpinner.step(at: mid), SpokeSpinner.step(at: mid),
+            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
+            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
             "pure function of the instant — a re-render never restarts the cycle",
         )
     }
 
-    /// A spoke's opacity ramps DOWN with its distance behind the leading spoke and the ramp is a
-    /// permutation of one fixed set — the AppKit spinner's comet tail, so the eye reads direction.
-    func testSpokeOpacityRampTrailsTheLeadingSpoke() {
-        let lead = SpokeSpinner.opacity(spoke: 3, step: 3)
-        XCTAssertEqual(lead, 1, "the leading spoke is fully inked")
-        var previous = lead
-        for behind in 1..<SpokeSpinner.spokeCount {
-            let value = SpokeSpinner.opacity(
-                spoke: (3 - behind + SpokeSpinner.spokeCount) % SpokeSpinner.spokeCount,
-                step: 3,
+    /// The command spinner sweeps a LINE and the agent pulse blooms a STAR: the two animated marks
+    /// share no frame, so adjacent rows can never read as the same activity. Every command frame is a
+    /// plain ASCII scalar — braille (`⠋⠙⠹…`, heavy or light) is BANNED here: no mono face we can
+    /// count on carries U+2800…U+28FF, so CoreText substitutes AppleBraille (an embossing font —
+    /// sparse circles, weight ignored, invisible at 11pt).
+    func testCommandSpinnerSweepsAsciiAndSharesNoFrameWithThePulse() {
+        XCTAssertTrue(
+            Set(CommandSpinner.frames).isDisjoint(with: Set(StatusDot.pulseFrames)),
+            "a sweeping command and a breathing agent never wear the same glyph",
+        )
+        for frame in CommandSpinner.frames {
+            guard frame.unicodeScalars.count == 1, let scalar = frame.unicodeScalars.first else {
+                XCTFail("\(frame) must be ONE scalar so the mono slot's advance is stable")
+                return
+            }
+            XCTAssertTrue(
+                scalar.isASCII,
+                "\(frame) must be ASCII — a substituted font draws its own idea of the glyph",
             )
-            XCTAssertLessThan(value, previous, "spoke \(behind) behind the lead fades further")
-            previous = value
         }
-        XCTAssertGreaterThan(previous, 0, "even the tail spoke is visible — the ring never breaks")
+        XCTAssertEqual(
+            Set(CommandSpinner.frames).count, CommandSpinner.frames.count,
+            "a rotation repeats no frame — a repeat reads as a stall",
+        )
+    }
+
+    /// ⚠️ Every DINGBAT pulse frame (U+2700…U+27BF — the stars) pins TEXT presentation with
+    /// `\u{FE0E}`. Bare U+2733 `✳` resolves to `AppleColorEmojiUI` on Apple platforms: a colour emoji
+    /// that ignores `foregroundStyle` and measures 16pt of advance where its Menlo siblings measure
+    /// 6.62 — so that one frame flashed a coloured star and jumped the mark's width mid-cycle (and it
+    /// is exactly the frame Reduce Motion freezes on). The selector keeps the whole cycle one
+    /// typeface. `·` (U+00B7) is outside the block and is the mono face's own glyph.
+    func testEveryDingbatPulseFramePinsTextPresentation() {
+        let selector: Unicode.Scalar = "\u{FE0E}"
+        for frame in StatusDot.pulseFrames {
+            guard let first = frame.unicodeScalars.first else {
+                XCTFail("an empty frame renders nothing")
+                return
+            }
+            guard (0x2700...0x27BF).contains(first.value) else { continue }
+            XCTAssertEqual(
+                frame.unicodeScalars.last, selector,
+                "\(frame) must carry VARIATION SELECTOR-15 or it renders as a colour emoji",
+            )
+            XCTAssertEqual(
+                frame.unicodeScalars.count, 2,
+                "\(frame) is one star plus the selector — nothing else belongs in a frame",
+            )
+        }
+        XCTAssertEqual(
+            StatusDot.pulseStillFrame.unicodeScalars.last, selector,
+            "the Reduce-Motion frame is the emoji-prone ✳ — it needs the selector most",
+        )
     }
 
     /// The agent PULSE reuses the app's own `StatusGlyph` breath — the rail and the compact agent
@@ -276,13 +316,16 @@ final class StatusDotTests: XCTestCase {
     /// the state must still be readable when the system asks for stillness.
     func testReduceMotionFreezesBothAnimatedMarksOnALegibleFrame() {
         XCTAssertEqual(
-            StatusDot.pulseStillFrame, "✳",
-            "the frozen breath is the mid-swell asterisk, not the near-invisible dot",
+            StatusDot.pulseStillFrame, "✳\u{FE0E}",
+            "the frozen breath is the mid-swell asterisk (text-pinned), not the near-invisible dot",
         )
         XCTAssertTrue(
             StatusDot.pulseFrames.contains(StatusDot.pulseStillFrame),
             "the still frame is one of the real frames",
         )
-        XCTAssertEqual(SpokeSpinner.stillStep, 0, "a frozen spinner is a complete, evenly-lit wheel")
+        XCTAssertEqual(
+            CommandSpinner.stillFrame, CommandSpinner.frames[0],
+            "a frozen spinner holds a real frame — every line frame carries the same ink",
+        )
     }
 }
