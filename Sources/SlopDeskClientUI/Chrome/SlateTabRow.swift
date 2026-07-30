@@ -5,12 +5,10 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status is the trailing ``StatusDotView`` mark plus, for a live command, the slot's
-// ``CommandSpinner``. The mark column is the AGENT's: the working ring (accent), the resting dashed
-// ring (muted), the raised hand (amber question), the filled dot (green unread finish), the warning
-// triangle (red failure) — a plain shell mounts nothing there, and a busy COMMAND says it in the
-// slot instead, so no row carries two activity marks. Motion means IN FLIGHT and nothing else: a
-// settled rail is perfectly still. The title NEVER
+// Status is the trailing ``StatusDotView`` mark ALONE — one static dashed ring whose HUE names
+// the state (accent = working agent, muted = a code agent at rest, green = unread finish, amber =
+// a question waits, red = failed; a plain shell — busy or not — mounts nothing, the mark being
+// the AGENT's column) — and NOTHING animates. The title NEVER
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
 // coloured ring" the way a mail row reads unread. No row wash, no tinted
@@ -50,13 +48,6 @@ struct SlateTabRow: View {
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
-    /// Whether a plain COMMAND is running in this pane past the busy reveal — the slot swaps its
-    /// still ``processLabel`` for the ``CommandSpinner`` (otty's own row spinner), so "running" reads
-    /// as motion instead of as a process name that looks identical whether the command is live or
-    /// long finished. The command line itself stays in the row's tooltip. Resolved by
-    /// ``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)`` — never set for an
-    /// AGENT row (whose whole state lives in the mark column) or a bare busy shell.
-    var commandRunning: Bool = false
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
@@ -189,10 +180,6 @@ struct SlateTabRow: View {
                         // render as the ring mark, so their rows keep the shell label here.
                         if let badge, StatusPresentation.tabBadge(badge) != nil {
                             TabBadgeView(kind: badge)
-                        } else if commandRunning {
-                            // A live command takes the slot as MOTION (otty's row spinner) — the
-                            // process name it displaces is the thing the wheel is already saying.
-                            CommandSpinner()
                         } else if let processLabel {
                             // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
                             // in the instrument mono at the caption size on the tertiary ink — one

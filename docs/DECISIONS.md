@@ -3252,6 +3252,47 @@ presentation) — the same guard `SlateTabRow` already applies to the title's `�
 the colour-emoji frame those two surfaces have shipped since MERIDIAN. It shares the BEAT with the
 drawn mark and nothing else; one constant is not worth a font dependency at 11pt.
 
+### Round 20 — round 19 is REVERTED whole: the rail goes back to static marks (2026-07-30)
+
+*"Thôi, quay về các indicator tĩnh như ngày xưa đi cho tôi, lúc mà command vẫn chỉ hiện tên command
+đang chạy, các indicator tĩnh ấy."* Rounds 9–10 are reinstated exactly: **ONE shape — the static dashed
+ring — the HUE names the state, a running command shows only its NAME in the slot, and nothing in the
+rail animates.** `AgentWorkingMark`, `CommandSpinner`, `StatusMarkShape`, `RailRowsBuilder`'s spinner
+gate and `SlateTabRow.commandRunning` are all gone; `StatusDotStyle` is one `ink` again.
+
+⚠️ **The whole of round 19 above is kept in this file on purpose, because it is a rejection history, and
+it is the second time the rail has arrived at the same verdict from opposite directions.** Round 9 banned
+motion by argument; round 19 spent a day of iterations proving it by exhaustion — SIX cuts of one 12pt
+mark, every one rejected on looks:
+
+| cut | what it was | why it died |
+|---|---|---|
+| 1 | asterisk bloom, TYPED | the mono face has no star ⇒ `AppleColorEmojiUI` drew a colour emoji at 2.4× the advance |
+| 2 | the same bloom, DRAWN as capsules | at 12pt a radiating star is a burr of spikes; magnified, a cogwheel |
+| 3 | solid arc, comet tail (`AngularGradient`) | a gradient at 12pt spends half its length invisible |
+| 4 | dashed ring turning, arcs splitting into ten and knitting back | the split read as a gimmick; a turning ring is still a spinner |
+| 5 | dashed ring standing still, a LIGHT running through the dashes | calmest of the six, still not it |
+| 6 | solid arc chasing its own tail (Material's indeterminate) | "quay về các indicator tĩnh" |
+
+**What survives the revert, and why each one is worth keeping:**
+
+- ✅ **The `\u{FE0E}` fix in `StatusGlyph`** — a REAL pre-existing bug, unrelated to the rail question:
+  bare U+2733 `✳` resolves to `AppleColorEmojiUI`, a colour emoji that ignores the tint and measures
+  16pt of advance where its Menlo siblings measure 6.62. The iOS toolbar and the Peek & Reply header had
+  been flashing a coloured star at the wrong width since MERIDIAN. Kept, and pinned.
+- ✅ **The rule that a 12pt mark is judged at 12pt, by WATCHING it.** Every cut above looked defensible
+  magnified and cheap at size; the render sheets and the frame-sequence GIFs (`ffmpeg` out of an
+  `ImageRenderer` rig) are what settled each round, not prose. Cheap to rebuild, so the technique is
+  written down rather than the rigs kept.
+- ✅ **The design rules the six cuts bought**, all of which now apply to whatever comes next here: at
+  12pt use FLAT INK and WHOLE SHAPES (gradients and detail are luxuries of the zoomed-in view); a mark
+  this size carries exactly ONE idea; motion in a status column must mean "in flight" or not exist.
+- ⚠️ **`StatusDot.footprint` goes back to 10pt** (round 19 widened it to 12 for the spinner). Anything
+  re-added to this column must fit 10.
+- ❌ **Not kept, deliberately:** the otty pictogram vocabulary (raised hand, warning triangle, `?`/`!`
+  glyphs, the filled finish dot). Every one of them was pulled during round 19 itself for reading as
+  fussy detail at this size, so the revert loses nothing that survived its own round.
+
 ## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
 
 - ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều

@@ -18,11 +18,9 @@ import SwiftUI
 ///   • `awaiting` → `?` bold in the act-now amber (answer me);
 ///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print).
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
-/// header). The sidebar rows speak the same states through their own mark column
-/// (``StatusPresentation/statusDot(working:badge:agentIdle:)``) — a different alphabet for the
-/// resting/awaiting/done readings (dashed ring, closed ring, dot) and a DRAWN ring with a light running
-/// through it for `working` (``AgentWorkingMark`` — a 12pt mark cannot afford a star's spikes, where
-/// this 16pt glyph row can).
+/// header). The sidebar rows speak the same states through the trailing ring mark's hue instead
+/// (``StatusPresentation/statusDot(working:badge:)``) — so no glyph column rides the rail, and nothing
+/// in the rail animates at all.
 /// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
 /// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
 /// Pure SwiftUI text — no video/capture (hang-safety #6).
@@ -51,9 +49,10 @@ struct StatusGlyph: View {
     /// rests on longest). Same trap ``SlateTabRow`` guards for the title's `✳` marker. `·` (U+00B7)
     /// is the mono face's own glyph and needs nothing.
     ///
-    /// The rail's mark column does NOT share these frames — it draws a dashed ring with a light
-    /// travelling through it (``AgentWorkingMark``) because a 12pt mark cannot carry a star's detail. This instrument is 16pt
-    /// in a text row, which can, so the typed bloom stays exactly here.
+    /// ⚠️ The rail's mark column does NOT share these frames and must not be given them: it is a STATIC
+    /// dashed ring whose hue names the state, and a whole round of work (docs/DECISIONS.md round 19/20)
+    /// established that a 12pt mark cannot carry this bloom's detail — nor any other motion worth
+    /// keeping. This instrument is 16pt in a text row, which can, so the typed bloom stays exactly here.
     static let agentFrames = [
         "·", "✢\u{FE0E}", "✳\u{FE0E}", "✶\u{FE0E}", "✻\u{FE0E}",
         "✽\u{FE0E}", "✻\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢\u{FE0E}",

@@ -377,33 +377,6 @@ enum RailRowsBuilder {
         return name.isEmpty ? nil : name
     }
 
-    /// Whether the row's trailing slot swaps its process LABEL for the running-command spinner
-    /// (``SpokeSpinner`` — otty's `NSProgressIndicator` in the same slot): a plain command that has
-    /// been running long enough to matter reads as MOTION rather than as a still process name, which
-    /// stood in the slot looking identical whether the command was running or long finished.
-    ///
-    /// Three exclusions, all load-bearing:
-    ///   * the badge must be a running-COMMAND tier (``TabBadgeKind/commandBusy`` /
-    ///     ``TabBadgeKind/commandRunning``) — that tier IS the reveal gate
-    ///     (``WorkspaceStore/paneShowsBusyDot(_:now:)``, default 1 s), so a fast `ls` never flashes
-    ///     a spinner and a settled row never spins;
-    ///   * an AGENT pane never spins: `claude` holds the shell's OSC-133 block open for its whole
-    ///     interactive lifetime, so `isBusy` stays true for HOURS — a spinner there would run
-    ///     forever, and the mark column already speaks the agent's state (pulse / hand / dot / ring);
-    ///   * the SHELL is not a command: a busy pane fronted by a bare login shell keeps its label
-    ///     (``processDisplayName(_:)`` suppresses those names), as does a pane whose foreground
-    ///     process the host has not reported — with nothing to name, there is nothing to claim is
-    ///     running.
-    ///
-    /// Pure + static so the gate is unit-pinned headlessly, and shared by the macOS + iOS rows so
-    /// the two can't drift.
-    static func showsCommandSpinner(
-        badge: TabBadgeKind?, isAgent: Bool, processLabel: String?,
-    ) -> Bool {
-        guard badge == .commandBusy || badge == .commandRunning, !isAgent else { return false }
-        return processDisplayName(processLabel) != nil
-    }
-
     /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any
     /// braille spinner frame U+2800–U+28FF, or one of `·✢✳✶✻✽`, an optional variation selector, then
     /// whitespace/end) is stripped — the glyph is claude's activity channel, already spoken by the
