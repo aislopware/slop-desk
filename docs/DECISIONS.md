@@ -2937,9 +2937,9 @@ So the mark column keeps its fixed footprint and its one-mark-per-row rule, and 
 |---|---|---|
 | agent working | the breathing asterisk `· ✢ ✳ ✶ ✻ ✽` (0.15 s/frame, palindrome) — ⚠️ **superseded twice by the follow-up below; shipped as the closed turning RING** | accent |
 | agent at rest | the round-8 static dashed ring — UNCHANGED | muted secondary |
-| agent blocked | `hand.raised` — otty's "answer me" hand | amber |
+| agent blocked | `hand.raised` — otty's "answer me" hand — ⚠️ **superseded: now `questionmark.circle`, see follow-up 3** | amber |
 | agent done / unread finish | the filled dot (otty's `circlebadge.fill`) | green |
-| failure | `exclamationmark.triangle.fill` (otty's own) | red |
+| failure | `exclamationmark.triangle.fill` — ⚠️ **superseded: now `exclamationmark.circle`, see follow-up 3** | red |
 | plain running command | **not in this column** — see below | — |
 
 Motion is now permitted, but under a rule narrow enough to keep the round-9 lesson: **a mark may
@@ -3021,15 +3021,38 @@ candidates at true size next to a 4× blow-up showed why, in pixels rather than 
 radiating star is a burr of spikes, and magnified it reads as a cogwheel. **One stroke scales down;
 detail does not.**
 
-So the working mark becomes the RESTING RING, closed: `AgentSweepMark` draws the same circle at the
-same diameter and stroke weight with `drawnFraction` 0.82 — one gap instead of the dashed ring's
-eight — turning 12 steps × 0.08 s ≈ a second a revolution. Which turns the agent's column into ONE
-CIRCLE with three readings: **dashed while it waits at its prompt, closed and turning while it works,
-filled once it has finished something you haven't read.** A progression, not a legend to learn — and
-the two states that need a HUMAN (`✋` question, `⚠` failure) step outside that circle on purpose,
-which is now the mark column's whole grammar. The choice was made from a rendered comparison sheet of
-four drawn candidates (star bloom, arc sweep, travelling gap, orbiting dot); the rig was deleted once
-it had done its job.
+So the working mark becomes the RESTING RING, turning: `AgentSweepMark` draws the same circle at the
+same diameter and stroke weight. Which turns the agent's column into ONE CIRCLE with three readings:
+**dashed while it waits at its prompt, closed and turning while it works, filled once it has finished
+something you haven't read.** A progression, not a legend to learn. The choice was made from a
+rendered comparison sheet of four drawn candidates (star bloom, arc sweep, travelling gap, orbiting
+dot); the rig was deleted once it had done its job.
+
+**Follow-up 3 — the circle takes the last two states, and the rotation stops being plastic.**
+
+The two states needing a HUMAN were left outside the circle as otty's raised hand and warning
+triangle. They are now **inside** it: `questionmark.circle` amber and `exclamationmark.circle` red,
+drawn at the point size whose circle lands on `ringDiameter` rather than at a type-scale size — a `?`
+a point wider than the ring above it breaks the family faster than any hue could. So EVERY mark in the
+column is one silhouette and the INSIDE carries the state, which is the difference between a
+progression and a legend: `◌` waiting · `◯` turning · `?` asking · `!` broken · `●` finished unread.
+`StatusMarkShape.symbol` exposes the two circle variants precisely so a test can pin that a triangle
+never creeps back.
+
+And the rotation is now **continuous, not stepped**. Twelve discrete hops per turn read as plastic — a
+hop is the mechanism showing through, and the eye reads mechanism as cheap. The angle is a smooth
+function of the wall clock sampled per display frame (capped at 60 fps), and two further things move
+with it, which is what separates a thinking indicator from a loading widget: the tail **dissolves**
+(the stroke is an `AngularGradient`, full ink at the head to nothing at the tail, so the figure reads
+as something travelling rather than a gapped shape being rotated), and the arc **breathes** (its
+length oscillates across 0.45…0.78 turns on a 2.3 s sine, deliberately incommensurate with the 0.9 s
+revolution, so the silhouette never repeats and the motion never reads as a loop).
+
+Both derive from the same clock as the rotation, so the mark holds no animation STATE — which is not
+an aesthetic point: a `repeatForever` animation would restart on every chrome tick and snap the arc
+back to the top, and every working row would drift out of phase with its neighbours. `turns(at:)` and
+`length(at:)` are pure and pinned, including that the ramp has **no plateaus** when sampled far finer
+than a frame (a plateau is a hop) and that the two cycles stay incommensurate.
 
 The typed twin that survives is `StatusGlyph` (iOS toolbar, Peek & Reply header): 16pt in a text row,
 where the glyph is the right primitive. Its frames now carry `\u{FE0E}` (variation selector-15, text

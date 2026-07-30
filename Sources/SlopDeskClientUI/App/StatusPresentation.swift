@@ -118,10 +118,12 @@ enum StatusPresentation {
     /// a RESTING CODE AGENT keeps the static DASHED ring on the muted secondary ink (present,
     /// spending no hue); a WORKING AGENT closes that ring and turns it — the accent SWEEP, keyed on
     /// the RAW `.working` status so the badge gate can't kill it (the badge-routed `.running` tier
-    /// reads identically); an unread finish fills it in as the green DOT. The states you must ACT on
-    /// step outside the circle on purpose, wearing otty's own pictograms on their attention ink
-    /// (``attentionInk(_:)`` — the raised HAND for a question, the red TRIANGLE for a failure, and
-    /// the filled dot for the finish). A plain running COMMAND mounts
+    /// reads identically); an unread finish fills it in as the green DOT; and the two states that need
+    /// a HUMAN stay in the same circle with a glyph inside it on their attention ink
+    /// (``attentionInk(_:)`` — `?` amber for a question, `!` red for a failure). EVERY mark in this
+    /// column is that one circle: otty's raised hand and warning triangle shipped first and were
+    /// pulled, because a silhouette per state is a legend, where one circle whose inside changes is a
+    /// progression. A plain running COMMAND mounts
     /// NOTHING here — this column is the AGENT's, and a busy command's motion is the
     /// ``CommandSpinner`` that takes the process-label slot instead
     /// (``RailRowsBuilder/showsCommandSpinner(badge:isAgent:processLabel:)``), so no row ever
@@ -159,15 +161,15 @@ enum StatusPresentation {
         }
     }
 
-    /// The PICTOGRAM an attention state wears in the mark column — otty's own vocabulary, so the
-    /// shape is readable before the hue is (and stays readable to a colour-blind eye): the raised
-    /// HAND for a question waiting on you, the filled DOT for an unread finish (fresh flash and
-    /// settled alike — the split is semantic, never visual), the warning TRIANGLE for a failure.
+    /// The PICTOGRAM an attention state wears in the mark column, readable before the hue is (and so
+    /// still readable to a colour-blind eye) — but always INSIDE the column's one circle: `?` for a
+    /// question waiting on you, `!` for a failure, and the filled DOT for an unread finish (fresh
+    /// flash and settled alike — the split is semantic, never visual).
     /// Non-attention kinds have no pictogram of their own; the resting ring / working sweep are the
     /// resolver's own branches, so this map is only ever reached for the four attention kinds.
     static func attentionShape(_ kind: TabBadgeKind) -> StatusMarkShape {
         switch kind {
-        case .awaitingInput: .hand
+        case .awaitingInput: .question
         case .error: .alert
         case .completed,
              .finished: .dot

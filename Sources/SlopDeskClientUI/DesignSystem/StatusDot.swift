@@ -32,18 +32,32 @@ import SwiftUI
 enum StatusMarkShape: Equatable, Hashable, CaseIterable {
     /// The static dashed ring — a code agent PRESENT and at rest.
     case ring
-    /// The same ring CLOSED, with a gap travelling around it — a WORKING agent. The one animated
-    /// mark in this column.
+    /// The same ring CLOSED, turning — a WORKING agent. The one animated mark in this column.
     case sweep
-    /// The raised hand — a question waits on you.
-    case hand
+    /// The ring with a `?` inside — a question waits on you.
+    case question
     /// The filled dot — an unread finish.
     case dot
-    /// The warning triangle — a failure.
+    /// The ring with a `!` inside — a failure.
     case alert
 
     /// Whether this shape MOVES. Only the working sweep does: a settled rail is motionless.
     var animates: Bool { self == .sweep }
+
+    /// The SF Symbol a shape draws, for the two states that need a HUMAN. Both are CIRCLE variants —
+    /// pinned, because the obvious symbols for these states are otty's raised hand and warning
+    /// TRIANGLE (which is what shipped first), and a triangle breaks the column's one rule: every
+    /// mark is the same circle, so the marks read as a progression instead of a legend. The glyph
+    /// inside carries the meaning the silhouette no longer can. `nil` for the drawn shapes.
+    var symbol: SFSymbol? {
+        switch self {
+        case .question: .questionmarkCircle
+        case .alert: .exclamationmarkCircle
+        case .ring,
+             .sweep,
+             .dot: nil
+        }
+    }
 }
 
 /// The mark's geometry + cadence — pure constants, unit-testable.
@@ -58,9 +72,11 @@ enum StatusDot {
     static let ringDashCount = 8
     /// The drawn fraction of each dash period — lucide's roughly-even dash/gap rhythm.
     static let ringDashFill: CGFloat = 0.6
-    /// The point size the SYMBOL marks (hand, triangle) draw at inside ``footprint`` — one step under
-    /// the row title, so a mark reads as an instrument beside the name rather than competing with it.
-    static let symbolSize: CGFloat = 11
+    /// The point size the two SYMBOL marks (`?`, `!`) draw at inside ``footprint``. Chosen so their
+    /// circle lands on ``ringDiameter`` rather than by type scale: an SF Symbol circle draws at roughly
+    /// 0.8× its point size, and the column's whole premise is that every mark is the SAME circle — a
+    /// `?` a point wider than the ring above it breaks the family faster than any hue could.
+    static let symbolSize: CGFloat = 10
     /// The filled unread-finish dot's diameter — smaller than the ring it replaced: a solid mark
     /// carries more weight per point than an outline one.
     static let dotDiameter: CGFloat = 6
@@ -110,17 +126,18 @@ struct StatusDotView: View {
                 .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
         case .sweep:
             AgentSweepMark(ink: style.ink)
-        case .hand:
-            symbol(.handRaised)
         case .dot:
             Circle()
                 .fill(style.ink)
                 .frame(width: StatusDot.dotDiameter, height: StatusDot.dotDiameter)
-        case .alert:
-            symbol(.exclamationmarkTriangleFill)
+        case .alert,
+             .question:
+            if let symbol = style.shape.symbol { self.symbol(symbol) }
         }
     }
 
+    /// One of the two circle SYMBOLS, drawn to the ring's own optical size so the `?`/`!` circle sits
+    /// at the same diameter as the rings above and below it in the column.
     private func symbol(_ symbol: SFSymbol) -> some View {
         Image(systemSymbol: symbol)
             .font(.system(size: StatusDot.symbolSize, weight: .semibold))
@@ -140,50 +157,93 @@ struct StatusDotView: View {
 /// same bloom DRAWN as six capsules — at this size a radiating star is a burr of spikes, and blown up
 /// it reads as a cogwheel. A single stroke survives scaling; detail does not.
 ///
-/// Stepped (not eased) on ``StatusDot/frame(at:frames:beat:)`` off the fixed epoch, so every working
-/// row turns in unison and a re-render lands mid-rotation instead of restarting it. REDUCE MOTION
-/// freezes it at step 0 — still a closed ring with a gap, which reads as "not at rest" while
-/// standing still.
+/// The motion is CONTINUOUS, not stepped. The first cut advanced the gap in 12 discrete hops and read
+/// as plastic — a hop is a mechanism showing through, and the eye reads mechanism as cheap. So the
+/// angle is a smooth function of the wall clock sampled per display frame, and TWO further things
+/// move with it, which is what separates a thinking indicator from a loading widget:
+///
+///   * the tail DISSOLVES. The stroke is an `AngularGradient` from full ink at the head to nothing at
+///     the tail, so the ring reads as something travelling rather than a gapped shape being rotated —
+///     the trick every modern AI spinner uses, and the reason a hard-ended arc looks mechanical.
+///   * the arc BREATHES. Its length oscillates on a slow sine against the rotation, so the figure
+///     never repeats the same silhouette twice in a row. A fixed-length arc going round at a fixed
+///     rate is the definition of a plastic spinner.
+///
+/// Both derive from the SAME wall clock as the rotation, so nothing needs animation STATE: every
+/// working row in the rail is at the identical phase, and a re-render lands mid-rotation instead of
+/// snapping the gap back to the top (which is exactly what a `repeatForever` animation would do on
+/// every chrome tick). REDUCE MOTION freezes it as a plain static arc.
 struct AgentSweepMark: View {
     var ink: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Steps per revolution — 12 × ``beat`` ≈ one turn per second. Enough that the gap glides rather
-    /// than hops, without paying for a frame nobody can see.
-    static let steps = 12
-    static let beat: Double = 0.08
-    /// The step a REDUCE-MOTION mount freezes on — the gap at the top of the ring.
-    static let stillStep = 0
-    /// The drawn fraction of the circumference: the ring closes except for one gap. Distinct from the
-    /// resting ring at a glance, which spends the SAME ink on eight small gaps instead of one.
-    static let drawnFraction: CGFloat = 0.82
+    /// Seconds per revolution — a touch under a second: brisk enough to say "working", slow enough to
+    /// stay in the corner of the eye rather than pulling it.
+    static let revolution: Double = 0.9
+    /// Seconds per breath of the arc's LENGTH — deliberately not a multiple of ``revolution``, so the
+    /// two cycles drift against each other and the motion never looks like a loop.
+    static let breath: Double = 2.3
+    /// The arc's length in turns, sweeping between these two as it breathes. Never long enough to
+    /// close (a closed ring has nothing to see) nor short enough to read as a dot.
+    static let arcRange: ClosedRange<CGFloat> = 0.45...0.78
+    /// The arc a REDUCE-MOTION mount holds still at — mid-range, gap at the top.
+    static var stillArc: CGFloat { (arcRange.lowerBound + arcRange.upperBound) / 2 }
+    /// The frame ceiling while turning: 60 fps is smooth for a rotation this size, and bounding it
+    /// keeps a rail full of working agents off the display's own 120 Hz treadmill.
+    static let maxFrameInterval: Double = 1.0 / 60
 
     var body: some View {
         Group {
             if reduceMotion {
-                ring(step: Self.stillStep)
+                arc(turns: 0, length: Self.stillArc)
             } else {
-                TimelineView(.periodic(
-                    from: Date(timeIntervalSinceReferenceDate: 0), by: Self.beat,
-                )) { timeline in
-                    ring(step: StatusDot.frame(
-                        at: timeline.date, frames: Self.steps, beat: Self.beat,
-                    ))
+                TimelineView(.animation(minimumInterval: Self.maxFrameInterval)) { timeline in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    arc(turns: Self.turns(at: time), length: Self.length(at: time))
                 }
             }
         }
         .frame(width: StatusDot.footprint, height: StatusDot.footprint)
     }
 
-    private func ring(step: Int) -> some View {
+    /// The rotation for one instant, in TURNS (fractions of a revolution) — pure, so the cadence is
+    /// unit-pinned headlessly and every mount at the same instant is at the same angle.
+    static func turns(at time: TimeInterval) -> Double {
+        guard revolution > 0 else { return 0 }
+        let phase = (time / revolution).truncatingRemainder(dividingBy: 1)
+        return phase < 0 ? phase + 1 : phase
+    }
+
+    /// The arc's length for one instant, oscillating across ``arcRange`` on a sine of ``breath``.
+    /// Pure + clock-derived, so it needs no animation state and stays in unison across rows.
+    static func length(at time: TimeInterval) -> CGFloat {
+        guard breath > 0 else { return stillArc }
+        // Keep the multiply and the add separate — never `addingProduct` (CLAUDE.md bit-exactness).
+        let swing = (sin(time / breath * 2 * .pi) + 1) / 2
+        let span = arcRange.upperBound - arcRange.lowerBound
+        return arcRange.lowerBound + CGFloat(swing) * span
+    }
+
+    private func arc(turns: Double, length: CGFloat) -> some View {
         Circle()
-            .trim(from: 0, to: Self.drawnFraction)
-            .stroke(ink, style: StrokeStyle(
-                lineWidth: StatusDot.ringLineWidth, lineCap: .round,
-            ))
+            .trim(from: 0, to: length)
+            .stroke(
+                // The head carries the ink and the tail dissolves into the ground. The gradient is
+                // laid out in the ROTATED frame (it rides inside `rotationEffect`), so the fade
+                // travels with the arc instead of standing still under it.
+                AngularGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: ink.opacity(0), location: 0),
+                        .init(color: ink.opacity(0.35), location: Double(length) * 0.45),
+                        .init(color: ink, location: Double(length)),
+                    ]),
+                    center: .center,
+                ),
+                style: StrokeStyle(lineWidth: StatusDot.ringLineWidth, lineCap: .round),
+            )
             .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-            .rotationEffect(.degrees(360 / Double(Self.steps) * Double(step)))
+            .rotationEffect(.degrees(turns * 360))
     }
 }
 
