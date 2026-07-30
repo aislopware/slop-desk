@@ -268,12 +268,20 @@ final class SlateSnapshotRender: XCTestCase {
                 store: store, title: "api", projectKey: "/Users/abner/w/api", collapsed: true, count: 2,
                 rows: RailRowsBuilder.rows(for: store),
             )
+            // The two squeeze cases: a long branch WITH a readout (name truncates, sigils fold and pin
+            // right) and the same branch with nothing to report (name truncates alone).
+            SidebarSectionHeaderRow(
+                store: store, title: "long-branch", projectKey: "/Users/abner/w/long", count: 1,
+            )
+            SidebarSectionHeaderRow(
+                store: store, title: "clean-long-branch", projectKey: "/Users/abner/w/clean", count: 1,
+            )
         }
         .padding(8) // the sidebar list's LazyVStack inset
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 360),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 440),
             to: dir, named: "sidebar-section.png",
         )
     }
@@ -363,6 +371,18 @@ final class SlateSnapshotRender: XCTestCase {
         store.projectGitSummary[key] = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 4, staged: 1, modified: 3,
             untracked: 5, conflicted: 2, stash: 1,
+        )
+        // The squeeze case: a branch name far wider than the sidebar, with a full readout behind it —
+        // the header has to truncate the NAME and fold the counts to their sigils, flush right.
+        store.projectGitSummary["/Users/abner/w/long"] = PaneGitSummary(
+            hasRepo: true, branch: "feature/rail-git-line-truncation-behaviour", ahead: 12, behind: 3,
+            changedCount: 9, staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
+        // Same long branch, NOTHING to report — the line is the branch alone, truncating with no
+        // readout pinned beside it.
+        store.projectGitSummary["/Users/abner/w/clean"] = PaneGitSummary(
+            hasRepo: true, branch: "feature/rail-git-line-truncation-behaviour", ahead: 0, behind: 0,
+            changedCount: 0,
         )
         let panes = tabs.compactMap(\.activePane)
         store.setForegroundProcess("claude", for: panes[0])

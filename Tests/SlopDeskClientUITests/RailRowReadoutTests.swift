@@ -251,6 +251,55 @@ final class RailRowReadoutTests: XCTestCase {
         )
     }
 
+    // MARK: - The git line's compact (long-branch) form
+
+    /// When the branch name eats the line, the counts fold to their bare SIGILS instead of truncating
+    /// away with it: same runs, same order, same inks — the number goes, the state stays. The branch
+    /// itself has no compact form (it truncates), so it drops out of the folded readout entirely.
+    func testCompactStatusKeepsSigilsAndDropsCounts() {
+        let busy = PaneGitSummary(
+            hasRepo: true, branch: "feature/a-very-long-branch-name", ahead: 12, behind: 3,
+            changedCount: 9, staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
+        let compact = SidebarSectionHeaderRow.compactStatus(SidebarSectionHeaderRow.gitSegments(busy))
+        XCTAssertEqual(
+            compact.map(\.text), ["↑", "↓", "+", "!", "?", "~", "$"],
+            "every sigil survives the fold; every count goes",
+        )
+        XCTAssertEqual(
+            compact.map(\.ink),
+            [.divergence, .divergence, .staged, .modified, .untracked, .conflicted, .stash],
+            "the fold changes the text, never the ink role",
+        )
+        XCTAssertTrue(
+            compact.allSatisfy { !$0.text.contains(where: \.isNumber) },
+            "no digits survive — width is the whole point",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.gitLine(busy),
+            "feature/a-very-long-branch-name ↑12 ↓3 +30 !4 ?5 ~6 $7",
+            "the counts retreat to the tooltip / a11y line, they are not lost",
+        )
+    }
+
+    /// A quiet repo folds to NOTHING — there are no sigils to keep, so the tight form is just the
+    /// (truncating) branch, and a non-repo has no line at all.
+    func testCompactStatusEmptyWhenNothingToReport() {
+        XCTAssertTrue(
+            SidebarSectionHeaderRow.compactStatus(SidebarSectionHeaderRow.gitSegments(PaneGitSummary(
+                hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 0,
+            ))).isEmpty,
+            "a clean branch has no readout to fold",
+        )
+        XCTAssertNil(
+            SidebarSectionHeaderRow.GitSegment(text: "main", ink: .branch).symbol,
+            "the branch is a name, not a sigil",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.GitSegment(text: "↑12", ink: .divergence).symbol, "↑",
+        )
+    }
+
     /// The four WORKTREE states form a RAMP — `+staged` → `!modified` → `?untracked` → `~conflicted` is
     /// "how far this work is from being committed", and the filter's chromatics sweep it monotonically
     /// (green→yellow→orange→red, hue 126.9°→89.2°→51.5°→9.8° on the default theme) in the SAME order the

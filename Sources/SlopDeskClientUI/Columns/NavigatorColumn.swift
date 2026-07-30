@@ -616,10 +616,8 @@ struct SidebarSectionHeaderRow: View {
                     // made the counts that matter (a conflict, unpushed work) read exactly like the
                     // ones that don't. Each run wears its own ink instead; the mono grid keeps the
                     // line from turning into confetti.
-                    Self.gitDetailText(segments)
+                    Self.gitDetailLine(segments)
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
                         .accessibilityLabel(segments.map(\.text).joined(separator: " "))
                 }
             }
@@ -719,6 +717,14 @@ struct SidebarSectionHeaderRow: View {
     struct GitSegment: Equatable, Sendable {
         let text: String
         let ink: GitInk
+
+        /// The run stripped to its SIGIL — the leading glyph the dialect gives it (`↑2` → `↑`), which
+        /// is the whole run minus the count. `nil` for the branch: it is a NAME, not a sigil, so it
+        /// has no compact form (it truncates instead).
+        var symbol: String? {
+            guard ink != .branch else { return nil }
+            return text.first.map(String.init)
+        }
     }
 
     /// The git line SPLIT into its runs — the dialect above, one segment per sigil. Empty for a
@@ -793,12 +799,62 @@ struct SidebarSectionHeaderRow: View {
         }
     }
 
-    /// The painted line: one `Text` run per segment, space-joined, so the whole thing still truncates
-    /// as a single line (an `HStack` of runs would clip a whole run instead of the tail).
-    static func gitDetailText(_ segments: [GitSegment]) -> Text {
+    /// The STATUS runs stripped to their sigils — `↑2 ↓1 !3` → `↑ ↓ !` — for the line's compact form.
+    /// The counts go; the ink and the weight stay, so a squeezed line still says exactly WHICH states
+    /// are live. The branch is dropped (it has no sigil; it truncates instead), and the full numbers
+    /// stay one hover away in the tooltip. Pure + static so the fold is unit-pinned.
+    static func compactStatus(_ segments: [GitSegment]) -> [GitSegment] {
+        segments.compactMap { segment in
+            segment.symbol.map { GitSegment(text: $0, ink: segment.ink) }
+        }
+    }
+
+    /// The git line as it PAINTS, in the two forms the sidebar's real width asks for.
+    ///
+    /// Roomy: the whole dialect inline, branch then counts. Tight: the BRANCH is the only run that
+    /// truncates (tail — a long branch name loses its end, which is the part that repeats), and the
+    /// counts fold to ``compactStatus(_:)``'s bare sigils pinned flush to the trailing edge, one tight
+    /// cluster with no gaps so they read as a single readout rather than a second sentence.
+    ///
+    /// The tight form exists because one tail-truncating `Text` took the counts down WITH the branch:
+    /// `feature/some-very-long-name…` spelled three more characters of a name you already know and ate
+    /// the readout you were actually watching. Presence is what the sigils report — `↑` says there is
+    /// unpushed work at any width — so the counts survive the squeeze and the numbers retreat to the
+    /// tooltip.
+    @ViewBuilder
+    static func gitDetailLine(_ segments: [GitSegment]) -> some View {
+        let branch = segments.filter { $0.ink == .branch }
+        let status = segments.filter { $0.ink != .branch }
+        if status.isEmpty {
+            gitDetailText(segments)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                gitDetailText(segments)
+                    .lineLimit(1)
+                HStack(spacing: 0) {
+                    gitDetailText(branch)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    // The one gap the tight form keeps: the branch never touches the readout, however
+                    // little room is left for it.
+                    Spacer(minLength: 4)
+                    gitDetailText(compactStatus(status), separator: "")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+    }
+
+    /// The painted line: one `Text` run per segment, joined by `separator`, so the whole thing still
+    /// truncates as a single line (an `HStack` of runs would clip a whole run instead of the tail).
+    /// The compact form passes an EMPTY separator — bare sigils cluster tighter than they space out.
+    static func gitDetailText(_ segments: [GitSegment], separator: String = " ") -> Text {
         var line = AttributedString()
         for (index, segment) in segments.enumerated() {
-            var run = AttributedString(index == 0 ? segment.text : " " + segment.text)
+            var run = AttributedString(index == 0 ? segment.text : separator + segment.text)
             run.foregroundColor = ink(segment.ink)
             run.font = Slate.Typeface.instrument(Slate.Typeface.small, weight: weight(segment.ink))
             line.append(run)
