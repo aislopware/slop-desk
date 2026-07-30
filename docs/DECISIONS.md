@@ -3360,6 +3360,17 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   lot — silently, yielding a path, just the wrong one. Pinned by `VectorIconTests`.
 - ⚠️ **Material duotone fills need EVEN-ODD.** The cup punches its inner wall with a second subpath
   wound the same way as the outer one; non-zero winding fills the hole in solid.
+- ✅ **The generating row's TITLE shimmers too** — a highlight band sweeping across its own glyphs,
+  keyed on the SAME raw-working input the spinner is, so the two can never disagree about which row
+  is alive. The spinner says it in the mark column; the shimmer says it where the eye already is,
+  which is what matters on a rail running several agents at once. It is a MASK, not a recolour: the
+  glyphs keep their shape, weight and ink, and no layout moves. ⚠️ Its floor was set from a render —
+  at 0.55 the unlit title sat BELOW the resting rows' secondary ink, so for most of every pass the
+  row doing the work read dimmer than the ones asleep. Reduce Motion simply drops it, and that costs
+  nothing: it is the second voice on a fact the mark already states.
+- ⚠️ **A layer render photographs an animation's MODEL value**, so a live capture of a shimmering row
+  yields the same frame every time. `SlateTabRow.shimmerPhase` exists for that: the filmstrip and GIF
+  draw the SHIPPING row at pinned instants rather than a mock of it.
 - ✅ **A command's OUTCOME empties the slot beside it.** The disc or the triangle is the row's whole
   news; `make` / `swift` printed next to it is what WAS running, past tense, on a row whose title
   already says it — two words where one was doing the work. Everything still LIVE keeps its label,

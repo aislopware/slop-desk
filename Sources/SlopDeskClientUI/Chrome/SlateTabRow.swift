@@ -63,6 +63,11 @@ struct SlateTabRow: View {
     var isEditing: Bool = false
     /// The row's tooltip text (full cwd / live agent line / last command) — shown on hover via `.help`.
     var helpText: String?
+    /// Pins the working title's shimmer at one point of its lap instead of animating it — the
+    /// SNAPSHOT seam. A moving mark can only be judged by watching it, and a layer render captures
+    /// an animation's MODEL value (its end state), never the frame on screen; without this every
+    /// frame of a filmstrip would be identical. `nil` (every shipping call site) animates.
+    var shimmerPhase: CGFloat?
     var onSelect: () -> Void
     var onClose: () -> Void
     /// Commit the inline rename with the field's current text. No-op default keeps call sites compatible.
@@ -106,6 +111,10 @@ struct SlateTabRow: View {
                     ))
                     .foregroundStyle(titleInk)
                     .lineLimit(1)
+                    // The generating row's title SHIMMERS — the same fact the trailing spinner
+                    // states, said where the eye already is. Keyed on the SAME raw-working input
+                    // the mark is, so the two can never disagree about which row is alive.
+                    .slateShimmer(workingLabel != nil, phase: shimmerPhase)
                     // The state the ink and the AX-hidden trailing mark speak visually, kept
                     // legible for VoiceOver.
                     .accessibilityValue(workingLabel ?? attentionLabel ?? "")

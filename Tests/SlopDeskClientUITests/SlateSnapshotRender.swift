@@ -216,8 +216,9 @@ final class SlateSnapshotRender: XCTestCase {
         }
     }
 
-    /// Rasterize each view as one GIF frame and write a looping animation. Same @2x scale as the PNG
-    /// renders, so the GIF and the filmstrip show the same pixels.
+    /// Rasterize each view as one GIF frame and write a looping animation, through the same hosted
+    /// window the stills use — an animated proof that showed a DIFFERENT rasterizer from the still
+    /// proof would be evidence about the harness, not about the rail.
     @MainActor
     private func renderGIF(
         _ frames: [some View], size: CGSize, delay: Double, to dir: String, named name: String,
@@ -233,10 +234,8 @@ final class SlateSnapshotRender: XCTestCase {
             kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
         ] as CFDictionary)
         for frame in frames {
-            let renderer = ImageRenderer(content: frame.frame(width: size.width, height: size.height))
-            renderer.scale = 2
-            guard let cg = renderer.cgImage else {
-                XCTFail("ImageRenderer produced no frame for \(name)")
+            guard let cg = hostedBitmap(frame, size: size, scale: 2)?.cgImage else {
+                XCTFail("no frame for \(name)")
                 return
             }
             CGImageDestinationAddImage(dest, cg, [
@@ -245,6 +244,62 @@ final class SlateSnapshotRender: XCTestCase {
         }
         XCTAssertTrue(CGImageDestinationFinalize(dest), "GIF finalize failed for \(name)")
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
+    }
+
+    // MARK: - Opt-in render of the WORKING row's title shimmer (filmstrip + animated GIF)
+
+    /// Renders the generating agent's row — the title with a highlight band sweeping across its own
+    /// glyphs — as a phase filmstrip (`working-shimmer.png`) and an animated GIF
+    /// (`working-shimmer.gif`). ⚠️ A still is NOT sufficient evidence for this one, and a live
+    /// capture is not either: `CALayer.render(in:)` photographs an animation's MODEL value, so every
+    /// frame of a running shimmer comes out identical. The rows are drawn at pinned phases through
+    /// `SlateTabRow.shimmerPhase`, which is why that seam exists.
+    @MainActor
+    func testRenderWorkingRowShimmer() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the working shimmer")
+        }
+        let frames = 20
+        let phases = (0..<frames).map { CGFloat($0) / CGFloat(frames) }
+        let width = Slate.Metric.sidebarWidth
+
+        let strip = VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(stride(from: 0, to: frames, by: 2)), id: \.self) {
+                self.workingRow(phase: phases[$0])
+            }
+            // The row it must not be mistaken for: an agent present but idle, holding still.
+            SlateTabRow(
+                title: "refactor the reassembler", active: false, agentMarker: true,
+                agentIdle: true, onSelect: {}, onClose: {},
+            )
+        }
+        .padding(8)
+        .frame(width: width)
+        .background(Slate.Surface.ground)
+        try renderHosted(
+            strip, size: CGSize(width: width, height: 400), to: dir, named: "working-shimmer.png",
+        )
+
+        renderGIF(
+            phases.map { phase in
+                VStack(spacing: 2) { self.workingRow(phase: phase) }
+                    .padding(8)
+                    .frame(width: width)
+                    .background(Slate.Surface.ground)
+            },
+            size: CGSize(width: width, height: 44),
+            delay: Slate.Shimmer.period / Double(frames),
+            to: dir, named: "working-shimmer.gif",
+        )
+    }
+
+    /// The SHIPPING row in its working state, with the shimmer pinned at one instant.
+    @MainActor
+    private func workingRow(phase: CGFloat) -> some View {
+        SlateTabRow(
+            title: "refactor the reassembler", active: false, agentMarker: true,
+            workingLabel: "Agent working", shimmerPhase: phase, onSelect: {}, onClose: {},
+        )
     }
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
@@ -575,6 +630,22 @@ final class SlateSnapshotRender: XCTestCase {
     private func renderHosted(
         _ content: some View, size: CGSize, to dir: String, named name: String, scale: CGFloat = 2,
     ) throws {
+        guard let rep = hostedBitmap(content, size: size, scale: scale),
+              let png = rep.representation(using: .png, properties: [:])
+        else {
+            XCTFail("no PNG for \(name)")
+            return
+        }
+        let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
+        try png.write(to: out)
+        print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
+    }
+
+    /// One hosted rasterization — the shared body of ``renderHosted`` and the hosted GIF frames.
+    @MainActor
+    private func hostedBitmap(
+        _ content: some View, size: CGSize, scale: CGFloat,
+    ) -> NSBitmapImageRep? {
         let host = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
@@ -595,8 +666,8 @@ final class SlateSnapshotRender: XCTestCase {
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0,
         ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
-            XCTFail("no bitmap context for \(name)")
-            return
+            XCTFail("no bitmap context")
+            return nil
         }
         rep.size = size
         // `CALayer.render(in:)` draws top-left-down; an `NSBitmapImageRep` context is bottom-left-up.
@@ -605,14 +676,7 @@ final class SlateSnapshotRender: XCTestCase {
         context.cgContext.scaleBy(x: 1, y: -1)
         host.layer?.render(in: context.cgContext)
         window.orderOut(nil)
-
-        guard let png = rep.representation(using: .png, properties: [:]) else {
-            XCTFail("no PNG for \(name)")
-            return
-        }
-        let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
-        try png.write(to: out)
-        print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
+        return rep
     }
 
     /// Raise the whole layer tree's backing resolution — `CALayer.render(in:)` replays cached
