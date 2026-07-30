@@ -106,7 +106,7 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(8)
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
-        try render(
+        try renderHosted(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 260),
             to: dir, named: "tab-row-badges.png",
         )
@@ -126,14 +126,20 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    // MARK: - Opt-in render of the status marks (sheet + shimmer filmstrip + animated GIF)
+    // MARK: - Opt-in render of the status marks
 
     /// Renders the WHOLE mark vocabulary at true size and magnified (`status-marks.png`) — the only
     /// way to check the transcription of otty's artwork, since a mistyped coordinate parses happily
     /// and is invisible in the values.
     ///
+    /// ⚠️ Rendered through an offscreen WINDOW, not `ImageRenderer`: the working mark is the
+    /// platform's own indeterminate indicator, and `ImageRenderer` cannot rasterize an AppKit-backed
+    /// view at all — it substitutes the unavailable-placeholder tile. `cacheDisplay(in:to:)` on a
+    /// hosted view draws what the app draws, and the window is what makes the indicator animate at
+    /// all (an `NSProgressIndicator` with no window never starts).
+    ///
     /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`.
-    /// Pure SwiftUI shapes — no video/Metal (the hang-safety rule).
+    /// Pure SwiftUI — no video/Metal (the hang-safety rule).
     @MainActor
     func testRenderStatusMarks() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -168,75 +174,7 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(20)
         .frame(width: 780, alignment: .leading)
         .background(Slate.Surface.ground)
-        try render(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
-    }
-
-    /// Renders the agent-thinking mark — ``ShimmerRing``, a highlight sweeping the dashes — as BOTH
-    /// a phase filmstrip (`thinking-ring.png`) and an animated GIF (`thinking-ring.gif`: one lap at
-    /// the real frame rate, because a mark that says "now" can only be judged by watching it move).
-    /// A still frame is NOT sufficient evidence for this mark.
-    @MainActor
-    func testRenderThinkingRing() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the thinking ring")
-        }
-        let frames = 24
-        let phases = (0..<frames).map { Double($0) / Double(frames) * 360 }
-
-        // The filmstrip: the lap laid out flat, true size above magnified, so a still reviewer can
-        // still see WHERE the highlight is at each instant.
-        let strip = VStack(alignment: .leading, spacing: 14) {
-            captioned("true size — 14pt column, the rail's own scale") {
-                HStack(spacing: 6) {
-                    ForEach(phases.indices, id: \.self) { self.shimmer(phases[$0]) }
-                }
-            }
-            captioned("8× — the same frames, magnified") {
-                HStack(spacing: 10) {
-                    ForEach(Array(stride(from: 0, to: frames, by: 3)), id: \.self) {
-                        self.shimmer(phases[$0], zoom: 8)
-                    }
-                }
-            }
-            captioned("REDUCE MOTION's frozen frame, beside the marks it must not be confused with") {
-                HStack(spacing: 18) {
-                    self.shimmer(StatusDot.shimmerFrozenPhase, zoom: 8)
-                    self.still(StatusDotStyle(ink: Slate.Text.secondary), zoom: 8)
-                    self.still(StatusDotStyle(ink: Slate.Status.warn, mark: .awaiting), zoom: 8)
-                    self.still(StatusDotStyle(ink: Slate.Status.ok, mark: .agentFinish), zoom: 8)
-                }
-            }
-        }
-        .padding(20)
-        .frame(width: 900, alignment: .leading)
-        .background(Slate.Surface.ground)
-        try render(strip, size: CGSize(width: 900, height: 340), to: dir, named: "thinking-ring.png")
-
-        // The GIF: one lap at the shipped period, looping forever — the only honest look at it.
-        renderGIF(
-            phases.map { phase in
-                HStack(spacing: 40) {
-                    self.shimmer(phase)
-                    self.shimmer(phase, zoom: 8)
-                }
-                .padding(24)
-                .background(Slate.Surface.ground)
-            },
-            size: CGSize(width: 230, height: 120),
-            delay: StatusDot.shimmerPeriod / Double(frames),
-            to: dir, named: "thinking-ring.gif",
-        )
-    }
-
-    /// The thinking mark at one phase of its sweep (optionally magnified) — drawn from the SHIPPING
-    /// view + ink, so the render cannot flatter a geometry the app doesn't draw.
-    @MainActor
-    private func shimmer(_ phase: Double, zoom: CGFloat = 1) -> some View {
-        zoomed(
-            ShimmerRing(ink: StatusPresentation.thinkingMark.ink, phase: phase)
-                .frame(width: StatusDot.footprint, height: StatusDot.footprint),
-            side: StatusDot.footprint, zoom: zoom,
-        )
+        try renderHosted(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
     }
 
     /// A settled mark at the same scale, for the side-by-side that proves the shimmer can't be
@@ -604,6 +542,42 @@ final class SlateSnapshotRender: XCTestCase {
             Slate.State.shadow // the host's dim scrim role
             panel
         }
+    }
+
+    /// Rasterize through a real (offscreen) window instead of `ImageRenderer`.
+    ///
+    /// ⚠️ `ImageRenderer` silently refuses AppKit-backed views — a `ProgressView`, an
+    /// `NSViewRepresentable` — and draws the yellow unavailable placeholder in their place. Hosting
+    /// the view and calling `cacheDisplay(in:to:)` draws what the app draws. The WINDOW is not
+    /// optional: an `NSProgressIndicator` outside one never starts animating, so it would rasterize
+    /// blank.
+    @MainActor
+    private func renderHosted(
+        _ content: some View, size: CGSize, to dir: String, named name: String,
+    ) throws {
+        let host = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
+        host.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false,
+        )
+        window.contentView = host
+        window.orderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        // One turn of the run loop so the indicator's first frame exists before we photograph it.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            XCTFail("no bitmap rep for \(name)")
+            return
+        }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        window.orderOut(nil)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            XCTFail("no PNG for \(name)")
+            return
+        }
+        let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
+        try png.write(to: out)
+        print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
     }
 
     /// Rasterize `content` at @2x and write a PNG into `dir`. Fails (not skips) if the renderer yields nothing —

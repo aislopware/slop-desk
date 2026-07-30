@@ -1,12 +1,12 @@
 // StatusDotTests — pins the trailing status mark. The HUE names the STATE and the SYMBOL names what
-// happened, in otty's own badge vocabulary (docs/DECISIONS.md round 23): the hand for a waiting
-// question, the filled check for the AGENT's turn ending, the outline check for a background
-// command's clean exit, the alert triangle for a failure, and the dashed ring for an agent that is
-// merely present. The resolver's ladder is the spec: a working agent shimmers its ring (the same
-// raw-working key liveness uses, outranking every badge); a RESTING CODE AGENT rings muted; the
+// happened, in otty's own badge vocabulary (docs/DECISIONS.md round 23): the SPINNER for a working
+// agent, the hand for a waiting question, the filled check for the AGENT's turn ending, the plain
+// disc for a background command's clean exit, the alert triangle for a failure, and the dashed ring
+// for an agent that is merely present. The resolver's ladder is the spec: a working agent spins (the
+// same raw-working key liveness uses, outranking every badge); a RESTING CODE AGENT rings muted; the
 // attention states wear their attention ink — the title never recolours, so the mark's hue is those
 // states' entire rendering; a plain running command, a bare idle shell and privilege-only rows mount
-// nothing. The STATIC contract (nothing but the thinking ring moves) rides the shimmer pins.
+// nothing. The STATIC contract — exactly ONE mark moves — rides the mark pins.
 // Headless VALUE assertions — no render. Ink identity is asserted SELF-consistently against the
 // presentation maps (never absolute colour values — `Color` equality is provider-fragile).
 
@@ -26,7 +26,7 @@ final class StatusDotTests: XCTestCase {
         for badge: TabBadgeKind? in [.commandBusy, .error, .awaitingInput, .finished, .sudo] {
             XCTAssertEqual(
                 StatusPresentation.statusDot(working: true, badge: badge), raw,
-                "working outranks \(String(describing: badge)) — one shimmering ring, always",
+                "working outranks \(String(describing: badge)) — the spinner, always",
             )
         }
         XCTAssertEqual(
@@ -104,15 +104,15 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: - otty's vocabulary (round 23)
 
-    /// ⚠️ The FILLED check is the AGENT's turn ending; a background command's clean exit takes the
-    /// OUTLINE of the same symbol. Both finish tiers read alike: the `.completed` flash and the
-    /// settled `.finished` unread are one reading, since that split is semantic and never visual.
+    /// ⚠️ The CHECK is the AGENT's turn ending; a background command's clean exit takes the plain
+    /// DISC. Both of OUR finish tiers read alike: the `.completed` flash and the settled `.finished`
+    /// unread are one reading, since that split is freshness machinery and never visual.
     ///
-    /// The two-speaker rule (round 21) survives the change of alphabet — it just stopped needing an
-    /// invented geometry to say it. An agent's state is continuous; a command badge is an unread
-    /// receipt the store keeps only for an unfocused pane.
+    /// The two-speaker rule (round 21) is otty's too — it draws its own `completed` as
+    /// `checkmark.circle.fill` and its `finished` as an 8pt filled oval. An agent's state is
+    /// continuous; a command badge is an unread receipt the store keeps only for an unfocused pane.
     @MainActor
-    func testTheAgentsFinishIsFilledAndACommandsIsOutlined() {
+    func testTheAgentsFinishIsACheckAndACommandsIsADisc() {
         for kind: TabBadgeKind in [.completed, .finished] {
             XCTAssertEqual(
                 StatusPresentation.mark(for: kind, agentFinish: true), .agentFinish,
@@ -126,6 +126,10 @@ final class StatusDotTests: XCTestCase {
             XCTAssertEqual(
                 StatusPresentation.mark(for: kind, agentFinish: false), .commandFinish,
                 "\(kind) with no agent finish behind it is a background command's receipt",
+            )
+            XCTAssertEqual(
+                StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false)?.mark,
+                .commandFinish,
             )
         }
         // Filling the check must not change what the mark SAYS — one hue budget across both.
@@ -173,7 +177,9 @@ final class StatusDotTests: XCTestCase {
     }
 
     /// Everything still mid-session keeps the ring — a live agent with nothing to report says only
-    /// that it is there.
+    /// that it is there. ⚠️ `.running` is the exception, and it is not one: the resolver lifts that
+    /// tier to the WORKING mark BEFORE the badge switch, so `mark(for:)`'s answer for it is never
+    /// the one that reaches the row.
     @MainActor
     func testALiveSessionWithNothingToReportKeepsTheRing() {
         for kind: TabBadgeKind in [.running, .commandBusy, .commandRunning, .sudo, .caffeinate] {
@@ -182,10 +188,14 @@ final class StatusDotTests: XCTestCase {
                 "\(kind) is not an outcome — the ring, not a symbol",
             )
         }
-        XCTAssertEqual(StatusPresentation.statusDot(working: true, badge: nil)?.mark, .agentRing)
-        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.mark, .agentRing)
         XCTAssertEqual(
             StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.mark, .agentRing,
+        )
+        XCTAssertEqual(
+            StatusPresentation.statusDot(
+                working: false, badge: .commandBusy, agentIdle: true,
+            )?.mark,
+            .agentRing,
         )
     }
 
@@ -285,34 +295,33 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(StatusDot.symbolWeight, .medium, "otty draws every badge at Medium")
     }
 
-    // MARK: - The thinking shimmer (round 23)
+    // MARK: - The one thing that moves (round 23)
 
-    /// The THINKING agent's mark spends MOTION, not hue: the row title's own primary ink, the same
-    /// ring, shimmering. Two things it must never be — the accent (the rail's hue budget belongs to
-    /// the states that want the eye) and the resting agent's ink (Reduce Motion freezes the sweep,
-    /// and a frozen thinking ring must still not be a resting one).
+    /// The THINKING agent's mark is otty's own: `TabBadge.running` shows a spinning
+    /// `NSProgressIndicator` at the row's trailing edge, and so do we. It spends MOTION, not hue —
+    /// the rail's colour budget belongs to the states that want the eye, and an agent merely
+    /// thinking is answering "is this still alive?", which only movement can answer honestly.
     @MainActor
-    func testTheThinkingRingSpendsMotionNotHue() {
+    func testTheThinkingMarkIsTheSpinner() {
         let thinking = StatusPresentation.statusDot(working: true, badge: nil)
-        XCTAssertEqual(thinking?.mark, .agentRing, "still the ring — motion is not a sixth mark")
-        XCTAssertEqual(thinking?.shimmering, true, "the thinking agent is the one thing that moves")
-        XCTAssertEqual(thinking?.ink, Slate.Text.primary, "the row title's own ink — no hue spent")
+        XCTAssertEqual(thinking?.mark, .working, "otty's answer for this state, and ours")
         XCTAssertNotEqual(
             thinking?.ink, Slate.State.accent, "the accent is no longer the rail's busy voice",
         )
         XCTAssertNotEqual(
-            thinking?.ink,
-            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.ink,
-            "frozen by Reduce Motion, thinking must not collapse into resting",
+            thinking?.mark,
+            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.mark,
+            "working and resting must never collapse into one mark",
         )
+        XCTAssertEqual(StatusDot.spinnerSide, StatusDot.footprint, "otty lays it out at 14×14")
     }
 
-    /// ⚠️ ONLY the raw-working route shimmers. `claude` holds the shell's OSC-133 block open for its
+    /// ⚠️ ONLY the raw-working route moves. `claude` holds the shell's OSC-133 block open for its
     /// whole interactive lifetime, so a busy-means-motion rule would leave every idle agent's row
-    /// moving for HOURS (docs/DECISIONS.md rounds 19, 22, 23) — and a settled rail that twitches is
+    /// spinning for HOURS (docs/DECISIONS.md rounds 19, 22, 23) — and a settled rail that twitches is
     /// the exact failure round 19 was reverted for.
     @MainActor
-    func testNothingSettledShimmers() {
+    func testNothingSettledMoves() {
         let still: [(String, StatusDotStyle?)] = [
             ("resting agent", StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)),
             ("busy shell + agent", StatusPresentation.statusDot(
@@ -327,62 +336,9 @@ final class StatusDotTests: XCTestCase {
         ]
         for (name, style) in still {
             XCTAssertNotNil(style, "\(name) still mounts a mark")
-            XCTAssertEqual(style?.shimmering, false, "\(name) must hold absolutely still")
+            XCTAssertNotEqual(style?.mark, .working, "\(name) must hold absolutely still")
         }
         // The badge-routed agent tier is the SAME reading as raw working — including the motion.
-        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.shimmering, true)
-    }
-
-    /// The highlight is a WINDOW travelling a closed lap, not a fade of the whole ring: it must be
-    /// wide enough that the crest always has a dash under it (eight dashes, so one eighth is the
-    /// floor) and narrow enough to still read as a moving highlight rather than an even glow.
-    func testTheHighlightIsATravellingWindow() {
-        let dashShare = 1 / CGFloat(StatusDot.ringDashCount)
-        XCTAssertGreaterThan(
-            StatusDot.shimmerWindow, dashShare,
-            "narrower than one dash and the crest can fall entirely into a gap",
-        )
-        XCTAssertLessThan(
-            StatusDot.shimmerWindow, 0.5,
-            "half the ring lit at once is a pulse, not a sweep",
-        )
-        XCTAssertGreaterThan(StatusDot.shimmerBase, 0, "the ring survives every instant of the lap")
-        XCTAssertLessThan(
-            StatusDot.shimmerBase, 1, "…and the highlight has somewhere to brighten TO",
-        )
-    }
-
-    /// The gradient closes: it starts and ends dark, with the crest strictly inside the window and
-    /// the stops in order. An angular gradient that ended lit would put a hard seam at the wrap —
-    /// the once-per-lap twitch a settled rail is not allowed to have.
-    @MainActor
-    func testTheSweepClosesWithoutASeam() {
-        let stops = StatusDot.shimmerStops
-        XCTAssertEqual(stops.first?.location, 0)
-        XCTAssertEqual(stops.last?.location, 1)
-        XCTAssertEqual(stops.first?.color, stops.last?.color, "the lap's ends must match")
-        XCTAssertEqual(
-            stops.map(\.location), stops.map(\.location).sorted(), "stops must run in order",
-        )
-        // Exactly one full-strength stop, centred in the window: a band with two crests would read
-        // as two highlights chasing each other round the ring.
-        let crests = stops.filter { $0.color == .white }
-        XCTAssertEqual(crests.count, 1, "one crest per lap")
-        XCTAssertEqual(crests.first?.location, Double(StatusDot.shimmerWindow) / 2, "…and centred")
-        // The ramp is sampled between the ends and the crest — without those the band is a wedge
-        // with a hard edge, which reads as a rendering fault rather than a sweep.
-        XCTAssertGreaterThan(stops.count, 4, "the band needs a ramp, not two edges")
-    }
-
-    /// Reduce Motion parks the highlight at a phase where it is VISIBLE and the period is a real
-    /// duration. A state that exists only as an animation is invisible to someone who asked for
-    /// stillness, so the frozen frame has to still be legibly brighter on one side than the even
-    /// resting ring.
-    func testReduceMotionFreezesOnALitFrame() {
-        XCTAssertGreaterThan(StatusDot.shimmerPeriod, 0)
-        // The parked phase is a MEASURED offset (see the constant): all that can be pinned headlessly
-        // is that it is a real angle inside one lap — the render is the evidence for WHERE it lands.
-        XCTAssertGreaterThan(abs(StatusDot.shimmerFrozenPhase), 0, "0° would park it at 3 o'clock")
-        XCTAssertLessThanOrEqual(abs(StatusDot.shimmerFrozenPhase), 360)
+        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.mark, .working)
     }
 }

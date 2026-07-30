@@ -3313,56 +3313,68 @@ otty pictograms did not:
 
 The user reversed the abstract-geometry line: otty's badge symbols are more elegant than our
 ring/ring/dot, so follow them — but draw them PROPERLY this time, because the earlier attempt to
-follow them produced symbols that were not otty's and looked bad. Agent thinking is the one
-exception, and it becomes a SHIMMER (a coding agent, not a spinner). The rail's mark column now
-speaks otty's vocabulary, measured out of the shipping app rather than guessed:
+follow them produced symbols that were not otty's and looked bad. The rail's mark column now speaks
+otty's `TabBadge` vocabulary, case for case, read out of the shipping app rather than guessed:
 
-| state | mark | where it came from |
+| otty `TabBadge` | what otty draws | ours |
 |---|---|---|
-| agent working | the ring, SHIMMERING | ours — otty spins an `NSProgressIndicator` in the label slot instead |
-| agent at rest | lucide `circle-dashed`, muted | ours — otty draws nothing for a resting agent |
-| question waiting | lucide `hand` | `AgentRegistry.awaitingInputIcon`, an embedded `<svg>`, rendered 14×14, tinted `ottyWarning` |
-| agent's turn ended | `checkmark.circle.fill` | `TabsPanelRowView.draw`, 12pt `NSFontWeightMedium`, `ottySuccess` |
-| command's clean exit | `checkmark.circle` | ours — the same word said lighter (see the two-speaker note) |
-| failure | `exclamationmark.triangle.fill` | `TabsPanelRowView.draw`, 11pt Medium, `ottyDanger` |
-| sudo | `shield.fill` | ditto, 11pt Medium — replaces our `#` |
-| caffeinate | Material duotone cup | `PrivilegeIconSVG.caffeinate`, an embedded `<svg>` — replaces our `∞` |
+| `running` (tag 0) | a spinning `NSProgressIndicator`, **14×14**, 8pt in from the row's trailing edge | agent working |
+| `completed` (tag 1) | `checkmark.circle.fill`, 12pt `NSFontWeightMedium`, `ottySuccess` | the AGENT's turn ended |
+| `finished` (tag 2) | a plain filled **8pt** oval | a background COMMAND's clean exit |
+| `error` (tag 3) | `exclamationmark.triangle.fill`, 11pt Medium, `ottyDanger` | a failure |
+| `caffeinate` (tag 4) | a Material duotone cup (`PrivilegeIconSVG.caffeinate`, an embedded `<svg>`) | caffeinate — replaces our `∞` |
+| `awaitingInput` (tag 5) | lucide `hand` (`AgentRegistry.awaitingInputIcon`, an embedded `<svg>`), 14×14, `ottyWarning` | a question waiting |
+| `sudo` (tag 6) | `shield.fill`, 11pt Medium | sudo — replaces our `#` |
+
+Plus ONE mark that is ours, because otty has no need for it: an agent that is merely PRESENT takes
+lucide `circle-dashed`, muted. otty draws nothing there; our rail needs it, because `claude` sitting
+at its prompt is otherwise indistinguishable from a shell that has been busy for an hour.
 
 - ⚠️⚠️ **"Follow otty" failed last time because we redrew otty's icons by eye.** Two of them are not
   system symbols at all — they are literal SVG path data compiled into the app — so the nearest
   look-alike is a different icon, not a rounding error. The fix is a path-data reader
-  (`SVGPath`, `VectorIcon.swift`) and the `d` strings kept VERBATIM in `OttyIcon`. The two that ARE
+  (`SVGPath`, `VectorIcon.swift`) and the `d` strings kept VERBATIM in `OttyIcon`. The ones that ARE
   system symbols are mounted with `Image(systemName:)` at otty's own point size and weight, which
   makes them Apple's artwork exactly rather than a copy of it.
-- ⚠️⚠️ **The other half of "it looked bad" was the SIZE.** otty renders every badge into a 14×14 box;
+- ⚠️⚠️ **The other half of "it looked bad" was the SIZE.** otty lays every badge out in a 14×14 box;
   rounds 19–21 squeezed the same silhouettes into an 8pt column and pulled them for reading as fussy
   detail. `StatusDot.footprint` is now 14 — otty's box, undivided — and the ring grew 8 → 10 to sit
   with a 12pt filled check. The "three marks is the ceiling" pin from round 21 is SUPERSEDED: the
   ceiling was a symptom of the column being too small for a silhouette to survive in.
-- ✅ **Round 21's two speakers survive the change of alphabet**, and stop needing an invented geometry
-  to say it: the AGENT's finish fills the check, a background command's clean exit outlines it. The
-  reason is unchanged — an agent's state is continuous and survives being looked at, while a command
-  badge is an unread receipt the store keeps only for an UNFOCUSED pane and drops on focus. otty
-  itself fuses the two into one `completed` badge; we keep the split because the weight is free.
-- ✅ **Thinking SHIMMERS**: a highlight sweeping the dashes, on the row title's own ink, replacing
-  round 22's radial pump. Everything round 22 decided still holds — motion instead of hue, the gate on
-  RAW `.working` (never `isBusy`: `claude` holds the OSC-133 block open for its whole lifetime, so
-  busy-means-motion would move every idle agent's row for hours), Reduce Motion FREEZES on a lit frame
-  rather than hiding the mark. What changes is the mark's own geometry: the ring no longer moves, so
-  the column stops being sized by an excursion.
-- ⚠️ **The shimmer's two constants were set from RENDERS, not from reasoning.** At a 0.28 window it lit
-  ONE dash and read as a defect; at a 0.34 base the unlit ring landed on top of the resting ring's
-  muted ink, so a thinking row and a sleeping row were the same picture for most of every lap. Shipped
-  at 0.45 / 0.62. The parked Reduce-Motion phase (−171°) is likewise measured — SwiftUI's angular
-  gradient starts at 3 o'clock and the crest sits half a window in.
+- ⚠️⚠️ **The working mark is the PLATFORM's indeterminate indicator, not a shape of ours.** That is
+  what otty shows for `running`, and it is what this rail shows now. Round 19's hand-rolled
+  `SpokeSpinner` and round 22's radial pump and this round's first attempt (a shimmer sweeping the
+  ring's dashes) are all gone: they were inventions where the app being copied simply uses the
+  system spinner. Nothing about it is ours to tune — no ink, no cadence, no frozen frame — and
+  Reduce Motion becomes the platform's call, which is correct for the platform's own control.
+- ✅ **Round 21's two speakers turn out to be otty's split as well**, drawn the same way: the AGENT's
+  finish is the check, a background command's clean exit is the plain disc. The reason is unchanged —
+  an agent's state is continuous and survives being looked at, while a command badge is an unread
+  receipt the store keeps only for an UNFOCUSED pane and drops on focus. (Our `.completed` /
+  `.finished` split stays semantic — freshness machinery — and both resolve to the same mark.)
+- ✅ **Everything round 22 decided still holds**: motion instead of hue, and the gate on RAW
+  `.working` — never `isBusy`, because `claude` holds the OSC-133 block open for its whole lifetime,
+  so busy-means-motion would move every idle agent's row for hours. Exactly one mark moves.
 - ⚠️ **The path reader's one real trap: an arc's two flags are ONE CHARACTER each.** Minified data may
   pack them against the coordinate that follows (`a2 2 0 014 0`), and a number-shaped read swallows the
   lot — silently, yielding a path, just the wrong one. Pinned by `VectorIconTests`.
 - ⚠️ **Material duotone fills need EVEN-ODD.** The cup punches its inner wall with a second subpath
   wound the same way as the outer one; non-zero winding fills the hole in solid.
-- ✅ **Judged by rendering.** `SlateSnapshotRender.testRenderStatusMarks` writes the whole vocabulary
-  at true size and 8×, and `testRenderThinkingRing` writes both a filmstrip and an animated GIF. A
-  mistyped coordinate parses happily and is invisible in the values.
+- ⚠️⚠️ **`ImageRenderer` CANNOT rasterize the spinner** — it silently substitutes the yellow
+  unavailable-placeholder tile for any AppKit-backed view. `SlateSnapshotRender.renderHosted` draws
+  through an `NSHostingView` in a real offscreen `NSWindow` and `cacheDisplay(in:to:)` instead; the
+  WINDOW is not optional, because an `NSProgressIndicator` outside one never starts animating.
+- ✅ **Judged by rendering.** `testRenderStatusMarks` writes the whole vocabulary at true size and 8×.
+  A mistyped coordinate parses happily and is invisible in the values.
+
+⚠️ **How the symbols were measured**, so the next round does not guess:
+`nm -a … | swift demangle | grep -i badge` finds `TabsPanelRowView.cached*Badge`; `otool -tV -p
+'…TabsPanelRowViewC4draw…Tf4dn_n'` shows each `imageWithSystemSymbolName:` beside its
+`configurationWithPointSize:weight:`. Names of 15 characters or fewer are NOT in the literal pool —
+they are small strings built by `mov`/`movk`, little-endian ASCII (`0x662e646c65696873` = `shield.f`).
+`strings -a … | grep '<svg>'` yields the 20 embedded icons. Case names come out of
+`__TEXT,__swift5_reflstr`. Tints are `NSColor.ottySuccess` / `ottyWarning` / `ottyDanger` off
+`UiThemeJson.semanticCache` — the same green/amber/red budget the rail already spends.
 
 ### Round 22 — thinking is the one thing in the present tense, so it MOVES (2026-07-30)
 

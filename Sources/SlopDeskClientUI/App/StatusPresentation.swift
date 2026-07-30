@@ -123,14 +123,14 @@ enum StatusPresentation {
     /// it needs no hue at all — and everything settled holds still. The HUE names the STATE, the
     /// SYMBOL names what happened (``mark(for:agentFinish:)``).
     ///
-    /// The ladder: a WORKING AGENT SHIMMERS its ring (``thinkingMark`` — keyed on the RAW `.working`
-    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads identically);
-    /// a RESTING CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting
-    /// question raises otty's amber HAND; the agent's own FINISH takes the filled check on green. A
-    /// COMMAND's outcome instead takes the OUTLINE check (clean exit) or the alert triangle
-    /// (failure) — the same words said lighter, because a command badge is an unread receipt for an
-    /// event, not the state of something alive (the store records it only for an UNFOCUSED pane and
-    /// clears it on focus).
+    /// The ladder: a WORKING AGENT SPINS (``thinkingMark`` — keyed on the RAW `.working` status, so
+    /// the badge gate can't kill it; the badge-routed `.running` tier reads identically); a RESTING
+    /// CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting question
+    /// raises otty's amber HAND; the agent's own FINISH takes the filled check on green. A
+    /// COMMAND's outcome instead takes the plain DISC (clean exit) or the alert triangle (failure),
+    /// because a command badge is an unread receipt for an event, not the state of something alive
+    /// (the store records it only for an UNFOCUSED pane and clears it on focus) — a split otty
+    /// draws the same way, `completed` as a check and `finished` as a disc.
     ///
     /// A plain RUNNING command still marks NOTHING: the ring is the agent's column, and a muted ring
     /// on every `npm run dev` row spent it on the one thing the row's own running title already says.
@@ -174,7 +174,8 @@ enum StatusPresentation {
         }
     }
 
-    /// The THINKING agent's mark — the agent ring, SHIMMERING, on the row title's own primary ink.
+    /// The THINKING agent's mark — otty's spinner, which is otty's own answer for exactly this
+    /// state (`TabBadge.running` shows a 14×14 `NSProgressIndicator` at the row's trailing edge).
     ///
     /// It spends NO hue, and that is the point twice over. The rail's hue budget buys attention
     /// states (amber question, green finish, red failure); an agent merely thinking is not a state
@@ -183,11 +184,11 @@ enum StatusPresentation {
     /// so the working row spends movement instead of colour, and the whole colour budget stays with
     /// the rows that actually need you.
     ///
-    /// The primary ink (over the resting ring's secondary) also keeps the two legible APART when
-    /// Reduce Motion freezes the sweep: working and resting must never collapse into one mark.
+    /// The ink is carried for the value's sake only: the platform indicator paints itself, which is
+    /// what makes it the same spinner as every other spinner on the machine.
     @MainActor
     static var thinkingMark: StatusDotStyle {
-        StatusDotStyle(ink: Slate.Text.primary, mark: .agentRing, shimmering: true)
+        StatusDotStyle(ink: Slate.Text.primary, mark: .working)
     }
 
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue
@@ -196,9 +197,9 @@ enum StatusPresentation {
     ///  * a failure takes the alert TRIANGLE (always a command's: `.error` can only come from a
     ///    non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose status has no error
     ///    case).
-    ///  * a finish takes the CHECK — filled when it is the AGENT's turn ending (both the fresh
-    ///    `.completed` flash and the settled `.finished` unread; that split is semantic, never
-    ///    visual), outlined when it is a background command's clean exit.
+    ///  * a finish takes the CHECK when it is the AGENT's turn ending (both the fresh `.completed`
+    ///    flash and the settled `.finished` unread — OUR split there is semantic, never visual) and
+    ///    the plain DISC when it is a background command's clean exit.
     ///  * a waiting question raises the HAND, otty's own awaiting badge.
     ///  * everything else keeps the agent ring: a live session with nothing to report.
     ///
