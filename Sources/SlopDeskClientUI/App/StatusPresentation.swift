@@ -126,11 +126,12 @@ enum StatusPresentation {
     /// The ladder: a WORKING AGENT SPINS (``thinkingMark`` — keyed on the RAW `.working` status, so
     /// the badge gate can't kill it; the badge-routed `.running` tier reads identically); a RESTING
     /// CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting question
-    /// raises otty's amber HAND; the agent's own FINISH takes the filled check on green. A
-    /// COMMAND's outcome instead takes the plain DISC (clean exit) or the alert triangle (failure),
-    /// because a command badge is an unread receipt for an event, not the state of something alive
-    /// (the store records it only for an UNFOCUSED pane and clears it on focus) — a split otty
-    /// draws the same way, `completed` as a check and `finished` as a disc.
+    /// raises otty's amber HAND; the agent's own FINISH takes the filled check on green.
+    ///
+    /// ⚠️ A COMMAND's outcome mounts NO mark (round 24) — it speaks in the trailing SLOT, as the
+    /// command's own name in the outcome's ink (``commandOutcome(badge:agentFinish:)``). The mark
+    /// column is the agent's alone, so a row whose only news is `make` failing falls back here to
+    /// whatever the AGENT in that pane is doing (usually nothing).
     ///
     /// A plain RUNNING command still marks NOTHING: the ring is the agent's column, and a muted ring
     /// on every `npm run dev` row spent it on the one thing the row's own running title already says.
@@ -161,9 +162,11 @@ enum StatusPresentation {
              .completed,
              .error,
              .finished:
-            return attentionInk(badge).map {
-                StatusDotStyle(ink: $0, mark: mark(for: badge, agentFinish: agentFinish))
-            }
+            // A command's outcome has no mark of its own — `mark(for:)` returns nil for it and the
+            // row falls back to the agent's own reading, so the two voices can never both fire.
+            guard let mark = mark(for: badge, agentFinish: agentFinish), let ink = attentionInk(badge)
+            else { return resting }
+            return StatusDotStyle(ink: ink, mark: mark)
         // A busy shell says nothing of its own (the row's title already names the command) and the
         // privilege modifiers are slot text, not lifecycle — both fall through to whether a code
         // agent is resting in this pane.
@@ -191,42 +194,30 @@ enum StatusPresentation {
         StatusDotStyle(ink: Slate.Text.primary, mark: .working)
     }
 
-    /// Whether this mark makes the row's PROCESS LABEL redundant, so the slot beside it stays empty.
-    ///
-    /// A command's outcome — the disc for a clean exit, the triangle for a failure — is the row's
-    /// whole news. The process name next to it (`make`, `swift`) is what was running, in the past
-    /// tense, on a row whose title already says what it was; printing it beside the mark just puts
-    /// two words where one is doing the work. Everything still LIVE keeps its label: a running
-    /// command's name is current information, which is why the busy tiers are untouched here.
-    static func markSpeaksForTheSlot(_ style: StatusDotStyle?) -> Bool {
-        switch style?.mark {
-        case .commandFinish,
-             .failure: true
-        default: false
-        }
-    }
-
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue
-    /// having already named the state:
+    /// having already named the state, or `nil` for a state that has no mark at all:
     ///
-    ///  * a failure takes the alert TRIANGLE (always a command's: `.error` can only come from a
-    ///    non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose status has no error
-    ///    case).
     ///  * a finish takes the CHECK when it is the AGENT's turn ending (both the fresh `.completed`
-    ///    flash and the settled `.finished` unread — OUR split there is semantic, never visual) and
-    ///    the plain DISC when it is a background command's clean exit.
+    ///    flash and the settled `.finished` unread — OUR split there is semantic, never visual).
     ///  * a waiting question raises the HAND, otty's own awaiting badge.
+    ///  * a COMMAND's outcome — a clean exit, or a failure (`.error` is always a command's: it can
+    ///    only come from a non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose
+    ///    status has no error case) — draws NOTHING. It is the trailing slot's line now
+    ///    (``commandOutcome(badge:agentFinish:)``), where it can name the command instead of
+    ///    miming it.
     ///  * everything else keeps the agent ring: a live session with nothing to report.
     ///
     /// ⚠️ This set is otty's, and adding to it needs the same bar otty's clears: a silhouette may
     /// only say what the hue cannot. An earlier round invented pictograms per state (`?`, `!`, a
     /// hand-drawn hand) and pulled all of them for reading as fussy detail (docs/DECISIONS.md
-    /// rounds 19–21) — the fix was the size and the fidelity, not the idea (round 23).
-    static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark {
+    /// rounds 19–21) — the fix was the size and the fidelity, not the idea (round 23). Round 24
+    /// then took the command tiers OUT of the set: a disc and a triangle were spending the reader's
+    /// glyph budget to say what a bold or a red word says better.
+    static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark? {
         switch kind {
-        case .error: .failure
+        case .error: nil
         case .completed,
-             .finished: agentFinish ? .agentFinish : .commandFinish
+             .finished: agentFinish ? .agentFinish : nil
         case .awaitingInput: .awaiting
         case .caffeinate,
              .commandBusy,
@@ -235,6 +226,45 @@ enum StatusPresentation {
              .sudo: .agentRing
         }
     }
+
+    // MARK: Command outcome
+
+    typealias CommandOutcome = RailRowsBuilder.CommandOutcome
+
+    /// Whether this badge is a COMMAND's outcome, and which one — the trailing slot's reading.
+    ///
+    /// A finish badge fuses the agent's turn ending with a plain command's exit, so `agentFinish`
+    /// (``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``) decides which speaker it is:
+    /// the agent's finish is the check in the mark column, a command's is this. `.error` is always a
+    /// command's. `nil` for every live / privilege tier — an outcome is a finished fact.
+    ///
+    /// This and ``mark(for:agentFinish:)`` partition the badge set between the row's two voices: a
+    /// badge that resolves to an outcome here mounts no mark, and vice versa. The rule itself lives
+    /// with the receipt (``RailRowsBuilder/commandOutcome(badge:agentFinish:)``), so the mark
+    /// resolver and the slot's text can never disagree about who is speaking.
+    static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
+        RailRowsBuilder.commandOutcome(badge: badge, agentFinish: agentFinish)
+    }
+
+    /// The INK a command's outcome reads in — the git line's own two-register answer
+    /// (``NavigatorColumn`` `GitInk`, round 17→`1b289043`): a fact that needs you is BRIGHT, and the
+    /// only hue left in the readout is the red that means broken.
+    ///
+    /// A clean exit takes the primary text ink — one full step above the tertiary metadata grey the
+    /// resting slot rests on, which is the whole signal: this row DID something. Green was tried in
+    /// the mark and is not worth a colour here; "it worked" is the expected outcome, and spending a
+    /// hue on the expected leaves nothing to spend on the exception.
+    static func outcomeInk(_ outcome: CommandOutcome) -> Color {
+        switch outcome {
+        case .succeeded: Slate.Text.primary
+        case .failed: Slate.Status.err
+        }
+    }
+
+    /// The WEIGHT a command's outcome reads at — bold, both outcomes, exactly as the git line sets
+    /// its counts. At the 10pt instrument size a regular weight leaves the brightness step alone
+    /// carrying the signal, and it isn't enough.
+    static let outcomeWeight: Font.Weight = .bold
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers, drawn as
     /// otty draws them: a SHIELD for sudo, a CUP for caffeinate, both muted. They used to be the

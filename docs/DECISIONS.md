@@ -3309,6 +3309,46 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 24 — a command's outcome is a WORD, not a mark (2026-07-31)
+
+The user pulled the command-outcome indicator outright: drop the mark, and let the text at the row's
+trailing edge carry the exit instead — a clean one in the git line's own register (bold, text
+foreground), a non-zero one in red. Round 21's two speakers survive with one of them moved off the
+mark column: the ring/check/hand/spinner column is now the AGENT's alone, and a COMMAND's exit is the
+trailing slot's text, reading the command's own name (`make`, `swift`, `deploy.sh`).
+
+- ✅ **A mark could not name the command; a word does both jobs at once.** The disc said "something
+  you didn't watch has ended" and the triangle "something broke", and in both cases the reader's next
+  question was *what*. Round 23's own decision to EMPTY the slot beside the mark (`d3e68936`) is what
+  made this obvious: the row was already giving up its only naming space to keep a glyph that named
+  nothing. `make` in red is one glance, and it is strictly more information than the triangle was.
+- ✅ **The register is the git line's** (round 17 → `1b289043`), not a new one: the same instrument
+  mono at the same caption size the resting process label uses, stepped up to the primary ink and
+  BOLD. Only the register changes between "what is running here" and "what just finished here", so
+  the slot never becomes a second alphabet — and a settled rail still reads as one column of text.
+- ⚠️ **Red is the only hue spent, and success gets NONE.** Green was tried as the disc's ink and is
+  not worth carrying over: a clean exit is the expected outcome, and hue spent on the expected leaves
+  nothing for the exception. Brightness + weight carries "this row did something"; red carries
+  "and it broke" — the same two-register answer the git counts settled on.
+- ⚠️⚠️ **A badge now has exactly ONE voice, and that is pinned.** `StatusPresentation.mark(for:)`
+  returns `nil` for the command tiers and `commandOutcome(badge:agentFinish:)` returns `nil` for
+  everything the mark speaks for; `testEveryBadgeHasExactlyOneVoice` walks all nine kinds × both
+  finish owners asserting they never both fire. Without that pin the obvious "restore the dot too"
+  edit reads as additive and lands as the same news twice in two dialects.
+- ⚠️ **The failed block's attribution moved into the builder** (`RailRowsBuilder.failedBlock`) because
+  a SECOND consumer now needs it. The gate is unchanged and still load-bearing: `.error` is reachable
+  from a live `OSC 9;4;2` whose block is still OPEN, so `blocks.last(where: \.isFailed)` would name an
+  older, unrelated command. Unattributed failures fall back to the foreground process — red without a
+  culprit beats red with the wrong one.
+- ⚠️ **The name is the command's FIRST real word, basenamed**, with a leading `sudo` and leading
+  `KEY=value` env assignments skipped. The slot is one narrow column beside a title that must
+  truncate last, so arguments stay in the tooltip; `sudo` in particular would restate the privilege
+  badge two glyphs away.
+- ✅ **`StatusMark.commandFinish` / `.failure` are DELETED, not left unreachable**, along with
+  `dotDiameter` and `markSpeaksForTheSlot`. A dead case in this enum is an invitation to re-mount it.
+- ✅ **Judged by rendering.** `testRenderTabRowBadges` now carries both receipts, so the red word and
+  the bold word are checked at true size next to the agent marks that stayed.
+
 ### Round 23 — the marks are otty's, TRANSCRIBED not approximated (2026-07-30)
 
 The user reversed the abstract-geometry line: otty's badge symbols are more elegant than our
@@ -3320,8 +3360,8 @@ otty's `TabBadge` vocabulary, case for case, read out of the shipping app rather
 |---|---|---|
 | `running` (tag 0) | a spinning `NSProgressIndicator`, **14×14**, 8pt in from the row's trailing edge | agent working |
 | `completed` (tag 1) | `checkmark.circle.fill`, 12pt `NSFontWeightMedium`, `ottySuccess` | the AGENT's turn ended |
-| `finished` (tag 2) | a plain filled **8pt** oval | a background COMMAND's clean exit |
-| `error` (tag 3) | `exclamationmark.triangle.fill`, 11pt Medium, `ottyDanger` | a failure |
+| `finished` (tag 2) | a plain filled **8pt** oval | a background COMMAND's clean exit — *dropped in round 24; the slot names it instead* |
+| `error` (tag 3) | `exclamationmark.triangle.fill`, 11pt Medium, `ottyDanger` | a failure — *dropped in round 24; the slot names it in red* |
 | `caffeinate` (tag 4) | a Material duotone cup (`PrivilegeIconSVG.caffeinate`, an embedded `<svg>`) | caffeinate — replaces our `∞` |
 | `awaitingInput` (tag 5) | lucide `hand` (`AgentRegistry.awaitingInputIcon`, an embedded `<svg>`), 14×14, `ottyWarning` | a question waiting |
 | `sudo` (tag 6) | `shield.fill`, 11pt Medium | sudo — replaces our `#` |
@@ -3393,6 +3433,8 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   news; `make` / `swift` printed next to it is what WAS running, past tense, on a row whose title
   already says it — two words where one was doing the work. Everything still LIVE keeps its label,
   because a running command's name is current information (`markSpeaksForTheSlot`).
+  **SUPERSEDED by round 24**: giving up the slot to keep a glyph that names nothing was the tell —
+  the outcome IS the word now, and the marks (and `markSpeaksForTheSlot`) are gone.
 - ⚠️⚠️ **The spinner's APPEARANCE has to be set on the control.** `ProgressView` came out dark grey
   on a dark theme, and neither obvious fix moved it: `\.colorScheme` in the environment is SwiftUI's
   own notion, and the WINDOW's `NSAppearance` is pinned by `SlopDeskSplitViewController` but

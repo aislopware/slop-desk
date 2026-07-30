@@ -1,7 +1,6 @@
 // StatusDot — the sidebar row's trailing status mark: one fixed right-edge column, one hue budget.
 // The HUE names the state — muted = a resting agent, green = an unread finish, amber = a question
-// waiting, red = failed — and the title never recolours: the mark column is the rail's whole
-// status voice.
+// waiting — and the title never recolours: the mark column is the AGENT's whole status voice.
 //
 // The vocabulary is otty's, transcribed rather than approximated (docs/DECISIONS.md round 23), and
 // it is otty's `TabBadge` case for case — read out of the shipping app, not guessed at:
@@ -9,11 +8,6 @@
 //   * `running` — a spinning `NSProgressIndicator`, 14×14, at the row's right edge. otty's OWN
 //     answer for "the agent is generating right now", and the one this rail now uses.
 //   * `completed` — `checkmark.circle.fill` at 12pt Medium. The AGENT's turn ending.
-//   * `finished` — a plain filled 8pt disc. A background COMMAND's clean exit. otty draws these two
-//     differently, which is round 21's two speakers arrived at independently: an agent's state is
-//     continuous and survives being looked at, while a command badge is an unread RECEIPT the store
-//     keeps only for an unfocused pane and drops the moment you visit it.
-//   * `error` — `exclamationmark.triangle.fill` at 11pt Medium.
 //   * `awaitingInput` — lucide `hand`, carried as the literal path data otty embeds
 //     (``OttyIcon/hand``). A question is waiting on a person.
 //
@@ -21,6 +15,13 @@
 // takes lucide `circle-dashed`, muted. otty draws nothing there; our rail needs it, because
 // `claude` sitting at its prompt is otherwise indistinguishable from a shell that has been busy for
 // an hour.
+//
+// ⚠️ A COMMAND's outcome has no mark here at all (round 24). It used to take otty's two — the plain
+// disc for a clean exit, the alert triangle for a failure — and the row printed a symbol where the
+// slot beside it was going empty anyway. A command's exit is a fact about a NAME (`make` passed,
+// `make` failed), so it reads as that name in the trailing slot instead, on the git line's register:
+// bright + bold for the exit that worked, red for the one that didn't. One less glyph vocabulary to
+// learn, and the row now says WHAT finished rather than only that something did.
 //
 // ONE state moves — the spinner — and everything settled holds absolutely still (round 19's lesson
 // survives: a settled rail must not twitch).
@@ -60,14 +61,13 @@ enum StatusDot {
 
     /// The finish mark's point size — otty configures `checkmark.circle.fill` at exactly this.
     static let finishSymbolSize: CGFloat = 12
-    /// The failure mark's point size — otty configures `exclamationmark.triangle.fill` at this,
-    /// a point smaller than the finish. A triangle at equal point size out-weighs a circle.
-    static let alertSymbolSize: CGFloat = 11
+    /// The size otty gives its other badge symbols — a point smaller than the finish, because a
+    /// filled straight-edged glyph out-weighs a circle at equal point size. The privilege shield
+    /// (``TabBadgeView``) is the one left that uses it.
+    static let badgeSymbolSize: CGFloat = 11
     /// otty renders every badge at `NSFontWeightMedium`. Not `.regular`: at 11pt a regular-weight
     /// symbol goes thin enough on a muted ink to read as smudge rather than mark.
     static let symbolWeight: Font.Weight = .medium
-    /// The command-outcome disc's diameter — otty fills an 8×8 oval for its `finished` badge.
-    static let dotDiameter: CGFloat = 8
     /// The side lucide `hand` is drawn into — otty's badge box, undivided (an outlined glyph needs
     /// the whole box; a system symbol already carries its own margin inside one).
     static let handSide: CGFloat = 14
@@ -78,7 +78,8 @@ enum StatusDot {
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
-/// for. See this file's header for what each one is allowed to say.
+/// for. See this file's header for what each one is allowed to say. Every case here is an AGENT's:
+/// a command's outcome speaks in the trailing slot as text (``CommandReceipt``), not as a mark.
 enum StatusMark: Equatable {
     /// The agent is generating RIGHT NOW — otty's spinner. The only thing on this rail that moves.
     case working
@@ -88,21 +89,15 @@ enum StatusMark: Equatable {
     case awaiting
     /// The AGENT's turn ended and the finish is unread — `checkmark.circle.fill`.
     case agentFinish
-    /// A background COMMAND exited clean while you were away — the plain filled disc.
-    case commandFinish
-    /// Something failed — `exclamationmark.triangle.fill`.
-    case failure
 
     /// The system symbol this mark draws and the point size otty configures for it — `nil` for the
-    /// marks that are not system symbols (the ring, the hand, the disc, the spinner). ONE source, so
-    /// a magnified render cannot show a different symbol from the one the rail mounts.
+    /// marks that are not system symbols (the ring, the hand, the spinner). ONE source, so a
+    /// magnified render cannot show a different symbol from the one the rail mounts.
     var systemSymbol: (symbol: SFSymbol, size: CGFloat)? {
         switch self {
         case .agentFinish: (.checkmarkCircleFill, StatusDot.finishSymbolSize)
-        case .failure: (.exclamationmarkTriangleFill, StatusDot.alertSymbolSize)
         case .agentRing,
              .awaiting,
-             .commandFinish,
              .working: nil
         }
     }
@@ -145,10 +140,6 @@ struct StatusDotView: View {
                 WorkingSpinner()
             case .awaiting:
                 VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
-            case .commandFinish:
-                Circle()
-                    .fill(style.ink)
-                    .frame(width: StatusDot.dotDiameter, height: StatusDot.dotDiameter)
             default:
                 DashedRing()
                     .stroke(style.ink, style: StatusDot.ringStroke)

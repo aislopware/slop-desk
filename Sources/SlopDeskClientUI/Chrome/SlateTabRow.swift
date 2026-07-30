@@ -5,11 +5,12 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status is the trailing ``StatusDotView`` mark ALONE — one column where the HUE names the state
-// (accent = working agent, muted = a code agent at rest, green = a clean finish, amber = a question
-// waits, red = failed) and the geometry names the speaker: the static dashed RING is the agent's
-// (closed once its turn ended), the small filled DOT is a command's outcome. A plain shell — busy or
-// not — mounts nothing. NOTHING animates. The title NEVER
+// Status has two speakers, split by WHOSE it is. The AGENT's is the trailing ``StatusDotView`` mark
+// — one column where the HUE names the state (muted = a code agent at rest, green = its turn ended,
+// amber = a question waits) and only the thinking spinner moves. A COMMAND's outcome is the trailing
+// SLOT's own text: the command's NAME, bold on the primary ink when it exited clean and bold on red
+// when it did not, which is the git line's register rather than a glyph vocabulary of its own. A
+// plain shell — busy or not — mounts nothing. The title NEVER
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
 // coloured ring" the way a mail row reads unread. No row wash, no tinted
@@ -53,6 +54,10 @@ struct SlateTabRow: View {
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
+    /// A finished COMMAND's receipt — the command's name in the outcome's ink, which is how a
+    /// command's exit reads on this rail (there is no outcome MARK: see ``StatusDot``). Outranks
+    /// the resting process label, which by then names the shell the command exited back into.
+    var commandReceipt: RailRowsBuilder.CommandReceipt?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
@@ -189,7 +194,19 @@ struct SlateTabRow: View {
                         // render as the ring mark, so their rows keep the shell label here.
                         if let badge, StatusPresentation.tabBadge(badge) != nil {
                             TabBadgeView(kind: badge)
-                        } else if let processLabel, !StatusPresentation.markSpeaksForTheSlot(mark) {
+                        } else if let commandReceipt {
+                            // The command's OUTCOME, in the same instrument mono the resting label
+                            // uses — the register steps up, the voice does not change: bold on the
+                            // primary ink for a clean exit, bold on red for a failure (the git
+                            // line's own two answers).
+                            Text(commandReceipt.name)
+                                .font(Slate.Typeface.instrument(
+                                    Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
+                                ))
+                                .foregroundStyle(StatusPresentation.outcomeInk(commandReceipt.outcome))
+                                .lineLimit(1)
+                                .fixedSize()
+                        } else if let processLabel {
                             // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
                             // in the instrument mono at the caption size on the tertiary ink — one
                             // register with the git line, counts and telemetry.

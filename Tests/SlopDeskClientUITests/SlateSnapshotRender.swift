@@ -90,9 +90,16 @@ final class SlateSnapshotRender: XCTestCase {
             badgeRow("plan next move", badge: .awaitingInput, agent: true)
             badgeRow("OpenCode", badge: .completed, agentFinish: true, agent: true)
             badgeRow("refactor the reassembler", badge: .finished, agentFinish: true, agent: true)
-            // A COMMAND's alphabet — the outcome dot, on the SAME two inks, in the same column.
-            badgeRow("running build task", badge: .error, process: "make")
-            badgeRow("swift test", badge: .finished, process: "swift")
+            // A COMMAND's alphabet — no mark at all: the slot names what finished, bold on the
+            // primary ink for a clean exit and bold on red for a failure.
+            badgeRow(
+                "running build task", badge: .error, process: "make",
+                receipt: .init(name: "make", outcome: .failed),
+            )
+            badgeRow(
+                "swift test", badge: .finished, process: "swift",
+                receipt: .init(name: "swift", outcome: .succeeded),
+            )
             // …and the states that mark nothing at all: a running command and a resting shell.
             badgeRow("swift build", badge: .commandBusy, process: "swift")
             SlateTabRow(
@@ -114,15 +121,17 @@ final class SlateSnapshotRender: XCTestCase {
 
     /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase. `agent`
     /// wears the `✳` title marker (and leaves the slot bare, as the real rail does); `agentFinish`
-    /// says a finish badge is the AGENT's turn ending, which is what closes its ring.
+    /// says a finish badge is the AGENT's turn ending, which is what closes its ring; `receipt` is a
+    /// finished COMMAND's outcome, which takes the slot as text instead of a mark.
     @MainActor
     private func badgeRow(
         _ title: String, badge: TabBadgeKind, agentFinish: Bool = false, agent: Bool = false,
-        process: String? = nil,
+        process: String? = nil, receipt: RailRowsBuilder.CommandReceipt? = nil,
     ) -> some View {
         SlateTabRow(
             title: title, active: false, agentMarker: agent, badge: badge,
-            agentFinish: agentFinish, processLabel: process, onSelect: {}, onClose: {},
+            agentFinish: agentFinish, processLabel: process, commandReceipt: receipt,
+            onSelect: {}, onClose: {},
         )
     }
 
@@ -150,8 +159,6 @@ final class SlateSnapshotRender: XCTestCase {
             ("resting", StatusDotStyle(ink: Slate.Text.secondary)),
             ("question", StatusDotStyle(ink: Slate.Status.warn, mark: .awaiting)),
             ("agent finish", StatusDotStyle(ink: Slate.Status.ok, mark: .agentFinish)),
-            ("cmd finish", StatusDotStyle(ink: Slate.Status.ok, mark: .commandFinish)),
-            ("failure", StatusDotStyle(ink: Slate.Status.err, mark: .failure)),
         ]
         let sheet = VStack(alignment: .leading, spacing: 16) {
             captioned("true size — the rail's own 14pt column") {

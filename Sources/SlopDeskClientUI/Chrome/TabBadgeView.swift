@@ -39,7 +39,7 @@ struct TabBadgeView: View {
         switch style.art {
         case let .symbol(symbol):
             Image(systemSymbol: symbol)
-                .font(.system(size: StatusDot.alertSymbolSize, weight: StatusDot.symbolWeight))
+                .font(.system(size: StatusDot.badgeSymbolSize, weight: StatusDot.symbolWeight))
                 .foregroundStyle(style.tint)
         case let .vector(icon):
             VectorIconView(icon: icon, side: Self.artSide, ink: style.tint)

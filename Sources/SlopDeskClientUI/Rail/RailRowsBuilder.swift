@@ -506,13 +506,106 @@ enum RailRowsBuilder {
     /// decay (`WorkspaceStore.paneUnseenDone`).
     ///
     /// ONE predicate for both consumers, deliberately: it gates the row's agent FINAL LINE (a plain
-    /// command's exit must never surface a stale assistant line) AND the trailing mark's geometry
-    /// (the agent's finish closes its ring; a command's takes the outcome dot). Sharing it means the
-    /// row that shows the agent's last words is exactly the row that draws the closed ring. Pure +
-    /// static so the rule is unit-pinned without a view.
+    /// command's exit must never surface a stale assistant line) AND which VOICE the finish speaks in
+    /// (the agent's closes its ring in the mark column; a command's is the trailing slot's receipt).
+    /// Sharing it means the row that shows the agent's last words is exactly the row that draws the
+    /// closed ring. Pure + static so the rule is unit-pinned without a view.
     static func finishIsAgents(badge: TabBadgeKind?, status: ClaudeStatus, unseenDone: Bool) -> Bool {
         guard badge == .completed || badge == .finished else { return false }
         return status == .done || unseenDone
+    }
+
+    /// A finished command's OUTCOME — the two readings the trailing slot has (docs/DECISIONS.md
+    /// round 24). Kept here beside ``finishIsAgents(badge:status:unseenDone:)`` rather than in the
+    /// design system: which outcome a row has is a fact about its command blocks, and only the INK
+    /// it reads in (``StatusPresentation/outcomeInk(_:)``) is a view decision.
+    enum CommandOutcome: Equatable, Sendable {
+        /// Exit 0 (or a completion the shell reported no code for).
+        case succeeded
+        /// A non-zero exit, or a held-red `OSC 9;4;2`.
+        case failed
+    }
+
+    /// The trailing slot's RECEIPT for a finished command: the command's own name plus how it went.
+    /// `nil` ⇒ the slot keeps its resting process label.
+    struct CommandReceipt: Equatable, Sendable {
+        /// What ran — `make`, `npm`, `./deploy.sh` (``slotCommandName(_:)``), or the pane's
+        /// foreground process when no block can name it.
+        let name: String
+        let outcome: CommandOutcome
+    }
+
+    /// The row's outcome receipt — what the trailing slot prints once a command has finished.
+    ///
+    /// The NAME comes from the command's own block: the attributed FAILURE for a red receipt (the
+    /// caller gates it, see ``failedBlock(for:badge:store:)`` — a live progress error must not be
+    /// pinned on an older, unrelated command), the newest CLOSED block for a clean one. A row whose
+    /// blocks cannot name it (no OSC-133 segmentation, or an `OSC 9;4;2` error raised inside a
+    /// still-open block) falls back to the foreground process, so the outcome is never mute — and if
+    /// even that is unknown there is no receipt, because a nameless "something finished" is what the
+    /// disc used to say and is exactly what round 24 dropped.
+    ///
+    /// Pure + static so the whole reading is unit-pinned without a view or a store.
+    static func commandReceipt(
+        badge: TabBadgeKind?, agentFinish: Bool, blocks: [CommandBlock],
+        failedBlock: CommandBlock?, processLabel: String?,
+    ) -> CommandReceipt? {
+        guard let outcome = commandOutcome(badge: badge, agentFinish: agentFinish) else { return nil }
+        let text = outcome == .failed
+            ? failedBlock?.commandText
+            : blocks.last(where: { $0.complete || $0.durationMS != nil })?.commandText
+        guard let name = slotCommandName(text) ?? slotProcessName(processLabel) else { return nil }
+        return CommandReceipt(name: name, outcome: outcome)
+    }
+
+    /// The failure a row's `.error` badge may be BLAMED on — the newest closed failed block, or
+    /// `nil` when the badge cannot be attributed to one.
+    ///
+    /// ⚠️ The gate is the badge's SOURCE, not just its tier: `.error` is reachable from a finished
+    /// `.failure` completion OR a LIVE `OSC 9;4;2` progress error, and in the live case the alarming
+    /// command's block is still OPEN (never `isFailed`), so the newest closed failure would be an
+    /// OLDER, unrelated command. Only a `.failure` completion may name a block; a progress error
+    /// stays anonymous (the receipt falls back to the foreground process, the tooltip to silence).
+    @MainActor
+    static func failedBlock(for id: PaneID, badge: TabBadgeKind?, store: WorkspaceStore) -> CommandBlock? {
+        guard badge == .error, store.panePendingCompletion[id] == .failure else { return nil }
+        return store.commandBlocks(for: id).last(where: \.isFailed)
+    }
+
+    /// Whether a badge is a COMMAND's outcome, and which one. The finish tiers fuse both speakers,
+    /// so `agentFinish` decides: the agent's turn ending is the mark column's check, a command's exit
+    /// is the slot's. `.error` is always a command's — `ClaudeStatus` has no error case. Pure +
+    /// static; ``StatusPresentation/commandOutcome(badge:agentFinish:)`` is the view-side alias so
+    /// the mark resolver and this one read the same rule.
+    static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
+        switch badge {
+        case .error: .failed
+        case .completed,
+             .finished: agentFinish ? nil : .succeeded
+        case .awaitingInput,
+             .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .running,
+             .sudo,
+             nil: nil
+        }
+    }
+
+    /// The command's NAME as the slot prints it: the first REAL word of the command line, basenamed
+    /// (`/usr/bin/make -j8` → `make`). A leading `sudo` and leading `KEY=value` env assignments are
+    /// skipped — neither is what ran, and `sudo` in the slot would also restate the privilege badge
+    /// two glyphs away. The ARGUMENTS stay off: the slot is one narrow column beside a title that
+    /// must truncate last, and the full line is one hover away in the tooltip. `nil` for a blank
+    /// line. Pure + static so the trimming is unit-pinned.
+    static func slotCommandName(_ commandText: String?) -> String? {
+        guard let commandText else { return nil }
+        for token in commandText.split(whereSeparator: \.isWhitespace) {
+            if token.contains("=") { continue } // `FOO=bar make` — the assignment is not the command
+            if token == "sudo" { continue }
+            return slotProcessName(String(token))
+        }
+        return nil
     }
 
     /// The display folder name of a cwd: its last path component (`/a/b/repo` → `repo`, trailing-slash

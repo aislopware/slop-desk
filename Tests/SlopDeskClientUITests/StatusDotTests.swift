@@ -1,12 +1,16 @@
 // StatusDotTests — pins the trailing status mark. The HUE names the STATE and the SYMBOL names what
 // happened, in otty's own badge vocabulary (docs/DECISIONS.md round 23): the SPINNER for a working
-// agent, the hand for a waiting question, the filled check for the AGENT's turn ending, the plain
-// disc for a background command's clean exit, the alert triangle for a failure, and the dashed ring
-// for an agent that is merely present. The resolver's ladder is the spec: a working agent spins (the
-// same raw-working key liveness uses, outranking every badge); a RESTING CODE AGENT rings muted; the
-// attention states wear their attention ink — the title never recolours, so the mark's hue is those
-// states' entire rendering; a plain running command, a bare idle shell and privilege-only rows mount
-// nothing. The STATIC contract — exactly ONE mark moves — rides the mark pins.
+// agent, the hand for a waiting question, the filled check for the AGENT's turn ending, and the
+// dashed ring for an agent that is merely present. The resolver's ladder is the spec: a working
+// agent spins (the same raw-working key liveness uses, outranking every badge); a RESTING CODE AGENT
+// rings muted; the attention states wear their attention ink — the title never recolours, so the
+// mark's hue is those states' entire rendering; a plain running command, a bare idle shell and
+// privilege-only rows mount nothing. The STATIC contract — exactly ONE mark moves — rides the mark
+// pins.
+//
+// ⚠️ The mark column is the AGENT's alone (round 24). A COMMAND's outcome mounts NO mark and speaks
+// in the trailing SLOT instead, as the command's own name in the outcome's ink — pinned here as the
+// PARTITION (a badge is either a mark or a receipt, never both, never neither).
 // Headless VALUE assertions — no render. Ink identity is asserted SELF-consistently against the
 // presentation maps (never absolute colour values — `Color` equality is provider-fragile).
 
@@ -35,13 +39,18 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// Each attention kind's mark wears EXACTLY its attention ink — with a neutral title, the
-    /// mark's hue is the state's whole rendering, so it can never drift off the hue budget
-    /// (green unread finish, amber question, red failure). Whichever symbol, the hue is the same one.
+    /// Each attention kind the MARK still speaks for wears EXACTLY its attention ink — with a
+    /// neutral title, the mark's hue is the state's whole rendering, so it can never drift off the
+    /// hue budget (green unread finish, amber question). Whichever symbol, the hue is the same one.
     @MainActor
     func testAttentionKindsRingOnTheirAttentionInk() {
-        for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
-            let dot = StatusPresentation.statusDot(working: false, badge: kind)
+        let marked: [(TabBadgeKind, Bool)] = [
+            (.awaitingInput, false), (.completed, true), (.finished, true),
+        ]
+        for (kind, agentFinish) in marked {
+            let dot = StatusPresentation.statusDot(
+                working: false, badge: kind, agentFinish: agentFinish,
+            )
             XCTAssertNotNil(dot, "\(kind) must mount the mark — the neutral title can't say it")
             XCTAssertEqual(
                 dot?.ink, StatusPresentation.attentionInk(kind),
@@ -80,16 +89,30 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    /// An attention state OUTRANKS the resting-agent ring: a finished/blocked/failed agent keeps
-    /// its attention ink even though the same pane is also a resting agent.
+    /// An attention state the mark speaks for OUTRANKS the resting-agent ring: a finished or
+    /// blocked agent keeps its attention ink even though the same pane is also a resting agent.
     @MainActor
     func testAttentionOutranksTheRestingAgentRing() {
-        for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
+        let marked: [(TabBadgeKind, Bool)] = [
+            (.awaitingInput, false), (.completed, true), (.finished, true),
+        ]
+        for (kind, agentFinish) in marked {
             XCTAssertEqual(
-                StatusPresentation.statusDot(working: false, badge: kind, agentIdle: true)?.ink,
+                StatusPresentation.statusDot(
+                    working: false, badge: kind, agentIdle: true, agentFinish: agentFinish,
+                )?.ink,
                 StatusPresentation.attentionInk(kind),
                 "\(kind) keeps its attention ink over the muted resting ring",
             )
+        }
+        // ⚠️ A COMMAND's outcome does NOT outrank it — it is not in the mark column at all, so the
+        // resting agent beside it keeps saying the one thing this column is for: it is still there.
+        for kind: TabBadgeKind in [.error, .completed, .finished] {
+            let dot = StatusPresentation.statusDot(
+                working: false, badge: kind, agentIdle: true, agentFinish: false,
+            )
+            XCTAssertEqual(dot?.mark, .agentRing, "\(kind) leaves the mark column to the agent")
+            XCTAssertEqual(dot?.ink, Slate.Text.secondary, "and the ring keeps spending no hue")
         }
     }
 
@@ -104,15 +127,16 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: - otty's vocabulary (round 23)
 
-    /// ⚠️ The CHECK is the AGENT's turn ending; a background command's clean exit takes the plain
-    /// DISC. Both of OUR finish tiers read alike: the `.completed` flash and the settled `.finished`
-    /// unread are one reading, since that split is freshness machinery and never visual.
+    /// ⚠️ The CHECK is the AGENT's turn ending, and it is the ONLY finish this column draws — a
+    /// background command's clean exit mounts nothing here and reads in the slot instead. Both of
+    /// OUR finish tiers read alike: the `.completed` flash and the settled `.finished` unread are
+    /// one reading, since that split is freshness machinery and never visual.
     ///
-    /// The two-speaker rule (round 21) is otty's too — it draws its own `completed` as
-    /// `checkmark.circle.fill` and its `finished` as an 8pt filled oval. An agent's state is
-    /// continuous; a command badge is an unread receipt the store keeps only for an unfocused pane.
+    /// The two-speaker rule (round 21) survives round 24 with one speaker moved: an agent's state is
+    /// continuous and belongs in the state column; a command's exit is a fact about a NAME, and a
+    /// disc could not carry the name.
     @MainActor
-    func testTheAgentsFinishIsACheckAndACommandsIsADisc() {
+    func testTheAgentsFinishIsACheckAndACommandsIsNoMarkAtAll() {
         for kind: TabBadgeKind in [.completed, .finished] {
             XCTAssertEqual(
                 StatusPresentation.mark(for: kind, agentFinish: true), .agentFinish,
@@ -123,41 +147,104 @@ final class StatusDotTests: XCTestCase {
                 .agentFinish,
                 "\(kind) must RESOLVE to the filled check, not merely be classified as one",
             )
-            XCTAssertEqual(
-                StatusPresentation.mark(for: kind, agentFinish: false), .commandFinish,
-                "\(kind) with no agent finish behind it is a background command's receipt",
+            XCTAssertNil(
+                StatusPresentation.mark(for: kind, agentFinish: false),
+                "\(kind) with no agent finish behind it is the SLOT's receipt, not a mark",
             )
-            XCTAssertEqual(
-                StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false)?.mark,
-                .commandFinish,
-            )
-        }
-        // Filling the check must not change what the mark SAYS — one hue budget across both.
-        for agents in [true, false] {
-            XCTAssertEqual(
-                StatusPresentation.statusDot(
-                    working: false, badge: .finished, agentFinish: agents,
-                )?.ink,
-                StatusPresentation.attentionInk(.finished),
-                "the speaker changes the weight, never the hue",
+            XCTAssertNil(
+                StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false),
+                "and with no agent in the pane the row's mark column stays empty",
             )
         }
+        XCTAssertEqual(
+            StatusPresentation.statusDot(working: false, badge: .finished, agentFinish: true)?.ink,
+            StatusPresentation.attentionInk(.finished),
+            "the agent's own finish keeps the unread green",
+        )
     }
 
-    /// A failure is ALWAYS the alert triangle, whoever else is in the pane: `.error` can only come
-    /// from a non-zero exit or a held-red `OSC 9;4;2` — `ClaudeStatus` has no error case, so the
-    /// agent never speaks red.
+    /// A failure NEVER draws in the mark column, whoever else is in the pane: `.error` can only come
+    /// from a non-zero exit or a held-red `OSC 9;4;2` — `ClaudeStatus` has no error case, so it is
+    /// always a COMMAND's fact, and a command's facts are the slot's.
     @MainActor
-    func testAFailureIsAlwaysTheAlertTriangle() {
+    func testAFailureLeavesTheMarkColumnToTheAgent() {
         for agents in [true, false] {
-            XCTAssertEqual(
-                StatusPresentation.mark(for: .error, agentFinish: agents), .failure,
+            XCTAssertNil(
+                StatusPresentation.mark(for: .error, agentFinish: agents),
                 "a non-zero exit is a COMMAND's fact even in an agent pane",
             )
         }
-        let dot = StatusPresentation.statusDot(working: false, badge: .error)
-        XCTAssertEqual(dot?.mark, .failure)
-        XCTAssertEqual(dot?.ink, StatusPresentation.attentionInk(.error))
+        XCTAssertNil(StatusPresentation.statusDot(working: false, badge: .error))
+        // The red itself is NOT gone — it moved. The slot's receipt and the collapsed group's
+        // roll-up count both still read the error ink.
+        XCTAssertEqual(
+            StatusPresentation.outcomeInk(.failed), StatusPresentation.attentionInk(.error),
+            "the failure hue is one budget wherever it surfaces",
+        )
+    }
+
+    // MARK: - The command's outcome speaks in the slot (round 24)
+
+    /// ⚠️ A badge has exactly ONE voice. Every kind resolves to a mark or to a slot receipt, and
+    /// never to both — the mark column is the agent's, so a command's exit that also drew a symbol
+    /// would be the same news twice in two dialects.
+    @MainActor
+    func testEveryBadgeHasExactlyOneVoice() {
+        let everyKind: [TabBadgeKind] = [
+            .running, .commandRunning, .commandBusy, .completed, .finished, .error, .awaitingInput,
+            .caffeinate, .sudo,
+        ]
+        for kind in everyKind {
+            for agentFinish in [true, false] {
+                let mark = StatusPresentation.mark(for: kind, agentFinish: agentFinish)
+                let outcome = StatusPresentation.commandOutcome(
+                    badge: kind, agentFinish: agentFinish,
+                )
+                XCTAssertFalse(
+                    mark != nil && outcome != nil,
+                    "\(kind) (agentFinish=\(agentFinish)) speaks twice",
+                )
+            }
+        }
+    }
+
+    /// The OUTCOME map: a failure is red, a clean exit is bright — and only the agent's own finish
+    /// escapes the slot, because that one has a mark. `nil` for everything still live: an outcome is
+    /// a finished fact, so a busy shell never dresses its process name up as a verdict.
+    @MainActor
+    func testTheSlotReadsSucceededBrightAndFailedRed() {
+        XCTAssertEqual(StatusPresentation.commandOutcome(badge: .error, agentFinish: false), .failed)
+        XCTAssertEqual(StatusPresentation.commandOutcome(badge: .error, agentFinish: true), .failed)
+        for kind: TabBadgeKind in [.completed, .finished] {
+            XCTAssertEqual(
+                StatusPresentation.commandOutcome(badge: kind, agentFinish: false), .succeeded,
+            )
+            XCTAssertNil(
+                StatusPresentation.commandOutcome(badge: kind, agentFinish: true),
+                "the AGENT's finish is the check — it never doubles as a command receipt",
+            )
+        }
+        for kind: TabBadgeKind in [
+            .awaitingInput,
+            .commandBusy,
+            .commandRunning,
+            .running,
+            .sudo,
+            .caffeinate,
+        ] {
+            XCTAssertNil(StatusPresentation.commandOutcome(badge: kind, agentFinish: false))
+        }
+        XCTAssertNil(StatusPresentation.commandOutcome(badge: nil, agentFinish: false))
+        // The register is the git line's (docs/DECISIONS.md round 17 → `1b289043`): the working exit
+        // spends BRIGHTNESS, not a hue, and red stays reserved for broken. Both are BOLD — at 10pt
+        // mono the brightness step alone does not carry.
+        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
+        XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.Status.err)
+        XCTAssertNotEqual(
+            StatusPresentation.outcomeInk(.succeeded), Slate.Status.ok,
+            "green was the mark's answer; 'it worked' is the expected case and buys no hue",
+        )
+        XCTAssertEqual(StatusPresentation.outcomeWeight, .bold)
     }
 
     /// A waiting question raises otty's HAND — the one state on this rail that is asking a person
@@ -240,12 +327,17 @@ final class StatusDotTests: XCTestCase {
                     agents, status == .done || unseen,
                     "a live `.done` OR the unread latch owns the finish (\(status), unseen=\(unseen))",
                 )
-                // Whatever the predicate says, the mark must follow it — never diverge.
+                // Whatever the predicate says, the VOICE must follow it — never diverge: the
+                // agent's finish is the check, a command's is the slot's receipt.
                 XCTAssertEqual(
                     StatusPresentation.statusDot(
                         working: false, badge: .finished, agentFinish: agents,
                     )?.mark,
-                    agents ? .agentFinish : .commandFinish,
+                    agents ? .agentFinish : nil,
+                )
+                XCTAssertEqual(
+                    StatusPresentation.commandOutcome(badge: .finished, agentFinish: agents),
+                    agents ? nil : .succeeded,
                 )
             }
         }
@@ -257,43 +349,6 @@ final class StatusDotTests: XCTestCase {
                 "\(String(describing: kind)) is not a finish badge",
             )
         }
-    }
-
-    /// ⚠️ A command's OUTCOME empties the slot beside it: the disc or the triangle is the row's whole
-    /// news, and `make` / `swift` printed next to it is what WAS running, in the past tense, on a row
-    /// whose title already says it. Everything still LIVE keeps its label — a running command's name
-    /// is current information.
-    @MainActor
-    func testACommandsOutcomeEmptiesTheSlotBesideIt() {
-        for kind: TabBadgeKind in [.error, .completed, .finished] {
-            XCTAssertTrue(
-                StatusPresentation.markSpeaksForTheSlot(
-                    StatusPresentation.statusDot(working: false, badge: kind, agentFinish: false),
-                ),
-                "\(kind) as a command's receipt says everything the process name would",
-            )
-        }
-        // Live states keep the label: a busy shell, a running command, a thinking or resting agent.
-        let live: [StatusDotStyle?] = [
-            StatusPresentation.statusDot(working: true, badge: nil),
-            StatusPresentation.statusDot(working: false, badge: .commandBusy, agentIdle: true),
-            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true),
-            StatusPresentation.statusDot(working: false, badge: .awaitingInput),
-            StatusPresentation.statusDot(working: false, badge: .commandRunning),
-        ]
-        for style in live {
-            XCTAssertFalse(
-                StatusPresentation.markSpeaksForTheSlot(style),
-                "a live row's process name is current information",
-            )
-        }
-        // The AGENT's finish is not a command's — its row never carried a process label anyway, and
-        // suppressing one there would be a rule about the wrong speaker.
-        XCTAssertFalse(
-            StatusPresentation.markSpeaksForTheSlot(
-                StatusPresentation.statusDot(working: false, badge: .finished, agentFinish: true),
-            ),
-        )
     }
 
     // MARK: - Geometry
@@ -318,7 +373,7 @@ final class StatusDotTests: XCTestCase {
     func testEveryMarkFitsOttysBadgeBox() {
         XCTAssertEqual(StatusDot.footprint, 14, "otty's badge box, undivided")
         XCTAssertEqual(StatusDot.handSide, StatusDot.footprint, "the outlined hand takes the box")
-        for size in [StatusDot.finishSymbolSize, StatusDot.alertSymbolSize] {
+        for size in [StatusDot.finishSymbolSize, StatusDot.badgeSymbolSize] {
             XCTAssertLessThanOrEqual(size, StatusDot.footprint, "a symbol must fit its column")
         }
         XCTAssertLessThanOrEqual(
@@ -326,9 +381,9 @@ final class StatusDotTests: XCTestCase {
             "the ring's stroke stays inside the column, so the right edge never wavers",
         )
         // otty configures its own badges at these exact sizes: the finish a point larger than the
-        // alert, because a filled triangle out-weighs a circle at equal point size.
+        // rest, because a filled straight-edged glyph out-weighs a circle at equal point size.
         XCTAssertEqual(StatusDot.finishSymbolSize, 12)
-        XCTAssertEqual(StatusDot.alertSymbolSize, 11)
+        XCTAssertEqual(StatusDot.badgeSymbolSize, 11)
         XCTAssertEqual(StatusDot.symbolWeight, .medium, "otty draws every badge at Medium")
     }
 
@@ -368,8 +423,12 @@ final class StatusDotTests: XCTestCase {
             ("agent finish", StatusPresentation.statusDot(
                 working: false, badge: .finished, agentFinish: true,
             )),
-            ("command failure", StatusPresentation.statusDot(working: false, badge: .error)),
-            ("command finish", StatusPresentation.statusDot(working: false, badge: .completed)),
+            ("command failure + agent", StatusPresentation.statusDot(
+                working: false, badge: .error, agentIdle: true,
+            )),
+            ("command finish + agent", StatusPresentation.statusDot(
+                working: false, badge: .completed, agentIdle: true,
+            )),
         ]
         for (name, style) in still {
             XCTAssertNotNil(style, "\(name) still mounts a mark")

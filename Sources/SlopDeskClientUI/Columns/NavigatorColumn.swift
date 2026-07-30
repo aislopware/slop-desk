@@ -944,14 +944,10 @@ private struct SidebarLiveRow: View {
             }
             : nil
         let blocks = store.commandBlocks(for: row.id)
-        // The failed-block attribution is gated on the badge's SOURCE: the `.error` tier is reachable
-        // from a finished `.failure` completion OR a LIVE OSC 9;4;2 progress error — and in the live
-        // case the alarming command's block is still open (never `.isFailed`), so the newest closed
-        // failure would be an OLDER, unrelated command. Only a `.failure` completion may explain the
-        // alarm with a block; a progress error keeps the tooltip silent about exit codes.
-        let failedBlock = chrome.badge == .error && store.panePendingCompletion[row.id] == .failure
-            ? blocks.last(where: \.isFailed)
-            : nil
+        // The failure this row's alarm may be blamed on — source-gated, so a live progress error is
+        // never pinned on an older command (see `RailRowsBuilder.failedBlock`). It names both the
+        // tooltip's error line and the trailing slot's red receipt.
+        let failedBlock = RailRowsBuilder.failedBlock(for: row.id, badge: chrome.badge, store: store)
         // Whose finish this is — the agent's turn ending, or a plain command's clean exit. ONE
         // predicate feeds both consumers (see `RailRowsBuilder.finishIsAgents`): the agent's FINAL
         // assistant line below (a command's exit must never surface a stale agent line) and the
@@ -1039,6 +1035,12 @@ private struct SidebarLiveRow: View {
             // empty slot reads as missing data. Only an AGENT row leaves it empty: the `✳` marker
             // and the mark already say it, and any trailing text there just repeats them.
             processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
+            // A finished COMMAND takes that same slot and names itself in the outcome's ink — the
+            // whole rendering of an exit on this rail, since round 24 pulled the outcome marks.
+            commandReceipt: RailRowsBuilder.commandReceipt(
+                badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
+                failedBlock: failedBlock, processLabel: chrome.processLabel,
+            ),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
@@ -1105,6 +1107,19 @@ private struct IOSSidebarLiveRow: View {
         // command mounts no mark at all.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
+        // Whose finish it is — the same predicate the macOS row uses, resolved once here because
+        // both the trailing mark and the command receipt need the answer.
+        let agentFinish = RailRowsBuilder.finishIsAgents(
+            badge: chrome.badge, status: chrome.status,
+            unseenDone: store.paneUnseenDone.contains(row.id),
+        )
+        // The finished command's receipt — the same resolver as the macOS row, so an exit reads the
+        // same on both platforms.
+        let receipt = RailRowsBuilder.commandReceipt(
+            badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
+            failedBlock: RailRowsBuilder.failedBlock(for: row.id, badge: chrome.badge, store: store),
+            processLabel: chrome.processLabel,
+        )
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
@@ -1136,20 +1151,25 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            // Only a privilege marker mounts trailing TEXT — lifecycle is the ring mark's hue.
+            // A privilege marker, else a finished command's receipt — the two things that mount
+            // trailing TEXT. Everything else is the ring mark's hue.
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
+            } else if let receipt {
+                Text(receipt.name)
+                    .font(Slate.Typeface.instrument(
+                        Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
+                    ))
+                    .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
+                    .lineLimit(1)
+                    .fixedSize()
             }
             // The same trailing status mark as the macOS row (the T3 Code port) — rightmost, so
             // state reads down one fixed column on iOS too.
             if let dot = StatusPresentation.statusDot(
                 working: busyLabel != nil, badge: chrome.badge,
                 agentIdle: chrome.status == .idle,
-                // Same whose-finish predicate as the macOS row — one rule, both platforms.
-                agentFinish: RailRowsBuilder.finishIsAgents(
-                    badge: chrome.badge, status: chrome.status,
-                    unseenDone: store.paneUnseenDone.contains(row.id),
-                ),
+                agentFinish: agentFinish,
             ) {
                 StatusDotView(style: dot)
             }
