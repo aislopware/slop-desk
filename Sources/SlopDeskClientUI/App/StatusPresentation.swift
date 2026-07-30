@@ -4,6 +4,7 @@
 // source of truth) — this adds only the view-layer help text, retry gating, and agent glyph/tint.
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -54,8 +55,9 @@ enum StatusPresentation {
     /// idle/none = muted (the resting state spends no colour).
     ///
     /// `.working` = accent is this surface's OWN choice, and the one place these two vocabularies
-    /// diverge on purpose: the rail says working with MOTION (``thinkingRing``, round 22) because it
-    /// has a mark that can move, while a glyph in a toolbar slot has only its character and its tint.
+    /// diverge on purpose: the rail says working with MOTION (``thinkingMark``, rounds 22–23)
+    /// because it has a mark that can move, while a glyph in a toolbar slot has only its character
+    /// and its tint.
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
         case .none,
@@ -116,19 +118,19 @@ enum StatusPresentation {
         return nil
     }
 
-    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: one column, one hue budget
-    /// (T3 Code's own status-hue convention). Exactly ONE reading moves — the thinking agent's, which
-    /// is why it needs no hue at all — and everything settled holds still. The HUE names the STATE and the
-    /// geometry names the SPEAKER (``mark(for:agentFinish:)``): the ring is the AGENT's, the dot is
-    /// a COMMAND's outcome.
+    /// The row's trailing STATUS MARK — one column, one hue budget, and otty's own silhouettes
+    /// (docs/DECISIONS.md round 23). Exactly ONE reading moves — the thinking agent's, which is why
+    /// it needs no hue at all — and everything settled holds still. The HUE names the STATE, the
+    /// SYMBOL names what happened (``mark(for:agentFinish:)``).
     ///
-    /// The ladder: a WORKING AGENT PUMPS its ring (``thinkingRing`` — keyed on the RAW `.working`
+    /// The ladder: a WORKING AGENT SHIMMERS its ring (``thinkingMark`` — keyed on the RAW `.working`
     /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads identically);
-    /// a RESTING CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting question rings
-    /// amber; the agent's own FINISH closes the ring on green. A COMMAND's outcome instead takes the
-    /// small filled DOT on the same inks — green for a clean background finish, red for a failure —
-    /// because it is an unread receipt for an event, not the state of something alive (the store
-    /// records it only for an UNFOCUSED pane and clears it on focus).
+    /// a RESTING CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting
+    /// question raises otty's amber HAND; the agent's own FINISH takes the filled check on green. A
+    /// COMMAND's outcome instead takes the OUTLINE check (clean exit) or the alert triangle
+    /// (failure) — the same words said lighter, because a command badge is an unread receipt for an
+    /// event, not the state of something alive (the store records it only for an UNFOCUSED pane and
+    /// clears it on focus).
     ///
     /// A plain RUNNING command still marks NOTHING: the ring is the agent's column, and a muted ring
     /// on every `npm run dev` row spent it on the one thing the row's own running title already says.
@@ -147,14 +149,14 @@ enum StatusPresentation {
     static func statusDot(
         working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false, agentFinish: Bool = false,
     ) -> StatusDotStyle? {
-        if working { return thinkingRing }
+        if working { return thinkingMark }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
         let resting = agentIdle ? StatusDotStyle(ink: Slate.Text.secondary) : nil
         guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return thinkingRing
+        case .running: return thinkingMark
         case .awaitingInput,
              .completed,
              .error,
@@ -172,7 +174,7 @@ enum StatusPresentation {
         }
     }
 
-    /// The THINKING agent's mark — the open ring, PUMPING, on the row title's own primary text ink.
+    /// The THINKING agent's mark — the agent ring, SHIMMERING, on the row title's own primary ink.
     ///
     /// It spends NO hue, and that is the point twice over. The rail's hue budget buys attention
     /// states (amber question, green finish, red failure); an agent merely thinking is not a state
@@ -182,48 +184,53 @@ enum StatusPresentation {
     /// the rows that actually need you.
     ///
     /// The primary ink (over the resting ring's secondary) also keeps the two legible APART when
-    /// Reduce Motion freezes the pump: working and resting must never collapse into one mark.
+    /// Reduce Motion freezes the sweep: working and resting must never collapse into one mark.
     @MainActor
-    static var thinkingRing: StatusDotStyle {
-        StatusDotStyle(ink: Slate.Text.primary, mark: .openRing, pulsing: true)
+    static var thinkingMark: StatusDotStyle {
+        StatusDotStyle(ink: Slate.Text.primary, mark: .agentRing, shimmering: true)
     }
 
-    /// WHICH mark an attention state draws — the geometry that names the SPEAKER, the hue having
-    /// already named the state:
+    /// WHICH mark an attention state draws — the silhouette that names what happened, the hue
+    /// having already named the state:
     ///
-    ///  * a COMMAND's outcome takes the ``StatusMark/dot`` — a failure (always: `.error` can only
-    ///    come from a non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose status
-    ///    has no error case) and a clean background finish that is NOT the agent's.
-    ///  * the AGENT's own finish CLOSES its ring (both the fresh `.completed` flash and the settled
-    ///    `.finished` unread — that split is semantic, never visual).
-    ///  * everything else keeps the open ring: a question waiting is a live session mid-turn.
+    ///  * a failure takes the alert TRIANGLE (always a command's: `.error` can only come from a
+    ///    non-zero exit or a held-red `OSC 9;4;2`, never from the agent, whose status has no error
+    ///    case).
+    ///  * a finish takes the CHECK — filled when it is the AGENT's turn ending (both the fresh
+    ///    `.completed` flash and the settled `.finished` unread; that split is semantic, never
+    ///    visual), outlined when it is a background command's clean exit.
+    ///  * a waiting question raises the HAND, otty's own awaiting badge.
+    ///  * everything else keeps the agent ring: a live session with nothing to report.
     ///
-    /// ⚠️ Three marks is the CEILING for this column. A previous round gave every state its own
-    /// silhouette (hand, triangle, `?`, `!`) and pulled all of them for reading as fussy detail at
-    /// 8pt (docs/DECISIONS.md rounds 19–20). What survives is only what a shape can say that a hue
-    /// cannot: whether the work is over, and who did it.
+    /// ⚠️ This set is otty's, and adding to it needs the same bar otty's clears: a silhouette may
+    /// only say what the hue cannot. An earlier round invented pictograms per state (`?`, `!`, a
+    /// hand-drawn hand) and pulled all of them for reading as fussy detail (docs/DECISIONS.md
+    /// rounds 19–21) — the fix was the size and the fidelity, not the idea (round 23).
     static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark {
         switch kind {
-        case .error: .dot
+        case .error: .failure
         case .completed,
-             .finished: agentFinish ? .closedRing : .dot
-        case .awaitingInput,
-             .caffeinate,
+             .finished: agentFinish ? .agentFinish : .commandFinish
+        case .awaitingInput: .awaiting
+        case .caffeinate,
              .commandBusy,
              .commandRunning,
              .running,
-             .sudo: .openRing
+             .sudo: .agentRing
         }
     }
 
-    /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,
-    /// `∞` caffeinate), small muted text in the shell's own dialect. Every lifecycle state returns
-    /// `nil`: every lifecycle state lives in the trailing ring mark's hue
-    /// (``statusDot(working:badge:)``), so the slot keeps the shell label.
+    /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers, drawn as
+    /// otty draws them: a SHIELD for sudo, a CUP for caffeinate, both muted. They used to be the
+    /// mono characters `#` and `∞`, which asked the reader to know a legend; a shield and a cup ask
+    /// nothing (docs/DECISIONS.md round 23). Every lifecycle state returns `nil`: those live in the
+    /// trailing status mark (``statusDot(working:badge:)``), so their rows keep the shell label.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
         switch kind {
-        case .caffeinate: TabBadgeStyle(text: "∞", tint: Slate.Text.secondary)
-        case .sudo: TabBadgeStyle(text: "#", tint: Slate.Text.secondary)
+        // otty's own: a Material duotone cup, its exact path data (``OttyIcon/coffee``).
+        case .caffeinate: TabBadgeStyle(art: .vector(OttyIcon.coffee), tint: Slate.Text.secondary)
+        // otty's own: `shield.fill` at the same 11pt Medium it configures every badge symbol with.
+        case .sudo: TabBadgeStyle(art: .symbol(.shieldFill), tint: Slate.Text.secondary)
         case .awaitingInput,
              .commandBusy,
              .commandRunning,
@@ -252,10 +259,17 @@ enum StatusPresentation {
 }
 
 /// The trailing-slot marker for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — a small
-/// static text glyph in the shell's dialect (`#` sudo, `∞` caffeinate). A pure value (no view), so
-/// the badge map can be unit-tested without rendering.
+/// static privilege glyph. A pure value (no view), so the badge map can be unit-tested without
+/// rendering.
 struct TabBadgeStyle: Equatable {
-    let text: String
+    /// Where the drawing comes from. Both cases are otty's artwork exactly: a system symbol it asks
+    /// for by name, or path data it embeds — never a redraw of either.
+    enum Art: Equatable {
+        case symbol(SFSymbol)
+        case vector(VectorIcon)
+    }
+
+    let art: Art
     let tint: Color
 }
 #endif

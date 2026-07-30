@@ -51,11 +51,13 @@ final class TabBadgePresentationTests: XCTestCase {
         }
     }
 
-    /// The privilege markers are the ONLY slot glyphs — small text in the shell's dialect
-    /// (modifiers, not lifecycle states).
+    /// The privilege markers are the ONLY slot glyphs — otty's shield and duotone cup (modifiers,
+    /// not lifecycle states). They used to be the mono characters `#` and `∞`, which asked the
+    /// reader to know a legend; a shield and a cup ask nothing (docs/DECISIONS.md round 23).
+    @MainActor
     func testPrivilegeMarkersAreTheOnlySlotGlyphs() {
-        XCTAssertEqual(StatusPresentation.tabBadge(.sudo)?.text, "#")
-        XCTAssertEqual(StatusPresentation.tabBadge(.caffeinate)?.text, "∞")
+        XCTAssertEqual(StatusPresentation.tabBadge(.sudo)?.art, .symbol(.shieldFill))
+        XCTAssertEqual(StatusPresentation.tabBadge(.caffeinate)?.art, .vector(OttyIcon.coffee))
     }
 
     /// The compact agent surfaces (iOS toolbar, Peek & Reply header) speak the `StatusGlyph`

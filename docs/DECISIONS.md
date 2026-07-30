@@ -3309,6 +3309,61 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 23 — the marks are otty's, TRANSCRIBED not approximated (2026-07-30)
+
+The user reversed the abstract-geometry line: otty's badge symbols are more elegant than our
+ring/ring/dot, so follow them — but draw them PROPERLY this time, because the earlier attempt to
+follow them produced symbols that were not otty's and looked bad. Agent thinking is the one
+exception, and it becomes a SHIMMER (a coding agent, not a spinner). The rail's mark column now
+speaks otty's vocabulary, measured out of the shipping app rather than guessed:
+
+| state | mark | where it came from |
+|---|---|---|
+| agent working | the ring, SHIMMERING | ours — otty spins an `NSProgressIndicator` in the label slot instead |
+| agent at rest | lucide `circle-dashed`, muted | ours — otty draws nothing for a resting agent |
+| question waiting | lucide `hand` | `AgentRegistry.awaitingInputIcon`, an embedded `<svg>`, rendered 14×14, tinted `ottyWarning` |
+| agent's turn ended | `checkmark.circle.fill` | `TabsPanelRowView.draw`, 12pt `NSFontWeightMedium`, `ottySuccess` |
+| command's clean exit | `checkmark.circle` | ours — the same word said lighter (see the two-speaker note) |
+| failure | `exclamationmark.triangle.fill` | `TabsPanelRowView.draw`, 11pt Medium, `ottyDanger` |
+| sudo | `shield.fill` | ditto, 11pt Medium — replaces our `#` |
+| caffeinate | Material duotone cup | `PrivilegeIconSVG.caffeinate`, an embedded `<svg>` — replaces our `∞` |
+
+- ⚠️⚠️ **"Follow otty" failed last time because we redrew otty's icons by eye.** Two of them are not
+  system symbols at all — they are literal SVG path data compiled into the app — so the nearest
+  look-alike is a different icon, not a rounding error. The fix is a path-data reader
+  (`SVGPath`, `VectorIcon.swift`) and the `d` strings kept VERBATIM in `OttyIcon`. The two that ARE
+  system symbols are mounted with `Image(systemName:)` at otty's own point size and weight, which
+  makes them Apple's artwork exactly rather than a copy of it.
+- ⚠️⚠️ **The other half of "it looked bad" was the SIZE.** otty renders every badge into a 14×14 box;
+  rounds 19–21 squeezed the same silhouettes into an 8pt column and pulled them for reading as fussy
+  detail. `StatusDot.footprint` is now 14 — otty's box, undivided — and the ring grew 8 → 10 to sit
+  with a 12pt filled check. The "three marks is the ceiling" pin from round 21 is SUPERSEDED: the
+  ceiling was a symptom of the column being too small for a silhouette to survive in.
+- ✅ **Round 21's two speakers survive the change of alphabet**, and stop needing an invented geometry
+  to say it: the AGENT's finish fills the check, a background command's clean exit outlines it. The
+  reason is unchanged — an agent's state is continuous and survives being looked at, while a command
+  badge is an unread receipt the store keeps only for an UNFOCUSED pane and drops on focus. otty
+  itself fuses the two into one `completed` badge; we keep the split because the weight is free.
+- ✅ **Thinking SHIMMERS**: a highlight sweeping the dashes, on the row title's own ink, replacing
+  round 22's radial pump. Everything round 22 decided still holds — motion instead of hue, the gate on
+  RAW `.working` (never `isBusy`: `claude` holds the OSC-133 block open for its whole lifetime, so
+  busy-means-motion would move every idle agent's row for hours), Reduce Motion FREEZES on a lit frame
+  rather than hiding the mark. What changes is the mark's own geometry: the ring no longer moves, so
+  the column stops being sized by an excursion.
+- ⚠️ **The shimmer's two constants were set from RENDERS, not from reasoning.** At a 0.28 window it lit
+  ONE dash and read as a defect; at a 0.34 base the unlit ring landed on top of the resting ring's
+  muted ink, so a thinking row and a sleeping row were the same picture for most of every lap. Shipped
+  at 0.45 / 0.62. The parked Reduce-Motion phase (−171°) is likewise measured — SwiftUI's angular
+  gradient starts at 3 o'clock and the crest sits half a window in.
+- ⚠️ **The path reader's one real trap: an arc's two flags are ONE CHARACTER each.** Minified data may
+  pack them against the coordinate that follows (`a2 2 0 014 0`), and a number-shaped read swallows the
+  lot — silently, yielding a path, just the wrong one. Pinned by `VectorIconTests`.
+- ⚠️ **Material duotone fills need EVEN-ODD.** The cup punches its inner wall with a second subpath
+  wound the same way as the outer one; non-zero winding fills the hole in solid.
+- ✅ **Judged by rendering.** `SlateSnapshotRender.testRenderStatusMarks` writes the whole vocabulary
+  at true size and 8×, and `testRenderThinkingRing` writes both a filmstrip and an animated GIF. A
+  mistyped coordinate parses happily and is invisible in the values.
+
 ### Round 22 — thinking is the one thing in the present tense, so it MOVES (2026-07-30)
 
 The user proposed the thinking indicator directly: keep the mark on the TEXT colour and change no hue

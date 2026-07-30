@@ -126,85 +126,133 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    // MARK: - Opt-in render of the THINKING ring (filmstrip + animated GIF)
+    // MARK: - Opt-in render of the status marks (sheet + shimmer filmstrip + animated GIF)
 
-    /// Renders the agent-thinking mark — ``PulsingRingShape``, the dash segments riding a crest that
-    /// travels the ring — as BOTH a phase filmstrip (`thinking-ring.png`: one lap sampled at true
-    /// 10pt size and magnified 8×, so the swing can be measured) and an animated GIF
-    /// (`thinking-ring.gif`: the same lap at the real frame rate, because a mark that says "now" can
-    /// only be judged by watching it move). A still frame is NOT sufficient evidence for this mark.
+    /// Renders the WHOLE mark vocabulary at true size and magnified (`status-marks.png`) — the only
+    /// way to check the transcription of otty's artwork, since a mistyped coordinate parses happily
+    /// and is invisible in the values.
     ///
     /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`.
     /// Pure SwiftUI shapes — no video/Metal (the hang-safety rule).
+    @MainActor
+    func testRenderStatusMarks() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the status marks")
+        }
+        let marks: [(String, StatusDotStyle)] = [
+            ("thinking", StatusPresentation.thinkingMark),
+            ("resting", StatusDotStyle(ink: Slate.Text.secondary)),
+            ("question", StatusDotStyle(ink: Slate.Status.warn, mark: .awaiting)),
+            ("agent finish", StatusDotStyle(ink: Slate.Status.ok, mark: .agentFinish)),
+            ("cmd finish", StatusDotStyle(ink: Slate.Status.ok, mark: .commandFinish)),
+            ("failure", StatusDotStyle(ink: Slate.Status.err, mark: .failure)),
+        ]
+        let sheet = VStack(alignment: .leading, spacing: 16) {
+            captioned("true size — the rail's own 14pt column") {
+                HStack(spacing: 10) { ForEach(marks.indices, id: \.self) { self.still(marks[$0].1) } }
+            }
+            captioned("8× — \(marks.map(\.0).joined(separator: " · "))") {
+                HStack(spacing: 16) {
+                    ForEach(marks.indices, id: \.self) { self.still(marks[$0].1, zoom: 8) }
+                }
+            }
+            captioned("the privilege slot — sudo · caffeinate (true size, then 8×)") {
+                HStack(spacing: 16) {
+                    TabBadgeView(kind: .sudo)
+                    TabBadgeView(kind: .caffeinate)
+                    self.zoomed(TabBadgeView(kind: .sudo), side: TabBadgeView.side, zoom: 8)
+                    self.zoomed(TabBadgeView(kind: .caffeinate), side: TabBadgeView.side, zoom: 8)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 780, alignment: .leading)
+        .background(Slate.Surface.ground)
+        try render(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
+    }
+
+    /// Renders the agent-thinking mark — ``ShimmerRing``, a highlight sweeping the dashes — as BOTH
+    /// a phase filmstrip (`thinking-ring.png`) and an animated GIF (`thinking-ring.gif`: one lap at
+    /// the real frame rate, because a mark that says "now" can only be judged by watching it move).
+    /// A still frame is NOT sufficient evidence for this mark.
     @MainActor
     func testRenderThinkingRing() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the thinking ring")
         }
         let frames = 24
-        let phases = (0..<frames).map { CGFloat($0) / CGFloat(frames) }
+        let phases = (0..<frames).map { Double($0) / Double(frames) * 360 }
 
         // The filmstrip: the lap laid out flat, true size above magnified, so a still reviewer can
-        // still see WHICH segments are out at each instant.
+        // still see WHERE the highlight is at each instant.
         let strip = VStack(alignment: .leading, spacing: 14) {
-            captioned("true size — 10pt column, the rail's own scale") {
-                HStack(spacing: 6) { ForEach(phases.indices, id: \.self) { self.pump(phases[$0]) } }
+            captioned("true size — 14pt column, the rail's own scale") {
+                HStack(spacing: 6) {
+                    ForEach(phases.indices, id: \.self) { self.shimmer(phases[$0]) }
+                }
             }
             captioned("8× — the same frames, magnified") {
                 HStack(spacing: 10) {
                     ForEach(Array(stride(from: 0, to: frames, by: 3)), id: \.self) {
-                        self.pump(phases[$0], zoom: 8)
+                        self.shimmer(phases[$0], zoom: 8)
                     }
                 }
             }
-            captioned("beside the marks it must not be confused with (resting · question · finish)") {
+            captioned("REDUCE MOTION's frozen frame, beside the marks it must not be confused with") {
                 HStack(spacing: 18) {
-                    self.pump(0, zoom: 8)
+                    self.shimmer(StatusDot.shimmerFrozenPhase, zoom: 8)
                     self.still(StatusDotStyle(ink: Slate.Text.secondary), zoom: 8)
-                    self.still(StatusDotStyle(ink: Slate.Status.warn), zoom: 8)
-                    self.still(StatusDotStyle(ink: Slate.Status.ok, mark: .closedRing), zoom: 8)
+                    self.still(StatusDotStyle(ink: Slate.Status.warn, mark: .awaiting), zoom: 8)
+                    self.still(StatusDotStyle(ink: Slate.Status.ok, mark: .agentFinish), zoom: 8)
                 }
             }
         }
         .padding(20)
         .frame(width: 900, alignment: .leading)
         .background(Slate.Surface.ground)
-        try render(strip, size: CGSize(width: 900, height: 330), to: dir, named: "thinking-ring.png")
+        try render(strip, size: CGSize(width: 900, height: 340), to: dir, named: "thinking-ring.png")
 
         // The GIF: one lap at the shipped period, looping forever — the only honest look at it.
         renderGIF(
             phases.map { phase in
                 HStack(spacing: 40) {
-                    self.pump(phase)
-                    self.pump(phase, zoom: 8)
+                    self.shimmer(phase)
+                    self.shimmer(phase, zoom: 8)
                 }
                 .padding(24)
                 .background(Slate.Surface.ground)
             },
-            size: CGSize(width: 220, height: 110),
-            delay: StatusDot.pulsePeriod / Double(frames),
+            size: CGSize(width: 230, height: 120),
+            delay: StatusDot.shimmerPeriod / Double(frames),
             to: dir, named: "thinking-ring.gif",
         )
     }
 
-    /// The thinking mark at one phase, in its true 10pt column (optionally magnified) — drawn from
-    /// the SHIPPING shape + ink, so the render cannot flatter a geometry the app doesn't draw.
+    /// The thinking mark at one phase of its sweep (optionally magnified) — drawn from the SHIPPING
+    /// view + ink, so the render cannot flatter a geometry the app doesn't draw.
     @MainActor
-    private func pump(_ phase: CGFloat, zoom: CGFloat = 1) -> some View {
-        PulsingRingShape(phase: phase)
-            .stroke(StatusPresentation.thinkingRing.ink, style: StatusDot.pulseStroke)
-            .frame(width: StatusDot.footprint, height: StatusDot.footprint)
-            .scaleEffect(zoom)
-            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+    private func shimmer(_ phase: Double, zoom: CGFloat = 1) -> some View {
+        zoomed(
+            ShimmerRing(ink: StatusPresentation.thinkingMark.ink, phase: phase)
+                .frame(width: StatusDot.footprint, height: StatusDot.footprint),
+            side: StatusDot.footprint, zoom: zoom,
+        )
     }
 
-    /// A settled mark at the same scale, for the side-by-side that proves the pump can't be mistaken
-    /// for one of them.
+    /// A settled mark at the same scale, for the side-by-side that proves the shimmer can't be
+    /// mistaken for one of them.
     @MainActor
     private func still(_ style: StatusDotStyle, zoom: CGFloat = 1) -> some View {
-        StatusDotView(style: style)
+        zoomed(StatusDotView(style: style), side: StatusDot.footprint, zoom: zoom)
+    }
+
+    /// Magnify a mark WITHOUT resampling its geometry — `scaleEffect` on the vector, so an 8× frame
+    /// shows the shape the rasterizer would draw, not a blown-up 14pt bitmap.
+    @MainActor
+    private func zoomed(_ content: some View, side: CGFloat, zoom: CGFloat) -> some View {
+        content
             .scaleEffect(zoom)
-            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+            .frame(width: side * zoom, height: side * zoom)
     }
 
     @MainActor
