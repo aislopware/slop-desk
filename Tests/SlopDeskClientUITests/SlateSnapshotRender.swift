@@ -267,6 +267,9 @@ final class SlateSnapshotRender: XCTestCase {
             ForEach(Array(stride(from: 0, to: frames, by: 2)), id: \.self) {
                 self.workingRow(phase: phases[$0])
             }
+            ForEach(Array(stride(from: 0, to: frames, by: 2)), id: \.self) {
+                self.workingRow(phase: phases[$0], title: "api")
+            }
             // The row it must not be mistaken for: an agent present but idle, holding still.
             SlateTabRow(
                 title: "refactor the reassembler", active: false, agentMarker: true,
@@ -277,27 +280,32 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: width)
         .background(Slate.Surface.ground)
         try renderHosted(
-            strip, size: CGSize(width: width, height: 400), to: dir, named: "working-shimmer.png",
+            strip, size: CGSize(width: width, height: 760), to: dir, named: "working-shimmer.png",
         )
 
         renderGIF(
             phases.map { phase in
-                VStack(spacing: 2) { self.workingRow(phase: phase) }
-                    .padding(8)
-                    .frame(width: width)
-                    .background(Slate.Surface.ground)
+                VStack(spacing: 2) {
+                    self.workingRow(phase: phase)
+                    self.workingRow(phase: phase, title: "api")
+                }
+                .padding(8)
+                .frame(width: width)
+                .background(Slate.Surface.ground)
             },
-            size: CGSize(width: width, height: 44),
+            size: CGSize(width: width, height: 80),
             delay: Slate.Shimmer.period / Double(frames),
             to: dir, named: "working-shimmer.gif",
         )
     }
 
-    /// The SHIPPING row in its working state, with the shimmer pinned at one instant.
+    /// The SHIPPING row in its working state, with the shimmer pinned at one instant. ⚠️ The SHORT
+    /// title is not decoration: a band wide enough to cover a short run turns the sweep into a blink,
+    /// which is the defect this render exists to catch.
     @MainActor
-    private func workingRow(phase: CGFloat) -> some View {
+    private func workingRow(phase: CGFloat, title: String = "refactor the reassembler") -> some View {
         SlateTabRow(
-            title: "refactor the reassembler", active: false, agentMarker: true,
+            title: title, active: false, agentMarker: true,
             workingLabel: "Agent working", shimmerPhase: phase, onSelect: {}, onClose: {},
         )
     }

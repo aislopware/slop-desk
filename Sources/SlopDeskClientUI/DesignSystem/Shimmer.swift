@@ -25,12 +25,13 @@ extension Slate {
         /// the resting rows' secondary ink, so for most of every lap the row doing the work read
         /// dimmer than the ones asleep — backwards. The floor is "still brighter than resting".
         static let base: Double = 0.7
-        /// The band's width as a fraction of the run. Wide enough that a short title ("api") is
-        /// lit as a whole rather than sliced.
-        static let widthFraction: CGFloat = 0.45
-        /// …and never narrower than this, so a long title still gets a band with a readable ramp
-        /// instead of a hairline.
-        static let minimumWidth: CGFloat = 60
+        /// The band's width as a fraction of the run. ⚠️ It must stay WELL under the run: shipped
+        /// first at 0.45 with a 60pt floor, which on the rail's short titles (a project name, a
+        /// bare `api`) covered the whole run — so the title blinked on and off instead of being
+        /// swept, and the wrap read as a jerk back to the start rather than a band leaving.
+        static let widthFraction: CGFloat = 0.35
+        /// …and never narrower than this, so the ramp is still a ramp on a very short run.
+        static let minimumWidth: CGFloat = 16
 
         /// The band, as fractions of its own width: dark at both ends, full in the middle. The
         /// quarter stops are the ramp — two stops alone give a hard-edged wedge that reads as a
@@ -94,6 +95,16 @@ private struct SlateShimmer: ViewModifier {
         }
     }
 
+    /// Where the band is in its pass, wrapped into `0..<1`.
+    ///
+    /// ⚠️ The wrap is what makes a restart invisible. `phase` only ever GROWS (each pass animates to
+    /// `phase + 1`), so a row that is rebuilt mid-pass — the rail rebuilds on every status tick —
+    /// picks the animation up where it left off instead of snapping the band back to the head.
+    private var lap: CGFloat {
+        let raw = pinnedPhase ?? phase
+        return raw - raw.rounded(.down)
+    }
+
     private func band(over content: Content) -> some View {
         GeometryReader { proxy in
             let width = proxy.size.width
@@ -102,18 +113,20 @@ private struct SlateShimmer: ViewModifier {
                 stops: Slate.Shimmer.stops, startPoint: .leading, endPoint: .trailing,
             )
             .frame(width: band)
-            // Starts fully off the leading edge and ends fully off the trailing one, so every lap
-            // begins and ends with the run evenly lit — no flash at the wrap.
-            .offset(x: -band + (pinnedPhase ?? phase) * (width + band))
+            // Starts fully off the leading edge and ends fully off the trailing one, so the band
+            // creeps IN from the head and creeps OUT past the tail — it is never simply switched on.
+            .offset(x: -band + lap * (width + band))
         }
         .mask(content)
         .allowsHitTesting(false)
     }
 
     private func run() {
-        phase = 0
+        // ⚠️ NOT `phase = 0` first: re-seeding is exactly the jump this animation must not have. One
+        // pass is one unit, and ``lap`` wraps, so continuing from wherever the value stands is
+        // seamless — `position(p)` and `position(p + 1)` are the same point.
         withAnimation(.linear(duration: Slate.Shimmer.period).repeatForever(autoreverses: false)) {
-            phase = 1
+            phase += 1
         }
     }
 }

@@ -35,21 +35,22 @@ final class ShimmerTests: XCTestCase {
         XCTAssertGreaterThan(Slate.Shimmer.period, 0)
     }
 
-    /// The band is sized to the run it crosses, with a floor: a three-letter title ("api") gets lit
-    /// as a whole word rather than sliced down the middle by a proportionally tiny band.
-    func testAShortTitleIsLitWholeAndALongOneGetsARamp() {
+    /// ⚠️ The band is a FRACTION of the run, never the whole of it. Shipped first at 0.45 with a
+    /// 60pt floor, which on the rail's short titles (a project name, a bare `api`) covered the run
+    /// end to end — so the title blinked on and off instead of being swept, and the wrap read as a
+    /// jerk back to the head rather than a band leaving.
+    func testTheBandNeverCoversTheWholeRun() {
+        for width: CGFloat in [24, 40, 80, 160, 400] {
+            let band = Slate.Shimmer.bandWidth(for: width)
+            XCTAssertGreaterThan(band, 0)
+            XCTAssertLessThan(
+                band, width, "a band as wide as the run is a blink, not a sweep (run \(width))",
+            )
+        }
+        XCTAssertEqual(Slate.Shimmer.bandWidth(for: 400), 400 * Slate.Shimmer.widthFraction)
         XCTAssertEqual(
-            Slate.Shimmer.bandWidth(for: 30), Slate.Shimmer.minimumWidth,
-            "below the floor, the band is the floor",
-        )
-        XCTAssertGreaterThan(
-            Slate.Shimmer.bandWidth(for: 30), 30, "…which is wider than the title itself",
-        )
-        let long: CGFloat = 400
-        XCTAssertEqual(Slate.Shimmer.bandWidth(for: long), long * Slate.Shimmer.widthFraction)
-        XCTAssertLessThan(
-            Slate.Shimmer.bandWidth(for: long), long,
-            "a band as wide as the run would brighten the whole title at once — a pulse, not a sweep",
+            Slate.Shimmer.bandWidth(for: 20), Slate.Shimmer.minimumWidth,
+            "below the floor the band is the floor — the ramp stays a ramp",
         )
     }
 }

@@ -3368,6 +3368,14 @@ at its prompt is otherwise indistinguishable from a shell that has been busy for
   at 0.55 the unlit title sat BELOW the resting rows' secondary ink, so for most of every pass the
   row doing the work read dimmer than the ones asleep. Reduce Motion simply drops it, and that costs
   nothing: it is the second voice on a fact the mark already states.
+- ⚠️⚠️ **The band must stay well UNDER the run's width.** Shipped first at 0.45 with a 60pt floor,
+  which on the rail's real titles — a project name, a bare `api` — covered the run end to end: the
+  title blinked on and off instead of being swept, and the wrap read as a jerk back to the head
+  rather than as a band leaving. Now 0.35 with a 16pt floor, and the render carries a SHORT title
+  precisely because that is where the defect lives.
+- ⚠️ **The pass never re-seeds.** `phase` only grows (each pass animates to `phase + 1`) and the
+  position wraps it, so a row rebuilt mid-pass — the rail rebuilds on every status tick — picks the
+  animation up where it left off. Assigning `phase = 0` on restart is the same visible snap.
 - ⚠️ **A layer render photographs an animation's MODEL value**, so a live capture of a shimmering row
   yields the same frame every time. `SlateTabRow.shimmerPhase` exists for that: the filmstrip and GIF
   draw the SHIPPING row at pinned instants rather than a mock of it.
