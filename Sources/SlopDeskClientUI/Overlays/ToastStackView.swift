@@ -13,8 +13,8 @@
 //     `InstrumentChip`, `NavigatorColumn`), not a new device. Two earlier leading elements were cut: the
 //     SF Symbol quartet (`bell` / `checkmark.circle` / `exclamationmark.triangle` / `asterisk` — four
 //     glyphs from four families that never shared a stroke weight, and the very pictograms rounds 19–21
-//     pulled off the rail), then the rail's own `StatusDotView` ring/dot, which is right in a 10pt sidebar
-//     column but read as a tiny abstract speck where a notification wants something concrete. A coloured
+//     pulled off the rail), then the rail's own `StatusDotView` ring/dot, which is right in the sidebar's
+//     narrow mark column but read as a tiny abstract speck where a notification wants something concrete. A coloured
 //     caps word carries the same bit with far more legible ink — and with no glyph column, every line
 //     starts on ONE left rail.
 //   * COLOUR LIVES IN EXACTLY ONE PLACE — the eyebrow. The surface is never tinted by flavour (chromatic

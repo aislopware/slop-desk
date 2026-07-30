@@ -241,4 +241,147 @@ final class StatusDotTests: XCTestCase {
             StatusDot.footprint, StatusDot.ringDiameter, "…inside one fixed column",
         )
     }
+
+    // MARK: - The thinking pump (round 22)
+
+    /// The THINKING agent's mark spends MOTION, not hue: the row title's own primary ink, the same
+    /// open ring, pumping. Two things it must never be — the accent (the rail's hue budget belongs to
+    /// the states that want the eye) and the resting agent's ink (Reduce Motion freezes the pump, and
+    /// a frozen thinking ring must still not be a resting one).
+    @MainActor
+    func testTheThinkingRingSpendsMotionNotHue() {
+        let thinking = StatusPresentation.statusDot(working: true, badge: nil)
+        XCTAssertEqual(thinking?.mark, .openRing, "still the ring — motion is not a fourth mark")
+        XCTAssertEqual(thinking?.pulsing, true, "the thinking agent is the one thing that moves")
+        XCTAssertEqual(thinking?.ink, Slate.Text.primary, "the row title's own ink — no hue spent")
+        XCTAssertNotEqual(thinking?.ink, Slate.State.accent, "the accent is no longer the rail's busy voice")
+        XCTAssertNotEqual(
+            thinking?.ink,
+            StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)?.ink,
+            "frozen by Reduce Motion, thinking must not collapse into resting",
+        )
+    }
+
+    /// ⚠️ ONLY the raw-working route pumps. `claude` holds the shell's OSC-133 block open for its
+    /// whole interactive lifetime, so a busy-means-motion rule would leave every idle agent's row
+    /// moving for HOURS (docs/DECISIONS.md rounds 19, 22) — and a settled rail that twitches is the
+    /// exact failure round 19 was reverted for.
+    @MainActor
+    func testNothingSettledPumps() {
+        let still: [(String, StatusDotStyle?)] = [
+            ("resting agent", StatusPresentation.statusDot(working: false, badge: nil, agentIdle: true)),
+            ("busy shell + agent", StatusPresentation.statusDot(
+                working: false, badge: .commandBusy, agentIdle: true,
+            )),
+            ("question", StatusPresentation.statusDot(working: false, badge: .awaitingInput)),
+            ("agent finish", StatusPresentation.statusDot(
+                working: false, badge: .finished, agentFinish: true,
+            )),
+            ("command failure", StatusPresentation.statusDot(working: false, badge: .error)),
+            ("command finish", StatusPresentation.statusDot(working: false, badge: .completed)),
+        ]
+        for (name, style) in still {
+            XCTAssertNotNil(style, "\(name) still mounts a mark")
+            XCTAssertEqual(style?.pulsing, false, "\(name) must hold absolutely still")
+        }
+        // The badge-routed agent tier is the SAME reading as raw working — including the motion.
+        XCTAssertEqual(StatusPresentation.statusDot(working: false, badge: .running)?.pulsing, true)
+    }
+
+    /// The pump never leaves the column and never digs inward: every segment at every phase sits
+    /// between the ordinary ring (its trough IS the resting dashed ring) and the footprint's edge,
+    /// stroke included. This is what lets the thinking row share one right edge with every settled
+    /// row — the mark that moves may not make the rail move.
+    func testThePumpStaysInsideTheColumnAndNeverDigsInward() {
+        let inner = StatusDot.ringDiameter / 2
+        let outer = StatusDot.footprint / 2 - StatusDot.ringLineWidth / 2
+        for step in 0..<240 {
+            let phase = CGFloat(step) / 240
+            for segment in 0..<StatusDot.ringDashCount {
+                let radius = StatusDot.pulseRadius(segment: segment, phase: phase)
+                XCTAssertGreaterThanOrEqual(
+                    Double(radius), Double(inner) - 1e-9,
+                    "segment \(segment) @ \(phase) dug INSIDE the resting ring",
+                )
+                XCTAssertLessThanOrEqual(
+                    Double(radius), Double(outer) + 1e-9,
+                    "segment \(segment) @ \(phase) crossed the column edge",
+                )
+            }
+        }
+        // The crest uses ALL of the column: at full lift the stroke's outer edge IS the column edge.
+        XCTAssertEqual(
+            Double(inner + StatusDot.pulseAmplitude), Double(outer), accuracy: 1e-9,
+            "the footprint is sized by the crest — no slack, no overflow",
+        )
+    }
+
+    /// The crest TRAVELS: each segment peaks exactly when the phase reaches its own position, one
+    /// eighth of a lap apart, and peaks at the full amplitude. That is the whole idea the user asked
+    /// for — the segments move out and back in TURN, not together (a synchronous breath is a
+    /// different, already-rejected mark).
+    func testTheCrestTravelsOneSegmentPerEighthLap() {
+        for segment in 0..<StatusDot.ringDashCount {
+            let own = CGFloat(segment) / CGFloat(StatusDot.ringDashCount)
+            XCTAssertEqual(
+                Double(StatusDot.pulseLift(segment: segment, phase: own)),
+                Double(StatusDot.pulseAmplitude), accuracy: 1e-9,
+                "segment \(segment) must be at full lift when the crest reaches it",
+            )
+            // …and it is the ONLY one there: every other segment is strictly lower at that instant.
+            for other in 0..<StatusDot.ringDashCount where other != segment {
+                XCTAssertLessThan(
+                    StatusDot.pulseLift(segment: other, phase: own),
+                    StatusDot.pulseLift(segment: segment, phase: own),
+                    "segment \(other) must not share segment \(segment)'s crest",
+                )
+            }
+        }
+        // Away from the crest the wave is FLAT — the far side of the ring is the plain resting ring,
+        // which is what keeps the mark a travelling wave rather than a wobbling circle.
+        XCTAssertEqual(StatusDot.pulseLift(segment: 4, phase: 0), 0, "half a lap away is at rest")
+    }
+
+    /// One lap is the whole animation: `phase` and `phase + 1` draw the same frame, which is what
+    /// lets a non-autoreversing `repeatForever` loop with no seam. A pump that jumped at the wrap
+    /// would tick once per lap — the twitch a settled rail is not allowed.
+    func testOneLapIsSeamless() {
+        for step in 0..<64 {
+            let phase = CGFloat(step) / 64
+            for segment in 0..<StatusDot.ringDashCount {
+                XCTAssertEqual(
+                    Double(StatusDot.pulseLift(segment: segment, phase: phase)),
+                    Double(StatusDot.pulseLift(segment: segment, phase: phase + 1)),
+                    accuracy: 1e-9, "segment \(segment) must wrap seamlessly at \(phase)",
+                )
+            }
+        }
+    }
+
+    /// Reduce Motion freezes the pump on a CRESTED frame, never a resting one: a state that exists
+    /// only as an animation is invisible to someone who asked for stillness, so the held frame has to
+    /// still be legibly not the even resting ring.
+    func testReduceMotionFreezesOnACrest() {
+        XCTAssertEqual(
+            Double(StatusDot.pulseLift(segment: 0, phase: StatusDot.pulseFrozenPhase)),
+            Double(StatusDot.pulseAmplitude), accuracy: 1e-9,
+            "the frozen frame must keep a segment out where the eye can see it",
+        )
+    }
+
+    /// The pumping ring's TROUGH is the ordinary dashed ring — same diameter, same cut, same weight.
+    /// ⚠️ Shrinking the base to buy excursion room was tried and rendered: at r=3.25 the gaps fall
+    /// under the stroke width and the eight segments fuse into a notched blob. The dash rhythm IS the
+    /// mark; the wave may only push outward from it.
+    func testThePumpsTroughIsTheOrdinaryRing() {
+        XCTAssertEqual(StatusDot.pulseBaseDiameter, StatusDot.ringDiameter)
+        // The gap between two resting segments, measured as arc length, against the stroke that has
+        // to read across it — the margin that shrinking the ring spends.
+        let gap = CGFloat.pi * StatusDot.ringDiameter / CGFloat(StatusDot.ringDashCount)
+            * (1 - StatusDot.ringDashFill)
+        XCTAssertLessThan(
+            gap, StatusDot.ringLineWidth * 1.2,
+            "the rhythm is ALREADY tight at r=4 — this is why the base may not shrink",
+        )
+    }
 }

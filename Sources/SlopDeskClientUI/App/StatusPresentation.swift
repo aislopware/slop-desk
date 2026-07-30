@@ -50,8 +50,12 @@ enum StatusPresentation {
 
     /// Tint for an agent status — the SAME hue budget the tab rows speak (``attentionInk(_:)``), so
     /// the iOS toolbar glyph / Peek & Reply header can never disagree with the sidebar about one pane:
-    /// working = accent (in-motion), needs-permission = amber (act-now; red is reserved for broken),
-    /// done = green (unread finish), idle/none = muted (the resting state spends no colour).
+    /// needs-permission = amber (act-now; red is reserved for broken), done = green (unread finish),
+    /// idle/none = muted (the resting state spends no colour).
+    ///
+    /// `.working` = accent is this surface's OWN choice, and the one place these two vocabularies
+    /// diverge on purpose: the rail says working with MOTION (``thinkingRing``, round 22) because it
+    /// has a mark that can move, while a glyph in a toolbar slot has only its character and its tint.
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
         case .none,
@@ -113,13 +117,14 @@ enum StatusPresentation {
     }
 
     /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: one column, one hue budget
-    /// (T3 Code's own status-hue convention), nothing animated. The HUE names the STATE and the
+    /// (T3 Code's own status-hue convention). Exactly ONE reading moves — the thinking agent's, which
+    /// is why it needs no hue at all — and everything settled holds still. The HUE names the STATE and the
     /// geometry names the SPEAKER (``mark(for:agentFinish:)``): the ring is the AGENT's, the dot is
     /// a COMMAND's outcome.
     ///
-    /// The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working` status, so the
-    /// badge gate can't kill it; the badge-routed `.running` tier reads identically); a RESTING CODE
-    /// AGENT rings on the muted secondary ink (present, spending no hue); a waiting question rings
+    /// The ladder: a WORKING AGENT PUMPS its ring (``thinkingRing`` — keyed on the RAW `.working`
+    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads identically);
+    /// a RESTING CODE AGENT rings on the muted secondary ink (present, spending no hue); a waiting question rings
     /// amber; the agent's own FINISH closes the ring on green. A COMMAND's outcome instead takes the
     /// small filled DOT on the same inks — green for a clean background finish, red for a failure —
     /// because it is an unread receipt for an event, not the state of something alive (the store
@@ -142,14 +147,14 @@ enum StatusPresentation {
     static func statusDot(
         working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false, agentFinish: Bool = false,
     ) -> StatusDotStyle? {
-        if working { return StatusDotStyle(ink: Slate.State.accent) }
+        if working { return thinkingRing }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
         let resting = agentIdle ? StatusDotStyle(ink: Slate.Text.secondary) : nil
         guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(ink: Slate.State.accent)
+        case .running: return thinkingRing
         case .awaitingInput,
              .completed,
              .error,
@@ -165,6 +170,22 @@ enum StatusPresentation {
              .commandRunning,
              .sudo: return resting
         }
+    }
+
+    /// The THINKING agent's mark — the open ring, PUMPING, on the row title's own primary text ink.
+    ///
+    /// It spends NO hue, and that is the point twice over. The rail's hue budget buys attention
+    /// states (amber question, green finish, red failure); an agent merely thinking is not a state
+    /// that wants the eye, it is one that answers "is this still alive?" when the eye arrives.
+    /// Motion answers that in the present tense, which is exactly what no static mark can forge —
+    /// so the working row spends movement instead of colour, and the whole colour budget stays with
+    /// the rows that actually need you.
+    ///
+    /// The primary ink (over the resting ring's secondary) also keeps the two legible APART when
+    /// Reduce Motion freezes the pump: working and resting must never collapse into one mark.
+    @MainActor
+    static var thinkingRing: StatusDotStyle {
+        StatusDotStyle(ink: Slate.Text.primary, mark: .openRing, pulsing: true)
     }
 
     /// WHICH mark an attention state draws — the geometry that names the SPEAKER, the hue having

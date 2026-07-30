@@ -126,6 +126,128 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
+    // MARK: - Opt-in render of the THINKING ring (filmstrip + animated GIF)
+
+    /// Renders the agent-thinking mark — ``PulsingRingShape``, the dash segments riding a crest that
+    /// travels the ring — as BOTH a phase filmstrip (`thinking-ring.png`: one lap sampled at true
+    /// 10pt size and magnified 8×, so the swing can be measured) and an animated GIF
+    /// (`thinking-ring.gif`: the same lap at the real frame rate, because a mark that says "now" can
+    /// only be judged by watching it move). A still frame is NOT sufficient evidence for this mark.
+    ///
+    /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`.
+    /// Pure SwiftUI shapes — no video/Metal (the hang-safety rule).
+    @MainActor
+    func testRenderThinkingRing() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the thinking ring")
+        }
+        let frames = 24
+        let phases = (0..<frames).map { CGFloat($0) / CGFloat(frames) }
+
+        // The filmstrip: the lap laid out flat, true size above magnified, so a still reviewer can
+        // still see WHICH segments are out at each instant.
+        let strip = VStack(alignment: .leading, spacing: 14) {
+            captioned("true size — 10pt column, the rail's own scale") {
+                HStack(spacing: 6) { ForEach(phases.indices, id: \.self) { self.pump(phases[$0]) } }
+            }
+            captioned("8× — the same frames, magnified") {
+                HStack(spacing: 10) {
+                    ForEach(Array(stride(from: 0, to: frames, by: 3)), id: \.self) {
+                        self.pump(phases[$0], zoom: 8)
+                    }
+                }
+            }
+            captioned("beside the marks it must not be confused with (resting · question · finish)") {
+                HStack(spacing: 18) {
+                    self.pump(0, zoom: 8)
+                    self.still(StatusDotStyle(ink: Slate.Text.secondary), zoom: 8)
+                    self.still(StatusDotStyle(ink: Slate.Status.warn), zoom: 8)
+                    self.still(StatusDotStyle(ink: Slate.Status.ok, mark: .closedRing), zoom: 8)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 900, alignment: .leading)
+        .background(Slate.Surface.ground)
+        try render(strip, size: CGSize(width: 900, height: 330), to: dir, named: "thinking-ring.png")
+
+        // The GIF: one lap at the shipped period, looping forever — the only honest look at it.
+        renderGIF(
+            phases.map { phase in
+                HStack(spacing: 40) {
+                    self.pump(phase)
+                    self.pump(phase, zoom: 8)
+                }
+                .padding(24)
+                .background(Slate.Surface.ground)
+            },
+            size: CGSize(width: 220, height: 110),
+            delay: StatusDot.pulsePeriod / Double(frames),
+            to: dir, named: "thinking-ring.gif",
+        )
+    }
+
+    /// The thinking mark at one phase, in its true 10pt column (optionally magnified) — drawn from
+    /// the SHIPPING shape + ink, so the render cannot flatter a geometry the app doesn't draw.
+    @MainActor
+    private func pump(_ phase: CGFloat, zoom: CGFloat = 1) -> some View {
+        PulsingRingShape(phase: phase)
+            .stroke(StatusPresentation.thinkingRing.ink, style: StatusDot.pulseStroke)
+            .frame(width: StatusDot.footprint, height: StatusDot.footprint)
+            .scaleEffect(zoom)
+            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+    }
+
+    /// A settled mark at the same scale, for the side-by-side that proves the pump can't be mistaken
+    /// for one of them.
+    @MainActor
+    private func still(_ style: StatusDotStyle, zoom: CGFloat = 1) -> some View {
+        StatusDotView(style: style)
+            .scaleEffect(zoom)
+            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+    }
+
+    @MainActor
+    private func captioned(_ caption: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(caption)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.tertiary)
+            content()
+        }
+    }
+
+    /// Rasterize each view as one GIF frame and write a looping animation. Same @2x scale as the PNG
+    /// renders, so the GIF and the filmstrip show the same pixels.
+    @MainActor
+    private func renderGIF(
+        _ frames: [some View], size: CGSize, delay: Double, to dir: String, named name: String,
+    ) {
+        let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
+        guard let dest = CGImageDestinationCreateWithURL(
+            out as CFURL, "com.compuserve.gif" as CFString, frames.count, nil,
+        ) else {
+            XCTFail("could not create a GIF destination at \(out.path)")
+            return
+        }
+        CGImageDestinationSetProperties(dest, [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
+        ] as CFDictionary)
+        for frame in frames {
+            let renderer = ImageRenderer(content: frame.frame(width: size.width, height: size.height))
+            renderer.scale = 2
+            guard let cg = renderer.cgImage else {
+                XCTFail("ImageRenderer produced no frame for \(name)")
+                return
+            }
+            CGImageDestinationAddImage(dest, cg, [
+                kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: delay],
+            ] as CFDictionary)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(dest), "GIF finalize failed for \(name)")
+        print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
+    }
+
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
     /// Renders the REAL ``SidebarSectionHeaderRow`` (the gutter-chevron + NAME header on the rows'

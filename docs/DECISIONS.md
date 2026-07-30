@@ -3309,6 +3309,47 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 22 — thinking is the one thing in the present tense, so it MOVES (2026-07-30)
+
+The user proposed the thinking indicator directly: keep the mark on the TEXT colour and change no hue
+at all, and let the dash chunks slide outward from the ring and back in one after another, the way an
+EDM visualizer's bars run around a circle. The mark for a WORKING agent is now exactly that — the same
+dashed ring with a crest travelling around it, on the row title's own primary ink.
+Round 19's blanket "nothing in the rail animates" is narrowed, NOT reversed — see the gate below.
+
+- ✅ **Motion instead of hue, and both halves are wins.** Thinking is the only state on this rail
+  happening in the present tense, and motion is the one thing a static mark cannot forge (the accent
+  ring said "working" the same way an hour-old finish said "finished" — a legend you have to learn).
+  Handing the state to movement also hands its ACCENT BACK to the hue budget, so colour on this rail
+  now means only what wants the eye: amber question, green finish, red failure.
+- ✅ **The trough IS the resting ring** — same 8pt diameter, same lucide `circle-dashed` cut, same
+  weight — and the wave only ever pushes OUTWARD from it. So the pumping mark is visibly the same
+  alphabet, not a new pictogram: three marks is still the ceiling (round 21), and `pulsing` is a flag
+  on the open ring rather than a fourth case.
+- ⚠️ **The gate is `.working` RAW, and that is load-bearing.** `claude` holds the shell's OSC-133 block
+  open for its whole interactive lifetime, so an `isBusy`-keyed rule leaves every idle agent's row
+  moving for HOURS — the exact failure that got round 19 reverted. Nothing settled pumps, pinned by
+  `testNothingSettledPumps`.
+- ⚠️ **Footprint 10 → 12.** The column is sized by the widest thing it draws, and at full crest that is
+  `4 + 1.25 + 0.75 = 6`. Every settled mark keeps its own size and simply gets more air.
+- ❌ **Rejected: shrinking the ring to fit the excursion inside 10pt** (base `6.5pt`, so the crest
+  grazes the old edge). Rendered: at r=3.25 the gaps fall UNDER the stroke width and the eight
+  segments fuse into a notched blob. The dash rhythm is the mark's identity — spending it to save 2pt
+  of column buys a different, worse mark.
+- ⚠️ **`addArc` is a trap in this shape, in both spellings** — found by rendering, not by reading. With
+  no current point it sweeps the 333° COMPLEMENT (eight near-complete rings at eight radii = one fat
+  blob); seeded with a `move`, CoreGraphics recomputes the arc start an ulp off it and leaves a
+  hairline connector at a ~180° corner, which mitres into a 10×-lineWidth SPIKE out of the mark, rounds
+  into a fat pill on every lifted segment, and bevels into a visible notch. The segments are polylines
+  (8 chords, 0.002pt off the true arc) precisely so there is no seam to dress.
+- ✅ **Reduce Motion FREEZES on a crest** rather than dropping the mark — a state that exists only as an
+  animation is invisible to someone who asked for stillness — and the thinking ink is PRIMARY against
+  the resting ring's SECONDARY, so the two never collapse into one mark when held still.
+- ✅ **Judged by watching it, per round 20's rule.** `SlateSnapshotRender.testRenderThinkingRing` writes
+  BOTH a phase filmstrip (true size + 8×) and an animated GIF at the shipped 1.4s period. A still frame
+  is not sufficient evidence for this mark, and the three geometry bugs above were all invisible in the
+  values — only the render showed them.
+
 ### Round 21 — the column has TWO speakers: the ring is the agent's, the dot is a command's (2026-07-30)
 
 *"Status của command thường cần khác với agent, ở trạng thái complete và error."* Correct, and the rail
