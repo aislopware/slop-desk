@@ -290,6 +290,14 @@ public enum AllSettingsCatalog {
         // MARK: Controls (copy / paste / mouse / scroll fire-time flags)
 
         SettingEntry(
+            key: SettingsKey.tabSwitcherPreview,
+            label: "Preview While Switching Tabs",
+            description: "As ⌃⇥ walks the tab list, show each tab underneath the switcher.",
+            defaultText: "On",
+            bucket: .advancedOnly,
+            keywords: "tab switcher control ctrl preview follow highlight cycle mru",
+        ),
+        SettingEntry(
             key: SettingsKey.copyOnSelect,
             label: "Copy on Select",
             description: "Copy the selection to the pasteboard as soon as it is made.",
@@ -662,6 +670,7 @@ public enum AllSettingsCatalog {
         SettingsKey.shiftArrowSelect,
         // Controls — mouse / scroll
         SettingsKey.mouseHideWhileTyping, SettingsKey.focusFollowsMouse, SettingsKey.scrollMultiplier,
+        SettingsKey.tabSwitcherPreview,
         SettingsKey.allowMouseCapture, SettingsKey.allowShiftClickKey, SettingsKey.clickToMove,
         SettingsKey.rightClickActionKey, SettingsKey.optionAsAltKey, SettingsKey.undoAtPrompt,
         // Controls — links

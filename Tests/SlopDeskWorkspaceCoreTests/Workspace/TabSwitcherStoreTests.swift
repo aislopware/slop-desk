@@ -1,3 +1,4 @@
+import Defaults
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -27,6 +28,13 @@ final class TabSwitcherStoreTests: XCTestCase {
 
     private func activeTab(_ store: WorkspaceStore) -> TabID? {
         store.tree.activeSession?.activeTab?.id
+    }
+
+    /// HOST TRUTH — the projection BEFORE this device's local overlays (the follow-along preview rides
+    /// one). This is what "nothing was committed" has to mean while a switcher is open: `activeTab`
+    /// reads what the device is LOOKING at, which the preview legitimately moves.
+    private func committedTab(_ store: WorkspaceStore) -> TabID? {
+        store.workspaceMirror.topology?.tree.activeSession?.activeTab?.id
     }
 
     /// Builds a three-tab session and leaves the visit order A → C → A, so:
@@ -80,7 +88,7 @@ final class TabSwitcherStoreTests: XCTestCase {
         store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
         store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
         store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
-        XCTAssertEqual(activeTab(store), a, "three ⇥ taps moved the highlight, not the workspace")
+        XCTAssertEqual(committedTab(store), a, "three ⇥ taps moved the highlight, not the workspace")
         XCTAssertNotNil(store.tabSwitcher, "and the switcher is still open")
     }
 
@@ -184,7 +192,7 @@ final class TabSwitcherStoreTests: XCTestCase {
         store.commitTabSwitcherOnModifierRelease()
 
         XCTAssertNotNil(store.tabSwitcher, "an unarmed switcher survives a modifier release")
-        XCTAssertEqual(activeTab(store), a, "and nothing was committed")
+        XCTAssertEqual(committedTab(store), a, "and nothing was committed")
     }
 
     // MARK: - Navigating elsewhere abandons the walk
@@ -233,5 +241,93 @@ final class TabSwitcherStoreTests: XCTestCase {
         store.commitTabSwitcher()
 
         XCTAssertEqual(activeTab(store), c, "the commit's own focus change did not cancel it")
+    }
+
+    // MARK: - The follow-along preview (`controls.tabSwitcherPreview`, default ON)
+
+    /// Runs `body` with the preview setting forced to `enabled`, restoring it after — the key is a real
+    /// `UserDefaults` entry, so a test that flipped it and walked away would leak into every later one.
+    private func withPreview(_ enabled: Bool, _ body: () -> Void) {
+        let previous = Defaults[.tabSwitcherPreview]
+        Defaults[.tabSwitcherPreview] = enabled
+        defer { Defaults[.tabSwitcherPreview] = previous }
+        body()
+    }
+
+    /// The point of the feature: while the highlight walks, THIS DEVICE looks at the highlighted tab.
+    func testStepShowsTheHighlightedTabWhileTheSwitcherIsOpen() {
+        withPreview(true) {
+            let store = makeStore()
+            let (a, b, c) = seedDivergentFixture(store)
+
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            XCTAssertEqual(activeTab(store), c, "the first candidate is on screen")
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            XCTAssertEqual(activeTab(store), b, "and the walk keeps the view with it")
+            XCTAssertEqual(committedTab(store), a, "…while the WORKSPACE has not moved")
+        }
+    }
+
+    /// ⚠️ THE FOUNDING RULE SURVIVES: the preview is a device-local overlay, never an intent. Host truth
+    /// stays on the starting tab for the whole walk, so no other client is dragged through the cycle.
+    func testPreviewStagesNoIntent() {
+        withPreview(true) {
+            let store = makeStore()
+            let (a, _, _) = seedDivergentFixture(store)
+            for _ in 0..<5 { store.openOrStepTabSwitcher(forward: true, armedByModifier: true) }
+            XCTAssertEqual(committedTab(store), a, "five steps staged nothing on the host")
+        }
+    }
+
+    /// Esc puts the view back where the gesture found it — the preview must not survive its own walk.
+    func testCancelRestoresTheViewThePreviewMovedOffOf() {
+        withPreview(true) {
+            let store = makeStore()
+            let (a, _, _) = seedDivergentFixture(store)
+
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            XCTAssertNotEqual(activeTab(store), a, "the preview did move the view")
+            store.cancelTabSwitcher()
+
+            XCTAssertEqual(activeTab(store), a, "cancel put it back")
+            XCTAssertEqual(committedTab(store), a)
+            XCTAssertFalse(store.tabSwitcherPreviewing, "and the preview state is unwound")
+        }
+    }
+
+    /// A commit still lands the tab for real — the preview is unwound first, so the ONE staged focus is
+    /// the commit's, computed from the focus the gesture began with.
+    func testCommitAfterAPreviewLandsTheTabForReal() {
+        withPreview(true) {
+            let store = makeStore()
+            let (_, _, c) = seedDivergentFixture(store)
+
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            store.commitTabSwitcher()
+
+            XCTAssertEqual(committedTab(store), c, "the host moved exactly once, at the commit")
+            XCTAssertEqual(activeTab(store), c)
+            XCTAssertFalse(store.tabSwitcherPreviewing)
+            XCTAssertNil(store.tabSwitcherFocusBeforePreview, "no saved focus left behind")
+        }
+    }
+
+    /// OFF is a real mode: the walk moves the highlight and NOTHING else, exactly as it did before the
+    /// preview existed.
+    func testPreviewOffLeavesTheViewWhereItWas() {
+        withPreview(false) {
+            let store = makeStore()
+            let (a, _, c) = seedDivergentFixture(store)
+
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+            store.openOrStepTabSwitcher(forward: true, armedByModifier: true)
+
+            XCTAssertEqual(activeTab(store), a, "the view held still")
+            XCTAssertFalse(store.tabSwitcherPreviewing)
+            store.openOrStepTabSwitcher(forward: false, armedByModifier: true)
+            store.commitTabSwitcher()
+            XCTAssertEqual(committedTab(store), c, "and the commit still works")
+        }
     }
 }

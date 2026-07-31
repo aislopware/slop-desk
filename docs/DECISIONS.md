@@ -5679,3 +5679,52 @@ return.
 
 → touches `AgentHookListener.swift`, `AgentInstaller.hookScript()`. An already-installed hook script is
 stale until the host reinstalls it (or it is edited in place).
+
+## The switcher is measured against its window, and the walk is a LOOK (2026-07-31)
+
+Two asks on the round-3 card: it read too narrow, and ⇥ should show the tab it is passing over rather
+than only the one it lands on.
+
+### Width is a band, not a constant
+
+The card was a fixed 460 — the app's dialog rung. Wrong instrument: a dialog's content is authored and
+fits by construction, while this card carries LIVE text of wildly varying length. The band was MEASURED
+in the row's own anatomy (SF 13, ~90pt of chrome: card + row padding, the keycap and its gap):
+
+| content | card | what lands there |
+|---|---|---|
+| 45 ch | 390 | the low end of a comfortable measure |
+| 60 ch | 490 | `swift test --filter TabSwitcherRowsTests` |
+| 75 ch | 590 | the high end; past it the eye loses the line |
+
+- ✅ **`clamp(400, 0.42 × window, 640)`, then never more than 2/3 of the window.** 400 shows a real
+  command untruncated; 640 is the app's widest list rung (Open Quickly) and the point past which a line
+  stops being scannable. ⚠️ The last clamp OUTRANKS the floor: on a narrow window the minimum would draw
+  a card wider than its host, and an overlay that fills its window has stopped being an overlay.
+  HW-verified at three regimes — 820 → 400 (floor), 1280 → 538, 1600 → 640 (cap).
+- ✅ **Height is capped at 0.7 of the window and the rows scroll**, with the highlight kept in view. A
+  session with more tabs than the window is tall previously drew a card taller than its host.
+
+### The walk previews the tab it is over (`controls.tabSwitcherPreview`, default ON)
+
+⚠️ This does NOT relax the switcher's founding rule that the highlight is LOCAL. A tab focus is a
+host-owned intent, and staging one per step would broadcast every intermediate tab of a cycle to every
+other client on the workspace.
+
+- ✅ **The preview rides `DeviceFocus`** — the same device-local overlay an unfollowing device lives on
+  (docs/45 §8.2). It writes no intent, publishes no presence (that rides `reconcileTree`, which the
+  preview never calls), and is unwound on BOTH exits. The commit still stages exactly once, and it is
+  unwound BEFORE that commit so `selectTab` publishes focus from the state the gesture began with.
+- ✅ **Cheap by construction:** `SplitContainer` renders every tab of the active session and merely hides
+  the inactive ones, so a preview step is a visibility flip, not a mount.
+- ✅ **The toggle is real, and the OFF case is a legitimate mode, not a broken product** (the flags
+  criterion): the preview flips a VIDEO pane's UDP/VT/Metal pipeline on and off as the walk passes, and
+  some people want the workspace to hold still. Filed under Appearance → Tabs and in All Settings.
+- ⚠️ **Three existing tests pinned the behaviour this replaces** — they read `store.tree` (the projection
+  WITH this device's overlays) to assert "nothing was committed". They now assert host truth
+  (`workspaceMirror.topology`), which is what that sentence always meant; the preview legitimately moves
+  what the device is LOOKING at.
+
+→ touches `TabSwitcherOverlay.swift`, `TabSwitcherRows.swift` (new `TabSwitcherMetrics`),
+`WorkspaceStore+TabSwitcher.swift`, `SettingsKey`/`AllSettingsCatalog`/`PreferencesStore` (+ both
+Settings surfaces). New ladder rung `Slate.Metric.heightRowTall`. No wire change (golden byte-identical).

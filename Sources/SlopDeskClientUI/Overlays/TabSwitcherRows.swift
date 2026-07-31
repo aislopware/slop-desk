@@ -21,6 +21,7 @@
 // Pure composers (`header` / `relativePath` / `note` / `items`) so the wording and the header runs are
 // unit-pinned without a view; the one `@MainActor` entry is the store read.
 
+import CoreGraphics
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -52,6 +53,50 @@ struct TabSwitcherItem: Identifiable, Equatable {
     /// NAME is not unique and cannot be the identity.
     let id: Int
     let content: Content
+}
+
+/// How big the card is, as a function of the window it floats in. Pure + unit-pinned; the view only
+/// supplies the container size.
+///
+/// A fixed width is wrong for this surface in a way it is not wrong for a dialog: the switcher's rows
+/// carry LIVE text of wildly varying length (`zsh` … `nvim Sources/…/TabSwitcherOverlay.swift`), so the
+/// right measure depends on how much room the window can spare. The band below is MEASURED, not guessed
+/// — SF 13 in this row anatomy (card 12 + row 12 padding either side, a 30pt keycap and its 12pt gap =
+/// ~90pt of chrome):
+///
+/// | content | card |
+/// |---|---|
+/// | 45 characters — the low end of a comfortable measure | 390 |
+/// | 60 characters — `swift test --filter TabSwitcherRowsTests` and friends land here | 490 |
+/// | 75 characters — the high end; past it the eye loses the line | 590 |
+///
+/// So: ``minWidth`` 400 (a real command, untruncated), ``maxWidth`` 640 (the app's Open-Quickly rung —
+/// the widest list panel the chrome already uses), and between them a fraction of the window. The last
+/// clamp is the one that matters on a small window: an overlay that eats two thirds of its host has
+/// stopped reading as an overlay.
+enum TabSwitcherMetrics {
+    /// Below this a genuine title truncates on nearly every row.
+    static let minWidth: CGFloat = 400
+    /// The app's widest list-panel rung (Open Quickly). Past ~75 characters a line stops being scannable.
+    static let maxWidth: CGFloat = 640
+    /// Of the window, between the two bounds. At 1280 that is 538; at 1524 and wider it reaches the cap.
+    static let widthFraction: CGFloat = 0.42
+    /// The hard share of the window the card may occupy — it outranks ``minWidth``, because a card wider
+    /// than its window is not a floating surface.
+    static let widthCeilingFraction: CGFloat = 0.66
+    /// The card may not grow past this share of the window's height; beyond it the rows scroll.
+    static let heightFraction: CGFloat = 0.7
+
+    static func width(container: CGFloat) -> CGFloat {
+        guard container > 0 else { return minWidth }
+        let ideal = min(max(container * widthFraction, minWidth), maxWidth)
+        return min(ideal, container * widthCeilingFraction)
+    }
+
+    static func maxHeight(container: CGFloat) -> CGFloat {
+        guard container > 0 else { return .infinity }
+        return container * heightFraction
+    }
 }
 
 enum TabSwitcherRowsBuilder {

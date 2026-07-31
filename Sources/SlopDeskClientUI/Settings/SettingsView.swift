@@ -1308,6 +1308,7 @@ private struct AppearanceSettingsTab: View {
     @Bindable var store: PreferencesStore
 
     @Default(.newTabPosition) private var newTabPosition
+    @Default(.tabSwitcherPreview) private var tabSwitcherPreview
     // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
     // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`, which drives `chrome.sidebarCollapsed`.
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
@@ -1351,6 +1352,14 @@ private struct AppearanceSettingsTab: View {
                 // AUTO HIDE TABS PANEL (`auto-hide-tabs-panel`, `tab-setting.png`): `.auto` collapses
                 // the sidebar when the active session has one tab (reads `SidebarAutoHidePolicy`);
                 // `.default`/`.always` never auto-hide. Cross-platform.
+                // ⌃⇥ FOLLOW-ALONG PREVIEW. Filed under Tabs rather than Keyboard: what it changes is what
+                // the WORKSPACE does while a chord is held, not what the chord is.
+                SettingsGlyphToggleRow(
+                    .rectangleOnRectangle,
+                    "Preview While Switching Tabs",
+                    "As ⌃⇥ walks the tab list, show each tab underneath the switcher.",
+                    isOn: $tabSwitcherPreview,
+                )
                 pickerRow(
                     "Auto Hide Tabs Panel",
                     "When to show the tabs panel in Sidebar layout",

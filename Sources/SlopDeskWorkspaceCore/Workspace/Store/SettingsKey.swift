@@ -266,6 +266,9 @@ public enum SettingsKey {
     /// secure-input INDICATOR — show the `🛡 SECURE INPUT` pill while secure input is
     /// active (default ON; macOS-only). **The behaviour lives elsewhere.**
     public static let secureInputIndicator = "controls.secureInputIndicator"
+    /// ⌃⇥ FOLLOW-ALONG PREVIEW — as the switcher's highlight walks, show that tab underneath it
+    /// (default ON). Read at step time by ``WorkspaceStore/previewHighlightedTab()``.
+    public static let tabSwitcherPreview = "controls.tabSwitcherPreview"
 
     // (terminal-features__notifications.md privilege surface — Settings → Advanced). Fire-time
     // flags, never folded into a typed prefs model → golden-safe. These gate what an OSC sequence from the
@@ -541,6 +544,13 @@ public enum SettingsKey {
     /// notification bodies before they reach the sidebar/pill/Notification Center (default ON — security
     /// by default; the escape hatch is for someone who genuinely wants raw titles). Read at fire-time.
     public static var redactSecretsEnabled: Bool { Defaults[.redactSecrets] }
+
+    /// Whether the ⌃⇥ switcher shows each tab as its highlight walks over it, instead of revealing the
+    /// choice only on release (default ON — a switcher you can SEE through is the point of holding the
+    /// key). OFF is a legitimate mode, not a broken product: the preview flips a video pane's
+    /// UDP/VT/Metal pipeline on and off as the walk passes, and some people simply want the workspace to
+    /// hold still. Read at step time, so a change applies to the next gesture.
+    public static var tabSwitcherPreviewEnabled: Bool { Defaults[.tabSwitcherPreview] }
 
     /// Whether copied text is archived into the clipboard-history ring that backs the pill's "Paste Recent"
     /// submenu (default ON). OFF stops the monitor retaining any copied string — the privacy escape hatch for
@@ -871,6 +881,7 @@ public extension Defaults.Keys {
     static let tabBadgeBusyDelaySeconds = Key<Double>(slopDesk: SettingsKey.tabBadgeBusyDelaySeconds, default: 1)
     static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
+    static let tabSwitcherPreview = Key<Bool>(slopDesk: SettingsKey.tabSwitcherPreview, default: true)
     static let recordClipboardHistory = Key<Bool>(slopDesk: SettingsKey.recordClipboardHistory, default: true)
     // Dock-icon toggles (macOS-only NSDockTile; the keys compile + round-trip on iOS, inert there).
     // Fire-time flags, never folded into a typed prefs model → golden-safe. Animate default OFF, error-tint ON.

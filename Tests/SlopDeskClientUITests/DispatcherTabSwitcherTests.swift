@@ -70,6 +70,12 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         store.tree.activeSession?.activeTab?.id
     }
 
+    /// HOST TRUTH — the projection BEFORE this device's local overlays. The follow-along preview moves
+    /// what the device LOOKS at while the switcher is open, so "nothing was committed" is asserted here.
+    private func committedTab(_ store: WorkspaceStore) -> TabID? {
+        store.workspaceMirror.topology?.tree.activeSession?.activeTab?.id
+    }
+
     // MARK: - The keys we must NOT cost the pane
 
     /// BARE ⇥ is shell completion. It must pass through untouched and open nothing.
@@ -114,14 +120,14 @@ final class DispatcherTabSwitcherTests: XCTestCase {
     /// ⌃⇥ opens the switcher, is swallowed, and — critically — does NOT move the workspace yet.
     func testControlTabOpensTheSwitcherWithoutSwitchingYet() {
         let store = makeThreeTabStore()
-        let before = activeTab(store)
+        let before = committedTab(store)
         let dispatcher = WorkspaceKeyDispatcher(store: store)
 
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
 
         XCTAssertNil(result, "⌃⇥ is owned by the workspace (swallowed)")
         XCTAssertNotNil(store.tabSwitcher, "the switcher is open")
-        XCTAssertEqual(activeTab(store), before, "but no tab switch has been committed")
+        XCTAssertEqual(committedTab(store), before, "but no tab switch has been committed")
     }
 
     /// Releasing ⌃ commits — that key-up IS the selection, and it lands on the recently-used tab rather
@@ -143,14 +149,14 @@ final class DispatcherTabSwitcherTests: XCTestCase {
     /// and must NOT commit.
     func testFlagsChangeStillHoldingControlDoesNotCommit() {
         let store = makeThreeTabStore()
-        let before = activeTab(store)
+        let before = committedTab(store)
         let dispatcher = WorkspaceKeyDispatcher(store: store)
 
         _ = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
         _ = dispatcher.handle(flagsChanged(control: true))
 
         XCTAssertNotNil(store.tabSwitcher, "still mid-gesture — ⌃ is down")
-        XCTAssertEqual(activeTab(store), before, "nothing committed")
+        XCTAssertEqual(committedTab(store), before, "nothing committed")
     }
 
     /// Repeat ⌃⇥ while open STEPS the frozen ring; two taps then release lands on the third candidate.

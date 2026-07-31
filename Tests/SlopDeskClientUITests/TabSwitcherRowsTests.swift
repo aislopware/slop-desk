@@ -277,4 +277,47 @@ final class TabSwitcherRowsTests: XCTestCase {
         let rows = try openedRows(store)
         XCTAssertEqual(rows.first { $0.number == 1 }?.title, "Release prep")
     }
+
+    // MARK: - `TabSwitcherMetrics` (how big the card is for the window it floats in)
+
+    /// The MEASURED band: 400 shows a real command untruncated, 640 is the app's widest list rung, and
+    /// between them the card takes a share of the window rather than a constant.
+    func testWidthTracksTheWindowBetweenTheMeasuredBounds() {
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 1280), 1280 * 0.42, accuracy: 0.5)
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 1000), 420, accuracy: 0.5)
+    }
+
+    /// A wide display does not get a wide card: past ~75 characters the eye loses the line, so the
+    /// measure caps even as the window keeps growing.
+    func testWidthStopsAtTheMaximumOnAWideWindow() {
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 1920), TabSwitcherMetrics.maxWidth)
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 3840), TabSwitcherMetrics.maxWidth)
+    }
+
+    /// ⚠️ THE WINDOW OUTRANKS THE FLOOR. On a narrow window the minimum would draw a card wider than
+    /// its host — an overlay that cannot be an overlay. The share ceiling wins.
+    func testANarrowWindowShrinksTheCardBelowItsMinimum() {
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 500), 500 * 0.66, accuracy: 0.5)
+        XCTAssertLessThan(TabSwitcherMetrics.width(container: 500), TabSwitcherMetrics.minWidth)
+        XCTAssertLessThanOrEqual(TabSwitcherMetrics.width(container: 320), 320)
+    }
+
+    /// A short title must not drag the card below the floor — the floor is about the LINE, and only the
+    /// window overrides it.
+    func testAMidSizedWindowKeepsTheFloor() {
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 800), TabSwitcherMetrics.minWidth)
+    }
+
+    /// A session with more tabs than the window is tall gets a scrolling card, never one taller than its
+    /// host.
+    func testHeightIsCappedToAShareOfTheWindow() {
+        XCTAssertEqual(TabSwitcherMetrics.maxHeight(container: 900), 630, accuracy: 0.5)
+        XCTAssertLessThan(TabSwitcherMetrics.maxHeight(container: 900), 900)
+    }
+
+    /// A zero container (a first layout pass) must not collapse the card to nothing.
+    func testAnUnmeasuredContainerFallsBackToTheFloor() {
+        XCTAssertEqual(TabSwitcherMetrics.width(container: 0), TabSwitcherMetrics.minWidth)
+        XCTAssertEqual(TabSwitcherMetrics.maxHeight(container: 0), .infinity)
+    }
 }

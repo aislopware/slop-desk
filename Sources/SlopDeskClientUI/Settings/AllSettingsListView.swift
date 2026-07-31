@@ -56,6 +56,7 @@ struct AllSettingsListView: View {
     @Default(.pasteProtection) private var pasteProtection
     @Default(.mouseHideWhileTyping) private var mouseHideWhileTyping
     @Default(.focusFollowsMouse) private var focusFollowsMouse
+    @Default(.tabSwitcherPreview) private var tabSwitcherPreview
     @Default(.scrollMultiplier) private var scrollMultiplier
     @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
@@ -242,6 +243,7 @@ struct AllSettingsListView: View {
         case SettingsKey.clickToMove: boolControl($clickToMove, refresh: true)
         case SettingsKey.shiftArrowSelect: boolControl($shiftArrowSelect, refresh: true)
         case SettingsKey.focusFollowsMouse: boolControl($focusFollowsMouse)
+        case SettingsKey.tabSwitcherPreview: boolControl($tabSwitcherPreview)
         case SettingsKey.undoAtPrompt: boolControl($undoAtPrompt)
         case SettingsKey.autoSwitchLayouts: boolControl($autoSwitchLayouts)
         case SettingsKey.recordClipboardHistory: boolControl($recordClipboardHistory)

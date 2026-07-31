@@ -31,6 +31,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct TabSwitcherOverlay: View {
@@ -42,33 +43,58 @@ struct TabSwitcherOverlay: View {
 
     var body: some View {
         if let switcher = store.tabSwitcher {
-            card(TabSwitcherRowsBuilder.items(for: switcher, store: store))
-                // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
-                // click here would strand a user who reached for the workspace behind it.
-                .allowsHitTesting(false)
-                .transition(.opacity)
+            // The container's size, not the card's: the card is measured AGAINST the window
+            // (``TabSwitcherMetrics``), so it needs to see it. `GeometryReader` fills the overlay's
+            // proposed space, and the card is re-centred inside it.
+            GeometryReader { proxy in
+                card(TabSwitcherRowsBuilder.items(for: switcher, store: store), in: proxy.size)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
+            // click here would strand a user who reached for the workspace behind it.
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 
-    private func card(_ items: [TabSwitcherItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(items) { item in
-                switch item.content {
-                case let .section(name):
-                    SectionHeader(name: name, isFirst: item.id == 0)
-                case let .row(row):
-                    RowView(row: row)
+    private func card(_ items: [TabSwitcherItem], in container: CGSize) -> some View {
+        // A session with more tabs than the window is tall must not draw a card taller than its host.
+        // The rows scroll instead, and the highlight is kept in view as ⇥ walks past the fold.
+        ScrollViewReader { scroller in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(items) { item in
+                        switch item.content {
+                        case let .section(name):
+                            SectionHeader(name: name, isFirst: item.id == 0)
+                        case let .row(row):
+                            RowView(row: row).id(row.id)
+                        }
+                    }
                 }
+                .padding(Slate.Metric.space3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.never)
+            .scrollBounceBehavior(.basedOnSize)
+            .onChange(of: highlighted(items)) { _, id in
+                guard let id else { return }
+                withAnimation(Slate.Anim.smallFade) { scroller.scrollTo(id, anchor: .center) }
             }
         }
-        .padding(Slate.Metric.space3)
-        .frame(width: cardWidth)
+        .frame(width: TabSwitcherMetrics.width(container: container.width))
+        .frame(maxHeight: TabSwitcherMetrics.maxHeight(container: container.height))
+        // The card is only as tall as its rows until it hits that ceiling — `fixedSize` on the vertical
+        // axis stops the ScrollView claiming the whole allowance for four rows.
+        .fixedSize(horizontal: false, vertical: true)
         .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
     }
 
-    /// Wide enough that a real pane title — a running command, an agent's stated intent — finishes on the
-    /// line instead of ending in an ellipsis two words in.
-    private let cardWidth: CGFloat = 460
+    private func highlighted(_ items: [TabSwitcherItem]) -> TabID? {
+        items.lazy.compactMap { item -> TabSwitcherRow? in
+            if case let .row(row) = item.content { row } else { nil }
+        }.first(where: \.isHighlighted)?.id
+    }
 }
 
 /// The card's SURFACE: Liquid Glass with a specular rim and a cast shadow, or a plain material when the

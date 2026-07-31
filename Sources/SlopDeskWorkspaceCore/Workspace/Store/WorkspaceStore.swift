@@ -1041,6 +1041,16 @@ public final class WorkspaceStore {
     /// this workspace. The highlight moves here; only the commit stages.
     public internal(set) var tabSwitcher: TabSwitcher?
 
+    /// `true` while a step is showing its highlighted tab LOCALLY (the follow-along preview, on by
+    /// default — ``SettingsKey/tabSwitcherPreviewEnabled``). Set with ``tabSwitcherFocusBeforePreview``,
+    /// which is what a cancel puts back; the pair is one piece of state in two fields because "no preview
+    /// running" and "preview running over a nil device focus" are different things.
+    var tabSwitcherPreviewing = false
+
+    /// The device focus in force when the preview began — restored on cancel AND before a commit, so the
+    /// transient overlay never outlives the gesture that made it.
+    var tabSwitcherFocusBeforePreview: DeviceFocus?
+
     // MARK: - Recent-pane MRU (quick-switch to the previously-focused pane)
 
     /// Panes in most-recently-FOCUSED order (front = current), deduped, capped at ``focusHistoryCap``,
