@@ -17,7 +17,7 @@ final class DecodeGateTests: XCTestCase {
     // MARK: Broken chain — the cascade scenario
 
     func testLossDropsNewerDeltasButNotAnchors() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 100)
         XCTAssertEqual(g.mode, .brokenChain)
         // Post-loss deltas: the -12909 storm frames — must never reach VT.
@@ -33,7 +33,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testTwoLossesDropDeltaBetweenThem() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 200)
         g.noteLoss(frameID: 210)
         // A delta BETWEEN the two losses descends from the first break — must drop.
@@ -45,7 +45,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testLossOrderIrrelevantForMinMax() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 210)
         g.noteLoss(frameID: 200) // older loss reported later (drain order)
         XCTAssertEqual(g.minLostFrameID, 200)
@@ -55,7 +55,7 @@ final class DecodeGateTests: XCTestCase {
     // MARK: Healing
 
     func testAckedAnchorNewerThanEveryLossReopens() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 100)
         g.noteLoss(frameID: 104)
         // The host's recovery refresh (LTR P-frame) decodes successfully past every loss.
@@ -65,7 +65,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testAnchorOlderThanNewestLossDoesNotReopen() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 100)
         g.noteLoss(frameID: 110)
         // An anchor that only outruns the FIRST loss proves nothing about the second.
@@ -75,7 +75,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testKeyframeNewerThanLossesReopens() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 100)
         g.noteDecodeSucceeded(frameID: 101, keyframe: true)
         XCTAssertEqual(g.mode, .open)
@@ -88,7 +88,7 @@ final class DecodeGateTests: XCTestCase {
 
         // CASE 1 — the session was never torn down (brokenChain): the pre-loss acked LTRs survive in the
         // DPB, so an acked-LTR refresh can still decode → the downgrade is safe, stay brokenChain.
-        var alive = DecodeGate()
+        let alive = DecodeGate()
         alive.noteLoss(frameID: 100)
         XCTAssertEqual(alive.mode, .brokenChain)
         alive.noteDecodeSucceeded(frameID: 90, keyframe: true)
@@ -100,7 +100,7 @@ final class DecodeGateTests: XCTestCase {
         // stale keyframe rebuilds it empty. No pre-teardown acked LTR survives, so an acked-LTR refresh
         // would reference a frame VT no longer holds (-12909) → another teardown/IDR round. STAY
         // needKeyframe: only a keyframe NEWER than the loss may re-anchor.
-        var dead = DecodeGate()
+        let dead = DecodeGate()
         dead.noteLoss(frameID: 100)
         dead.noteHardDecodeFailure()
         XCTAssertEqual(dead.mode, .needKeyframe)
@@ -119,7 +119,7 @@ final class DecodeGateTests: XCTestCase {
     // MARK: needKeyframe (dead session)
 
     func testHardFailureAcceptsOnlyKeyframes() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteLoss(frameID: 50)
         g.noteHardDecodeFailure()
         XCTAssertEqual(g.mode, .needKeyframe)
@@ -132,7 +132,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testAwaitingKeyframeGatesPreIDRDeltas() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteAwaitingKeyframe()
         XCTAssertEqual(g.mode, .needKeyframe)
         XCTAssertEqual(g.verdict(frameID: 1, keyframe: false, ackedAnchored: false), .drop)
@@ -140,7 +140,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testLossWhileNeedKeyframeStaysNeedKeyframe() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteHardDecodeFailure()
         g.noteLoss(frameID: 300)
         XCTAssertEqual(g.mode, .needKeyframe)
@@ -153,7 +153,7 @@ final class DecodeGateTests: XCTestCase {
     // MARK: Wrap-awareness
 
     func testWrapAwareLossAndHealing() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         let nearWrap = UInt32.max - 1
         g.noteLoss(frameID: nearWrap)
         // Post-wrap delta is NEWER than the loss → drop.
@@ -166,7 +166,7 @@ final class DecodeGateTests: XCTestCase {
     }
 
     func testNonKeyframeSuccessWhileOpenIsNoOp() {
-        var g = DecodeGate()
+        let g = DecodeGate()
         g.noteDecodeSucceeded(frameID: 7, keyframe: false)
         XCTAssertEqual(g.mode, .open)
         XCTAssertNil(g.maxLostFrameID)

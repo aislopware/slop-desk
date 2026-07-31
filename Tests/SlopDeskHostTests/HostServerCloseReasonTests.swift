@@ -80,7 +80,7 @@ final class HostServerCloseReasonTests: XCTestCase {
         let evict = try XCTUnwrap(session.onEvictSubscriber, "the eviction seam is wired")
         evict(1)
 
-        await pollUntil("the eviction to reach the evicted client") { await pair.data.isFinished }
+        await pollUntil("the eviction to reach the evicted client") { pair.data.isFinished }
         let reason = await pair.data.peerCloseReason
         XCTAssertEqual(reason, .subscriberEvicted, "the laggard is told its PANE survived it")
     }
@@ -99,7 +99,7 @@ final class HostServerCloseReasonTests: XCTestCase {
 
         rig.server.reapPanesRemovedFromTopologyForTesting([pane])
 
-        await pollUntil("the reap to reach the client") { await pair.data.isFinished }
+        await pollUntil("the reap to reach the client") { pair.data.isFinished }
         let reason = await pair.data.peerCloseReason
         XCTAssertEqual(reason, .retired, "the pane is leaving the layout; its session id is going with it")
     }

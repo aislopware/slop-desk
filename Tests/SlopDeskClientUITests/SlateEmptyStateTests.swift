@@ -6,6 +6,7 @@ import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
+@MainActor
 final class SlateEmptyStateTests: XCTestCase {
     func testPinnedCopyPerCause() {
         XCTAssertEqual(SlateEmptyState.title(for: .neverConnected), "Not Connected")

@@ -249,6 +249,12 @@ final class TickCounter: @unchecked Sendable {
 /// fires once per composite vsync of the target display, independent of ScreenCaptureKit / TCC and
 /// independent of whether any content is on the VD — it measures the compositor CLOCK. A VD that
 /// WindowServer clocks at 120Hz ticks ~120×/s; one it idles/caps at 60 ticks ~60×/s.
+///
+/// CVDisplayLink is deprecated (macOS 15) in favour of `NSView`/`NSWindow`/`NSScreen.displayLink` —
+/// but those need a view/window plus a scheduled run loop, and this probe deliberately binds the RAW
+/// `CGDirectDisplayID` of a HEADLESS virtual display from a plain CLI to count compositor vsyncs.
+/// The deprecated API is the only shape that measures exactly this; migrating would change the
+/// instrument. The deprecation warnings in this function are accepted on purpose.
 func measureCompositorClock(displayID id: CGDirectDisplayID, seconds: Double) {
     var link: CVDisplayLink?
     let cr = CVDisplayLinkCreateWithCGDisplay(id, &link)

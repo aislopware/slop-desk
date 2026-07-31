@@ -11,6 +11,7 @@
 import XCTest
 @testable import SlopDeskClientUI
 
+@MainActor
 final class CheatSheetColumnBalanceTests: XCTestCase {
     /// Total rendered height of a column: each section costs its rows PLUS its own header line.
     private func heights(rowCounts: [Int], assignment: [Int], columns: Int = 2) -> [Int] {

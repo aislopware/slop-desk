@@ -13,11 +13,12 @@ import XCTest
 final class AutotypeSeamTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        AutotypeSeam.reset()
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated { AutotypeSeam.reset() }
     }
 
     override func tearDown() {
-        AutotypeSeam.reset()
+        MainActor.assumeIsolated { AutotypeSeam.reset() }
         super.tearDown()
     }
 

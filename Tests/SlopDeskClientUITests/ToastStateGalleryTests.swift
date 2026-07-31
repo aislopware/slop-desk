@@ -30,7 +30,8 @@ final class ToastStateGalleryTests: XCTestCase {
     override func tearDown() {
         // The theme is process-wide (`ThemeStore.shared`), so a light-theme group must not leak into
         // whatever test runs next.
-        ThemeStore.shared.active = .monokaiProClassic
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated { ThemeStore.shared.active = .monokaiProClassic }
         super.tearDown()
     }
 

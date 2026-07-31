@@ -296,7 +296,7 @@ func benchLatency(width: Int, height: Int, fps: Int, bitrate: Int, pool: FramePo
 
 func benchDecode(_ stream: [(Data, Bool)]) -> DecodeResult {
     let dec = VideoDecoder { _ in }
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
     var hostTs: UInt32 = 1
     var lat: [Double] = []

@@ -231,7 +231,7 @@ func runScenario(
     // multi-loss recovery (recovers up to m holes per group of 5). The packetizer reads `m` from the FEC
     // object at construction, so a single shared scheme value drives both send (parity emit) and recover.
     let pk = VideoPacketizer(fec: RustReedSolomonFEC(groupSize: 5, parityCount: fecParity))
-    var ra = FrameReassembler(fec: RustReedSolomonFEC(groupSize: 5, parityCount: fecParity))
+    let ra = FrameReassembler(fec: RustReedSolomonFEC(groupSize: 5, parityCount: fecParity))
     let dec = VideoDecoder(decodedFrameHandler: { _ in decodedCounter.value += 1 })
     dec.outputFullRange = fullRange
 
@@ -353,7 +353,7 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
     }
 
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     let dec = VideoDecoder(decodedFrameHandler: { _ in decodedCounter.value += 1 })
     var ltrCtl = LTRController()
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return stats }
@@ -640,7 +640,7 @@ func runAckRefArm(
     }
 
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     let mad = MADBox()
     mad.lowMotion = lowMotion
     let dec = VideoDecoder(decodedFrameHandler: { img in decodedCounter.value += 1
@@ -1119,7 +1119,7 @@ func runClosedLoopAdaptation(
     // ── Host-side real components ──
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling)
     var currentTier: UInt8 = fixedTier ?? AdaptiveFECPolicy.defaultTier // 0 = g5
@@ -1390,7 +1390,7 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     let capacityBps = ceiling * 55 / 100 // between the 25% floor and the ceiling — convergence is reachable
     result.capacityMbps = Double(capacityBps) / 1_000_000.0
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling)
     var lastActuated = ceiling
@@ -1592,7 +1592,7 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
     let warmFrames = 120, squeezeFrames = 90, restoreFrames = 60
 
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling, gradientCutEnabled: gradientEnabled)
     var lastActuated = ceiling
@@ -1762,7 +1762,7 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
 func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling, gradientCutEnabled: true)
 
@@ -2005,7 +2005,7 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
 
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling)
     var gov = FPSGovernor(baseFps: kFPS)
@@ -2278,7 +2278,7 @@ func runFPSGovernorWeatherArm(frames: Int, verbose: Bool) -> FPSGovWeatherResult
 
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    let ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling)
     var gov = FPSGovernor(baseFps: kFPS)
@@ -2464,7 +2464,7 @@ func simulateDoubleLossRecovery(
 ) -> (unfreezeMs: Double, requests: Int, secondGranted: Bool) {
     let oneWay = rtt / 2
     let encodeDelay = 0.010
-    var policy = RecoveryIDRPolicy()
+    let policy = RecoveryIDRPolicy()
     let router = RecoveryDatagramRouter()
     let ltrCtl = LTRController() // fresh ⇒ no acked token ⇒ refreshLTR folds to .idr
     let recoveryPolicy = RecoveryPolicy()
@@ -2564,7 +2564,7 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
 
     // ── Phase B: storm cap — 6 rapid requests in <400 ms through the REAL wire+router ──
     do {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         let router = RecoveryDatagramRouter()
         var nextKF: UInt32 = 500
         let requestTimes = [0.0, 0.02, 0.05, 0.1, 0.2, 0.35]
@@ -2599,7 +2599,7 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
 
     // ── Phase C: stale-ack suppression — the keyframe decode-ack arriving over the REAL wire ──
     do {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         let router = RecoveryDatagramRouter()
         policy.noteKeyframeSent(frameID: 200, now: 0.0)
         if case let .ack(frameID) = router.route(
@@ -2617,7 +2617,7 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
 
     // ── Phase D: a policy grant converts to a REAL keyframe on the next HW encode ──
     do {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         let sink = FrameSink()
         let enc = VideoEncoder(
             width: kWidth,
@@ -2887,7 +2887,7 @@ func runRecoveryRequestLossArm(
     let router = RecoveryDatagramRouter()
     let deduper = RecoveryRequestDeduper()
     let ltrCtl = LTRController() // fresh ⇒ no acked token ⇒ refreshLTR falls back to .idr
-    var idrPolicy = RecoveryIDRPolicy()
+    let idrPolicy = RecoveryIDRPolicy()
     var nextKF: UInt32 = 100
 
     var inFlight: [(at: Double, wire: Data)] = []

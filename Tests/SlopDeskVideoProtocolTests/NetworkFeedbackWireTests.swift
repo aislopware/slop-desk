@@ -73,7 +73,7 @@ final class NetworkFeedbackWireTests: XCTestCase {
     func testWholeFrameNotMarkedFECRecovered() {
         let packetizer = VideoPacketizer(fec: XORParityFEC())
         let fragments = packetizer.packetize(frame: Data([1, 2, 3, 4]), keyframe: true)
-        var reassembler = FrameReassembler(fec: XORParityFEC())
+        let reassembler = FrameReassembler(fec: XORParityFEC())
         var completed: ReassembledFrame?
         for fragment in fragments {
             if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
@@ -95,7 +95,7 @@ final class NetworkFeedbackWireTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(data.count, 2)
         XCTAssertGreaterThanOrEqual(parity.count, 1)
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
         // Drop the FIRST data fragment, deliver the rest + the parity → XOR recovers the hole.
         for fragment in data.dropFirst() {

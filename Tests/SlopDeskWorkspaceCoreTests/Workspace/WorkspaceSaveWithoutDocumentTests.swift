@@ -14,16 +14,17 @@ import XCTest
 final class WorkspaceSaveWithoutDocumentTests: XCTestCase {
     private var directory: URL!
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-save-no-document-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    override func tearDownWithError() throws {
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws {
         try? FileManager.default.removeItem(at: directory)
-        try super.tearDownWithError()
     }
 
     private func seed() -> TreeWorkspace {

@@ -179,6 +179,6 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
             "saveImmediately persisted the live tree synchronously",
         )
         // The peeked on-disk schema version is v10 (the file is a TreeWorkspace, not a canvas Workspace).
-        let data = try Data(contentsOf: persistence.fileURL)
+        _ = try Data(contentsOf: persistence.fileURL)
     }
 }

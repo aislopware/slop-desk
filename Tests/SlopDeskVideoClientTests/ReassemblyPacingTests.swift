@@ -26,7 +26,7 @@ final class ReassemblyPacingTests: XCTestCase {
         let frame = makeAVCC(naluSizes: [VideoPacketizer.maxPayloadSize + 200, 40])
         let fragments = packetizer.packetize(frame: frame, keyframe: true)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for f in fragments {
             if case let .completed(r) = try reassembler.ingest(FrameFragment.decode(f.encode())) { completed = r }
@@ -42,7 +42,7 @@ final class ReassemblyPacingTests: XCTestCase {
         // Drop the FIRST data fragment; FEC parity (sent last) must recover it.
         let dataDropIndex = try XCTUnwrap(fragments.firstIndex { !$0.header.flags.contains(.parity) })
 
-        var reassembler = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+        let reassembler = FrameReassembler(fec: XORParityFEC(groupSize: 5))
         var completed: ReassembledFrame?
         for (i, f) in fragments.enumerated() where i != dataDropIndex {
             if case let .completed(r) = try reassembler.ingest(FrameFragment.decode(f.encode())) { completed = r }
@@ -60,7 +60,7 @@ final class ReassemblyPacingTests: XCTestCase {
         let frameB = makeAVCC(naluSizes: [20])
         let fragsB = packetizer.packetize(frame: frameB, keyframe: false)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         // Deliver only the FIRST fragment of frame A (drop the rest), then all of B.
         _ = try reassembler.ingest(FrameFragment.decode(fragsA[0].encode()))
         for f in fragsB { _ = try reassembler.ingest(FrameFragment.decode(f.encode())) }

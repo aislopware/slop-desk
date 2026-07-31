@@ -344,7 +344,7 @@ public actor HostTransport {
         // After stop(), do NOT pair (yielding to the finished stream leaks the mux's 2 sockets)
         // or park (pendingMux is drained). Close this just-arrived link + any half-pair immediately.
         guard !stopped else {
-            Task { await link.close() }
+            Task { link.close() }
             if let existing = pendingMux.removeValue(forKey: connectionID) {
                 if let control = existing.control { Task { await control.close() } }
                 if let data = existing.data { Task { await data.close() } }

@@ -15,8 +15,10 @@ final class ClipboardSyncEngineTests: XCTestCase {
     private var pullRequests: [Int64] = []
     private var pullResult: (changeCount: Int64, clip: MetadataCodec.ClipboardClip?)?
 
-    override func setUp() {
-        super.setUp()
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func setUp() async throws {
         pasteboard = NSPasteboard(
             name: NSPasteboard.Name("slopdesk.tests.syncengine.\(UUID().uuidString)"),
         )
@@ -27,10 +29,12 @@ final class ClipboardSyncEngineTests: XCTestCase {
         pullResult = nil
     }
 
-    override func tearDown() {
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws {
         pasteboard.releaseGlobally()
         pasteboard = nil
-        super.tearDown()
     }
 
     private func makeEngine() -> ClipboardSyncEngine {

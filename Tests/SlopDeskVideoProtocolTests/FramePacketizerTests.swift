@@ -20,7 +20,7 @@ final class FramePacketizerTests: XCTestCase {
         XCTAssertTrue(fragments[0].header.flags.contains(.keyframe))
         XCTAssertEqual(fragments[0].header.fragCount, 1)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         let result = reassembler.ingest(fragments[0])
         guard case let .completed(reassembled) = result else {
             XCTFail("expected completed, got \(result)")
@@ -47,7 +47,7 @@ final class FramePacketizerTests: XCTestCase {
             let decoded = try FrameFragment.decode(fragment.encode())
             XCTAssertTrue(decoded.header.flags.contains(.isLTR), "every fragment carries bit 6")
         }
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in fragments {
             let wire = try FrameFragment.decode(fragment.encode())
@@ -72,7 +72,7 @@ final class FramePacketizerTests: XCTestCase {
             XCTAssertTrue(decoded.header.flags.contains(.ackedAnchored), "every fragment carries bit 7")
             XCTAssertTrue(decoded.header.flags.contains(.isLTR), "bit 6 rides independently")
         }
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in fragments {
             let wire = try FrameFragment.decode(fragment.encode())
@@ -118,7 +118,7 @@ final class FramePacketizerTests: XCTestCase {
             XCTAssertFalse(fragment.header.flags.contains(.isLTR), "bit 6 clear when off")
             XCTAssertEqual(fragment.header.flags.rawValue & 0x40, 0, "bit 6 (0x40) is zero")
         }
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in omitted {
             if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
@@ -152,7 +152,7 @@ final class FramePacketizerTests: XCTestCase {
             XCTAssertEqual(fragment.header.fragCount, UInt16(fragments.count))
         }
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in fragments {
             if case let .completed(frame) = reassembler.ingest(fragment) { completed = frame }
@@ -165,7 +165,7 @@ final class FramePacketizerTests: XCTestCase {
         let frame = makeAVCC(naluSizes: [VideoPacketizer.maxPayloadSize + 200, 40])
         let fragments = packetizer.packetize(frame: frame, keyframe: true, crisp: true)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in fragments {
             // Serialise → parse, exactly like a UDP send/receive.
@@ -185,7 +185,7 @@ final class FramePacketizerTests: XCTestCase {
         var fragments = packetizer.packetize(frame: frame, keyframe: false)
         fragments.reverse() // worst-case reorder
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for fragment in fragments {
             if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
@@ -217,7 +217,7 @@ final class FramePacketizerTests: XCTestCase {
         let nextFrame = makeAVCC(naluSizes: [30])
         let frame1 = packetizer.packetize(frame: nextFrame, keyframe: false)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         // Deliver frame0 MISSING its middle fragment.
         XCTAssertEqual(reassembler.ingest(frame0[0]), .incomplete)
         // skip frame0[1] (lost)
@@ -246,7 +246,7 @@ final class FramePacketizerTests: XCTestCase {
         let packetizer = VideoPacketizer()
         let frame = makeAVCC(naluSizes: [40])
         let fragments = packetizer.packetize(frame: frame, keyframe: true)
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         _ = reassembler.ingest(fragments[0]) // completes & retires
         // A duplicate (late) datagram for the same frame is stale, not a re-complete.
         XCTAssertEqual(reassembler.ingest(fragments[0]), .stale)
@@ -330,7 +330,7 @@ final class FramePacketizerTests: XCTestCase {
         let fragments = packetizer.packetize(frame: Data(), keyframe: true)
         XCTAssertEqual(fragments.count, 1)
         XCTAssertEqual(fragments[0].payload.count, 0)
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         guard case let .completed(frame) = reassembler.ingest(fragments[0]) else {
             XCTFail("empty frame should complete")
             return

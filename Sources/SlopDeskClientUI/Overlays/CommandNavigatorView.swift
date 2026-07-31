@@ -326,7 +326,7 @@ struct CommandNavigatorView: View {
             Button {
                 copyOutput(block)
             } label: {
-                Image(systemSymbol: .docOnDoc)
+                Image(systemSymbol: .documentOnDocument)
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.Text.secondary)
             }

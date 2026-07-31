@@ -292,7 +292,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// host's registration of the control sub-channel is silently DROPPED and this client waits for
     /// a snapshot forever. The bug presents as a flake, so the ordering has to be structural.
     func testNoRequestIsSentBeforeTheOpenAckArrives() async {
-        let rig = await makeRig(autoAccept: nil)
+        let rig = makeRig(autoAccept: nil)
         await MainActor.run { rig.client.start() }
 
         await expect("the open to have been attempted") { rig.opens() == 1 }
@@ -305,7 +305,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// A refusal is a definite answer — the flag is off on that host, or a subscriber already exists
     /// on this connection. The client releases the channel and stops; it does not retry-storm.
     func testARefusedOpenReleasesTheChannelAndNeverRetries() async {
-        let rig = await makeRig(autoAccept: false)
+        let rig = makeRig(autoAccept: false)
         await MainActor.run { rig.client.start() }
 
         await expect("the refusal to settle") { rig.client.state == .refused }
@@ -320,7 +320,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     // MARK: - Subscribe → snapshot → ack
 
     func testTheFirstSubscribeDeclaresNothingKnown() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
@@ -334,7 +334,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     }
 
     func testASnapshotIsAppliedAndAcked() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
@@ -354,7 +354,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     }
 
     func testADiffAdvancesTheMirrorAndIsAckedInTurn() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "old", fresh: true), stateNum: 1))
@@ -380,7 +380,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// A mis-based frame is answered with a fresh `subscribe` — the resync verb — carrying where the
     /// mirror ACTUALLY is, not where the host guessed.
     func testAMisBasedDiffResubscribesFromWhatTheMirrorHolds() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 3))
@@ -408,7 +408,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// The epoch's job: a delta from a restarted daemon whose numbers happen to line up must be
     /// refused, and the answer is a resubscribe rather than silent corruption.
     func testADiffFromAnotherEpochResubscribesRatherThanApplying() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 1))
@@ -432,7 +432,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
     /// A superseded frame is silent: no ack, no resubscribe, no churn.
     func testASupersededDiffProducesNoTraffic() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 5))
@@ -448,7 +448,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     // MARK: - Presence
 
     func testPresenceIsSentWithAMonotonicClock() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         let tab = UUID()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
@@ -473,7 +473,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// detached task per update publishes in SCHEDULING order, which is not issue order — so the
     /// sends are drained by a single task off an ordered queue.
     func testABurstOfPresenceUpdatesArrivesInIssueOrder() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         let tabs = (0..<6).map { _ in UUID() }
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
@@ -494,7 +494,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// for a tab switch. Only a changed VIEW is news — an unguarded repeat would spend a frame per
     /// reconcile on a workspace nobody is navigating, and run the clock away for nothing.
     func testAnUnchangedViewSendsNothing() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         let tab = UUID()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
@@ -525,7 +525,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// A resubscribe resets the host's per-subscriber view along with its base, so what this client
     /// is looking at must be re-asserted rather than waiting for the next UI change.
     func testAResubscribeReAssertsPresence() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 1))
@@ -543,7 +543,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     }
 
     func testAPresenceRosterLandsOnTheMirror() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
@@ -568,7 +568,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     // MARK: - Teardown
 
     func testTheStreamEndingClosesTheClientAndReleasesTheChannel() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
@@ -582,7 +582,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// Stopping forgets host truth. Keeping it would let a reconnect apply a diff against a document
     /// the host may have replaced; a fresh snapshot is one frame and always correct.
     func testStoppingResetsTheMirrorAndReleasesTheChannel() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 1))
@@ -622,7 +622,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// frame. There is no version negotiation on this wire, so tearing the channel down would make a
     /// newer host unusable rather than merely partially understood.
     func testAnUnknownEventKindDoesNotDisturbTheSubscription() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 1))
@@ -649,7 +649,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// The channel carries workspace traffic and nothing else, but a stray frame must not stall the
     /// loop — the guard is a `continue`, not a `break`.
     func testANonWorkspaceMessageIsSkipped() async {
-        let rig = await makeRig()
+        let rig = makeRig()
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 

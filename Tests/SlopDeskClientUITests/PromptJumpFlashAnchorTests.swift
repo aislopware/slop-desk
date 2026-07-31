@@ -9,6 +9,7 @@
 import XCTest
 @testable import SlopDeskClientUI
 
+@MainActor
 final class PromptJumpFlashAnchorTests: XCTestCase {
     /// A grid width comfortably wider than every unwrapped fixture row, so only the wrap tests wrap.
     private let cols = 80

@@ -212,7 +212,7 @@ final class CommandBlockTrackerTests: XCTestCase {
     }
 
     func testSnapshotForResyncEmptyWhenNoBlocks() {
-        var tracker = CommandBlockTracker()
+        let tracker = CommandBlockTracker()
         XCTAssertTrue(tracker.snapshotForResync().isEmpty, "a tracker that saw no commands backfills nothing")
     }
 

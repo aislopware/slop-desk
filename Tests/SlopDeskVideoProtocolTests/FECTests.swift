@@ -84,7 +84,7 @@ final class FECTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(dataFragments.count, 2)
         XCTAssertGreaterThanOrEqual(parityFragments.count, 1)
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
         // Deliver all data fragments EXCEPT the first one (lost), then the parity.
         for fragment in dataFragments.dropFirst() {
@@ -116,7 +116,7 @@ final class FECTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(data0.count, 2)
         XCTAssertGreaterThanOrEqual(parity0.count, 1)
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
 
         // 1) frame 0 data arrives EXCEPT the first fragment (lost).
@@ -155,7 +155,7 @@ final class FECTests: XCTestCase {
         let data0 = frame0.filter { !$0.header.flags.contains(.parity) }
         // Grace of 1: a single newer frame keeps frame 0 alive; the SECOND newer frame
         // pushes it past the window with parity still absent → dropped.
-        var reassembler = FrameReassembler(fec: fec, fecReorderGrace: 1)
+        let reassembler = FrameReassembler(fec: fec, fecReorderGrace: 1)
         for fragment in data0.dropFirst() { _ = reassembler.ingest(fragment) }
 
         let f1 = packetizer.packetize(frame: NALUnit.join([Data([1])]), keyframe: false)
@@ -184,7 +184,7 @@ final class FECTests: XCTestCase {
         let data0 = frame0.filter { !$0.header.flags.contains(.parity) }
         XCTAssertGreaterThanOrEqual(data0.count, 3)
 
-        var reassembler = FrameReassembler(fec: fec, fecReorderGrace: 4)
+        let reassembler = FrameReassembler(fec: fec, fecReorderGrace: 4)
         // Deliver only the LAST data fragment → first two of the group are missing.
         _ = try reassembler.ingest(XCTUnwrap(data0.last))
 
@@ -222,7 +222,7 @@ final class FECTests: XCTestCase {
         XCTAssertEqual(data.count, 10, "frame must split into exactly 10 data fragments")
         XCTAssertEqual(parity.count, 2, "10 data / groupSize 5 = 2 parity groups")
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
 
         // 1) data[0..3] arrive (group 0: 0..4) — withhold the group-0 member data[4] so the
@@ -267,7 +267,7 @@ final class FECTests: XCTestCase {
         XCTAssertEqual(data.count, 10)
         XCTAssertEqual(parity.count, 2)
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
 
         // All data EXCEPT data[7] (a hole in group 1: indices 5..9).
@@ -298,7 +298,7 @@ final class FECTests: XCTestCase {
         let data0 = frame0.filter { !$0.header.flags.contains(.parity) }
         // Deliver data fragments except the first, and NO parity → unrecoverable.
         // Grace 0 = sweep the instant the frontier advances.
-        var reassembler = FrameReassembler(fec: fec, fecReorderGrace: 0)
+        let reassembler = FrameReassembler(fec: fec, fecReorderGrace: 0)
         for fragment in data0.dropFirst() { _ = reassembler.ingest(fragment) }
         // The newer single-fragment frame completes; the unrecoverable older frame is
         // surfaced as a drop via the recovery queue.
@@ -323,7 +323,7 @@ final class FECTests: XCTestCase {
     private func assertClientRecoversWireSignalledTier(
         _ tier: UInt8,
         expectedGroupSize: Int,
-        file: StaticString = #file,
+        file: StaticString = #filePath,
         line: UInt = #line,
     ) {
         let fec = XORParityFEC(groupSize: 5)
@@ -348,7 +348,7 @@ final class FECTests: XCTestCase {
         )
 
         // Reassembler is g5; it must override per-frame from the wire tier (NOT use its local constant).
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
         // Drop data[0] (a single loss in group 0); deliver the rest, then all parity → recover.
         for fragment in data.dropFirst() {
@@ -380,15 +380,15 @@ final class FECTests: XCTestCase {
         XCTAssertNil(reassembler.nextDroppedFrame(), file: file, line: line)
     }
 
-    func testClientRecoversWireSignalledTierLight() throws { try assertClientRecoversWireSignalledTier(
+    func testClientRecoversWireSignalledTierLight() { assertClientRecoversWireSignalledTier(
         2,
         expectedGroupSize: 10,
     ) }
-    func testClientRecoversWireSignalledTierHeavy() throws { try assertClientRecoversWireSignalledTier(
+    func testClientRecoversWireSignalledTierHeavy() { assertClientRecoversWireSignalledTier(
         3,
         expectedGroupSize: 3,
     ) }
-    func testClientRecoversWireSignalledTierSevere() throws { try assertClientRecoversWireSignalledTier(
+    func testClientRecoversWireSignalledTierSevere() { assertClientRecoversWireSignalledTier(
         4,
         expectedGroupSize: 2,
     ) }
@@ -433,7 +433,7 @@ final class FECTests: XCTestCase {
         XCTAssertTrue(fragments.allSatisfy { $0.header.flags.fecTier == 1 }, "every fragment carries the OFF tier")
         XCTAssertEqual(fragments.count, 4, "fragCount == dataCount (no parity appended)")
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
         for f in fragments { if case let .completed(r) = reassembler.ingest(f) { completed = r } }
         XCTAssertNotNil(completed, "an OFF-tier frame completes on all-data even though the client holds a non-nil fec")
@@ -455,7 +455,7 @@ final class FECTests: XCTestCase {
             "OFF tier: no parity to recover with",
         )
 
-        var reassembler = FrameReassembler(fec: fec) // default grace — proves OFF frames get no grace
+        let reassembler = FrameReassembler(fec: fec) // default grace — proves OFF frames get no grace
         for f in frame0.dropFirst() { _ = reassembler.ingest(f) } // lose data[0]
         let result = reassembler.ingest(next[0])
         if case .completed = result {} else { XCTFail("newer frame should complete, got \(result)") }
@@ -477,7 +477,7 @@ final class FECTests: XCTestCase {
         let parity = fragments.filter { $0.header.flags.contains(.parity) }
         XCTAssertEqual(parity.count, 2, "6 data / g3 = 2 parity groups")
 
-        var reassembler = FrameReassembler(fec: fec)
+        let reassembler = FrameReassembler(fec: fec)
         var completed: ReassembledFrame?
         for f in data { if case let .completed(r) = reassembler.ingest(f) { completed = r } } // all data → completes
         _ = reassembler.ingest(parity[1]) // parity[0] dropped; irrelevant since data is whole

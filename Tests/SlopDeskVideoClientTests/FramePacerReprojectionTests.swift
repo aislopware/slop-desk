@@ -55,7 +55,7 @@ final class FramePacerReprojectionTests: XCTestCase {
             // reprojector + applyReprojection default to nil ⇒ feature off.
         ) { _ in sink.notePresent() }
         let pb = try makePixelBuffer()
-        try pacer.submit(pb)
+        pacer.submit(pb)
         var t = FramePacer.currentHostTimeSeconds()
         for _ in 0..<12 { t += 1.0 / 120.0
             pacer.tick(hostTimeSeconds: t)
@@ -83,7 +83,7 @@ final class FramePacerReprojectionTests: XCTestCase {
         ) { _ in sink.notePresent() }
 
         let pb = try makePixelBuffer()
-        try pacer.submit(pb)
+        pacer.submit(pb)
         // Tick once at/after the deadline → the real frame presents (and resets the hint to 0).
         var t = FramePacer.currentHostTimeSeconds()
         t += 1.0 / 120.0
@@ -103,7 +103,7 @@ final class FramePacerReprojectionTests: XCTestCase {
 
         // A real frame arrives + presents → the offset the pacer applies resets to exactly zero.
         let pb2 = try makePixelBuffer()
-        try pacer.submit(pb2)
+        pacer.submit(pb2)
         t += 1.0 / 60.0 // past the next content deadline
         pacer.tick(hostTimeSeconds: t)
         XCTAssertEqual(

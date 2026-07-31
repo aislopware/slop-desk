@@ -50,6 +50,7 @@ var compactEvery = 0 // >0: fire encodeCompactKeyframe every Kth frame
 // the virtual display destroyed — globals so the signal sources can reach them.
 nonisolated(unsafe) var gParking: WindowParkingManager?
 nonisolated(unsafe) var gVD: VirtualDisplay?
+@MainActor
 func vdCleanup() {
     gParking?.restoreAll()
     gParking = nil
@@ -61,7 +62,9 @@ nonisolated(unsafe) var gSignalSources: [DispatchSourceSignal] = []
 for sig in [SIGINT, SIGTERM] {
     signal(sig, SIG_IGN)
     let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    src.setEventHandler { vdCleanup()
+    src.setEventHandler {
+        // The source is bound to the .main queue, so the handler genuinely runs on the main actor.
+        MainActor.assumeIsolated { vdCleanup() }
         exit(2)
     }
     src.resume()
@@ -258,6 +261,7 @@ let task = Task {
                 eprint(
                     "self-scroll → pid \(spid) @\(Int(center.x)),\(Int(center.y)) (\(probeResample ? "RESAMPLE inputDiv=\(inputDiv) " : "")\(smoothPx != nil ? "SMOOTH pixel+phase \(smoothPx!)px" : "wheel \(scrollLines)line")/\(Int(scrollMs))ms, reverse \(reverseTicks))",
                 )
+                @Sendable
                 func postPixelScroll(dy: Int32, scrollPhase: Int64, momentumPhase: Int64) {
                     guard let ev = CGEvent(
                         scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: dy, wheel2: 0, wheel3: 0,

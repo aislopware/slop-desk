@@ -216,7 +216,7 @@ public enum PTYForegroundProbe {
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         let length = proc_pidpath(pgid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return "" }
-        let path = String(cString: buffer)
+        let path = String(bytes: buffer.prefix(while: { $0 != 0 }).map(UInt8.init(bitPattern:)), encoding: .utf8) ?? ""
         // Canonical, not raw basename: the Claude Code native installer's executable is NAMED
         // by its version (`…/claude/versions/2.1.218`) — the raw basename would defeat the
         // claude classifier and label the pane "2.1.218".

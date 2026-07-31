@@ -640,7 +640,7 @@ private struct ShellSettingsTab: View {
             )
             #if os(macOS)
             glyphToggle(
-                .arrowUpDoc,
+                .arrowUpDocument,
                 "Bounce Dock Icon",
                 "Bounce the Dock icon when a notification arrives and slopdesk isn't focused.",
                 isOn: $bounceDockIcon,
@@ -915,7 +915,7 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Shift+Arrow Select",
                     "Use Shift+arrows to drive a native selection instead of forwarding the arrow escapes.",
-                    symbol: .textCursor, isOn: $shiftArrowSelect,
+                    symbol: .characterCursorIbeam, isOn: $shiftArrowSelect,
                 )
                 toggleRow(
                     "Clear Selection on Typing",
@@ -925,7 +925,7 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Clear Selection on Copy",
                     "Drop the highlight after an explicit copy (does not apply when Copy on Select fires).",
-                    symbol: .docOnDoc, isOn: $clearSelectionOnCopy,
+                    symbol: .documentOnDocument, isOn: $clearSelectionOnCopy,
                 )
                 timingFooter(.live)
             }
@@ -934,7 +934,7 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Copy on Select",
                     "Copy the selection to the pasteboard as soon as it is made.",
-                    symbol: .docOnDoc, isOn: $copyOnSelect,
+                    symbol: .documentOnDocument, isOn: $copyOnSelect,
                 )
                 toggleRow(
                     "Trim Trailing Spaces on Copy",
@@ -1040,7 +1040,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Mouse Over to Focus",
                 "Focus the pane under the mouse cursor automatically.",
-                symbol: .cursorarrowRays, isOn: $focusFollowsMouse,
+                symbol: .pointerArrowRays, isOn: $focusFollowsMouse,
             )
             // A MENU, not cards: five actions with no shared geometry to draw. Their difference is the verb
             // ("Copy" vs "Paste" vs "Ignore"), and a glyph standing in for a verb adds a picture frame, not
@@ -1055,7 +1055,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Hide Mouse When Typing",
                 "Hide the mouse cursor while the keyboard is in use.",
-                symbol: .cursorarrowSlash, isOn: $mouseHideWhileTyping,
+                symbol: .pointerArrowSlash, isOn: $mouseHideWhileTyping,
             )
             // Surfaces as a simple ON/OFF switch (`spec/cursor-and-mouse`), not a 4-way picker: ON ⇒ ⇧ extends
             // the selection (`MouseShiftCapture.enabled`, default), OFF ⇒ ⇧ forwarded to the program
@@ -1065,7 +1065,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Allow Shift with Mouse Click",
                 "Hold Shift to select text even when the running app captures the mouse.",
-                symbol: .cursorarrowClick, isOn: Binding(
+                symbol: .pointerArrowClick, isOn: Binding(
                     get: { allowShiftClick.extendsSelection },
                     set: { allowShiftClick = $0 ? .enabled : .disabled },
                 ),
@@ -1073,7 +1073,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Cursor Click-to-Move",
                 "Click in the prompt to move the shell cursor — sends arrow keys across soft-wrapped rows.",
-                symbol: .cursorarrowMotionlines, isOn: $clickToMove,
+                symbol: .pointerArrowMotionlines, isOn: $clickToMove,
             )
             toggleRow(
                 "Allow Mouse Capture",
@@ -1272,7 +1272,7 @@ private struct EditorSettingsTab: View {
                 // which read like a broken control. Local to this page, NOT a new `SlateEmptyState.Cause`:
                 // that enum's typed causes are the pane area's connection states, with pinned copy per case.
                 VStack(spacing: Slate.Metric.space2) {
-                    Image(systemSymbol: .docText)
+                    Image(systemSymbol: .textDocument)
                         .font(SettingsType.placeholderGlyph)
                         .foregroundStyle(SettingsInk.tertiary)
                     Text("No File Editor Yet")
@@ -1852,6 +1852,7 @@ private struct AgentsSettingsTab: View {
 /// `nil` controller (no injection — e.g. the iOS-sheet wiring this regression fixes) MUST fall back to
 /// ``AgentHooksController/InstallState/disconnected`` + behaviour-disabled, NEVER a false live card. Pure +
 /// cross-platform, unit-pinned headlessly (`AgentSettingsCardTests`).
+@MainActor
 enum AgentSettingsCard {
     /// The install-card state to show: the controller's state, or `.disconnected` when no controller backs it.
     static func installState(_ controller: AgentHooksController?) -> AgentHooksController.InstallState {

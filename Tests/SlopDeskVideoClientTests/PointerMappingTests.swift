@@ -6,6 +6,7 @@ import XCTest
 /// be the EXACT inverse of the renderer's aspect-fit + zoom/pan transform, so a click
 /// lands on the host pixel under the on-screen cursor. Also pins the renderer's `fit`
 /// formula to `displayedVideoRect` so render-forward and input-inverse can never drift.
+@MainActor
 final class PointerMappingTests: XCTestCase {
     // MARK: normalize, zoom == 1, letterboxed (the macOS case)
 
@@ -316,6 +317,7 @@ import AppKit
 /// this seam the host never receives a modifier KEY-UP, so a ⌘ flag latched on the
 /// shared CGEventSource stays stuck and corrupts later text insertion (the Cmd+Delete
 /// → "enter" bug).
+@MainActor
 final class FlagsChangedModifierTests: XCTestCase {
     func testLeftCommandKeyCodeWithCommandFlagIsDown() {
         XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 55, flags: [.command]), true)

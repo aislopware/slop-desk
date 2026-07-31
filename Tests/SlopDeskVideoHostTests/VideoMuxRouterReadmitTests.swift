@@ -14,7 +14,7 @@ final class VideoMuxRouterReadmitTests: XCTestCase {
         // Monotonically retire well past the cap; the OLDEST (far-below) ids must be PRUNED out of
         // `retired` — they fall back to `.rejectUnadmitted` (a clean drop for an unknown lane) — while
         // ids within the prune window of the high-water mark stay `.dropRetired`.
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         let count: UInt32 = 700 // > retiredCap (512)
         for id in 1...count { router.retire(id) }
 
@@ -41,7 +41,7 @@ final class VideoMuxRouterReadmitTests: XCTestCase {
         // `.rejectUnadmitted`) while RECENT ids near the high-water mark are retained. The prune only
         // fires when the set exceeds `retiredCap`, so the retained window is bounded by ~cap, never
         // monotonically growing for the daemon lifetime. (The set is private — observed via behavior.)
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         let high: UInt32 = 5000
         for id in 1...high { router.retire(id) }
 
@@ -163,7 +163,7 @@ final class VideoMuxRouterReadmitTests: XCTestCase {
     func testDrainingLaneDropsEverythingIncludingHello() {
         // While a lane is draining (reaper stopping its session), EVERY datagram drops — a hello must
         // NOT re-admit yet (that would re-mint onto a dying session / the late endDrain would kill it).
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(1)
         router.beginDrain(1)
         XCTAssertTrue(router.isDraining(1))
@@ -180,7 +180,7 @@ final class VideoMuxRouterReadmitTests: XCTestCase {
     func testEndDrainTransitionsToRetiredThenHelloReadmits() {
         // After the session is stopped, endDrain moves draining → retired, where FIX #2's hello
         // re-admit applies — so the reconnecting client's NEXT hello cleanly re-mints.
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(2)
         router.beginDrain(2)
         router.endDrain(2)
@@ -203,7 +203,7 @@ final class VideoMuxRouterReadmitTests: XCTestCase {
         // The full FIX #2 chain at the router level: retire an id → it `.dropRetired`s → the daemon's
         // mint path calls `admit` (driven by the bootstrapDeliver), which clears the retired mark →
         // the SAME id now routes again (cross-process reuse after a client restart).
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(1)
         router.retire(1)
         XCTAssertEqual(router.route(channelID: 1, channel: .video, bytesCount: 100), .dropRetired)

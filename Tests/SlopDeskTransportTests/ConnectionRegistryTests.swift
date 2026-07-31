@@ -393,7 +393,7 @@ private final class GatedMuxLink: MuxByteLink, @unchecked Sendable {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     init(_ inner: InMemoryMuxLink) { self.inner = inner }
     var receiveChunks: AsyncThrowingStream<Data, Error> { inner.receiveChunks }
-    func send(_ data: Data) async throws {
+    func send(_ data: Data) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             lock.lock()
             if opened { lock.unlock()
@@ -403,7 +403,7 @@ private final class GatedMuxLink: MuxByteLink, @unchecked Sendable {
             waiters.append(c)
             lock.unlock()
         }
-        try await inner.send(data)
+        inner.send(data)
     }
 
     /// Pipelined sends bypass the gate (it exists to hold the AWAITED `openChannel` send
@@ -423,7 +423,7 @@ private final class GatedMuxLink: MuxByteLink, @unchecked Sendable {
         return !waiters.isEmpty
     }
 
-    func close() async { await inner.close() }
+    func close() { inner.close() }
 }
 
 /// Captures the connections + their client-side DATA link a test factory builds, so a test can drive a

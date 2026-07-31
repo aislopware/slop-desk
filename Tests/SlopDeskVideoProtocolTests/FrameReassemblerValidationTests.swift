@@ -26,7 +26,7 @@ final class FrameReassemblerValidationTests: XCTestCase {
     /// An implausibly huge `fragCount` (peer-controlled UInt16) is rejected as `.stale` BEFORE any
     /// per-frame buffer is allocated — no alloc/CPU amplification, no pending frame created.
     func testHugeFragCountIsRejected() {
-        var r = FrameReassembler()
+        let r = FrameReassembler()
         XCTAssertEqual(
             r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: .max)),
             .stale,
@@ -43,7 +43,7 @@ final class FrameReassemblerValidationTests: XCTestCase {
     /// `fragIndex >= fragCount` (and `fragCount == 0`) are invalid — every legitimate fragment has
     /// `0 < fragCount` and `fragIndex < fragCount` (parity ids are `dataCount + groupOrder < fragCount`).
     func testOutOfRangeFragIndexAndZeroCountRejected() {
-        var r = FrameReassembler()
+        let r = FrameReassembler()
         XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 5, fragCount: 3)), .stale, "fragIndex >= fragCount")
         XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: 0)), .stale, "fragCount 0")
         XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 3, fragCount: 3)), .stale, "fragIndex == fragCount")
@@ -52,7 +52,7 @@ final class FrameReassemblerValidationTests: XCTestCase {
 
     /// The guard does NOT reject valid input: a legitimate single-fragment keyframe still completes.
     func testValidSingleFragmentFrameStillCompletes() {
-        var r = FrameReassembler()
+        let r = FrameReassembler()
         let result = r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: 1, keyframe: true, payload: Data([9, 8, 7])))
         XCTAssertEqual(
             result,
@@ -67,7 +67,7 @@ final class FrameReassemblerValidationTests: XCTestCase {
     /// `nextDroppedFrame()` (ignoring the `.dropped` return) would NEVER signal recovery for that frame
     /// (fixed by routing the `.dropped` return through the same recovery path).
     func testReorderThenLossReturnsDroppedFromIngestNotViaQueue() {
-        var r = FrameReassembler() // no FEC: any missing data fragment on an old frame is terminal
+        let r = FrameReassembler() // no FEC: any missing data fragment on an old frame is terminal
         // frame1 arrives first → advances the loss frontier, still incomplete (needs fragIndex 1).
         XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: 2)), .incomplete)
         // frame0's late fragment arrives — frame0 is older than the frontier, missing fragIndex 0, no

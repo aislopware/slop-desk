@@ -34,7 +34,7 @@ final class StaticIDRDeciderTests: XCTestCase {
 
     // 3. Heartbeat boundary is inclusive (>=): fires at exactly +heartbeat, not just before.
     func testHeartbeatBoundaryInclusive() {
-        var d = make()
+        let d = make()
         d.onCompleteFrame(now: 10)
         XCTAssertTrue(
             d.shouldReencode(now: 11.0, forcedLatched: false, hasRetainedBuffer: true),
@@ -48,7 +48,7 @@ final class StaticIDRDeciderTests: XCTestCase {
 
     // 4. Quiet window suppresses the heartbeat while the live path is driving.
     func testQuietWindowSuppressesHeartbeat() {
-        var d = make()
+        let d = make()
         d.onCompleteFrame(now: 10)
         XCTAssertFalse(
             d.shouldReencode(now: 10.5, forcedLatched: false, hasRetainedBuffer: true),
@@ -58,7 +58,7 @@ final class StaticIDRDeciderTests: XCTestCase {
 
     // 5. Quiet window suppresses even a forced (recovery) request — the live latch drain handles it.
     func testQuietWindowSuppressesForced() {
-        var d = make()
+        let d = make()
         d.onCompleteFrame(now: 10)
         XCTAssertFalse(
             d.shouldReencode(now: 10.5, forcedLatched: true, hasRetainedBuffer: true),
@@ -69,7 +69,7 @@ final class StaticIDRDeciderTests: XCTestCase {
     // 6. Forced wins once quiet, BEFORE the heartbeat would otherwise fire (quietWindow < heartbeat
     //    isolates that recovery beats the heartbeat phase).
     func testForcedWinsOnceQuietBeforeHeartbeat() {
-        var d = make(quietWindow: 0.3) // shorter than heartbeat (1.0) to isolate the forced path
+        let d = make(quietWindow: 0.3) // shorter than heartbeat (1.0) to isolate the forced path
         d.recordSynthetic(now: 10.1) // recent synthetic anchor ⇒ the heartbeat phase is mid-cycle
         d.onCompleteFrame(now: 10)
         // now=10.5: past the 0.3 quiet window but only 0.4 < 1.0 since the synthetic anchor →
@@ -88,7 +88,7 @@ final class StaticIDRDeciderTests: XCTestCase {
     //     frame at exactly +quietWindow is NOT suppressed → a forced request fires; a sub-heartbeat
     //     non-forced still does not. Pins the strict-`<` semantics against a `<`→`<=` regression.
     func testQuietWindowExactBoundary() {
-        var d = make(quietWindow: 0.3)
+        let d = make(quietWindow: 0.3)
         d.recordSynthetic(now: 9.9) // recent synthetic anchor ⇒ the heartbeat phase is mid-cycle
         d.onCompleteFrame(now: 10)
         XCTAssertTrue(
@@ -113,7 +113,7 @@ final class StaticIDRDeciderTests: XCTestCase {
 
     // 7. A synthetic emission re-anchors the cadence (measured from max(lastComplete, lastSynthetic)).
     func testSyntheticReAnchorsCadence() {
-        var d = make()
+        let d = make()
         d.onCompleteFrame(now: 10)
         d.recordSynthetic(now: 11) // a synthetic fired at 11
         XCTAssertFalse(
@@ -129,7 +129,7 @@ final class StaticIDRDeciderTests: XCTestCase {
     // 8. A real frame after a synthetic still gates via its quiet window; once quiet AND one
     //    heartbeat past the synthetic anchor, fire.
     func testRealFrameAfterSyntheticReAnchorsToReal() {
-        var d = make()
+        let d = make()
         d.recordSynthetic(now: 11)
         d.onCompleteFrame(now: 11.2) // a real frame landed shortly after the synthetic
         XCTAssertFalse(
@@ -147,7 +147,7 @@ final class StaticIDRDeciderTests: XCTestCase {
     //     shape: heartbeat 2.5, quietWindow 1.0 ⇒ crisp ~1 s after the scroll ends (Parsec-like),
     //     then steady-state synthetics one heartbeat apart.
     func testFirstCrispAfterMotionFiresAtQuietWindowNotHeartbeat() {
-        var d = StaticIDRDecider(heartbeat: 2.5, quietWindow: 1.0)
+        let d = StaticIDRDecider(heartbeat: 2.5, quietWindow: 1.0)
         d.recordSynthetic(now: 2) // an old static-phase synthetic long ago
         d.onCompleteFrame(now: 10) // ...then motion; the last real frame lands at t=10
         XCTAssertFalse(
@@ -172,7 +172,7 @@ final class StaticIDRDeciderTests: XCTestCase {
     // 9. lastComplete == 0 but lastSynthetic set: max() picks the synthetic anchor, quiet-window
     //    check is skipped (guarded by lastComplete != 0).
     func testLastEmissionPicksSyntheticWhenNoRealFrame() {
-        var d = make()
+        let d = make()
         d.recordSynthetic(now: 5)
         XCTAssertFalse(
             d.shouldReencode(now: 5.5, forcedLatched: false, hasRetainedBuffer: true),
@@ -186,8 +186,8 @@ final class StaticIDRDeciderTests: XCTestCase {
 
     // 10. Equatable sanity — identical anchors compare equal (guards against accidental field drift).
     func testEquatable() {
-        var a = make()
-        var b = make()
+        let a = make()
+        let b = make()
         XCTAssertEqual(a, b)
         a.onCompleteFrame(now: 10)
         b.onCompleteFrame(now: 10)

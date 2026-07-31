@@ -27,8 +27,8 @@ final class MuxBugFixRegressionTests: XCTestCase {
         let frame = MuxEnvelopeCodec.encode(
             .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0, initialCwd: nil),
         )
-        try await clientData.send(frame)
-        try await clientData.send(frame)
+        clientData.send(frame)
+        clientData.send(frame)
         try await Task.sleep(for: .milliseconds(120))
 
         XCTAssertEqual(
@@ -226,11 +226,11 @@ final class MuxBugFixRegressionTests: XCTestCase {
         let open = MuxEnvelopeCodec.encode(
             .channelOpen(channelID: 5, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0, initialCwd: nil),
         )
-        try await clientData.send(open)
+        clientData.send(open)
         try await clientData.send(MuxEnvelopeCodec.encode(.channelClose(channelID: 5)))
         // The hostile/buggy reopen storm on the SAME (now terminally closed) id.
         for _ in 0..<10 {
-            try await clientData.send(open)
+            clientData.send(open)
         }
         try await Task.sleep(for: .milliseconds(120))
 

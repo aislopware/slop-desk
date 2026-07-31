@@ -628,7 +628,7 @@ func performGracefulShutdown(_ signalName: String) {
                 mux.send(bye, on: .control, channelID: id)
             }
             await registry.stopAll()
-            await mux.stop()
+            mux.stop()
         }
         // Restore every parked window to its original display/size BEFORE the VD is destroyed (the
         // original display must still exist). Then tear the VD down AFTER all SCStreams stopped
@@ -1058,7 +1058,7 @@ Task {
         // at the OUTER run loop), so a scope-local would be deallocated within seconds and the
         // NSWorkspace observer + heartbeat would silently die with it.
         let swipeNavKicker = SwipeNavStatusKicker(registry: registry)
-        try await mux.start { channelID, channel, data in
+        try mux.start { channelID, channel, data in
             _ = swipeNavKicker
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp

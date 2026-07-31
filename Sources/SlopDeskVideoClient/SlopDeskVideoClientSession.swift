@@ -731,7 +731,7 @@ public actor SlopDeskVideoClientSession {
             queue.append(.cursor(data))
             wakeup.yield()
         }
-        for effect in stateMachine.start() { await apply(effect) }
+        for effect in stateMachine.start() { apply(effect) }
         startKeepalive()
         startNetworkStats()
         startHelloRetry()
@@ -755,11 +755,11 @@ public actor SlopDeskVideoClientSession {
 
     /// One retry tick: re-sends the hello iff the FSM is still `.connecting`. Returns whether the
     /// loop should keep running (false once the state resolved).
-    private func resendHelloIfStillConnecting(attempt: Int) async -> Bool {
+    private func resendHelloIfStillConnecting(attempt: Int) -> Bool {
         let effects = stateMachine.resendHello()
         guard !effects.isEmpty else { return false }
         dbg("hello retry #\(attempt + 1) — still connecting (no ack yet)")
-        for effect in effects { await apply(effect) }
+        for effect in effects { apply(effect) }
         return true
     }
 
@@ -774,11 +774,11 @@ public actor SlopDeskVideoClientSession {
     }
 
     /// Drains one inbound batch in arrival order on the actor.
-    private func receiveBatch(_ batch: [ClientInboundQueue.Item]) async {
+    private func receiveBatch(_ batch: [ClientInboundQueue.Item]) {
         for item in batch {
             switch item {
-            case let .media(channel, data): await receiveMedia(channel: channel, data: data)
-            case let .cursor(data): await receiveCursor(data)
+            case let .media(channel, data): receiveMedia(channel: channel, data: data)
+            case let .cursor(data): receiveCursor(data)
             }
         }
     }
@@ -797,7 +797,7 @@ public actor SlopDeskVideoClientSession {
         inboundWakeup = nil
         inboundConsumer?.cancel()
         inboundConsumer = nil
-        for effect in stateMachine.stop() { await apply(effect) }
+        for effect in stateMachine.stop() { apply(effect) }
         await transport.stop()
         log.info("video client session stopped")
     }
@@ -1147,7 +1147,7 @@ public actor SlopDeskVideoClientSession {
 
     // MARK: Inbound media routing
 
-    private func receiveMedia(channel: VideoChannel, data: Data) async {
+    private func receiveMedia(channel: VideoChannel, data: Data) {
         dbgMediaCount += 1
         if dbgMediaCount == 1 || dbgMediaCount.isMultiple(of: 30) {
             dbg(
@@ -1171,7 +1171,7 @@ public actor SlopDeskVideoClientSession {
             // acks, cadence, …) proves the host is alive — stamp BEFORE the FSM (which deliberately
             // no-ops a keepalive).
             lastControlSignalAt = ProcessInfo.processInfo.systemUptime
-            for effect in stateMachine.handleControl(message) { await apply(effect) }
+            for effect in stateMachine.handleControl(message) { apply(effect) }
         case let .videoFragment(fragment):
             lastVideoSignalAt = ProcessInfo.processInfo.systemUptime
             ingestVideo(fragment)

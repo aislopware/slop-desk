@@ -9,6 +9,7 @@ import XCTest
 /// autoconnect passed via launch arguments has to carry the REAL host into the ``ConnectionTarget``,
 /// not silently fall back to the `127.0.0.1` default. A same-host check (everything on `127.0.0.1`)
 /// can never catch that fallback, so it is pinned here.
+@MainActor
 final class WorkspaceStoreAutomationInputsTests: XCTestCase {
     /// A matching `SLOPDESK_…=value` argument overrides the inherited environment; argv[0] and
     /// non-matching tokens are ignored; unrelated environment entries survive.

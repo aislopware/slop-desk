@@ -330,7 +330,7 @@ private final class RuntimeConformanceCacheChurn: @unchecked Sendable {
         threadsHoldRunning = true
         for thread in 0..<threads {
             finished.enter()
-            let running = running
+            nonisolated(unsafe) let running = running
             let finished = finished
             Thread.detachNewThread {
                 var serial = 0

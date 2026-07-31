@@ -26,7 +26,7 @@ final class FrameReassemblerFrontierJumpTests: XCTestCase {
     /// datagram from a prior session, or a crafted packet) must not permanently latch the frontier —
     /// the very next LEGITIMATE frame still reassembles normally instead of being swept as hopeless.
     func testSingleWildJumpDoesNotWedgeSubsequentLegitFrames() {
-        var r = FrameReassembler()
+        let r = FrameReassembler()
         XCTAssertEqual(
             r.ingest(frag(frameID: 0, fragIndex: 0, fragCount: 1, payload: Data([1]))),
             .completed(ReassembledFrame(frameID: 0, keyframe: false, crisp: false, avcc: Data([1]))),
@@ -49,7 +49,7 @@ final class FrameReassemblerFrontierJumpTests: XCTestCase {
     /// A GENUINE resync: several consecutive far-forward candidates clustered close to each other (the
     /// real stream restarted/reattached far ahead) must eventually be accepted, not dropped forever.
     func testSustainedConsistentFarForwardStreamResyncs() {
-        var r = FrameReassembler()
+        let r = FrameReassembler()
         XCTAssertEqual(
             r.ingest(frag(frameID: 0, fragIndex: 0, fragCount: 1, payload: Data([1]))),
             .completed(ReassembledFrame(frameID: 0, keyframe: false, crisp: false, avcc: Data([1]))),

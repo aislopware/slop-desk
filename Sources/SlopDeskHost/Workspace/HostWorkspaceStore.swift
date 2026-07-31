@@ -153,7 +153,7 @@ public actor HostWorkspaceStore {
         guard saveTask == nil else { return }
         saveTask = Task { [debounce] in
             try? await Task.sleep(for: debounce)
-            await self.writePending()
+            self.writePending()
         }
     }
 

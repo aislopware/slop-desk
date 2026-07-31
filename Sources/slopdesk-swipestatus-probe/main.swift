@@ -39,13 +39,13 @@ while let a = it.next() {
 
 // Snapshot the parsed args into nonisolated constants so the drain threads (nonisolated contexts)
 // can read them — same idiom as slopdesk-fake-client.
-nonisolated(unsafe) let host = argHost
-nonisolated(unsafe) let displayID = argDisplayID
-nonisolated(unsafe) let seconds = argSeconds
+let host = argHost
+let displayID = argDisplayID
+let seconds = argSeconds
 
 // A high, random lane id: the GUI client's allocator is monotonic from small values, so a random
 // id in a high band cannot collide with a live lane on the shared daemon.
-nonisolated(unsafe) let chan = UInt32.random(in: 0x6000_0000...0x6FFF_FFFF)
+let chan = UInt32.random(in: 0x6000_0000...0x6FFF_FFFF)
 
 func udpSocket(to port: UInt16) -> (fd: Int32, addr: sockaddr_in) {
     let fd = socket(AF_INET, SOCK_DGRAM, 0)
@@ -59,8 +59,8 @@ func udpSocket(to port: UInt16) -> (fd: Int32, addr: sockaddr_in) {
     return (fd, addr)
 }
 
-nonisolated(unsafe) let media = udpSocket(to: argMediaPort)
-nonisolated(unsafe) let cursor = udpSocket(to: argCursorPort)
+let media = udpSocket(to: argMediaPort)
+let cursor = udpSocket(to: argCursorPort)
 
 func sendDatagram(_ data: Data, over sock: (fd: Int32, addr: sockaddr_in)) {
     var a = sock.addr

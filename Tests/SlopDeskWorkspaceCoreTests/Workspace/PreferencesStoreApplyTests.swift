@@ -16,11 +16,14 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     override func tearDown() {
         // Restore the process-wide overlays the apply paths mutate so a later test isn't polluted.
-        EnvConfig.overlay = [:]
-        WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
-        AppearanceApplier.apply = nil
-        AppearanceApplier.resolveTerminalColors = nil
-        AppearanceApplier.resolveActiveThemeSlug = nil
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated {
+            EnvConfig.overlay = [:]
+            WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
+            AppearanceApplier.apply = nil
+            AppearanceApplier.resolveTerminalColors = nil
+            AppearanceApplier.resolveActiveThemeSlug = nil
+        }
         super.tearDown()
     }
 

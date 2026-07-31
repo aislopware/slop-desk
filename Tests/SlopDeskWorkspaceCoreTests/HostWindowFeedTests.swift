@@ -8,7 +8,8 @@ import XCTest
 @MainActor
 final class HostWindowFeedTests: XCTestCase {
     override func tearDown() {
-        HostWindowFeedQuery.openLink = nil
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated { HostWindowFeedQuery.openLink = nil }
         super.tearDown()
     }
 

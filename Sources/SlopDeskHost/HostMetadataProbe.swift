@@ -482,11 +482,16 @@ struct HostMetadataProbe: MetadataQuerying {
     private static func processName(_ pid: pid_t) -> String {
         var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         if proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 {
-            return ForegroundProcessDetector.basename(of: String(cString: pathBuffer))
+            return ForegroundProcessDetector.basename(of: string(fromCString: pathBuffer))
         }
         var nameBuffer = [CChar](repeating: 0, count: 256)
         _ = proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))
-        return String(cString: nameBuffer)
+        return string(fromCString: nameBuffer)
+    }
+
+    /// Decode a NUL-terminated `[CChar]` buffer as UTF-8 (the non-deprecated `String(cString:)` shape).
+    private static func string(fromCString buffer: [CChar]) -> String {
+        String(bytes: buffer.prefix(while: { $0 != 0 }).map(UInt8.init(bitPattern:)), encoding: .utf8) ?? ""
     }
 
     /// Reads a fixed-size C char tuple (e.g. `vnode_info_path.vip_path`) as a String.

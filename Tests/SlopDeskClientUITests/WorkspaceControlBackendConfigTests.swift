@@ -46,22 +46,27 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        // Wire the GUI apply hook exactly as `SlopDeskClientUI` does at launch, so mutating the live
-        // `PreferencesStore.appearance` retints the shared `ThemeStore` — the mechanism `config set theme`
-        // relies on to drive the running app.
-        AppearanceApplier.apply = { ThemeStore.shared.apply(appearance: $0) }
-        // Deterministic OS-appearance probe (no NSApp in a test). Dark ⇒ the unset/default slot resolves to
-        // Monokai Pro Classic — the product default the finding expects `config get theme` to report.
-        ThemeStore.shared.osIsDark = { true }
-        ThemeStore.shared.apply(appearance: AppearancePreferences()) // reset to the default theme
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated {
+            // Wire the GUI apply hook exactly as `SlopDeskClientUI` does at launch, so mutating the live
+            // `PreferencesStore.appearance` retints the shared `ThemeStore` — the mechanism `config set theme`
+            // relies on to drive the running app.
+            AppearanceApplier.apply = { ThemeStore.shared.apply(appearance: $0) }
+            // Deterministic OS-appearance probe (no NSApp in a test). Dark ⇒ the unset/default slot resolves to
+            // Monokai Pro Classic — the product default the finding expects `config get theme` to report.
+            ThemeStore.shared.osIsDark = { true }
+            ThemeStore.shared.apply(appearance: AppearancePreferences()) // reset to the default theme
+        }
     }
 
     override func tearDown() {
-        AppearanceApplier.apply = nil
-        AppearanceApplier.resolveTerminalColors = nil
-        AppearanceApplier.resolveActiveThemeSlug = nil
-        ThemeStore.shared.osIsDark = { ThemeStore.systemIsDark() }
-        ThemeStore.shared.apply(appearance: AppearancePreferences()) // leave the singleton at its default
+        MainActor.assumeIsolated {
+            AppearanceApplier.apply = nil
+            AppearanceApplier.resolveTerminalColors = nil
+            AppearanceApplier.resolveActiveThemeSlug = nil
+            ThemeStore.shared.osIsDark = { ThemeStore.systemIsDark() }
+            ThemeStore.shared.apply(appearance: AppearancePreferences()) // leave the singleton at its default
+        }
         super.tearDown()
     }
 

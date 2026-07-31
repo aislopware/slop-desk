@@ -65,7 +65,7 @@ final class FragmentInterleaverTests: XCTestCase {
         let out = FragmentInterleaver.interleave(packetized(), groupSize: groupSize)
         // Drop wire positions 1 and 2 (adjacent). Interleaved → two DIFFERENT groups → recoverable.
         let survivors = out.enumerated().filter { $0.offset != 1 && $0.offset != 2 }.map(\.element)
-        var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
+        let r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
         for f in survivors {
             if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }
@@ -79,7 +79,7 @@ final class FragmentInterleaverTests: XCTestCase {
         let frags = packetized() // raw consecutive order: data[0],data[1],… both in group 0
         let survivors = frags.enumerated().filter { $0.offset != 1 && $0.offset != 2 }.map(\.element)
         XCTAssertEqual(group(of: frags[1]), group(of: frags[2]), "precondition: positions 1,2 share a group")
-        var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
+        let r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
         for f in survivors {
             if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }
@@ -95,7 +95,7 @@ final class FragmentInterleaverTests: XCTestCase {
         let numGroups = (dataCount + groupSize - 1) / groupSize
         // Drop the first `numGroups` wire positions (all data, rank-0 = one per group).
         let survivors = out.enumerated().filter { $0.offset >= numGroups }.map(\.element)
-        var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
+        let r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
         for f in survivors {
             if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }

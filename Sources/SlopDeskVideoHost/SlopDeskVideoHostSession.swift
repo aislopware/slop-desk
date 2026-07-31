@@ -1048,10 +1048,10 @@ public actor SlopDeskVideoHostSession {
     /// order — and an EMPTY run reaches the trailing flush too, so a residual stranded by a lost
     /// gesture-`ended` drains on the next control/recovery-only batch instead of waiting for the
     /// next unrelated input.
-    private func injectCoalesced(_ run: [InputEvent]) async {
+    private func injectCoalesced(_ run: [InputEvent]) {
         for event in scrollPlanner.plan(run: run, now: ProcessInfo.processInfo.systemUptime) {
             let raiseFirst = InputDatagramRouter.raiseFirst(for: event, needsRaise: inputNeedsRaise)
-            await inject(event, raiseFirst: raiseFirst)
+            inject(event, raiseFirst: raiseFirst)
         }
         if scrollPlanner.hasPendingScroll { armScrollIdleFlush() }
     }

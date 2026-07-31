@@ -54,6 +54,6 @@ public enum HostDisplayName {
             nil, 0, NI_NAMEREQD,
         )
         guard rc == 0 else { return nil }
-        return String(cString: buffer)
+        return String(bytes: buffer.prefix(while: { $0 != 0 }).map(UInt8.init(bitPattern:)), encoding: .utf8)
     }
 }

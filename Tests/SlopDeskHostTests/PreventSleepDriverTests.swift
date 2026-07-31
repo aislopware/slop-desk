@@ -60,7 +60,7 @@ final class PreventSleepDriverTests: XCTestCase {
         let started = DispatchSemaphore(value: 0)
         let bFinished = DispatchSemaphore(value: 0)
         let flagLock = NSLock()
-        var bReturned = false // guarded by flagLock (written by thread B, read by thread A)
+        nonisolated(unsafe) var bReturned = false // guarded by flagLock (written by thread B, read by thread A)
         // Read after `bFinished` on the test thread (thread A — the hook runs synchronously inside A's apply).
         nonisolated(unsafe) var concurrentNoteCompletedDuringApply = false
 

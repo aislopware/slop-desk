@@ -292,8 +292,8 @@ Task {
                 "framewatch[latency]: A=\(wa.windowID) \(wa.owningApplication?.applicationName ?? "?") \"\(wa.title ?? "")\"  B=\(wb.windowID) \(wb.owningApplication?.applicationName ?? "?") \"\(wb.title ?? "")\"  \(Int(seconds))s",
             )
             let da = LumaFlipDetector(label: "A"), db = LumaFlipDetector(label: "B")
-            let sa = try await startWatch(window: wa, fps: fps, output: da, asDisplay: aAsDisplay)
-            let sb = try await startWatch(window: wb, fps: fps, output: db, asDisplay: bAsDisplay)
+            let sa = try startWatch(window: wa, fps: fps, output: da, asDisplay: aAsDisplay)
+            let sb = try startWatch(window: wb, fps: fps, output: db, asDisplay: bAsDisplay)
             try await sa.startCapture()
             try await sb.startCapture()
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))

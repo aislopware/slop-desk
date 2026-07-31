@@ -50,9 +50,11 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
     /// the method's duration or `jump`/`learn` degrade to nil mid-test.
     private var retained: [AnyObject] = []
 
-    override func tearDown() {
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws {
         retained.removeAll()
-        super.tearDown()
     }
 
     private func makeStore() -> WorkspaceStore {

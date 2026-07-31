@@ -17,14 +17,18 @@ final class TerminalViewModelSecureInputTests: XCTestCase {
     /// The dev machine's real `autoSecureInput` default, captured so the test's writes never leak out.
     private var savedAuto = true
 
-    override func setUp() {
-        super.setUp()
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func setUp() async throws {
         savedAuto = Defaults[.autoSecureInput]
     }
 
-    override func tearDown() {
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws {
         Defaults[.autoSecureInput] = savedAuto
-        super.tearDown()
     }
 
     #if os(macOS)

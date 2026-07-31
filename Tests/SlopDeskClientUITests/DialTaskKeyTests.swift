@@ -10,6 +10,7 @@ import XCTest
 /// key matter and they fail differently: a key that is not `nil` while the hold stands dials the very
 /// ids the hold exists to keep off the wire, and a key that does not MOVE on the release leaves the
 /// pane dark for the rest of the launch — `.task(id:)` re-fires only when its key changes.
+@MainActor
 final class DialTaskKeyTests: XCTestCase {
     func testTheKeyIsNilWhileTheLaunchHoldStands() {
         XCTAssertNil(

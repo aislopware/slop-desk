@@ -6,6 +6,7 @@ import XCTest
 /// The keep-all-mounted focus-steal guard: with every tab's panes mounted (so a libghostty surface survives
 /// a tab switch), a BACKGROUND tab's own `activePane` must NOT own the renderer's keyboard focus — else the
 /// last-mounted hidden tab would steal first responder from the visible one.
+@MainActor
 final class SplitContainerFocusGateTests: XCTestCase {
     func testOnlyTheActiveTabsActivePaneIsFocused() {
         let p1 = PaneID()

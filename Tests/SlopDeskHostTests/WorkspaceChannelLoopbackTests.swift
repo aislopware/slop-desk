@@ -255,7 +255,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
 
     func testAWorkspaceOpenIsAcceptedAndYieldsASnapshot() async throws {
         let rig = await makeRig()
-        let (control, collector, _) = try await openWorkspace(rig)
+        let (_, collector, _) = try await openWorkspace(rig)
         defer { collector.stop() }
         let snapshot = await awaitEvent(collector, kind: .snapshot)
         let frame = try XCTUnwrap(snapshot)
@@ -275,7 +275,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         // and must never touch the JOIN route or the detached-store claim that keep one shell per
         // sessionID.
         let rig = await makeRig()
-        let (control, collector, _) = try await openWorkspace(rig)
+        let (_, collector, _) = try await openWorkspace(rig)
         defer { collector.stop() }
         _ = await awaitEvent(collector, kind: .snapshot)
         XCTAssertTrue(rig.server.listPanesForControl().isEmpty)
@@ -305,7 +305,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
 
     func testASecondWorkspaceChannelOnOneConnectionIsRefused() async throws {
         let rig = await makeRig()
-        let (control, collector, _) = try await openWorkspace(rig)
+        let (_, collector, _) = try await openWorkspace(rig)
         defer { collector.stop() }
         _ = await awaitEvent(collector, kind: .snapshot)
 

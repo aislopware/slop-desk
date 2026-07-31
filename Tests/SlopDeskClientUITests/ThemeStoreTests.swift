@@ -59,20 +59,20 @@ final class ThemeStoreTests: XCTestCase {
         let store = ThemeStore.shared
         store.active = .monokaiProClassic
 
-        var posts = 0
+        let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
             forName: ThemeStore.didChangeNotification, object: nil, queue: nil,
-        ) { _ in posts += 1 }
+        ) { _ in posts.bump() }
         defer { NotificationCenter.default.removeObserver(token) }
 
         store.apply(.monokaiProClassic) // no change → no post
-        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(posts.value, 0)
         store.apply(.monokaiProSpectrum) // SAME lightness, different variant → one post
-        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(posts.value, 1)
         store.apply(.monokaiProSpectrum) // idempotent → no post
-        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(posts.value, 1)
         store.apply(.monokaiProClassicLight) // dark → light → one more post
-        XCTAssertEqual(posts, 2)
+        XCTAssertEqual(posts.value, 2)
     }
 
     // MARK: - dual-slot follow-OS + cross-module id round-trip
@@ -104,17 +104,17 @@ final class ThemeStoreTests: XCTestCase {
         store.apply(appearance: AppearancePreferences(
             theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
         ))
-        var posts = 0
+        let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
             forName: ThemeStore.didChangeNotification, object: store, queue: nil,
-        ) { _ in posts += 1 }
+        ) { _ in posts.bump() }
         defer { NotificationCenter.default.removeObserver(token) }
 
         dark = true
         store.reresolveForOSAppearance()
-        XCTAssertEqual(posts, 1, "an OS flip to dark posts the cross-boundary repaint")
+        XCTAssertEqual(posts.value, 1, "an OS flip to dark posts the cross-boundary repaint")
         store.reresolveForOSAppearance() // OS still dark → idempotent
-        XCTAssertEqual(posts, 1, "re-resolving with no OS change posts nothing")
+        XCTAssertEqual(posts.value, 1, "re-resolving with no OS change posts nothing")
     }
 
     /// A NON-follow-OS user (separate-dark OFF, a concrete theme) does not change — nor post — on an OS flip.
@@ -124,15 +124,15 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(theme: .monokaiProClassic))
-        var posts = 0
+        let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
             forName: ThemeStore.didChangeNotification, object: store, queue: nil,
-        ) { _ in posts += 1 }
+        ) { _ in posts.bump() }
         defer { NotificationCenter.default.removeObserver(token) }
 
         dark = true
         store.reresolveForOSAppearance()
-        XCTAssertEqual(posts, 0, "a fixed (non-follow-OS) theme doesn't change on an OS flip")
+        XCTAssertEqual(posts.value, 0, "a fixed (non-follow-OS) theme doesn't change on an OS flip")
         XCTAssertEqual(store.active.id, "monokai-classic")
     }
 
@@ -168,3 +168,13 @@ final class ThemeStoreTests: XCTestCase {
     }
 }
 #endif
+
+// MARK: - PostCount (Sendable notification tally)
+
+/// The notification-observer closure is `@Sendable`, so the post tally lives in a box rather than a
+/// captured local `var`. Every post in these tests fires synchronously on the test thread — the box
+/// exists purely to satisfy the capture checking, not to add synchronisation.
+private final class PostCount: @unchecked Sendable {
+    private(set) var value = 0
+    func bump() { value += 1 }
+}

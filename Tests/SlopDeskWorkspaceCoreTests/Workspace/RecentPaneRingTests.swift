@@ -100,7 +100,7 @@ final class RecentPaneRingTests: XCTestCase {
 
     func testClosingAPaneDropsItFromTheRing() throws {
         let (store, ids) = makeStore(3)
-        let (a, b, c) = (ids[0], ids[1], ids[2])
+        let (_, b, c) = (ids[0], ids[1], ids[2])
         store.focus(b)
         store.focus(c) // ring [c, b, a]
         store.closePane(c) // close the current → c pruned

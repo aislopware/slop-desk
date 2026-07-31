@@ -18,9 +18,12 @@ final class PreferencesStoreConfigBridgeTests: XCTestCase {
     }
 
     override func tearDown() {
-        AppearanceApplier.apply = nil
-        AppearanceApplier.resolveTerminalColors = nil
-        AppearanceApplier.resolveActiveThemeSlug = nil
+        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
+        MainActor.assumeIsolated {
+            AppearanceApplier.apply = nil
+            AppearanceApplier.resolveTerminalColors = nil
+            AppearanceApplier.resolveActiveThemeSlug = nil
+        }
         super.tearDown()
     }
 

@@ -9,6 +9,7 @@ import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
 
+@MainActor
 final class RailRowReadoutTests: XCTestCase {
     // MARK: - Precedence
 

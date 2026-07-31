@@ -33,7 +33,7 @@ final class VideoSendSchedulerTests: XCTestCase {
         let fragments = packetizer.packetize(frame: frame, keyframe: true, crisp: true)
         let outgoing = scheduler.scheduleFrame(fragments)
 
-        var reassembler = FrameReassembler()
+        let reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for out in outgoing {
             XCTAssertEqual(out.channel, .video)

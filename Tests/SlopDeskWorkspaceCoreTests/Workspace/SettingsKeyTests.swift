@@ -72,8 +72,12 @@ final class SettingsKeyTests: XCTestCase {
         ]
     }
 
-    override func setUp() { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
-    override func tearDown() { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    // The @objc XCTestCase overrides must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func setUp() async throws { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
 
     func testGatesDefaultOnWhenUnset() {
         XCTAssertTrue(SettingsKey.oscNotificationsEnabled)

@@ -18,7 +18,7 @@ final class MuxOpenAckResumeTests: XCTestCase {
     /// Ack arrives BEFORE the await (routed while the caller was elsewhere): the recorded
     /// verdict is returned immediately.
     func testVerdictRecordedBeforeAwaitIsDelivered() async throws {
-        let (client, peerData) = try await makeClient()
+        let (client, peerData) = await makeClient()
         _ = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 7)
         try await peerData.send(MuxEnvelopeCodec.encode(
             .channelOpenAck(channelID: 1, accepted: true, resumeFromSeq: 7),
@@ -31,7 +31,7 @@ final class MuxOpenAckResumeTests: XCTestCase {
 
     /// Await parked BEFORE the ack arrives: the routed ack resumes it.
     func testParkedWaiterResumesOnAckArrival() async throws {
-        let (client, peerData) = try await makeClient()
+        let (client, peerData) = await makeClient()
         _ = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 9)
         let waiter = Task { await client.awaitOpenAck(for: 1) }
         try await Task.sleep(for: .milliseconds(50))
@@ -46,7 +46,7 @@ final class MuxOpenAckResumeTests: XCTestCase {
     /// A refusal resolves the waiter `(false, 0)` — the transport's connect throws and the
     /// ReconnectManager retries, exactly the dead-channel outcome the refusal already meant.
     func testRefusalResolvesWaiterAsRefused() async throws {
-        let (client, peerData) = try await makeClient()
+        let (client, peerData) = await makeClient()
         _ = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
         let waiter = Task { await client.awaitOpenAck(for: 1) }
         try await Task.sleep(for: .milliseconds(50))
@@ -61,7 +61,7 @@ final class MuxOpenAckResumeTests: XCTestCase {
     /// Cancellation (the connect timeout race losing) resumes the waiter immediately with
     /// `(false, 0)` — no stranded continuation, no hang.
     func testCancelledWaiterResumesImmediately() async throws {
-        let (client, _) = try await makeClient()
+        let (client, _) = await makeClient()
         _ = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
         let waiter = Task { await client.awaitOpenAck(for: 1) }
         try await Task.sleep(for: .milliseconds(50))
@@ -72,8 +72,8 @@ final class MuxOpenAckResumeTests: XCTestCase {
 
     /// An ack for an id this side never opened is ignored (phantom-entry discipline) — a
     /// waiter on an unknown id resolves refused instead of parking forever.
-    func testUnknownIDResolvesRefusedWithoutParking() async throws {
-        let (client, _) = try await makeClient()
+    func testUnknownIDResolvesRefusedWithoutParking() async {
+        let (client, _) = await makeClient()
         let verdict = await client.awaitOpenAck(for: 99)
         XCTAssertFalse(verdict.accepted)
     }

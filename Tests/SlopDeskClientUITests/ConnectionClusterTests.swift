@@ -9,6 +9,7 @@ import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
+@MainActor
 final class ConnectionClusterTests: XCTestCase {
     func testVisibleMetricIsThePingAlone() {
         // The row's one metric: rounded ping, nothing appended; nil until the first sample.

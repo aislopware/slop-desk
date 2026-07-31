@@ -12,13 +12,16 @@ import XCTest
 final class DevicePreferencesTests: XCTestCase {
     private var directory: URL!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-device-prefs-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    override func tearDown() {
+    // The @objc XCTestCase override must keep the throwing signature (a non-throwing
+    // override of a throwing @objc method does not compile).
+    // swiftlint:disable:next unneeded_throws_rethrows
+    override func tearDown() async throws {
         try? FileManager.default.removeItem(at: directory)
         directory = nil
     }

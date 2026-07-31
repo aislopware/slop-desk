@@ -8,6 +8,7 @@ import XCTest
 /// it's testable without forcing the Metal-touching renderer type) through the settings overlay: a GUI
 /// slider value reaches the strength, and an EMPTY overlay yields today's default (0 = off). The
 /// function only reads env via ``EnvConfig`` — no Metal device is created (hang-safety rule honoured).
+@MainActor
 final class SharpenResolutionTests: XCTestCase {
     override func tearDown() {
         EnvConfig.overlay = [:]

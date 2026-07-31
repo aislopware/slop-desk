@@ -53,10 +53,10 @@ final class InspectorResilientDecodeTests: XCTestCase {
 
         // Feed raw bytes straight onto the host end of the loopback (so the client
         // decodes them). `hostChannel.send` bytes surface on `clientChannel.inbound`.
-        try await hostChannel.send(good("first"))
-        try await hostChannel.send(malformedEventFrame())
-        try await hostChannel.send(unknownTypeFrame())
-        try await hostChannel.send(good("second"))
+        try hostChannel.send(good("first"))
+        hostChannel.send(malformedEventFrame())
+        hostChannel.send(unknownTypeFrame())
+        try hostChannel.send(good("second"))
 
         let got = try await collector.value
         XCTAssertEqual(
@@ -88,14 +88,14 @@ final class InspectorResilientDecodeTests: XCTestCase {
         }
 
         // One good event, then an oversized length prefix (claims > 16 MiB).
-        try await hostChannel.send(good("before"))
+        try hostChannel.send(good("before"))
         var bad = Data()
         let tooBig = UInt32(SlopDesk.maxFramePayloadLength + 1)
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 24))
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 16))
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 8))
         bad.append(UInt8(truncatingIfNeeded: tooBig))
-        try await hostChannel.send(bad)
+        hostChannel.send(bad)
 
         let result = await collector.value
         XCTAssertEqual(result.events, [.message(MessageEvent(role: .assistant, text: "before"))])

@@ -7,7 +7,7 @@ import XCTest
 /// router, a closed Decision enum, no socket / no SCStream).
 final class VideoMuxRouterTests: XCTestCase {
     func testRouteAdmittedChannelID() {
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(11)
         XCTAssertEqual(router.route(channelID: 11, channel: .video, bytesCount: 1200), .route(channelID: 11))
         XCTAssertTrue(router.isAdmitted(11))
@@ -23,7 +23,7 @@ final class VideoMuxRouterTests: XCTestCase {
         // Reconnect-generation case: a channelID admitted then retired must DROP its
         // in-flight datagrams (not reject, not route) so the previous generation's
         // bytes never reach a new session.
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(7)
         router.retire(7)
         XCTAssertEqual(router.route(channelID: 7, channel: .video, bytesCount: 1200), .dropRetired)
@@ -33,7 +33,7 @@ final class VideoMuxRouterTests: XCTestCase {
     func testReconnectAdmitsNewChannelIDWhileOldStaysRetired() {
         // A reconnecting client is admitted under a NEW id; the OLD id stays retired so
         // its still-in-flight datagrams are dropped, while the new lane routes.
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(7)
         router.retire(7)
         router.admit(9) // fresh generation
@@ -42,7 +42,7 @@ final class VideoMuxRouterTests: XCTestCase {
     }
 
     func testTwoChannelIDsRouteIndependently() {
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(11)
         router.admit(13)
         XCTAssertEqual(router.route(channelID: 11, channel: .video, bytesCount: 800), .route(channelID: 11))
@@ -56,7 +56,7 @@ final class VideoMuxRouterTests: XCTestCase {
     func testReadmittingRetiredChannelIDClearsRetiredMark() {
         // Admitting an id that was previously retired (legitimate reuse of an id by a
         // fresh generation) clears the retired mark so it routes again.
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(5)
         router.retire(5)
         XCTAssertEqual(router.route(channelID: 5, channel: .video, bytesCount: 100), .dropRetired)
@@ -65,7 +65,7 @@ final class VideoMuxRouterTests: XCTestCase {
     }
 
     func testEmptyDatagramIsDropped() {
-        var router = VideoMuxRouter()
+        let router = VideoMuxRouter()
         router.admit(3)
         guard case .drop = router.route(channelID: 3, channel: .video, bytesCount: 0) else {
             XCTFail("expected drop for an empty datagram")

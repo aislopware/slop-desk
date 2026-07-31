@@ -52,7 +52,7 @@ guard windowID != 0 else { eprint("need --window-id")
 }
 
 // BSD UDP socket → host media port.
-nonisolated(unsafe) let fd = socket(AF_INET, SOCK_DGRAM, 0)
+let fd = socket(AF_INET, SOCK_DGRAM, 0)
 guard fd >= 0 else { eprint("socket failed")
     exit(1)
 }
@@ -61,7 +61,7 @@ var addrTmp = sockaddr_in()
 addrTmp.sin_family = sa_family_t(AF_INET)
 addrTmp.sin_port = port.bigEndian
 inet_pton(AF_INET, host, &addrTmp.sin_addr)
-nonisolated(unsafe) let addr = addrTmp
+let addr = addrTmp
 
 func sendDatagram(_ data: Data) {
     var a = addr
@@ -110,6 +110,9 @@ final class SFlag: @unchecked Sendable { var run = true }
 let sflag = SFlag()
 if let spid = scrollPid {
     eprint("self-scroll → pid \(spid) @\(Int(scrollX)),\(Int(scrollY))")
+    // Snapshot the (top-level, main-actor) scroll point before the thread starts — the thread must
+    // not reach back into main-actor state.
+    let scrollPoint = CGPoint(x: scrollX, y: scrollY)
     Thread.detachNewThread {
         var i = 0
         while sflag.run {
@@ -122,7 +125,7 @@ if let spid = scrollPid {
                 wheel2: 0,
                 wheel3: 0,
             ) {
-                ev.location = CGPoint(x: scrollX, y: scrollY)
+                ev.location = scrollPoint
                 ev.postToPid(spid)
             }
             i += 1

@@ -9,7 +9,7 @@ import XCTest
 final class RecoveryIDRPolicyTests: XCTestCase {
     /// A fresh policy (no keyframe ever sent) grants immediately and spends a token.
     func testGrantWhenNoRecentKeyframe() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         XCTAssertEqual(policy.availableTokens, 2.0, accuracy: 1e-9)
         XCTAssertEqual(policy.decide(now: 10.0, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .grant)
         XCTAssertEqual(policy.availableTokens, 1.0, accuracy: 1e-9)
@@ -19,7 +19,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// 2·RTT escalation arrives carrying lastDecoded < K with age(K) past the grace ⇒ the casualty
     /// bypass grants IMMEDIATELY (the legacy sent-keyed gate would suppress for the full 500 ms).
     func testCasualtyBypassAfterGrace() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 100, now: 5.0)
         // age 0.2 s ≥ grace(rtt 0.05) = max(0.75×0.05, 0.04) = 0.04 ⇒ bypass.
         XCTAssertEqual(policy.decide(now: 5.2, clientLastDecoded: 99, smoothedRTTSeconds: 0.05), .grant)
@@ -27,7 +27,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
 
     /// Within the grace the keyframe is plausibly still in flight — suppress, and spend NO token.
     func testSuppressInFlightWithinGrace() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 100, now: 5.0)
         let before = policy.availableTokens
         XCTAssertEqual(policy.decide(now: 5.02, clientLastDecoded: 99, smoothedRTTSeconds: 0.05), .suppressInFlight)
@@ -38,7 +38,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// reports a genuinely new post-K loss ⇒ grant at ANY age — the cooldown is self-keyed on
     /// delivery.
     func testRequestProvesDeliveryGrants() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 100, now: 5.0)
         // Immediately after the send (well inside the old 500 ms window AND inside grace).
         XCTAssertEqual(policy.decide(now: 5.01, clientLastDecoded: 100, smoothedRTTSeconds: 0.05), .grant)
@@ -53,7 +53,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// After the client decode-ACKED keyframe K, a delayed request predating K is suppressed at
     /// zero cost regardless of age (this is what the keyframe ack buys over the grace heuristic).
     func testSuppressStaleAfterDeliveredAck() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 100, now: 5.0)
         policy.noteKeyframeDelivered(frameID: 100)
         let before = policy.availableTokens
@@ -65,7 +65,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// Only ids matching the sent-keyframe ring count as keyframe delivery — an LTR-P ack must
     /// not masquerade as one.
     func testDeliveredAckIgnoredUnlessRingMatch() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 100, now: 5.0)
         policy.noteKeyframeDelivered(frameID: 555) // not a sent keyframe — ignored
         // If 555 had been folded, this pre-555 request would be .suppressStale; instead the
@@ -76,7 +76,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// Token bucket: capacity 2 ⇒ two grants back-to-back (ordinary + casualty bypass), the third
     /// is rate-limited; a 500 ms refill restores one grant.
     func testTokenBucketCapsBurstAtTwo() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         XCTAssertEqual(policy.decide(now: 10.0, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .grant)
         policy.noteKeyframeSent(frameID: 1, now: 10.01)
         // Past grace (age 0.09 > 0.04), client still behind ⇒ casualty bypass — second token.
@@ -91,7 +91,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// While a grant is latched-but-unserviced, duplicate requests fold to suppressGrantPending;
     /// a noteKeyframeSent clears it; and the 1.5 s timeout un-wedges a dead capture path.
     func testSuppressGrantPendingUntilKeyframeSentOrTimeout() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         XCTAssertEqual(policy.decide(now: 10.0, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .grant)
         // Duplicates while the granted IDR has not hit the wire yet.
         XCTAssertEqual(
@@ -108,7 +108,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
         XCTAssertEqual(policy.decide(now: 11.11, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .suppressInFlight)
 
         // Timeout arm: a grant never serviced (capture died) expires after 1.5 s.
-        var wedged = RecoveryIDRPolicy()
+        let wedged = RecoveryIDRPolicy()
         XCTAssertEqual(wedged.decide(now: 20.0, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .grant)
         XCTAssertEqual(
             wedged.decide(now: 21.4, clientLastDecoded: nil, smoothedRTTSeconds: 0.05),
@@ -124,7 +124,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// nil lastDecoded (the wire sentinel — nothing decoded yet) is maximally behind: suppressed
     /// within grace, granted after — the connect-time first-IDR-loss case.
     func testNilLastDecodedTreatedAsBehind() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         policy.noteKeyframeSent(frameID: 0, now: 5.0) // the FIRST-frame keyframe
         XCTAssertEqual(policy.decide(now: 5.01, clientLastDecoded: nil, smoothedRTTSeconds: 0.05), .suppressInFlight)
         XCTAssertEqual(
@@ -137,7 +137,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// frameIDs straddling the UInt32 wrap: ring compares, delivered-id monotonicity and the
     /// request compare all use distanceWrapped.
     func testWrapAwareIDs() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         let nearMax: UInt32 = .max - 1
         policy.noteKeyframeSent(frameID: nearMax, now: 5.0)
         // Client's lastDecoded is 3 (wrapped past .max) — AHEAD of nearMax ⇒ proves delivery.
@@ -166,7 +166,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// call-count never changes outcomes; only time and ids do).
     func testWallClockOnly() {
         func run(extraProbes: Int) -> [RecoveryIDRPolicy.Verdict] {
-            var policy = RecoveryIDRPolicy()
+            let policy = RecoveryIDRPolicy()
             var verdicts: [RecoveryIDRPolicy.Verdict] = []
             policy.noteKeyframeSent(frameID: 10, now: 1.0)
             verdicts.append(policy.decide(now: 1.02, clientLastDecoded: 9, smoothedRTTSeconds: 0.05)) // in-flight
@@ -189,7 +189,7 @@ final class RecoveryIDRPolicyTests: XCTestCase {
     /// The ring is bounded at `keyframeRingCapacity` (oldest evicted) — an ack for an evicted id
     /// no longer matches (bounded memory, no unbounded-map class of bug).
     func testKeyframeRingEvictsOldest() {
-        var policy = RecoveryIDRPolicy()
+        let policy = RecoveryIDRPolicy()
         for id: UInt32 in [1, 2, 3, 4, 5] { // capacity 4 ⇒ 1 evicted
             policy.noteKeyframeSent(frameID: id, now: 5.0 + Double(id) * 0.001)
         }

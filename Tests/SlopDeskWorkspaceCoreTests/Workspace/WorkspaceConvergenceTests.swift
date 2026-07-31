@@ -86,7 +86,7 @@ final class WorkspaceConvergenceTests: XCTestCase {
             for (client, session) in zip(rig.clients, rig.sessions) {
                 for stateNum in client.drainAcks() {
                     moved = true
-                    await session.note(ack: stateNum)
+                    session.note(ack: stateNum)
                 }
             }
             let current = await rig.document.stateNum

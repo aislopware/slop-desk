@@ -15,17 +15,14 @@ final class BoundedInputPipeTests: XCTestCase {
         let totalChunks = 64 // 64 KiB total — 8× the cap
         let pipe = BoundedInputPipe(capacityBytes: cap)
 
-        let produced = NSLock()
-        var producedChunks = 0
+        let produced = LockedBox(0)
         let producerDone = expectation(description: "producer finished")
         let producer = Thread {
             for i in 0..<totalChunks {
                 var data = Data(repeating: UInt8(truncatingIfNeeded: i), count: chunk)
                 data[0] = UInt8(i) // ordinal tag for order verification
                 XCTAssertTrue(pipe.enqueue(data))
-                produced.lock()
-                producedChunks = i + 1
-                produced.unlock()
+                produced.value = i + 1
             }
             producerDone.fulfill()
         }
@@ -36,17 +33,13 @@ final class BoundedInputPipeTests: XCTestCase {
         // Poll until progress stops, then hold and re-check.
         var last = -1
         for _ in 0..<200 {
-            produced.lock()
-            let now = producedChunks
-            produced.unlock()
+            let now = produced.value
             if now == last, now > 0 { break }
             last = now
             Thread.sleep(forTimeInterval: 0.01)
         }
         Thread.sleep(forTimeInterval: 0.1) // producer must still be parked, not trickling
-        produced.lock()
-        let stalledAt = producedChunks
-        produced.unlock()
+        let stalledAt = produced.value
         XCTAssertLessThan(
             stalledAt, totalChunks,
             "producer ran to completion against a stalled consumer — no backpressure",
@@ -77,30 +70,23 @@ final class BoundedInputPipeTests: XCTestCase {
     /// cap — its enqueue returns false — so the reader thread can exit during teardown.
     func testFinishUnblocksParkedProducer() {
         let pipe = BoundedInputPipe(capacityBytes: 1024)
-        let parkedResult = NSLock()
-        var rejectedAfterFinish: Bool?
+        let parkedResult = LockedBox<Bool?>(nil)
         let producerDone = expectation(description: "parked producer returned")
         let producer = Thread {
             pipe.enqueue(Data(count: 1024)) // fills to cap
             let accepted = pipe.enqueue(Data(count: 1024)) // must PARK here
-            parkedResult.lock()
-            rejectedAfterFinish = !accepted
-            parkedResult.unlock()
+            parkedResult.value = !accepted
             producerDone.fulfill()
         }
         producer.start()
 
         Thread.sleep(forTimeInterval: 0.2) // let the producer reach the parked enqueue
-        parkedResult.lock()
-        let returnedEarly = rejectedAfterFinish != nil
-        parkedResult.unlock()
+        let returnedEarly = parkedResult.value != nil
         XCTAssertFalse(returnedEarly, "second enqueue did not park at the cap")
 
         pipe.finish()
         wait(for: [producerDone], timeout: 5)
-        parkedResult.lock()
-        XCTAssertEqual(rejectedAfterFinish, true, "parked enqueue must return false after finish()")
-        parkedResult.unlock()
+        XCTAssertEqual(parkedResult.value, true, "parked enqueue must return false after finish()")
     }
 
     /// Chunks queued before finish() still drain in order, then next() returns nil — the
@@ -139,5 +125,25 @@ final class BoundedInputPipeTests: XCTestCase {
         consumer.cancel()
         let value = await consumer.value
         XCTAssertNil(value)
+    }
+}
+
+// MARK: - LockedBox (Sendable cross-thread slot)
+
+/// A lock-guarded mutable slot: the producer THREAD writes while the test thread polls, so the
+/// shared value lives behind a Sendable box rather than a captured local `var` beside a bare NSLock.
+private final class LockedBox<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ initial: Value) { stored = initial }
+    var value: Value {
+        get { lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+        set { lock.lock()
+            stored = newValue
+            lock.unlock()
+        }
     }
 }
