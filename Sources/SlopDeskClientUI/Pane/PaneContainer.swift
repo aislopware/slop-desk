@@ -4,8 +4,11 @@
 // content view (terminal → `TerminalLeafView`; `.desktop` → the `VideoWindowFactory`
 // seam, else a native placeholder). The terminal renders as a FLUSH, borderless panel on paper — there
 // is NO floating card, NO accent ring, NO drop shadow and NO inset gutter. The per-pane controls
-// (split/close) hover-reveal as a top overlay instead of a resting header bar; focus is conveyed only by
-// dimming the unfocused panes (the `⌘D` split treatment). Tap anywhere focuses the pane via the store.
+// (split/close) hover-reveal as a top overlay instead of a resting header bar. At REST focus is conveyed
+// by adding a mark to the subject (`PaneFocusCorner`), never by dimming its siblings — that was tried and
+// removed for washing out live content. The one exception is the ⌃⇥ walk, where the question changes on
+// every tap and the answer has to be findable in 200ms (`PaneRecedeScrim`); it lasts as long as the held
+// modifier and no longer. Tap anywhere focuses the pane via the store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
@@ -101,6 +104,25 @@ struct PaneContainer: View {
     /// would be pure ornament. Pure + static so the gate is unit-pinned.
     static func showsFocusCorner(isFocused: Bool, tabPaneCount: Int) -> Bool {
         isFocused && tabPaneCount > 1
+    }
+
+    /// Whether this pane RECEDES for the ⌃⇥ walk: the switcher is open and this is not the pane it is
+    /// on. Pure + static so the composition is unit-pinned against a live store (see
+    /// ``PaneRecedeScrim`` for why the treatment is transient rather than resting).
+    ///
+    /// `isFocused` is the subject on BOTH settings of the preview: with it on, each step moves this
+    /// device's focus onto the highlighted pane, so the lit pane IS the highlight; with it off the focus
+    /// stays put and the lit pane is where a cancel would leave you. Either way exactly one pane of the
+    /// visible tab stays lit, which is the whole claim.
+    static func showsSwitcherRecede(switcherIsOpen: Bool, isFocused: Bool) -> Bool {
+        switcherIsOpen && !isFocused
+    }
+
+    /// This pane's reading of ``showsSwitcherRecede(switcherIsOpen:isFocused:)``. Observing
+    /// `store.paneSwitcher` here is what repaints the veil on every ⇥ tap; it costs nothing at rest,
+    /// where the switcher is nil and the branch is a compare.
+    private var recedesForSwitcher: Bool {
+        Self.showsSwitcherRecede(switcherIsOpen: store.paneSwitcher != nil, isFocused: isFocused)
     }
 
     private var spec: PaneSpec? { store.tree.activeSession?.specs[paneID] }
@@ -230,6 +252,15 @@ struct PaneContainer: View {
                     .fill(Slate.State.accent)
                     .opacity(Self.showsFocusCorner(isFocused: isFocused, tabPaneCount: tabPaneCount) ? 1 : 0)
                     .allowsHitTesting(false)
+            }
+            // The ⌃⇥ walk's contrast: every pane but the one the walk is on recedes, for the length of the
+            // held modifier only. OUTERMOST so it veils the focus corner too — during a walk the corner is
+            // the resting answer to a question the switcher is currently asking louder.
+            .overlay {
+                PaneRecedeScrim()
+                    .opacity(recedesForSwitcher ? 1 : 0)
+                    .allowsHitTesting(false)
+                    .animation(Slate.Anim.smallFade, value: recedesForSwitcher)
             }
             .animation(Slate.Anim.standard, value: isFocused)
     }

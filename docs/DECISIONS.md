@@ -5771,3 +5771,28 @@ everything.
 `WorkspaceStore+TabSwitcher`→`+PaneSwitcher`; `.selectTab(Int)`→`.selectPane(Int)` and
 `.tabSwitcher`→`.paneSwitcher` (binding ids `pane.select.<n>` / `pane.selectN` / `pane.switcher`, all
 moved to the Panes group); `controls.tabSwitcherPreview`→`controls.paneSwitcherPreview`.
+
+### The walk turns the contrast up, and only for the walk
+
+⚠️ Dimming the unfocused panes as a RESTING treatment was tried and removed — it washed out live content,
+and a pane you are watching a build in must not be half-erased because the cursor is elsewhere. Focus at
+rest adds a mark to the subject (`PaneFocusCorner`) instead of subtracting from everything else.
+
+A ⌃⇥ walk is the opposite case, which is why this is not a reversal of that: for the length of a held
+modifier the whole screen is answering "WHICH pane am I about to land on", the answer changes on every
+tap, and a 10pt corner marker 900pt away is not something the eye finds in 200ms.
+
+- ✅ **`PaneRecedeScrim` on every pane but the subject, while `paneSwitcher != nil`.** The subject is the
+  pane `isFocused` already names, so it works on BOTH settings of the preview: with it on the focus IS
+  the highlight, with it off the lit pane is where a cancel would leave you. Exactly one pane of the
+  visible tab stays lit either way.
+- ✅ **0.72 over `Slate.Surface.face`** — theme-directed by construction (sinks on dark, washes on light).
+  ⚠️ MEASURED, not picked: at 0.55 a light theme's black text only reached mid-grey — a real difference
+  that was not findable at a glance, which is the one thing this has to be.
+- ✅ Non-hit-testing, kept in the tree at opacity 0, faded with `Slate.Anim.smallFade`. A click during a
+  walk still abandons the switcher and focuses the pane under the cursor — the escape must not be veiled
+  shut.
+- ⚠️ The predicate is trivial alone, so the TEST drives a live store and evaluates the same two calls the
+  view makes (`showsSwitcherRecede` × `SplitContainer.isPaneFocused`) — what can break is the JOIN.
+
+→ new `PaneRecedeScrim.swift`, one overlay + one static gate in `PaneContainer`.
