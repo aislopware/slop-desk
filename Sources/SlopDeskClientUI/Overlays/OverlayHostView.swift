@@ -83,10 +83,26 @@ struct OverlayHostView: View {
             .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
             .animation(Slate.Anim.smallFade, value: coordinator.notice)
             .sheet(item: activeSheetBinding) { sheet in
-                // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
-                // presented content directly — not only on the presenter below — to be order-independent).
+                // Every overlay is drawn on the SAME floating glass card the ⌃⇥ switcher is (see
+                // ``SlateOverlayCard``) — so the card, not the system window, is what the user sees. The
+                // sheet is kept for what it is genuinely good at (modality, key focus for the text fields,
+                // Esc / click-away routing back through the binding) and stripped of everything it draws:
+                //
+                //   * `.presentationBackground(.clear)` clears the SwiftUI-drawn ground, and
+                //     `.slateClearSheetWindow()` clears the `NSWindow` behind it. BOTH are required — the
+                //     first alone leaves the card nested inside a second white panel (photographed).
+                //   * the padding is the SHADOW's room. A sheet window sizes itself to its content, so a
+                //     shadow cast right at the content edge is clipped away by the window holding it.
+                //
+                // The tint goes to the THEME accent here, not the system one. A `.tint(nil)` reset belonged to
+                // the era when these were native dialogs and should read as System Settings; a Monokai glass
+                // card with a system-blue prominent button in it reads as two applications.
                 sheetContent(sheet)
-                    .tint(nil)
+                    .slateGlassCard()
+                    .padding(Slate.Metric.space3)
+                    .presentationBackground(.clear)
+                    .slateClearSheetWindow()
+                    .tint(Slate.State.accent)
             }
             .alert(
                 closeAlertTitle,

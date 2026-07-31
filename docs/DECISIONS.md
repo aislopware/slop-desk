@@ -5828,3 +5828,47 @@ order ⇥ steps in, so grouping would make the highlight jump around the list.
 
 → `PaneSwitcherRows` loses `items`/`PaneSwitcherItem` and renames `header`→`projectName`;
 `PaneSwitcherOverlay` loses `SectionHeader` and rebuilds `RowView`.
+
+### Every overlay is the switcher's card (2026-07-31)
+
+The ⌃⇥ switcher's card is the surface the user actually likes, so it stops being one overlay's private
+styling and becomes the vocabulary the whole floating set speaks: the command palette, Open Quickly,
+global search, the keyboard cheat sheet, Connect to Host, Peek & Reply.
+
+Before this they were native `.sheet` bodies under the "everything outside the workspace is native chrome"
+directive (2026-06-30) — a grouped `Form`, a `List` with section backgrounds, per-glyph shortcut chips, an
+opaque system panel. That directive is narrowed, not reversed: Settings and the close-confirmation `.alert`
+stay native, because they ARE system surfaces. The command surfaces are workspace furniture, and reading
+like System Settings is what made them look unrelated to the window they float over.
+
+**The four moves — this is all "the switcher's style" is.**
+
+- ✅ **The SURFACE is glass with a rim and a cast shadow**, never an opaque box. Extracted from the
+  switcher to `SlateGlassCard` + `Slate.Metric.panelShadowRadius`/`panelShadowY`.
+- ✅ **No chrome inside it.** No grouped-`Form` insets, no `List` section fills, no system `Divider`s
+  between static regions. The single allowed line is `SlateCardSeparator`, and only where content MOVES
+  past content (results scrolling under a query field). This is the move that makes the set look related.
+- ✅ **A selected row is a PLATE** — one surface rung up, hairline-bordered (`slateSelectionPlate`) — and
+  its title goes heavier, never coloured. In global search the pointer IS the selection, so hover takes
+  the same plate.
+- ✅ **A pressable key is a KEYCAP** (`SlateKeycap`), one cap per CHORD rather than one per glyph: the
+  modifiers are a single gesture, and a row of little boxes reads as four things to do.
+
+**⚠️ `.presentationBackground(.clear)` does not clear a macOS sheet.** Photographed: the palette rendered
+as a card nested inside a second, larger, white panel. It clears the SwiftUI-drawn ground while the sheet's
+`NSWindow` keeps painting its own and casting its own shadow. `slateClearSheetWindow()` reaches the window
+(`isOpaque`, `backgroundColor`, `hasShadow`); BOTH modifiers are required. The sheet is kept for what it is
+genuinely good at — modality, key focus for the text fields, Esc/click-away routing through the existing
+binding — and stripped of everything it draws.
+
+⚠️ **The card title is one rung ABOVE a section header** (`footnote`/`secondary` vs `small`/`tertiary`).
+The first cut set both alike and was photographed: on the connect card `CONNECT TO HOST` and the `HOST`
+label under it were the same size, ink and voice — the card's name read as a third field label.
+
+⚠️ **The cheat sheet packs COLUMNS, not a grid.** `LazyVGrid` pairs sections into grid rows, so a short
+category is centred against the long one beside it and floats halfway down the card. `columnAssignment`
+deals sections greedily into the shortest column, balanced by rendered height (rows + header line), and is
+pure so `CheatSheetColumnBalanceTests` pins it without a view.
+
+→ New `DesignSystem/SlateOverlayCard.swift`; `DesignSystem/SlateSheet.swift` DELETED (both its users
+converted); `PaneSwitcherOverlay` loses its private `SwitcherSurface`/`Keycap` to the shared ones.

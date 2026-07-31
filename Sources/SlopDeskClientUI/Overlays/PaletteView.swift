@@ -10,10 +10,17 @@
 // labels) rather than the light theme shown in the reference screenshot.
 //
 // SEAM discipline: the palette OWNS no state — every read/mutation goes through the coordinator (the single
-// `@Observable` reducer) so the GUI and the headless model can't drift. Presented as a NATIVE `.sheet` by the
-// `OverlayHostView` that mounts it (the system provides the window chrome — bg / rounded corners / shadow);
-// this view carries only the search field + result rows. `Slate.*` tokens ONLY for that content (raw
-// font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
+// `@Observable` reducer) so the GUI and the headless model can't drift. Presented by ``OverlayHostView``,
+// which draws it on the shared floating GLASS CARD (``SlateOverlayCard``) — so this view carries only the
+// search field + result rows, and no ground, corners or shadow of its own.
+//
+// Section headers SURVIVE here, unlike in the ⌃⇥ switcher where they were deleted. The rule is the same in
+// both places — a header earns its line only when consecutive rows share it — and the two surfaces simply
+// answer it differently: the switcher's order is a recency ring, so projects interleave and a header
+// degenerates into a caption per row, while the palette's results are ranked WITHIN category, so its rows
+// genuinely arrive in runs. Same rule, opposite outcome.
+//
+// `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -46,11 +53,12 @@ struct PaletteView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
-            Divider()
+            // The card's one internal line, and it is earned: results scroll UNDER the query field.
+            SlateCardSeparator()
             resultsList
         }
-        // Presented as a native `.sheet` by `OverlayHostView` — the system provides the window chrome (bg /
-        // rounded corners / shadow), so this view carries only its content + a fixed macOS dialog width.
+        // The glass card is applied by `OverlayHostView`; this view carries only its content + a fixed
+        // macOS dialog width.
         #if os(macOS)
         .frame(width: panelWidth)
         #endif
@@ -115,7 +123,9 @@ struct PaletteView: View {
                         row(entry.ranked, selectableIndex: entry.selectableIndex)
                     }
                 }
-                .padding(.vertical, Slate.Metric.space1)
+                // Rows must not touch the card's own edge — a row clipped flush against the rim reads as
+                // a rendering fault rather than as "there is more below".
+                .padding(.vertical, Slate.Metric.space2)
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: coordinator.paletteSelection) { _, _ in
@@ -146,10 +156,13 @@ struct PaletteView: View {
             // labels, the ✓/icon gutter sitting to their LEFT). A section header carries no glyph, so this is an
             // empty placeholder — only its width matters.
             Color.clear.frame(width: 20)
+            // The INSTRUMENT voice, the same caps micro-label a card's own title takes
+            // (``SlateCardTitle``) — so a header reads as the card naming a region rather than as a
+            // shouted row. The system face at semibold competed with the row titles under it.
             Text(item.title.uppercased())
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(Slate.State.header)
+                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+                .tracking(Slate.Typeface.instrumentTracking)
+                .foregroundStyle(Slate.Text.tertiary)
                 // The section label always wins the layout: a long cwd pill truncates its path, never the
                 // "WORKING DIRECTORY" header it sits on.
                 .layoutPriority(1)
@@ -215,27 +228,24 @@ struct PaletteView: View {
             }
             .frame(width: 20, alignment: .center)
 
+            // The selected row's title goes HEAVIER, never coloured — the card vocabulary's rule that
+            // importance is light and weight, not hue.
             highlightedTitle(ranked)
-                .font(.system(size: Slate.Typeface.body))
+                .font(.system(size: Slate.Typeface.body, weight: isSelected ? .medium : .regular))
                 .lineLimit(1)
 
             Spacer(minLength: Slate.Metric.space2)
 
+            // ONE cap for the whole chord ("⇧⌘L"), not a cap per glyph: the modifiers are not separate
+            // keys to hunt for, they are one gesture, and a row of little boxes read as four things to do.
             if let shortcut = item.shortcut, !shortcut.isEmpty {
-                HStack(spacing: Slate.Metric.space1) {
-                    ForEach(Array(keycaps(shortcut).enumerated()), id: \.offset) { _, key in
-                        keycapChip(key)
-                    }
-                }
+                SlateKeycap(label: shortcut, lit: isSelected)
             }
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: Slate.Metric.heightRow)
+        .frame(height: Slate.Metric.heightRowTall)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
-                .fill(isSelected ? Slate.State.selected : Color.clear),
-        )
+        .slateSelectionPlate(isSelected)
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
         // Hover moves the keyboard selection onto this row (spec: hover/tap → run) — but only on genuine
@@ -249,18 +259,6 @@ struct PaletteView: View {
         }
         .onTapGesture { coordinator.run(item) }
         .id(item.id)
-    }
-
-    private func keycapChip(_ key: String) -> some View {
-        Text(key)
-            .font(.system(size: Slate.Typeface.small, weight: .medium))
-            .foregroundStyle(Slate.Text.secondary)
-            .frame(minWidth: 18, minHeight: 18)
-            .padding(.horizontal, Slate.Metric.space1)
-            .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(Slate.Surface.raised),
-            )
     }
 
     // MARK: - Title highlight (fzf ranges)
@@ -333,12 +331,6 @@ struct PaletteView: View {
         let cwd = store.paneCwd(for: paneID)
         guard let cwd, !cwd.isEmpty else { return nil }
         return cwd
-    }
-
-    /// Split a shortcut glyph string ("⇧⌘L", or a space-separated multi-chord sequence "⌃B D") into one chip
-    /// per key symbol (the spec renders each key as its own rounded badge). Whitespace separators are dropped.
-    private func keycaps(_ shortcut: String) -> [String] {
-        shortcut.split(separator: " ").flatMap { chord in chord.map(String.init) }
     }
 }
 

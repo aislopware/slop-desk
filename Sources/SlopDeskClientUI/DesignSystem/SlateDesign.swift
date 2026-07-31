@@ -398,6 +398,13 @@ enum Slate {
         // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
         static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
 
+        // The floating GLASS card's cast shadow (``SlateGlassCard``) — soft and low, so the card reads as
+        // hovering a short way above the workspace rather than pasted onto a far wall. Tokens because every
+        // overlay now shares one surface: a card that cast a different shadow would read as a different
+        // depth, which is exactly the drift this vocabulary exists to stop.
+        static let panelShadowRadius: CGFloat = 12
+        static let panelShadowY: CGFloat = 4
+
         // Chrome dimensions (semantic aliases INTO the height ladder — never a sixth literal)
         static let paneHeaderHeight: CGFloat = heightBar
         /// The hover-reveal titlebar strip height — the content area reserves this at its top so the

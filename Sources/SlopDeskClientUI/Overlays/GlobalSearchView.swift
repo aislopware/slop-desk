@@ -62,7 +62,8 @@ struct GlobalSearchView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             queryBar
-            Divider()
+            // The card's one internal line, and it is earned: results scroll UNDER the query field.
+            SlateCardSeparator()
             summaryLine
             resultsList
         }
@@ -96,22 +97,14 @@ struct GlobalSearchView: View {
                 .foregroundStyle(Slate.Text.primary)
                 .tint(Slate.State.accent) // the active caret is the accent colour
                 .focused($queryFocused)
-                // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png): a
-                // `Surface.face` fill + `radiusSmall` + its own `Line.subtle` hairline, because this overlay's
-                // field sits on bare `Surface.ground` and needs the ring to read as a field plate. The find bar's
-                // sibling field (`TerminalFindBar.queryField`) ALSO wears a `Line.subtle` hairline,
-                // but its FILL is `State.selected`, not `Surface.face` — that fill difference is the INTENTIONAL
-                // context delta (the find-bar field sits on the elevated, borderless `Surface.raised` card whose
-                // `State.selected` wash inverts contrast by theme, so the hairline delineates it regardless of
-                // direction). The two fills stay context-specific; both fields are hairline-delineated and
-                // screenshot-faithful. The `Aa` / `.*` pills stay OUTSIDE this plate (siblings in the HStack).
-                .padding(.horizontal, Slate.Metric.space2)
-                .padding(.vertical, Slate.Metric.space1)
-                .background(Slate.Surface.face, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-                )
+                // The query sinks into the shared field plate (``View/slateFieldPlate()``) — the same recipe
+                // the connect card's inputs take, so an editable field looks the same on every overlay. The
+                // find bar's sibling field (`TerminalFindBar.queryField`) keeps a `State.selected` fill
+                // instead: it sits on the elevated, borderless `Surface.raised` card, whose wash inverts
+                // contrast by theme, so its ring has to delineate in the other direction. Both are
+                // hairline-delineated; only the fill is context-specific. The `Aa` / `.*` pills stay OUTSIDE
+                // this plate (siblings in the HStack).
+                .slateFieldPlate()
             // The mode pills render as INDIVIDUALLY-OUTLINED chips (each its own resting plate + hairline,
             // gaps between — NO shared backing tray) per global-search.png. ``FindTogglePillTray`` is the EXACT
             // layout container the find bar reuses, so the two surfaces render the pills identically.
@@ -210,8 +203,8 @@ struct GlobalSearchView: View {
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.secondary)
             Text(group.groupTitle)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
+                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
+                .foregroundStyle(Slate.Text.secondary)
                 .lineLimit(1)
             Spacer(minLength: Slate.Metric.space2)
         }
@@ -314,9 +307,13 @@ private struct GlobalSearchHitRow: View {
                 .foregroundStyle(Slate.Text.tertiary)
                 .opacity(hovering ? 1 : 0)
         }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: Slate.Metric.heightControl)
+        .padding(.horizontal, Slate.Metric.space3)
+        .frame(height: Slate.Metric.heightRow)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Hover lifts the row onto the shared selection plate — the same plate a keyboard-selected palette
+        // row takes, because on this surface the pointer IS the selection (there is no keyboard cursor).
+        .slateSelectionPlate(hovering)
+        .padding(.horizontal, Slate.Metric.space3)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onJump() }

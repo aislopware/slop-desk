@@ -5,6 +5,11 @@
 // `PeekContent` (title + the agent's blocking question + a few recent command-block lines), and offers a
 // reply field — so the user can ANSWER a blocked agent INLINE without a full tab/context switch.
 //
+// Drawn on the shared floating GLASS CARD (``SlateOverlayCard``) like every other overlay: the system
+// `Divider`s became the card's own hairlines (each earned — content scrolls past both), the `RECENT` caption
+// took the instrument caps voice, and the reply field sank into the shared field plate instead of wearing a
+// stock rounded border, which on glass read as a control borrowed from another application.
+//
 // **Observe + reply, NEVER an approval gate**: the agent is never paused pending an
 // slopdesk confirmation. On submit the typed line is formatted by the pure `PeekReplyFormatter` (plain /
 // `!`-shell / digit), which appends the single trailing newline, and sent VERBATIM down the pane's PTY
@@ -76,11 +81,11 @@ struct PeekReplyOverlay: View {
     private func panel(target: PaneID, content: PeekContent) -> some View {
         VStack(spacing: 0) {
             header(target: target, content: content)
-            Divider()
+            SlateCardSeparator()
             questionBlock(content)
             pendingToolBlock(target: target)
             if !content.recent.isEmpty { recentBlock(content) }
-            Divider()
+            SlateCardSeparator()
             replyBar(target: target)
         }
     }
@@ -232,8 +237,9 @@ struct PeekReplyOverlay: View {
     private func recentBlock(_ content: PeekContent) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("RECENT")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+                .tracking(Slate.Typeface.instrumentTracking)
+                .foregroundStyle(Slate.Text.tertiary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(content.recent.enumerated()), id: \.offset) { _, line in
@@ -256,8 +262,12 @@ struct PeekReplyOverlay: View {
 
     private func replyBar(target: PaneID) -> some View {
         HStack(spacing: 8) {
-            TextField("Reply…", text: $field)
-                .textFieldStyle(.roundedBorder)
+            TextField("", text: $field, prompt: Text("Reply…").foregroundStyle(Slate.Text.tertiary))
+                .textFieldStyle(.plain)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent)
+                .slateFieldPlate()
                 .focused($replyFocused)
                 .onSubmit { submit(target: target) }
                 // The empty-field digit quick-answer is intercepted BEFORE the field inserts the character:

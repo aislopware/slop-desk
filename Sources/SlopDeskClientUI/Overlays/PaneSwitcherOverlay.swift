@@ -23,10 +23,9 @@
 // The place line uses WEIGHT to separate its halves as well: the project is set a shade heavier than the
 // path under it, so a run of rows from one repo still lines up down the card without a header saying so.
 //
-// The card must read as GLASS and not as a grey box: `glassEffect` alone all but vanishes over a dark
-// terminal, so the surface adds the two things a physical pane of glass has — a specular RIM at the edge
-// and a cast SHADOW under it. Both are theme-directed (a light rim on a dark theme is a highlight; on a
-// light theme it would be invisible, so the rim darkens instead).
+// The card's SURFACE, its selection plate and its keycap now live in ``SlateOverlayCard`` — this card is
+// where all three were designed, and once it was the surface the user wanted, every other floating overlay
+// adopted them. Read that file for why glass needs a rim and a shadow to survive a dark terminal.
 //
 // `Slate` supplies GEOMETRY and INK; raw font/radius/height literals fail `scripts/check-ds-leaks.sh`. No
 // AppKit, so this compiles for iOS with the rest of `SlopDeskClientUI`, where the switcher never opens.
@@ -38,10 +37,6 @@ import SwiftUI
 
 struct PaneSwitcherOverlay: View {
     let store: WorkspaceStore
-
-    /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
-    /// with Reduce Transparency on, the card takes a plain opaque material instead.
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         if let switcher = store.paneSwitcher {
@@ -84,37 +79,7 @@ struct PaneSwitcherOverlay: View {
         // The card is only as tall as its rows until it hits that ceiling — `fixedSize` on the vertical
         // axis stops the ScrollView claiming the whole allowance for four rows.
         .fixedSize(horizontal: false, vertical: true)
-        .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
-    }
-}
-
-/// The card's SURFACE: Liquid Glass with a specular rim and a cast shadow, or a plain material when the
-/// user asked for less transparency. Split into a modifier because the two branches must land on the same
-/// geometry — an `if/else` around the whole card would give SwiftUI two view identities to cross-fade.
-private struct SwitcherSurface: ViewModifier {
-    let reduceTransparency: Bool
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Slate.Metric.radiusPanel, style: .continuous)
-    }
-
-    /// The lit edge. Glass is legible at its BOUNDARY — over a dark terminal the blur alone leaves a grey
-    /// slab, and the rim is what says "pane of glass". Directed by theme: a light theme gets a darkened
-    /// edge, where a white one would disappear.
-    private var rim: Color {
-        Slate.theme.isLight ? .black.opacity(0.10) : .white.opacity(0.14)
-    }
-
-    func body(content: Content) -> some View {
-        Group {
-            if reduceTransparency {
-                content.background(.regularMaterial, in: shape)
-            } else {
-                content.glassEffect(.regular, in: shape)
-            }
-        }
-        .overlay { shape.strokeBorder(rim, lineWidth: Slate.Metric.hairline) }
-        .shadow(color: Slate.State.shadow, radius: 12, y: 4)
+        .slateGlassCard()
     }
 }
 
@@ -159,48 +124,16 @@ private struct RowView: View {
                 }
             }
             Spacer(minLength: Slate.Metric.space3)
-            Keycap(number: row.number, lit: row.isHighlighted)
+            // Absent past ⌘9, where the chord does not exist (the app binds ⌘1–9 only) — an unpressable
+            // key drawn on a row is a lie.
+            if row.number <= PaneSwitcherRowsBuilder.highestShortcut {
+                SlateKeycap(label: "⌘\(row.number)", lit: row.isHighlighted)
+            }
         }
         .padding(.horizontal, Slate.Metric.space3)
         .frame(height: Slate.Metric.heightRowStacked)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            row.isHighlighted ? Slate.Surface.raised : .clear,
-            in: .rect(cornerRadius: Slate.Metric.radiusCard),
-        )
-        .overlay {
-            if row.isHighlighted {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
-            }
-        }
-    }
-}
-
-/// The ⌘-number as a KEY. `fixedSize` is load-bearing, not decoration: in an `HStack` a flexible `Text`
-/// will happily eat the width its neighbours needed, and a long title used to truncate the shortcut down
-/// to a bare "⌘" — the one glyph on the row that CANNOT survive being shortened, because a shortcut with
-/// its number cut off is not a shortcut. Fixed here, the keycap is laid out first and the title takes what
-/// is left. Absent past ⌘9, where the chord does not exist (the app binds ⌘1–9 only) — an unpressable key
-/// drawn on a row is a lie.
-private struct Keycap: View {
-    let number: Int
-    let lit: Bool
-
-    var body: some View {
-        if number <= PaneSwitcherRowsBuilder.highestShortcut {
-            Text("⌘\(number)")
-                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
-                .foregroundStyle(lit ? Slate.Text.secondary : Slate.Text.tertiary)
-                .frame(height: Slate.Metric.heightControl)
-                .padding(.horizontal, Slate.Metric.space2)
-                .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline)
-                }
-                .fixedSize()
-        }
+        .slateSelectionPlate(row.isHighlighted)
     }
 }
 #endif

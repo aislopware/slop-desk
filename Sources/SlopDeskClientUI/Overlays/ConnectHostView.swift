@@ -1,7 +1,12 @@
-// ConnectHostView — the Connect-to-Host editor, NATIVE SwiftUI. Everything OUTSIDE the
-// workspace + panes is native chrome (the directive that also made Settings a native `NavigationSplitView`):
-// so this is a native `.sheet` body — a grouped `Form` of native `TextField`s + a native button bar — NOT the
-// old bespoke `Scrim` + `OverlayPanel` card. Presented as a real macOS sheet by `OverlayHostView`.
+// ConnectHostView — the Connect-to-Host editor, drawn on the shared floating GLASS CARD
+// (``SlateOverlayCard``) that every overlay now takes from the ⌃⇥ switcher.
+//
+// It was a grouped `Form` before, under the "everything outside the workspace is native chrome" directive.
+// The Form is gone: its inset grey group boxes are a ground of their own, and a ground inside a glass card
+// is a box inside a box — the single thing that most made these dialogs look unrelated to the workspace they
+// float over. The fields keep their native `TextField` behaviour (editing, focus ring, selection); what they
+// lose is the Form's furniture. Labels are the caps instrument voice the rail speaks, and each input sinks
+// into a field plate, because on glass an unringed field is indistinguishable from a label.
 //
 // A THIN form over the app-global ``AppConnection`` (which already owns the editable host/port fields, the
 // parse/validation, and the `connect()` lifecycle) — opened by the sidebar connection status line / the
@@ -11,6 +16,7 @@
 // host/port are the headline fields; the two video ports sit behind a `DisclosureGroup` (most keep defaults).
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -33,43 +39,51 @@ struct ConnectHostView: View {
     @State private var connectTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            SlateSheetHeader("Connect to Host")
+        VStack(alignment: .leading, spacing: 0) {
+            SlateCardTitle("Connect to Host")
 
-            Form {
-                Section {
-                    TextField("Host", text: $connection.host, prompt: Text("host.local or 10.0.0.7"))
-                        .focused($hostFocused)
-                    TextField("Port", text: $connection.port, prompt: Text("9000"))
-                        .font(.body.monospaced())
-                }
+            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                field("Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
+                    .focused($hostFocused)
+                field("Port", text: $connection.port, prompt: "9000", mono: true)
 
-                Section {
-                    DisclosureGroup("Video ports", isExpanded: $showAdvanced) {
-                        TextField("Media port", text: $connection.mediaPort, prompt: Text("9001"))
-                            .font(.body.monospaced())
-                        TextField("Cursor port", text: $connection.cursorPort, prompt: Text("9002"))
-                            .font(.body.monospaced())
+                // The two video ports stay folded away — most people keep the defaults, and a card that
+                // opens showing four fields asks four questions when it only has two.
+                Button {
+                    withAnimation(Slate.Anim.standard) { showAdvanced.toggle() }
+                } label: {
+                    HStack(spacing: Slate.Metric.space1) {
+                        Image(systemSymbol: showAdvanced ? .chevronDown : .chevronRight)
+                            .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        Text("Video ports")
+                            .font(.system(size: Slate.Typeface.base))
                     }
+                    .foregroundStyle(Slate.Text.secondary)
+                }
+                .buttonStyle(.plain)
+
+                if showAdvanced {
+                    field("Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
+                    field("Cursor port", text: $connection.cursorPort, prompt: "9002", mono: true)
                 }
 
                 if let hint = connection.validationHint {
-                    Label(hint, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
+                    warning(hint)
                 } else if case let .failed(reason) = connection.status {
-                    // The sheet stays open on a failed connect (see `connectAndClose`) — the same
+                    // The card stays open on a failed connect (see `connectAndClose`) — the same
                     // validation-hint row voice carries the reason, run through the presenter so it
                     // reads as the actionable copy every other connection surface shows, never the
                     // raw transport dump (which stays reachable via the status pill's tooltip).
-                    Label(ConnectionPresenter.friendlyFailure(reason), systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
+                    warning(ConnectionPresenter.friendlyFailure(reason))
                 }
             }
-            .formStyle(.grouped)
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.bottom, Slate.Metric.space4)
 
-            SlateSheetFooter {
+            // No `Divider` above the buttons: the card's own edge already ends the surface, and a rule
+            // here was the last of the stacked-boxes look the Form left behind.
+            HStack(spacing: Slate.Metric.space2) {
+                Spacer(minLength: 0)
                 Button("Cancel") { cancelAndClose() }
                     .keyboardShortcut(.cancelAction)
                 Button("Connect") { connectAndClose() }
@@ -77,9 +91,11 @@ struct ConnectHostView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!connection.canConnect)
             }
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.bottom, Slate.Metric.space4)
         }
         #if os(macOS)
-        .frame(width: 460) // a fixed-width macOS dialog; iOS presents the sheet full-width
+        .frame(width: 420) // a fixed-width macOS card; iOS presents the sheet full-width
         #endif
         .onAppear {
             // Seed the fields from the committed target (re-editing the live host), then defer focus a runloop
@@ -93,6 +109,40 @@ struct ConnectHostView: View {
             connectTask?.cancel()
             connectTask = nil
         }
+    }
+
+    // MARK: - Card parts
+
+    /// One labelled input: the caps instrument label over a plated `TextField`. Two registers stacked, the
+    /// same anatomy a switcher row uses — what a field is called, then the field itself.
+    private func field(
+        _ label: String, text: Binding<String>, prompt: String, mono: Bool = false,
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+            Text(label.uppercased())
+                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+                .tracking(Slate.Typeface.instrumentTracking)
+                .foregroundStyle(Slate.Text.tertiary)
+            TextField("", text: text, prompt: Text(prompt).foregroundStyle(Slate.Text.tertiary))
+                .textFieldStyle(.plain)
+                // A port is a NUMBER being read back, so it takes the instrument face; a hostname is a
+                // name and keeps the system one.
+                .font(mono
+                    ? Slate.Typeface.instrument(Slate.Typeface.body)
+                    : .system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent)
+                .slateFieldPlate()
+        }
+    }
+
+    /// The validation / failure line — amber, because this one IS a status and the no-hue rule is about
+    /// readouts competing for attention, not about suppressing an actual warning.
+    private func warning(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.system(size: Slate.Typeface.base))
+            .foregroundStyle(Slate.Status.warn)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Validate-then-connect: no-op unless the form parses (the button is also disabled then), then fire the

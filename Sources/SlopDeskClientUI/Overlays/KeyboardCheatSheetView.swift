@@ -1,8 +1,11 @@
-// KeyboardCheatSheetView — the ⌘/ keyboard cheat sheet, NATIVE SwiftUI. Everything outside the
-// workspace + panes is native chrome, so this is a native `.sheet` body — a grouped `List` of `Section`s (one
-// per binding category: Panes / Tabs / Sessions / Focus / View / Agents), each row a native `LabeledContent`
-// pairing the binding's title (leading) with its chord glyph (trailing) — the System-Settings shortcut idiom.
-// Native SwiftUI, not a bespoke `Slate.Surface.face` panel. Presented as a real sheet by ``OverlayHostView``.
+// KeyboardCheatSheetView — the ⌘/ keyboard cheat sheet, drawn on the shared floating GLASS CARD
+// (``SlateOverlayCard``): a column of category runs, each row pairing the binding's title with its chord set
+// in a KEYCAP.
+//
+// It was a grouped `List` of `Section`s before. The keycap is the point of the change: this surface exists
+// to teach keys, and a chord printed as loose secondary text is a fact about a key, where a cap is the key.
+// The `List`'s section backgrounds went with it — a card does not need boxes drawn inside it to say where a
+// run of shortcuts begins; the caps label and the air above it do that.
 //
 // The rows render the single source-of-truth binding table (``WorkspaceBindingRegistry/groupedForDisplay``),
 // with each chord taken from the SAME registry the keyboard dispatcher fires (``WorkspaceBindingRegistry/glyph``)
@@ -37,30 +40,97 @@ struct KeyboardCheatSheetView: View {
         }
     }
 
+    /// Which column each section belongs in, balanced by RENDERED HEIGHT (a section costs its rows plus its
+    /// own header line) rather than by section count — three short categories beside one long one is the
+    /// case that makes a naive halve-the-list split look broken. Greedy: each section joins whichever column
+    /// is currently shortest, which keeps the registry's declared order reading down the page.
+    ///
+    /// Takes plain row counts and returns plain column indices, so it is PURE and unit-pinnable without
+    /// standing up a view or the binding registry.
+    static func columnAssignment(rowCounts: [Int], columns: Int = 2) -> [Int] {
+        let width = max(1, columns)
+        var heights = Array(repeating: 0, count: width)
+        return rowCounts.map { rows in
+            // `min()` on a non-empty array is never nil, and `firstIndex(of:)` of that minimum is never nil
+            // — the fallbacks only exist so this function cannot trap on any input.
+            let target = heights.min().flatMap { heights.firstIndex(of: $0) } ?? 0
+            heights[target] += rows + 1
+            return target
+        }
+    }
+
+    /// The sections dealt into their columns.
+    private var columns: [[CheatSection]] {
+        let list = sections
+        let assignment = Self.columnAssignment(rowCounts: list.map(\.bindings.count))
+        var buckets: [[CheatSection]] = [[], []]
+        for (section, column) in zip(list, assignment) where buckets.indices.contains(column) {
+            buckets[column].append(section)
+        }
+        return buckets
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            SlateSheetHeader("Keyboard Shortcuts", systemImage: "keyboard") {
+        VStack(alignment: .leading, spacing: 0) {
+            SlateCardTitle("Keyboard Shortcuts") {
                 Button("Done") { coordinator.closeCheatSheet() }
                     .keyboardShortcut(.cancelAction)
             }
 
-            List {
-                ForEach(sections) { section in
-                    Section(section.category.rawValue) {
-                        ForEach(section.bindings, id: \.id) { binding in
-                            LabeledContent(binding.title) {
-                                if let glyph = chordGlyph(binding) {
-                                    Text(glyph).foregroundStyle(.secondary)
+            ScrollView {
+                // TWO COLUMNS, packed as columns rather than as a grid. The table is long enough that one
+                // column turns a reference sheet into a scroll, and a reader looking up a chord wants to SEE
+                // the set. A `LazyVGrid` was tried first and photographed: it pairs the sections into grid
+                // ROWS, so a short category next to a long one is centred against it and floats halfway down
+                // the card with dead air above and below. Columns have no such coupling.
+                HStack(alignment: .top, spacing: Slate.Metric.space4) {
+                    ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+                        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                            ForEach(column) { section in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(section.category.rawValue.uppercased())
+                                        .font(Slate.Typeface.instrument(
+                                            Slate.Typeface.small, weight: .medium,
+                                        ))
+                                        .tracking(Slate.Typeface.instrumentTracking)
+                                        .foregroundStyle(Slate.Text.tertiary)
+                                        .padding(.horizontal, Slate.Metric.space2)
+                                        .padding(.bottom, Slate.Metric.space1)
+                                    ForEach(section.bindings, id: \.id) { binding in
+                                        row(binding)
+                                    }
                                 }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .padding(.horizontal, Slate.Metric.space3)
+                .padding(.top, Slate.Metric.space2)
+                .padding(.bottom, Slate.Metric.space4)
             }
         }
         #if os(macOS)
         .frame(width: 640, height: 560)
         #endif
+    }
+
+    /// One binding: what it does, and the key that does it. No plate — nothing here is selected, and a
+    /// resting row in this card is just its two facts.
+    private func row(_ binding: WorkspaceBinding) -> some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Text(binding.title)
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: Slate.Metric.space2)
+            if let glyph = chordGlyph(binding) {
+                SlateKeycap(label: glyph)
+            }
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .frame(height: Slate.Metric.heightRow)
     }
 
     // MARK: - Glyph derivation

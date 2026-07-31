@@ -128,7 +128,10 @@ struct OpenQuicklyView: View {
         #endif
     }
 
-    private var divider: some View { Divider() }
+    /// The card's internal hairline — earned where content MOVES past content (the results scroll
+    /// under the query bar, and the footer is a fixed rail the list runs beneath). Theme ink, not the
+    /// system `Divider`, whose grey lands far too heavy on glass.
+    private var divider: some View { SlateCardSeparator() }
 
     // MARK: - Search bar
 
@@ -228,10 +231,12 @@ struct OpenQuicklyView: View {
     }
 
     private func sectionHeader(_ filter: OpenQuicklyFilter) -> some View {
+        // The INSTRUMENT caps voice every card's section header speaks — the system face at semibold
+        // competed with the row titles it was meant to be labelling.
         Text(filter.sectionHeader)
-            .font(.system(size: Slate.Typeface.small, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(Slate.State.header)
+            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+            .tracking(Slate.Typeface.instrumentTracking)
+            .foregroundStyle(Slate.Text.tertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Slate.Metric.space3)
             .padding(.top, Slate.Metric.space3)
@@ -294,12 +299,9 @@ struct OpenQuicklyView: View {
             #endif
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: Slate.Metric.heightRow)
+        .frame(height: Slate.Metric.heightRowTall)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
-                .fill(isSelected ? Slate.State.selected : Color.clear),
-        )
+        .slateSelectionPlate(isSelected)
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
         // Hover-select on genuine pointer MOVEMENT only — a keyboard scrollTo sliding this row under a
@@ -372,19 +374,14 @@ struct OpenQuicklyView: View {
         .frame(height: Slate.Metric.heightRow)
     }
 
+    /// A footer hint: what the key does, then the key as a CAP. The glyph used to be a bare tinted plate
+    /// with no edge — which is what a badge looks like, not what a key looks like.
     private func footerHint(_ label: String, glyph: String) -> some View {
         HStack(spacing: Slate.Metric.space1) {
             Text(label)
                 .font(.system(size: Slate.Typeface.small))
                 .foregroundStyle(Slate.Text.tertiary)
-            Text(glyph)
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.horizontal, Slate.Metric.space1)
-                .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .fill(Slate.Surface.raised),
-                )
+            SlateKeycap(label: glyph)
         }
     }
 
