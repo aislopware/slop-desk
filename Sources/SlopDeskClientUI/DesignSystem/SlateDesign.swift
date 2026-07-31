@@ -402,6 +402,9 @@ enum Slate {
         /// so two cards summoned in a row read as the same object at the same distance. List overlays
         /// (palette / open-quickly / global search) size to their own content instead.
         static let cardFormWidth: CGFloat = 460
+        /// A PORT number's field on a form card — five digits wide, never the card's width: a field's
+        /// width is part of what it says about its answer.
+        static let portFieldWidth: CGFloat = 96
 
         // The floating GLASS card's cast shadow (``SlateGlassCard``) — soft and low, so the card reads as
         // hovering a short way above the workspace rather than pasted onto a far wall. Tokens because every
@@ -464,6 +467,9 @@ enum Slate {
     enum Typeface {
         /// Large empty-state / placeholder glyph (build-status / empty pane).
         static let display: CGFloat = 40
+        /// A floating card's TITLE — one rung above ``body``, the only size in the overlay family that
+        /// outranks the content it names.
+        static let title: CGFloat = 15
         /// Primary content + the command input field — the slightly-larger reading size.
         static let body: CGFloat = 13
         /// Default UI label size.

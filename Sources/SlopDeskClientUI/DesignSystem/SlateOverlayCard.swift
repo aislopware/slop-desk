@@ -243,19 +243,16 @@ struct SlateCardSeparator: View {
 
 // MARK: - The card's own title
 
-/// A floating card's title line: the name of the surface, quietly, with an optional trailing accessory.
+/// A floating card's title line: a REAL title — the system face at `title`/semibold in the reading ink —
+/// with an optional trailing accessory, and no rule under it (the card has an edge already).
 ///
-/// This replaced `SlateSheetHeader`, which spoke the system `.headline` above a `Divider` because it
-/// belonged to a native dialog; that file is deleted, along with its `SlateSheetFooter` sibling, now that
-/// nothing presents a native-voiced sheet. A glass card is workspace furniture, so its title takes the caps
-/// micro-label the rail uses — it names the surface without competing with the row the user is actually
-/// reading, and there is no rule under it, because the card has an edge already.
-///
-/// ⚠️ It is ONE RUNG UP from a section header, and that gap is not decoration. The first cut set both at
-/// `small`/`tertiary` and was photographed: on the connect card, `CONNECT TO HOST` and the `HOST` label
-/// under it were the same size, ink and voice, stacked four points apart — the card's name read as a third
-/// field label. So the title takes `footnote` in `secondary` while section headers stay `small` in
-/// `tertiary`, and it carries the air beneath it that separates a name from a list.
+/// It spoke the instrument caps micro-label first (`CONNECT TO HOST`, mono, tracked wide) and was
+/// photographed and rejected as "not modern": three caps-mono runs stacked on one form (title + two field
+/// labels) read as engraving on an instrument panel, and no current macOS dialog (HIG Tahoe alerts/panels,
+/// Linear, Raycast, Things) titles a form that way — they all set a short sentence-case noun phrase one
+/// size up from the body. So the title is the ONE line on a card that outranks the content: `title` (15)
+/// at semibold in `primary`, against `base`-in-`secondary` field labels — hierarchy by size and weight,
+/// never by voice-switching into caps.
 struct SlateCardTitle<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: () -> Trailing
@@ -267,15 +264,14 @@ struct SlateCardTitle<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
-            Text(title.uppercased())
-                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
-                .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(SlateOverlayInk.secondary)
+            Text(title)
+                .font(.system(size: Slate.Typeface.title, weight: .semibold))
+                .foregroundStyle(SlateOverlayInk.primary)
             Spacer(minLength: Slate.Metric.space2)
             trailing()
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .padding(.top, Slate.Metric.space3)
+        .padding(.top, Slate.Metric.space4)
         .padding(.bottom, Slate.Metric.space3)
     }
 }

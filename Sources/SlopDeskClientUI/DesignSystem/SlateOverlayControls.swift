@@ -20,9 +20,11 @@ import SwiftUI
 
 // MARK: - The caps micro-label
 
-/// A section-level caps micro-label in the instrument voice: a field's name ("HOST"), a block caption
-/// ("RECENT"). One rung DOWN from ``SlateCardTitle`` (`small`/`tertiary` vs `footnote`/`secondary`) — the
-/// gap is what keeps a card's name from reading as one more field label.
+/// A section-level caps micro-label in the instrument voice — a LIST region's caption ("RECENT", the
+/// palette's category headers), never a form-field's name. Field labels are sentence-case system text
+/// (see ``SlateLabeledField``): a caps-mono run above every input read as instrument engraving, and the
+/// photographed form carried three of them stacked. Caps survive only where the palette family already
+/// wears them well — naming a run of rows, one per region.
 struct SlateCapsLabel: View {
     let text: String
 
@@ -38,10 +40,12 @@ struct SlateCapsLabel: View {
 
 // MARK: - The labelled input
 
-/// One labelled form input: the caps label, then a REAL macOS text field under it. `.roundedBorder` at
-/// `.large` is the whole point — it is the system's field, at the system's size, so it takes the focus
-/// ring, the selection and the height a user expects instead of a look-alike plate that comes up short
-/// (a hand-drawn plate was tried and rejected on sight as cramped).
+/// One labelled form input: a sentence-case label in the system face (`base`/medium/`secondary` — the
+/// register modern form dialogs use; the caps-mono label was photographed and rejected as engraving),
+/// then a REAL macOS text field under it. `.roundedBorder` at `.large` is the whole point — it is the
+/// system's field, at the system's size, so it takes the focus ring, the selection and the height a user
+/// expects instead of a look-alike plate that comes up short (a hand-drawn plate was tried and rejected
+/// on sight as cramped).
 struct SlateLabeledField: View {
     let label: String
     @Binding var text: String
@@ -52,7 +56,9 @@ struct SlateLabeledField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            SlateCapsLabel(label)
+            Text(label)
+                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .foregroundStyle(SlateOverlayInk.secondary)
             TextField("", text: $text, prompt: Text(prompt))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.large)

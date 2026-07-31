@@ -49,9 +49,16 @@ struct ConnectHostView: View {
             SlateCardTitle("Connect to Host")
 
             VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                SlateLabeledField(label: "Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
-                    .focused($hostFocused)
-                SlateLabeledField(label: "Port", text: $connection.port, prompt: "9000", mono: true)
+                // Host and port share ONE row — a port is five digits, and a five-digit field the full
+                // width of the card asks a question the same size as "which machine?". (A title-less,
+                // placeholder-as-label cut was photographed and rejected: this card usually opens
+                // PRE-FILLED with the live target, and a filled field with no label says nothing.)
+                HStack(alignment: .top, spacing: Slate.Metric.space3) {
+                    SlateLabeledField(label: "Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
+                        .focused($hostFocused)
+                    SlateLabeledField(label: "Port", text: $connection.port, prompt: "9000", mono: true)
+                        .frame(width: Slate.Metric.portFieldWidth)
+                }
 
                 // The two video ports stay folded away — most people keep the defaults, and a card that
                 // opens showing four fields asks four questions when it only has two.
@@ -74,8 +81,16 @@ struct ConnectHostView: View {
                 .buttonStyle(.plain)
 
                 if showAdvanced {
-                    SlateLabeledField(label: "Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
-                    SlateLabeledField(label: "Cursor port", text: $connection.cursorPort, prompt: "9002", mono: true)
+                    // The two video ports are peers, so they share a row the way host/port do.
+                    HStack(alignment: .top, spacing: Slate.Metric.space3) {
+                        SlateLabeledField(label: "Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
+                        SlateLabeledField(
+                            label: "Cursor port",
+                            text: $connection.cursorPort,
+                            prompt: "9002",
+                            mono: true,
+                        )
+                    }
                 }
 
                 if let hint = connection.validationHint {

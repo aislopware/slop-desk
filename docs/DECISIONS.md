@@ -6014,3 +6014,31 @@ standard padding), and `SlateWarningRow` (the amber status line). Peek & Reply's
 token (`cardFormWidth`), so the connect and peek-reply cards are the same object at the same size. The
 rule stands as before — the card is ours, the controls in it are the system's — this round just makes
 "ours" one vocabulary instead of six dialects.
+
+## A form card's title is a real title, and its labels speak sentence-case (2026-07-31)
+
+The connect card was reported "not beautiful, not modern" with the complaint aimed at its TITLE and
+LAYOUT. The card was wearing the instrument voice head to toe: `CONNECT TO HOST` in tracked caps-mono,
+`HOST` and `PORT` in the same register right under it — three runs of engraving stacked on one small
+form. Research across the current crop of macOS dialogs (Apple's Tahoe HIG alerts/panels, Linear,
+Raycast, Things 3) agrees on the opposite grammar: a short sentence-case noun-phrase title one size up
+from the body, sentence-case field labels, and NO caps eyebrows anywhere in a form.
+
+So the floating family's hierarchy is now SIZE AND WEIGHT in one voice, not a voice-switch:
+
+- **`SlateCardTitle` is a real title**: the system face at the new `Slate.Typeface.title` rung (15) at
+  semibold in `primary` — the one line on a card that outranks the content it names. The caps-mono
+  treatment is deleted.
+- **`SlateLabeledField`'s label is sentence-case** system text (`base`/medium/`secondary`), not a caps
+  micro-label. `SlateCapsLabel` survives ONLY as a LIST region's caption (palette / Open Quickly
+  section headers, cheat-sheet categories, Peek & Reply's Recent) — naming a run of rows is the one
+  place the caps register still earns its keep, and those surfaces were the ones already judged good.
+- **A port field is port-sized**: host + port share one row (`portFieldWidth` = 96), as do the two
+  video ports behind the disclosure — a five-digit answer no longer gets a card-wide question. Three
+  variants were built for real and photographed (title-first / Linear-compact 13pt / title-less
+  placeholder-as-label): the title-less cut died on contact with reality — this card opens PRE-FILLED
+  with the live target, and a filled field with no label says nothing about what it is.
+
+The cheat sheet inherits the same real title through the shared component. Peek & Reply keeps its own
+header (the agent pane's title IS that card's identity — it was already content-first) and the
+search-led overlays (palette / Open Quickly / global search) were never titled at all.
