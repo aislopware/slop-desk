@@ -5872,3 +5872,20 @@ pure so `CheatSheetColumnBalanceTests` pins it without a view.
 
 → New `DesignSystem/SlateOverlayCard.swift`; `DesignSystem/SlateSheet.swift` DELETED (both its users
 converted); `PaneSwitcherOverlay` loses its private `SwitcherSurface`/`Keycap` to the shared ones.
+
+**Follow-up, same day — three corrections from looking at it running.**
+
+- ⚠️ **The shadow gutter was a HALO.** Padding the card inside the sheet, to give its cast shadow room, put
+  a 12pt band of the sheet's OWN surface around the card: brighter than both the card and the workspace,
+  and tinted by the theme's ground — clearly violet on Monokai Classic. Neither
+  `.presentationBackground(.clear)` nor clearing the `NSWindow` stops the sheet painting that surface; the
+  only thing that hides it is sizing the window exactly to the card. So the padding is gone and the cast
+  shadow with it — the rim carries the card alone. (Re-enabling the window's own shadow does not help: the
+  sheet's surface makes the window's alpha a full rectangle, so it would cast a rectangular shadow around
+  a rounded card.)
+- ⚠️ **The tint goes back to SYSTEM.** Theme-accenting the stock buttons was tried and rejected on sight:
+  a recoloured system button reads as a recoloured system button, not as workspace furniture.
+- ⚠️ **The controls inside a card stay NATIVE.** A hand-drawn field plate is thinner than a real macOS
+  field and reads as cramped, so Connect-to-Host and Peek & Reply use `.roundedBorder` at `.large`. The
+  card supplies the SURFACE and the labels around the controls; the controls themselves are the system's.
+  `slateFieldPlate()` survives for global search's search bar, which is a search bar, not a form field.

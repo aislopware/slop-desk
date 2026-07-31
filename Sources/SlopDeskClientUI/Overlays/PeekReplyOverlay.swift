@@ -6,9 +6,9 @@
 // reply field — so the user can ANSWER a blocked agent INLINE without a full tab/context switch.
 //
 // Drawn on the shared floating GLASS CARD (``SlateOverlayCard``) like every other overlay: the system
-// `Divider`s became the card's own hairlines (each earned — content scrolls past both), the `RECENT` caption
-// took the instrument caps voice, and the reply field sank into the shared field plate instead of wearing a
-// stock rounded border, which on glass read as a control borrowed from another application.
+// `Divider`s became the card's own hairlines (each earned — content scrolls past both) and the `RECENT`
+// caption took the instrument caps voice. The reply field stays a NATIVE control — the card is ours, what
+// sits in it is the system's.
 //
 // **Observe + reply, NEVER an approval gate**: the agent is never paused pending an
 // slopdesk confirmation. On submit the typed line is formatted by the pure `PeekReplyFormatter` (plain /
@@ -262,12 +262,12 @@ struct PeekReplyOverlay: View {
 
     private func replyBar(target: PaneID) -> some View {
         HStack(spacing: 8) {
-            TextField("", text: $field, prompt: Text("Reply…").foregroundStyle(Slate.Text.tertiary))
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
-                .slateFieldPlate()
+            // A REAL macOS field, at the system's size. A hand-drawn plate was tried here too and read as
+            // cramped next to a stock send button — see ``ConnectHostView``: the card is ours, the controls
+            // in it are the system's.
+            TextField("Reply…", text: $field)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
                 .focused($replyFocused)
                 .onSubmit { submit(target: target) }
                 // The empty-field digit quick-answer is intercepted BEFORE the field inserts the character:

@@ -91,18 +91,22 @@ struct OverlayHostView: View {
                 //   * `.presentationBackground(.clear)` clears the SwiftUI-drawn ground, and
                 //     `.slateClearSheetWindow()` clears the `NSWindow` behind it. BOTH are required — the
                 //     first alone leaves the card nested inside a second white panel (photographed).
-                //   * the padding is the SHADOW's room. A sheet window sizes itself to its content, so a
-                //     shadow cast right at the content edge is clipped away by the window holding it.
+                //   * ⚠️ NO PADDING around the card. A gutter was tried, to give the card's shadow room —
+                //     and it produced a visible HALO: the sheet still paints its own surface across the
+                //     whole window, so the gutter was a band of that surface ringing the card, brighter
+                //     than both the card and the workspace, and tinted by whatever the theme's ground is
+                //     (violet on Monokai Classic). Sized exactly to the card, the sheet's surface is
+                //     entirely underneath it and cannot be seen. The cost is the cast shadow, which the
+                //     window edge now clips — the rim carries the card alone.
                 //
-                // The tint goes to the THEME accent here, not the system one. A `.tint(nil)` reset belonged to
-                // the era when these were native dialogs and should read as System Settings; a Monokai glass
-                // card with a system-blue prominent button in it reads as two applications.
+                // The tint stays SYSTEM (`nil`). The controls inside these cards are real AppKit controls
+                // and read as themselves; a theme-accented stock button looks like a recoloured system
+                // button, not like workspace furniture.
                 sheetContent(sheet)
                     .slateGlassCard()
-                    .padding(Slate.Metric.space3)
                     .presentationBackground(.clear)
                     .slateClearSheetWindow()
-                    .tint(Slate.State.accent)
+                    .tint(nil)
             }
             .alert(
                 closeAlertTitle,

@@ -3,10 +3,15 @@
 //
 // It was a grouped `Form` before, under the "everything outside the workspace is native chrome" directive.
 // The Form is gone: its inset grey group boxes are a ground of their own, and a ground inside a glass card
-// is a box inside a box — the single thing that most made these dialogs look unrelated to the workspace they
-// float over. The fields keep their native `TextField` behaviour (editing, focus ring, selection); what they
-// lose is the Form's furniture. Labels are the caps instrument voice the rail speaks, and each input sinks
-// into a field plate, because on glass an unringed field is indistinguishable from a label.
+// is a box inside a box — the single thing that most made these dialogs look unrelated to the workspace it
+// floats over.
+//
+// ⚠️ The CARD changed; the CONTROLS did not. A first cut also replaced the stock field with a hand-drawn
+// plate and re-tinted the buttons to the theme accent, and both were rejected on sight: the plate was
+// thinner than a real macOS field and read as cramped, and a theme-accented prominent button looks like a
+// recoloured system button rather than like workspace furniture. So the inputs are native `.roundedBorder`
+// fields at `.large`, the buttons keep the system accent, and what the card supplies is the SURFACE and the
+// labels around them. A dialog's controls should be the system's; only the thing holding them is ours.
 //
 // A THIN form over the app-global ``AppConnection`` (which already owns the editable host/port fields, the
 // parse/validation, and the `connect()` lifecycle) — opened by the sidebar connection status line / the
@@ -56,9 +61,9 @@ struct ConnectHostView: View {
                         Image(systemSymbol: showAdvanced ? .chevronDown : .chevronRight)
                             .font(.system(size: Slate.Typeface.small, weight: .semibold))
                         Text("Video ports")
-                            .font(.system(size: Slate.Typeface.base))
+                            .font(.callout)
                     }
-                    .foregroundStyle(Slate.Text.secondary)
+                    .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
 
@@ -95,7 +100,7 @@ struct ConnectHostView: View {
             .padding(.bottom, Slate.Metric.space4)
         }
         #if os(macOS)
-        .frame(width: 420) // a fixed-width macOS card; iOS presents the sheet full-width
+        .frame(width: 460) // a fixed-width macOS card; iOS presents the sheet full-width
         #endif
         .onAppear {
             // Seed the fields from the committed target (re-editing the live host), then defer focus a runloop
@@ -113,8 +118,9 @@ struct ConnectHostView: View {
 
     // MARK: - Card parts
 
-    /// One labelled input: the caps instrument label over a plated `TextField`. Two registers stacked, the
-    /// same anatomy a switcher row uses — what a field is called, then the field itself.
+    /// One labelled input: the caps label, then a REAL macOS text field under it. `.roundedBorder` at
+    /// `.large` is the whole point — it is the system's field, at the system's size, so it takes the focus
+    /// ring, the selection and the height a user expects instead of a look-alike plate that comes up short.
     private func field(
         _ label: String, text: Binding<String>, prompt: String, mono: Bool = false,
     ) -> some View {
@@ -123,16 +129,12 @@ struct ConnectHostView: View {
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
                 .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.Text.tertiary)
-            TextField("", text: text, prompt: Text(prompt).foregroundStyle(Slate.Text.tertiary))
-                .textFieldStyle(.plain)
-                // A port is a NUMBER being read back, so it takes the instrument face; a hostname is a
-                // name and keeps the system one.
-                .font(mono
-                    ? Slate.Typeface.instrument(Slate.Typeface.body)
-                    : .system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
-                .slateFieldPlate()
+            TextField("", text: text, prompt: Text(prompt))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                // A port is a NUMBER being read back, so it takes the mono face; a hostname is a name and
+                // keeps the system one.
+                .font(mono ? .body.monospaced() : .body)
         }
     }
 
@@ -140,8 +142,8 @@ struct ConnectHostView: View {
     /// readouts competing for attention, not about suppressing an actual warning.
     private func warning(_ text: String) -> some View {
         Label(text, systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: Slate.Typeface.base))
-            .foregroundStyle(Slate.Status.warn)
+            .font(.callout)
+            .foregroundStyle(.orange)
             .fixedSize(horizontal: false, vertical: true)
     }
 
