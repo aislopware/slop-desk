@@ -319,12 +319,14 @@ public struct SlopDeskClientApp: App {
             appearance.theme = Self.nextBuiltinTheme(after: appearance.theme)
             preferences.appearance = appearance
         }
-        // SCREENSHOT FIXTURE ONLY (default-OFF): `SLOPDESK_TOAST_DEMO=1` seeds a representative STICKY
-        // notification stack at launch, because the card's glass surface is a GPU backdrop effect that
+        // SCREENSHOT FIXTURE ONLY (default-OFF): `SLOPDESK_TOAST_DEMO=<page>` seeds a STICKY
+        // notification page at launch, because the card's glass surface is a GPU backdrop effect that
         // `ImageRenderer` cannot rasterise — the real window is the only place the shipping card can be
-        // photographed. Sticky (no dwell) so the shot is stable; no real event path sets this.
-        if WorkspaceStore.automationInputs()["SLOPDESK_TOAST_DEMO"] == "1" {
-            Self.seedDemoToasts(overlay)
+        // photographed. Paged because the coordinator caps the stack at four and the spine expands only
+        // the newest two, so the full vocabulary is photographed two cards at a time. Sticky (no dwell)
+        // so the shot is stable; no real event path sets this.
+        if let page = WorkspaceStore.automationInputs()["SLOPDESK_TOAST_DEMO"], !page.isEmpty {
+            Self.seedDemoToasts(overlay, page: page)
         }
 
         #if os(macOS)
@@ -1041,27 +1043,56 @@ public struct SlopDeskClientApp: App {
         return keys.contains { (env[$0]?.isEmpty == false) }
     }
 
-    /// The `SLOPDESK_TOAST_DEMO` fixture stack: one card per state a design pass has to judge —
-    /// both speakers, the collapsed spine tier, a failure, and the highest-signal attention card
-    /// flush to the corner. Sticky so a screenshot never races the dwell.
+    /// The `SLOPDESK_TOAST_DEMO` fixture pages. Page "1" is the four-deep greatest-hits stack (both
+    /// speakers + the collapsed spine tier); pages "2"–"7" walk the WHOLE vocabulary two cards at a
+    /// time, so every card photographs EXPANDED (body visible without a hover). Sticky so a screenshot
+    /// never races the dwell.
     @MainActor
-    private static func seedDemoToasts(_ overlay: OverlayCoordinator) {
-        overlay.pushToast(Toast(
-            id: "demo.osc", flavor: .default, source: .command,
-            title: "npm run dev", body: "listening on :3000", autoDismiss: nil,
-        ))
-        overlay.pushToast(Toast(
-            id: "demo.fail", flavor: .error, source: .command,
-            title: "make check", body: "exit 1 · 42s", autoDismiss: nil,
-        ))
-        overlay.pushToast(Toast(
-            id: "demo.done", flavor: .success, source: .agent,
-            title: "Claude", body: "refactor the reducer", autoDismiss: nil,
-        ))
-        overlay.pushToast(Toast(
-            id: "demo.input", flavor: .attention, source: .agent,
-            title: "Claude", body: "slop-desk ▸ api", autoDismiss: nil,
-        ))
+    private static func seedDemoToasts(_ overlay: OverlayCoordinator, page: String) {
+        func push(
+            _ id: String, _ flavor: Toast.Flavor, _ source: Toast.Source,
+            _ title: String, _ body: String?, headline: String? = nil,
+        ) {
+            overlay.pushToast(Toast(
+                id: "demo.\(id)", flavor: flavor, source: source,
+                title: title, body: body, autoDismiss: nil, headline: headline,
+            ))
+        }
+        switch page {
+        case "2": // the agent's happy pair
+            push("input", .attention, .agent, "Claude", "slop-desk ▸ api")
+            push("done", .success, .agent, "Claude", "refactor the reducer")
+        case "3": // the agent's unhappy pair
+            push("agentfail", .error, .agent, "Claude", "turn failed")
+            push("working", .default, .agent, "Claude", "slop-desk ▸ api")
+        case "4": // a long command's two exits
+            push("cmdok", .success, .command, "make check", "exit 0 · 42s")
+            push("cmdfail", .error, .command, "make check", "exit 1 · 42s")
+        case "5": // the pass-through pair: an OSC notice and a cwd advisory
+            push("osc", .default, .command, "npm run dev", "listening on :3000")
+            push("advisory", .attention, .command, "cd'd on host", "may not exist there")
+        case "6": // the reconnect verdicts (explicit headlines)
+            push(
+                "reattach", .success, .command, "Session reattached",
+                "Same shell — context preserved", headline: "Session reattached",
+            )
+            push(
+                "fresh", .attention, .command, "Reconnected to a fresh shell",
+                "The previous session ended", headline: "Reconnected to a fresh shell",
+            )
+        case "7": // content edges: a middle-truncated command line, and the shortest possible card
+            push(
+                "long", .error, .command,
+                "docker compose -f ./deploy/compose.prod.yaml up --build --force-recreate api",
+                "exit 125 · 3s",
+            )
+            push("short", .success, .agent, "Claude", nil)
+        default: // "1": the four-deep stack — two spine rows above two full cards
+            push("osc", .default, .command, "npm run dev", "listening on :3000")
+            push("cmdfail", .error, .command, "make check", "exit 1 · 42s")
+            push("done", .success, .agent, "Claude", "refactor the reducer")
+            push("input", .attention, .agent, "Claude", "slop-desk ▸ api")
+        }
     }
 
     #if os(macOS)
