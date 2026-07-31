@@ -53,12 +53,10 @@ jobs:
         run: bash scripts/check-ds-leaks.sh
 
   # ----------------------------------------------- Swift build & test -------
-  # NOTE: the package targets macOS 26 / iOS 26 (.v26), which needs Xcode 26.5+.
-  # Until GitHub's hosted images ship it, run this on a self-hosted runner or
-  # locally via `make check`. Kept here so it activates automatically once the
-  # hosted image updates. A clean checkout builds with no prerequisite — the
-  # package is pure Swift plus the in-tree `CSlopDeskSIMD` C target (compiled
-  # from source), no staticlib to pre-build.
+  # NOTE: the package targets macOS 26 / iOS 26 (.v26), which needs Xcode 26.5+
+  # (hosted macos-latest images ship it). A clean checkout builds with no
+  # prerequisite — the package is pure Swift plus the in-tree `CSlopDeskSIMD`
+  # C target (compiled from source), no staticlib to pre-build.
   swift-build-test:
     name: Swift build + test (needs Xcode 26.5+)
     runs-on: macos-latest
