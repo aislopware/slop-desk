@@ -224,9 +224,14 @@ struct ToastCardView: View {
             // the last opaque outlier of the family. No hit barrier: this card's whole body is already
             // its jump button, and a background barrier would swallow the very clicks it exists to take.
             .slateGlassCard(hitBarrier: false)
-            .onHover { hovering = $0 }
-            // Body reveal / spine promotion resize the card — a relayout, so the standard curve.
-            .animation(Slate.Anim.standard, value: showsBody)
+            // The hover flip must run inside `withAnimation`: expanding this card shifts every SIBLING
+            // card in the stack, and a bare assignment animates only this subtree (the keyed `.animation`
+            // below) while the siblings snap — the transaction is what carries the curve to the column.
+            .onHover { inside in
+                withAnimation(Slate.Anim.stackReflow) { hovering = inside }
+            }
+            // Body reveal / spine promotion resize the card AND reflow the stack — the column curve.
+            .animation(Slate.Anim.stackReflow, value: showsBody)
             .animation(Slate.Anim.smallFade, value: showsClose)
             .contentShape(Rectangle())
             .modifier(ToastJumpAction(onJump: onJump, title: toast.title))

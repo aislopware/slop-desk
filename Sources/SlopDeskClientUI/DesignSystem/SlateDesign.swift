@@ -530,6 +530,10 @@ enum Slate {
         /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
         /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
         static let needle = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.24)
+        /// A whole COLUMN reflowing (toast spine expand/collapse shifts every sibling card, not just the
+        /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
+        /// reads as calm as the forward. EaseInEaseOut 0.28s.
+        static let stackReflow = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.28)
     }
 }
 
