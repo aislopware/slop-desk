@@ -121,12 +121,9 @@ struct OverlayHostView: View {
             },
             message: { Text(closeAlertMessage) },
         )
-        // The WindowGroup tints its whole subtree with the THEME accent so stock controls in the workspace
-        // and pane chrome adopt the filter; resetting to nil here scopes this overlay layer and the close
-        // `.alert` back to the system accent. That is the same call the neutral overlay ink makes for
-        // colour generally (see ``SlateOverlayInk``): what floats above the workspace is not painted in the
-        // workspace's palette. Only affects THIS subtree — the workspace beneath keeps the theme tint.
-        .tint(nil)
+        // No tint override anywhere on this layer: the app's ONE neutral accent (the AccentColor
+        // asset) already makes stock controls, focus rings and selection read graphite — here and in
+        // the workspace beneath alike (see ``SlateOverlayInk``).
     }
 
     /// The live connection-health fold, read once per body evaluation so the indicator
@@ -191,12 +188,11 @@ struct OverlayHostView: View {
                     .slateGlassCard()
                     // The card must never run out of a small window; this is the margin it keeps.
                     .padding(Slate.Metric.space4)
-                    // The controls are real AppKit controls and read as themselves — but they are tinted
-                    // NEUTRAL, not with the system accent. A monochrome card with one blue filled button on
-                    // it reads as a system dialog wearing our surface (and as a pink one wherever the
-                    // machine's accent is pink). The theme accent is doubly wrong here and was rejected
-                    // earlier; `SlateOverlayInk.control` is the family's own filled-control ink.
-                    .tint(SlateOverlayInk.control)
+                // The controls are real AppKit controls and read as themselves, in the app's ONE
+                // neutral accent. No `.tint()` here: the earlier per-card grey tint made the platform
+                // draw a prominent button as a near-white plate under a white label in dark mode. The
+                // AccentColor asset carries a per-appearance graphite instead, so the platform keeps
+                // its own label-contrast logic.
             }
             .transition(.opacity)
             // ⚠️ Closing the card must hand the KEYBOARD BACK. The card's field is the window's first

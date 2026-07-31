@@ -84,11 +84,10 @@ public struct SlopDeskSettingsScene: Scene {
             SettingsView(store: store)
                 .agentHooksController(agentHooks)
                 .workspaceStore(workspace)
-                // SYSTEM chrome, end to end: the tint is reset to the system accent AND no colour scheme is
-                // pinned, so the window follows the OS appearance like System Settings does. Pinning it to
-                // the terminal theme used to put a Monokai-dark preferences window on a light Mac (and a
-                // theme-tinted label beside a system-blue switch). See `SettingsInk`.
-                .tint(nil)
+            // SYSTEM chrome, end to end: no colour scheme is pinned, so the window follows the OS
+            // appearance like System Settings does. Pinning it to the terminal theme used to put a
+            // Monokai-dark preferences window on a light Mac. Controls take the app's one neutral
+            // accent (the AccentColor asset) with no per-scene override. See `SettingsInk`.
         }
     }
 }

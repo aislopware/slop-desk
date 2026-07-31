@@ -659,9 +659,6 @@ public struct SlopDeskClientApp: App {
                 .sheet(isPresented: $presentFirstLaunch) {
                     FirstLaunchView(model: firstLaunchModel, store: preferences)
                         .agentHooksController(agentHooks)
-                        // Native sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read
-                        // as native macOS controls; appearance still follows the theme via `preferredColorScheme`.
-                        .tint(nil)
                         // Adopt the active theme's light/dark like every other surface (issue 1) — without it
                         // the sheet inherited the OS appearance and could render light over a dark workspace.
                         .preferredColorScheme(Slate.colorScheme)
@@ -674,9 +671,11 @@ public struct SlopDeskClientApp: App {
                 }
                 // The app chrome is a PINNED palette (default Monokai Pro Classic — flat dark filter).
                 // Pin the window's colour scheme to the active theme so every system semantic colour we don't
-                // tokenize resolves with the right contrast, and route the global tint to the theme's accent
-                // colour so stock controls/selection adopt it.
-                .tint(Slate.State.accent)
+                // tokenize resolves with the right contrast. Stock controls take NO tint override: the app
+                // ships one NEUTRAL accent (the AccentColor asset — see project.yml), so buttons, focus
+                // rings and selection read graphite everywhere without per-subtree `.tint()` corrections.
+                // Where the THEME accent is a deliberate signal (active tab, focus corner), the view says
+                // `Slate.State.accent` itself.
                 .preferredColorScheme(Slate.colorScheme)
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
             #if os(macOS)
@@ -1038,7 +1037,7 @@ public struct SlopDeskClientApp: App {
     #if os(macOS)
     /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView`
     /// root inherits NOTHING from the main scene (the known hosting-root env trap), so the theme
-    /// tint/scheme + the injected stores must be re-applied here or the satellite renders unthemed and
+    /// colour scheme + the injected stores must be re-applied here or the satellite renders unthemed and
     /// its deep views resolve nil coordinators.
     private func decorateSatelliteRoot(_ root: AnyView) -> AnyView {
         AnyView(
@@ -1046,7 +1045,6 @@ public struct SlopDeskClientApp: App {
                 .preferencesStore(preferences)
                 .agentHooksController(agentHooks)
                 .overlayCoordinator(overlayCoordinator)
-                .tint(Slate.State.accent)
                 .preferredColorScheme(Slate.colorScheme),
         )
     }

@@ -10,8 +10,9 @@
 // plate and re-tinted the buttons to the theme accent, and both were rejected on sight: the plate was
 // thinner than a real macOS field and read as cramped, and a theme-accented prominent button looks like a
 // recoloured system button rather than like workspace furniture. So the inputs are native `.roundedBorder`
-// fields at `.large`, the buttons keep the system accent, and what the card supplies is the SURFACE and the
-// labels around them. A dialog's controls should be the system's; only the thing holding them is ours.
+// fields at `.large` and the buttons take the app's one NEUTRAL accent (the AccentColor asset) — which is
+// also what keeps the field's focus ring grey instead of machine-blue. A dialog's controls should be the
+// system's; only the thing holding them is ours. The parts are the shared ``SlateOverlayControls`` family.
 //
 // A THIN form over the app-global ``AppConnection`` (which already owns the editable host/port fields, the
 // parse/validation, and the `connect()` lifecycle) — opened by the sidebar connection status line / the
@@ -48,9 +49,9 @@ struct ConnectHostView: View {
             SlateCardTitle("Connect to Host")
 
             VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                field("Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
+                SlateLabeledField(label: "Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
                     .focused($hostFocused)
-                field("Port", text: $connection.port, prompt: "9000", mono: true)
+                SlateLabeledField(label: "Port", text: $connection.port, prompt: "9000", mono: true)
 
                 // The two video ports stay folded away — most people keep the defaults, and a card that
                 // opens showing four fields asks four questions when it only has two.
@@ -73,39 +74,32 @@ struct ConnectHostView: View {
                 .buttonStyle(.plain)
 
                 if showAdvanced {
-                    field("Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
-                    field("Cursor port", text: $connection.cursorPort, prompt: "9002", mono: true)
+                    SlateLabeledField(label: "Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
+                    SlateLabeledField(label: "Cursor port", text: $connection.cursorPort, prompt: "9002", mono: true)
                 }
 
                 if let hint = connection.validationHint {
-                    warning(hint)
+                    SlateWarningRow(text: hint)
                 } else if case let .failed(reason) = connection.status {
                     // The card stays open on a failed connect (see `connectAndClose`) — the same
                     // validation-hint row voice carries the reason, run through the presenter so it
                     // reads as the actionable copy every other connection surface shows, never the
                     // raw transport dump (which stays reachable via the status pill's tooltip).
-                    warning(ConnectionPresenter.friendlyFailure(reason))
+                    SlateWarningRow(text: ConnectionPresenter.friendlyFailure(reason))
                 }
             }
             .padding(.horizontal, Slate.Metric.space4)
             .padding(.bottom, Slate.Metric.space4)
 
-            // No `Divider` above the buttons: the card's own edge already ends the surface, and a rule
-            // here was the last of the stacked-boxes look the Form left behind.
-            HStack(spacing: Slate.Metric.space2) {
-                Spacer(minLength: 0)
-                Button("Cancel") { cancelAndClose() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Connect") { connectAndClose() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!connection.canConnect)
-            }
-            .padding(.horizontal, Slate.Metric.space4)
-            .padding(.bottom, Slate.Metric.space4)
+            SlateCardFooter(
+                confirmTitle: "Connect",
+                confirmDisabled: !connection.canConnect,
+                onCancel: { cancelAndClose() },
+                onConfirm: { connectAndClose() },
+            )
         }
         #if os(macOS)
-        .frame(width: 460) // a fixed-width macOS card; iOS presents the sheet full-width
+        .frame(width: Slate.Metric.cardFormWidth) // a fixed-width macOS card; iOS presents full-width
         #endif
         .onAppear {
             // Seed the fields from the committed target (re-editing the live host), then defer focus a runloop
@@ -121,36 +115,7 @@ struct ConnectHostView: View {
         }
     }
 
-    // MARK: - Card parts
-
-    /// One labelled input: the caps label, then a REAL macOS text field under it. `.roundedBorder` at
-    /// `.large` is the whole point — it is the system's field, at the system's size, so it takes the focus
-    /// ring, the selection and the height a user expects instead of a look-alike plate that comes up short.
-    private func field(
-        _ label: String, text: Binding<String>, prompt: String, mono: Bool = false,
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(label.uppercased())
-                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
-                .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(SlateOverlayInk.tertiary)
-            TextField("", text: text, prompt: Text(prompt))
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.large)
-                // A port is a NUMBER being read back, so it takes the mono face; a hostname is a name and
-                // keeps the system one.
-                .font(mono ? .body.monospaced() : .body)
-        }
-    }
-
-    /// The validation / failure line — amber, because this one IS a status and the no-hue rule is about
-    /// readouts competing for attention, not about suppressing an actual warning.
-    private func warning(_ text: String) -> some View {
-        Label(text, systemImage: "exclamationmark.triangle.fill")
-            .font(.callout)
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: false, vertical: true)
-    }
+    // MARK: - Actions
 
     /// Validate-then-connect: no-op unless the form parses (the button is also disabled then), then fire the
     /// app's `connect()`. Never force-unwraps — `canConnect` gates here and `connect()` re-guards the parse

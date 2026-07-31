@@ -133,7 +133,7 @@ cleanup() {
   # Left undone it is a per-run plist in the developer's ~/Library/Preferences, which is exactly how
   # this machine came to hold 55,003 `slopdesk.tests.pid*.plist` files.
   remove_defaults_suite
-  [[ -n "${HOSTD_PID}" ]] && kill "${HOSTD_PID}" 2> /dev/null || true
+  if [[ -n "${HOSTD_PID}" ]]; then kill "${HOSTD_PID}" 2> /dev/null || true; fi
   if [[ "${WITH_RENDERER}" == "1" ]]; then
     echo "==> restoring committed placeholder project.yml"
     git -C "${REPO_ROOT}" checkout -- "${SPEC}" 2> /dev/null || true

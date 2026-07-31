@@ -93,25 +93,13 @@ struct PaletteView: View {
     // MARK: - Search bar
 
     private var searchBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .magnifyingglass)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(SlateOverlayInk.secondary)
-            TextField("Search for commands…", text: $coordinator.paletteQuery)
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.primary) // the caret is the text's own ink, not an accent
-                .focused($searchFocused)
-                .onSubmit { coordinator.acceptSelected() } // plain ↩ runs + closes
-        }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: Slate.Metric.heightInput)
-        .onAppear {
-            // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
-            // dropped — defer one runloop hop (the same idiom InPaneChooserView uses).
-            DispatchQueue.main.async { searchFocused = true }
-        }
+        // The shared card-top search bar (focus-grab deferral included); plain ↩ runs + closes.
+        SlateSearchBar(
+            prompt: "Search for commands…",
+            text: $coordinator.paletteQuery,
+            focus: $searchFocused,
+            onSubmit: { coordinator.acceptSelected() },
+        )
     }
 
     // MARK: - Results list
@@ -157,13 +145,9 @@ struct PaletteView: View {
             // labels, the ✓/icon gutter sitting to their LEFT). A section header carries no glyph, so this is an
             // empty placeholder — only its width matters.
             Color.clear.frame(width: 20)
-            // The INSTRUMENT voice, the same caps micro-label a card's own title takes
-            // (``SlateCardTitle``) — so a header reads as the card naming a region rather than as a
-            // shouted row. The system face at semibold competed with the row titles under it.
-            Text(item.title.uppercased())
-                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
-                .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(SlateOverlayInk.tertiary)
+            // The shared caps micro-label — a header reads as the card naming a region rather than as a
+            // shouted row (the system face at semibold competed with the row titles under it).
+            SlateCapsLabel(item.title)
                 // The section label always wins the layout: a long cwd pill truncates its path, never the
                 // "WORKING DIRECTORY" header it sits on.
                 .layoutPriority(1)

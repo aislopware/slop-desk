@@ -49,7 +49,7 @@ PIDFILE="${WORK}/pids"
 : > "${PIDFILE}"
 FAILURES=0
 
-# shellcheck disable=SC2329 # invoked indirectly, by the EXIT trap below
+# shellcheck disable=SC2329,SC2317 # invoked indirectly, by the EXIT trap below (SC2317 = pre-0.11 spelling)
 cleanup() {
   local pids
   pids="$(cat "${PIDFILE}" 2> /dev/null)"

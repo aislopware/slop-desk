@@ -398,6 +398,11 @@ enum Slate {
         // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
         static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
 
+        /// A FORM card's fixed width (connect, peek-reply) — one width for every dialog-shaped overlay,
+        /// so two cards summoned in a row read as the same object at the same distance. List overlays
+        /// (palette / open-quickly / global search) size to their own content instead.
+        static let cardFormWidth: CGFloat = 460
+
         // The floating GLASS card's cast shadow (``SlateGlassCard``) — soft and low, so the card reads as
         // hovering a short way above the workspace rather than pasted onto a far wall. Tokens because every
         // overlay now shares one surface: a card that cast a different shadow would read as a different

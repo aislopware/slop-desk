@@ -29,11 +29,13 @@
 // which are neutral by construction and follow light/dark on their own. The workspace keeps the filter; the
 // things that float above it do not.
 //
-// Nor is the SYSTEM ACCENT part of the family. It was the last colour left — the caret, the fuzzy-match run,
-// the ✓ gutter, the default button — and a card that is otherwise monochrome reads as a system dialog the
-// moment one blue thing lands on it (and as a PINK one on a machine whose accent is pink, which is not a
-// decision this design gets to make). A match run is marked the way every other readout here marks
-// importance: heavier, against quieter neighbours. A filled control takes ``SlateOverlayInk/control``.
+// Nor is the MACHINE'S accent part of the family. It was the last colour left — the caret, the fuzzy-match
+// run, the ✓ gutter, the default button — and a card that is otherwise monochrome reads as a system dialog
+// the moment one blue thing lands on it (and as a PINK one on a machine whose accent is pink, which is not
+// a decision this design gets to make). A match run is marked the way every other readout here marks
+// importance: heavier, against quieter neighbours. Filled controls, focus rings and selection are handled
+// APP-WIDE by the neutral AccentColor asset (see Apps/Shared/Assets.xcassets) — the one supported way to
+// reach the focus ring, which no per-subtree `.tint()` can.
 //
 // Status colour is the exception and stays: a blocked agent's mark and a validation warning MEAN something,
 // and neutrality is about the chrome not competing, never about suppressing a signal.
@@ -63,12 +65,6 @@ enum SlateOverlayInk {
     static let hairline = Color.primary.opacity(0.12)
     /// The ground an editable field sinks into — the opposite direction from ``plate``.
     static let well = Color.primary.opacity(0.04)
-    /// The fill a FILLED control takes — the default button, a filled toggle — in place of the system
-    /// accent. Neutral like the rest of the family: an accent-blue button on a monochrome card was the
-    /// last coloured thing left on these surfaces, and it read as a system dialog wearing our card. Grey
-    /// rather than ``primary`` because a filled control's label is drawn white by the platform on both
-    /// appearances, and a `primary`-filled button in dark mode is white text on a white plate.
-    static let control = Color.gray
 }
 
 // MARK: - The card surface

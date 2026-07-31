@@ -143,25 +143,13 @@ struct OpenQuicklyView: View {
     // MARK: - Search bar
 
     private var searchBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .magnifyingglass)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(SlateOverlayInk.secondary)
-            TextField("Search tabs, windows…", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.primary) // the caret is the text's own ink, not an accent
-                .focused($searchFocused)
-                .onSubmit { actSelected() } // plain ↩ acts + closes
-        }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: Slate.Metric.heightInput)
-        .onAppear {
-            // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
-            // dropped — defer one runloop hop (the palette / find-bar idiom).
-            DispatchQueue.main.async { searchFocused = true }
-        }
+        // The shared card-top search bar (focus-grab deferral included); plain ↩ acts + closes.
+        SlateSearchBar(
+            prompt: "Search tabs, windows…",
+            text: $query,
+            focus: $searchFocused,
+            onSubmit: { actSelected() },
+        )
     }
 
     // MARK: - Filter pill bar
@@ -238,12 +226,9 @@ struct OpenQuicklyView: View {
     }
 
     private func sectionHeader(_ filter: OpenQuicklyFilter) -> some View {
-        // The INSTRUMENT caps voice every card's section header speaks — the system face at semibold
+        // The shared caps micro-label every card's section header speaks — the system face at semibold
         // competed with the row titles it was meant to be labelling.
-        Text(filter.sectionHeader)
-            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
-            .tracking(Slate.Typeface.instrumentTracking)
-            .foregroundStyle(SlateOverlayInk.tertiary)
+        SlateCapsLabel(filter.sectionHeader)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Slate.Metric.space3)
             .padding(.top, Slate.Metric.space3)

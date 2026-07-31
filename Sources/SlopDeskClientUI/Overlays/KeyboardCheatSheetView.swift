@@ -88,12 +88,7 @@ struct KeyboardCheatSheetView: View {
                         VStack(alignment: .leading, spacing: Slate.Metric.space3) {
                             ForEach(column) { section in
                                 VStack(alignment: .leading, spacing: 0) {
-                                    Text(section.category.rawValue.uppercased())
-                                        .font(Slate.Typeface.instrument(
-                                            Slate.Typeface.small, weight: .medium,
-                                        ))
-                                        .tracking(Slate.Typeface.instrumentTracking)
-                                        .foregroundStyle(SlateOverlayInk.tertiary)
+                                    SlateCapsLabel(section.category.rawValue)
                                         .padding(.horizontal, Slate.Metric.space2)
                                         .padding(.bottom, Slate.Metric.space1)
                                     ForEach(section.bindings, id: \.id) { binding in

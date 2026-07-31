@@ -72,7 +72,7 @@ struct PeekReplyOverlay: View {
         }
         .animation(Slate.Anim.smallFade, value: coordinator.peekReplyTarget())
         #if os(macOS)
-            .frame(width: 460)
+            .frame(width: Slate.Metric.cardFormWidth)
         #endif
     }
 
@@ -101,7 +101,7 @@ struct PeekReplyOverlay: View {
             vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
         }
         let caption = scent.map { "\(label) · \($0)" } ?? label
-        return HStack(spacing: 8) {
+        return HStack(spacing: Slate.Metric.space2) {
             if let reading = StatusPresentation.agentReading(status) {
                 StatusGlyph(reading: reading, tint: StatusPresentation.agentTint(status))
             }
@@ -118,7 +118,7 @@ struct PeekReplyOverlay: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             // The queue position REPLACES the static caption once a real queue (total >= 2)
             // exists — a hard cut on the queue edge, never both at once.
             if let position = queuePosition {
@@ -133,8 +133,8 @@ struct PeekReplyOverlay: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.vertical, Slate.Metric.space3)
     }
 
     /// The "N of M" triage-queue position, or `nil` for a single-target session (a queue of
@@ -158,8 +158,8 @@ struct PeekReplyOverlay: View {
             .foregroundStyle(content.question == nil ? .secondary : .primary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.vertical, Slate.Metric.space3)
     }
 
     // MARK: - Pending tool call (the exact call the question above is asking about)
@@ -201,8 +201,8 @@ struct PeekReplyOverlay: View {
             .frame(maxHeight: recentMaxHeight)
             .contentShape(Rectangle())
             .onTapGesture { pendingToolExpanded = false }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.bottom, Slate.Metric.space3)
         } else {
             let line = PendingToolSummary.line(name: card.name, input: card.input)
             Button {
@@ -216,8 +216,8 @@ struct PeekReplyOverlay: View {
             }
             .buttonStyle(.plain)
             .help("Show full input")
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.bottom, Slate.Metric.space3)
         }
     }
 
@@ -235,11 +235,8 @@ struct PeekReplyOverlay: View {
     // MARK: - Recent output (the cheap block-mirror tail)
 
     private func recentBlock(_ content: PeekContent) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("RECENT")
-                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
-                .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(SlateOverlayInk.tertiary)
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+            SlateCapsLabel("Recent")
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(content.recent.enumerated()), id: \.offset) { _, line in
@@ -254,14 +251,14 @@ struct PeekReplyOverlay: View {
             }
             .frame(maxHeight: recentMaxHeight)
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 12)
+        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.bottom, Slate.Metric.space3)
     }
 
     // MARK: - Reply bar
 
     private func replyBar(target: PaneID) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             // A REAL macOS field, at the system's size. A hand-drawn plate was tried here too and read as
             // cramped next to a stock send button — see ``ConnectHostView``: the card is ours, the controls
             // in it are the system's.
@@ -285,8 +282,8 @@ struct PeekReplyOverlay: View {
             // single Enter would deliver the reply TWICE (button action + onSubmit).
             .accessibilityLabel("Send reply")
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.vertical, Slate.Metric.space3)
         .onAppear {
             // A `@FocusState` set the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / Open-Quickly field idiom).
@@ -297,7 +294,7 @@ struct PeekReplyOverlay: View {
     // MARK: - All-caught-up fallback (race only)
 
     private var allCaughtUp: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Slate.Metric.space2) {
             Image(systemName: "checkmark.circle")
                 .font(.title2)
                 .foregroundStyle(.green)
@@ -307,7 +304,7 @@ struct PeekReplyOverlay: View {
                 .keyboardShortcut(.cancelAction)
         }
         .frame(maxWidth: .infinity)
-        .padding(24)
+        .padding(Slate.Metric.space4)
     }
 
     // MARK: - Actions

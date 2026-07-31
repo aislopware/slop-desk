@@ -5974,3 +5974,43 @@ appearances, so a `primary` fill would be white-on-white in dark mode).
 ⚠️ The native focus RING stays the system's blue: it is drawn from `NSColor.keyboardFocusIndicatorColor`,
 which `.tint` does not reach, and the only ways out are killing the ring or repainting the whole app's
 accent — both worse than one blue ring on a focused field.
+
+## The app ships ONE neutral accent, and the overlays ship one component kit (2026-07-31)
+
+Three reports against the connect card, photographed on hardware: the field ring was still machine-blue,
+the Connect button rendered as a near-white plate, and its white label vanished into it. All three were
+the residue of chasing neutrality with per-subtree `.tint()`:
+
+- The blue was `NSColor.keyboardFocusIndicatorColor` (and the text-selection wash) — AppKit derives both
+  from the APP's accent, and no `.tint()` on any subtree reaches them. The round above called repainting
+  the app accent "worse than one blue ring"; with the ring now reported alongside a tinted-button bug, the
+  trade reversed.
+- The white-on-white button was `.tint(SlateOverlayInk.control)` (a flat `Color.gray`) on
+  `.borderedProminent`: in dark appearance the platform lightens that tint into a near-white plate and
+  still paints the label white. A hand-picked tint bypasses the platform's own label-contrast logic; an
+  ACCENT does not.
+
+**The fix is the supported mechanism: an `AccentColor` asset** (`Apps/Shared/Assets.xcassets`, wired by
+`ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` in both app specs) carrying a per-appearance graphite
+(`#8E8E93` light / `#6E6E73` dark). Focus rings, text selection, filled controls and the close-confirm
+`.alert` all resolve neutral on every theme, on both platforms, with the platform still choosing label
+contrast. Verified by pixel on light + dark: no blue anywhere on the card, and the Connect label is
+legible on a graphite plate.
+
+With the accent itself neutral, every tint correction became dead weight and was DELETED: the WindowGroup's
+`.tint(Slate.State.accent)` (and the satellite copy), the overlay layer's `.tint(nil)`, the Settings
+scene's `.tint(nil)`, the first-launch sheet's `.tint(nil)`, and `SlateOverlayInk.control` itself. Where
+the THEME accent is a deliberate signal (active tab, the focus corner, the rail), the view names
+`Slate.State.accent` explicitly — the accent is now an ingredient views ask for, never an ambience they
+must undo. The terminal cells and the status colours are untouched.
+
+**The overlays now compose ONE component kit** (`DesignSystem/SlateOverlayControls.swift`) instead of
+hand-rolling the same shapes: `SlateCapsLabel` (the section-level caps micro-label — palette headers, Open
+Quickly headers, cheat-sheet categories, field names, Peek & Reply's RECENT), `SlateLabeledField` (caps
+label over a NATIVE `.roundedBorder`/`.large` field), `SlateSearchBar` (magnifier + plain field at
+`heightInput`, with the deferred focus-grab handled once), `SlateCardFooter` (Cancel + prominent confirm,
+standard padding), and `SlateWarningRow` (the amber status line). Peek & Reply's off-grid literals (20/14/
+12/24pt paddings, its own 460 width) moved onto the `Slate.Metric` grid, and the form-card width became a
+token (`cardFormWidth`), so the connect and peek-reply cards are the same object at the same size. The
+rule stands as before — the card is ours, the controls in it are the system's — this round just makes
+"ours" one vocabulary instead of six dialects.

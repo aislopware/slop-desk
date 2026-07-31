@@ -76,6 +76,9 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: SlopDesk
+        # The app-wide NEUTRAL accent (Apps/Shared/Assets.xcassets/AccentColor) — same graphite
+        # grey as the macOS client, so controls/selection read neutral on both platforms.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic

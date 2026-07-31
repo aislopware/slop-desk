@@ -78,6 +78,11 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: SlopDesk
+        # The app-wide NEUTRAL accent (Apps/Shared/Assets.xcassets/AccentColor): controls, focus
+        # rings, text selection and prominent buttons all resolve to a graphite grey instead of the
+        # machine's accent. This is the ONE supported way to reach NSColor.keyboardFocusIndicatorColor
+        # (a field's focus ring) — per-subtree `.tint()` never gets there.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         # PATH 1 (libghostty renderer): point the Swift importer at the CGhostty clang
