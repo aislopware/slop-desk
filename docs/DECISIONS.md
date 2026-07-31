@@ -5889,3 +5889,37 @@ converted); `PaneSwitcherOverlay` loses its private `SwitcherSurface`/`Keycap` t
   field and reads as cramped, so Connect-to-Host and Peek & Reply use `.roundedBorder` at `.large`. The
   card supplies the SURFACE and the labels around the controls; the controls themselves are the system's.
   `slateFieldPlate()` survives for global search's search bar, which is a search bar, not a form field.
+
+**Follow-up 2 — the cards leave the sheet, and the ink leaves the terminal.**
+
+Three more reports from running it: a white border flashing as a popup opened and vanishing once it
+settled; a radius and edge less elegant than the switcher's; and no liquid glass behind them at all.
+
+⚠️ **One cause: a sheet is its own WINDOW.** `glassEffect` refracts what is behind the view WITHIN its own
+backdrop, and a second window has nothing behind it — the material silently degrades to a flat fill
+(measured: every interior pixel of the sheet-hosted card was one dead value, where the in-window card's
+vary with the terminal beneath). The same window painted its own surface across its whole frame, which is
+the pale frame on open AND, when the card was inset for its shadow, the violet halo of the round before.
+And its mask clipped the corner to the system's radius rather than `radiusPanel`.
+
+Substituting a behind-window `NSVisualEffectView` was built and rejected on sight: a different material
+reads as a cousin of the switcher, not as the same object. **There is no separate-window arrangement that
+matches an in-window glass card.** So the cards are presented the way the switcher is — a centred
+`.overlay` in the workspace window — and the sheet is gone.
+
+⚠️ **`.onTapGesture` DOES NOT FIRE on that layer.** The workspace is an AppKit split
+(`NSViewControllerRepresentable`) and its real `NSView` wins `hitTest:` against SwiftUI content drawn over
+it, so SwiftUI's gesture recognition never sees the click. A real control does: measured both ways in one
+session — a row backed by `.onTapGesture` ran nothing while the connect card's native Cancel button, in the
+same overlay at the same moment, dismissed the card. Anything clickable on these cards is now a `Button`
+(`SlateClickTarget`, laid over the finished row so its layout is untouched); the dismiss backdrop is one
+too. Verified on hardware: a palette row click splits the pane, a click outside closes the card.
+⚠️ Hover-select does not survive this (`onContinuousHover` is a gesture) — keyboard selection and clicking
+both do.
+
+**The ink is NEUTRAL, not the terminal's** (`SlateOverlayInk`). Monokai's greys are tinted — Classic's are
+violet, Ristretto's warm rose — and a dialog wearing them reads as a stained panel rather than a neutral
+surface over coloured work. Every overlay colour now derives from `Color.primary` or the system accent, so
+it is a true grey on both appearances; `Slate` still supplies dimension and the mono face. The workspace
+keeps the filter. Status colour is the exception and stays: neutrality is about chrome not competing, never
+about suppressing a signal.

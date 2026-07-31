@@ -139,12 +139,12 @@ struct OpenQuicklyView: View {
         HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
             TextField("Search tabs, windows…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent) // the active caret is the accent colour
+                .foregroundStyle(SlateOverlayInk.primary)
+                .tint(SlateOverlayInk.accent) // the active caret is the accent colour
                 .focused($searchFocused)
                 .onSubmit { actSelected() } // plain ↩ acts + closes
         }
@@ -159,8 +159,8 @@ struct OpenQuicklyView: View {
 
     // MARK: - Filter pill bar
 
-    /// The filter pill ring (open-quickly.png): the active pill is FILLED (`Slate.State.selected`) with primary
-    /// text; inactive pills are OUTLINED (`Slate.Line.card`) with secondary text. SSH is absent by
+    /// The filter pill ring (open-quickly.png): the active pill is FILLED (the neutral plate) with primary
+    /// text; inactive pills are OUTLINED with secondary text. SSH is absent by
     /// product decision (see ``OpenQuicklyFilter``).
     private var pillBar: some View {
         HStack(spacing: Slate.Metric.space2) {
@@ -180,14 +180,14 @@ struct OpenQuicklyView: View {
         } label: {
             Text(filter.label)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
+                .foregroundStyle(active ? SlateOverlayInk.primary : SlateOverlayInk.secondary)
                 .padding(.horizontal, Slate.Metric.space3)
                 .padding(.vertical, Slate.Metric.space1)
                 .background(
-                    Capsule().fill(active ? Slate.State.selected : Color.clear),
+                    Capsule().fill(active ? SlateOverlayInk.plate : Color.clear),
                 )
                 .overlay(
-                    Capsule().stroke(active ? Color.clear : Slate.Line.card, lineWidth: Slate.Metric.hairline),
+                    Capsule().stroke(active ? Color.clear : SlateOverlayInk.hairline, lineWidth: Slate.Metric.hairline),
                 )
         }
         .buttonStyle(.plain)
@@ -236,7 +236,7 @@ struct OpenQuicklyView: View {
         Text(filter.sectionHeader)
             .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
             .tracking(Slate.Typeface.instrumentTracking)
-            .foregroundStyle(Slate.Text.tertiary)
+            .foregroundStyle(SlateOverlayInk.tertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Slate.Metric.space3)
             .padding(.top, Slate.Metric.space3)
@@ -247,7 +247,7 @@ struct OpenQuicklyView: View {
     private var emptyState: some View {
         Text(emptyMessage)
             .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(Slate.Text.tertiary)
+            .foregroundStyle(SlateOverlayInk.tertiary)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, Slate.Metric.space4)
     }
@@ -257,7 +257,7 @@ struct OpenQuicklyView: View {
         return HStack(spacing: Slate.Metric.space2) {
             Image(systemName: item.symbol)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .frame(width: 18, alignment: .center)
             highlightedTitle(item)
                 .font(.system(size: Slate.Typeface.body))
@@ -268,7 +268,7 @@ struct OpenQuicklyView: View {
             if let subtitle = item.subtitle {
                 Text(subtitle)
                     .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(SlateOverlayInk.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 240, alignment: .trailing)
@@ -276,7 +276,7 @@ struct OpenQuicklyView: View {
             if let stamp = item.timestamp {
                 Text(OutlinePresentation.relativeTime(from: stamp, now: Date()))
                     .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(SlateOverlayInk.tertiary)
                     .monospacedDigit()
             }
             badge(item.badge)
@@ -291,7 +291,7 @@ struct OpenQuicklyView: View {
             } label: {
                 Image(systemSymbol: .ellipsisCircle)
                     .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .foregroundStyle(SlateOverlayInk.secondary)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -312,7 +312,7 @@ struct OpenQuicklyView: View {
             hoverGate.noteHoverDrivenSelection()
             selection = selectableIndex
         }
-        .onTapGesture { act(item) }
+        .overlay { SlateClickTarget { act(item) } }
         .id(item.id)
         // The Actions popover anchors on the SELECTED row (⌘K), reusing the per-kind action table.
         .popover(isPresented: Binding(
@@ -326,12 +326,12 @@ struct OpenQuicklyView: View {
     private func badge(_ text: String) -> some View {
         Text(text)
             .font(.system(size: Slate.Typeface.small, weight: .medium))
-            .foregroundStyle(Slate.Text.secondary)
+            .foregroundStyle(SlateOverlayInk.secondary)
             .padding(.horizontal, Slate.Metric.space1)
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(Slate.Surface.raised),
+                    .fill(SlateOverlayInk.plate),
             )
     }
 
@@ -344,19 +344,19 @@ struct OpenQuicklyView: View {
         let title = item.title
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, let ranges = FuzzyMatcher.score(trimmed, title)?.ranges, !ranges.isEmpty else {
-            return Text(title).foregroundStyle(Slate.Text.primary)
+            return Text(title).foregroundStyle(SlateOverlayInk.primary)
         }
         var segments: [Text] = []
         var cursor = title.startIndex
         for range in ranges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(Slate.Text.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.primary))
             }
-            segments.append(Text(title[range]).foregroundStyle(Slate.State.accent).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.accent).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.primary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }
@@ -380,7 +380,7 @@ struct OpenQuicklyView: View {
         HStack(spacing: Slate.Metric.space1) {
             Text(label)
                 .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(SlateOverlayInk.tertiary)
             SlateKeycap(label: glyph)
         }
     }
@@ -415,7 +415,7 @@ struct OpenQuicklyView: View {
             if actions.isEmpty {
                 Text("No actions")
                     .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(SlateOverlayInk.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, Slate.Metric.space2)
             } else {
@@ -426,7 +426,7 @@ struct OpenQuicklyView: View {
         }
         .padding(.vertical, Slate.Metric.space1)
         .frame(minWidth: 240)
-        .background(Slate.Surface.face)
+        .background(SlateOverlayInk.well)
         // The popover owns the keyboard while open (its field is focused): ↑/↓ move the highlight over the
         // FILTERED list; ↩ is the field's `.onSubmit`; Esc closes just the popover (not the whole picker).
         .onKeyPress(phases: .down) { press in handleActionsKey(press, count: actions.count) }
@@ -436,12 +436,12 @@ struct OpenQuicklyView: View {
         HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
             TextField("Filter actions…", text: $actionsQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
+                .foregroundStyle(SlateOverlayInk.primary)
+                .tint(SlateOverlayInk.accent)
                 .focused($actionsFocused)
                 .onSubmit { runHighlightedAction() }
         }
@@ -466,12 +466,12 @@ struct OpenQuicklyView: View {
                     .font(.system(size: Slate.Typeface.body))
                 Spacer(minLength: Slate.Metric.space3)
             }
-            .foregroundStyle(Slate.Text.primary)
+            .foregroundStyle(SlateOverlayInk.primary)
             .padding(.horizontal, Slate.Metric.space3)
             .frame(height: Slate.Metric.heightRow)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
-                    .fill(isHighlighted ? Slate.State.selected : Color.clear),
+                    .fill(isHighlighted ? SlateOverlayInk.plate : Color.clear),
             )
             .contentShape(Rectangle())
         }

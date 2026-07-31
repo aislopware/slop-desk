@@ -4,10 +4,9 @@
 // fill row. (The per-domain filter chips live in the Open-Quickly picker — ⌘⇧P shows no chips here.)
 //
 // Faithful to `spec/user-interface__command-palette.md` (the centered floating panel, the magnifier +
-// blue/accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, per-symbol keycap chips,
-// the subtle selected-row fill) — mapped onto the DARK Monokai-default Slate token layer (`Slate.Surface.face`
-// panel, `Slate.State.selected` row fill, `Slate.State.accent` caret/highlight, `Slate.State.header` section
-// labels) rather than the light theme shown in the reference screenshot.
+// accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, keycaps, the subtle
+// selected-row fill), with two deliberate departures: a chord is ONE keycap rather than one per glyph, and
+// the ink is the NEUTRAL overlay palette (``SlateOverlayInk``) rather than the terminal's filter.
 //
 // SEAM discipline: the palette OWNS no state — every read/mutation goes through the coordinator (the single
 // `@Observable` reducer) so the GUI and the headless model can't drift. Presented by ``OverlayHostView``,
@@ -20,7 +19,7 @@
 // degenerates into a caption per row, while the palette's results are ranked WITHIN category, so its rows
 // genuinely arrive in runs. Same rule, opposite outcome.
 //
-// `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
+// `Slate.*` for DIMENSION, ``SlateOverlayInk`` for COLOUR (raw literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -95,12 +94,12 @@ struct PaletteView: View {
         HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
             TextField("Search for commands…", text: $coordinator.paletteQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent) // the active caret is the accent colour (spec)
+                .foregroundStyle(SlateOverlayInk.primary)
+                .tint(SlateOverlayInk.accent) // the active caret is the accent colour (spec)
                 .focused($searchFocused)
                 .onSubmit { coordinator.acceptSelected() } // plain ↩ runs + closes
         }
@@ -162,7 +161,7 @@ struct PaletteView: View {
             Text(item.title.uppercased())
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
                 .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(SlateOverlayInk.tertiary)
                 // The section label always wins the layout: a long cwd pill truncates its path, never the
                 // "WORKING DIRECTORY" header it sits on.
                 .layoutPriority(1)
@@ -203,12 +202,12 @@ struct PaletteView: View {
                 // shrinks — default `.tail` would drop the most meaningful part of the path.
                 .truncationMode(.head)
         }
-        .foregroundStyle(Slate.Text.secondary)
+        .foregroundStyle(SlateOverlayInk.secondary)
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .fill(Slate.Surface.raised),
+                .fill(SlateOverlayInk.plate),
         )
     }
 
@@ -223,7 +222,7 @@ struct PaletteView: View {
                 if toggledState(item) {
                     Image(systemSymbol: .checkmark)
                         .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                        .foregroundStyle(Slate.State.accent)
+                        .foregroundStyle(SlateOverlayInk.accent)
                 }
             }
             .frame(width: 20, alignment: .center)
@@ -257,7 +256,7 @@ struct PaletteView: View {
             hoverGate.noteHoverDrivenSelection()
             coordinator.paletteSelection = selectableIndex
         }
-        .onTapGesture { coordinator.run(item) }
+        .overlay { SlateClickTarget { coordinator.run(item) } }
         .id(item.id)
     }
 
@@ -268,7 +267,7 @@ struct PaletteView: View {
     private func highlightedTitle(_ ranked: RankedRow) -> Text {
         let title = ranked.item.title
         guard !ranked.titleRanges.isEmpty else {
-            return Text(title).foregroundStyle(Slate.Text.primary)
+            return Text(title).foregroundStyle(SlateOverlayInk.primary)
         }
         // Accumulate `Text` segments then fold with `+` — `Text` has no `+=`, so a `result = result + …`
         // reassignment can't be a shorthand op; the array fold keeps it clean.
@@ -276,13 +275,13 @@ struct PaletteView: View {
         var cursor = title.startIndex
         for range in ranked.titleRanges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(Slate.Text.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.primary))
             }
-            segments.append(Text(title[range]).foregroundStyle(Slate.State.accent).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.accent).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.primary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }

@@ -93,7 +93,7 @@ struct KeyboardCheatSheetView: View {
                                             Slate.Typeface.small, weight: .medium,
                                         ))
                                         .tracking(Slate.Typeface.instrumentTracking)
-                                        .foregroundStyle(Slate.Text.tertiary)
+                                        .foregroundStyle(SlateOverlayInk.tertiary)
                                         .padding(.horizontal, Slate.Metric.space2)
                                         .padding(.bottom, Slate.Metric.space1)
                                     ForEach(section.bindings, id: \.id) { binding in
@@ -121,7 +121,7 @@ struct KeyboardCheatSheetView: View {
         HStack(spacing: Slate.Metric.space2) {
             Text(binding.title)
                 .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: Slate.Metric.space2)

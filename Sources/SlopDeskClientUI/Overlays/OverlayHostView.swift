@@ -1,15 +1,14 @@
 // OverlayHostView — the single mount point that presents EVERY floating overlay above the workspace as
 // NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns no
-// bespoke `Scrim` or hand-drawn card: each overlay is a real system `.sheet` driven by the injected
-// ``OverlayCoordinator`` flags, and the pane/tab close confirmation is a native `.alert` driven off the
-// store's `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty)
-// is the host's only in-tree content — transient notifications float over the workspace without a modal.
+// state. Each overlay is an IN-WINDOW glass card (``SlateOverlayCard``) driven by the injected
+// ``OverlayCoordinator`` flags; the pane/tab close confirmation stays a native `.alert` off the store's
+// `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty) is the
+// host's only other in-tree content — transient notifications float over the workspace without a modal.
 //
 // One host so every overlay shares one presentation point: because the coordinator only ever drives one
 // overlay flag at a time (its `run()` closes-then-opens; the open* methods are the only writers), a single
-// `.sheet(item:)` keyed on a computed ``ActiveSheet`` is robust — it can never race two chained
-// `.sheet(isPresented:)` modifiers, and a system dismissal (Esc / click-away) routes back through the
-// binding's `set(nil)` to the matching `close*()`.
+// computed ``ActiveSheet`` is robust — it can never race two chained presentations, and a dismissal (Esc /
+// click-away) routes through `closeActiveSheet()` to the matching `close*()`.
 //
 // MOUNTING: the root view (`WorkspaceRootView`) attaches this as a top `.overlay` on the macOS
 // `WorkspaceSplitRepresentable` and on the iOS `NavigationSplitView` — a `.sheet`/`.alert` presented from an
@@ -19,7 +18,7 @@
 // `@Observable` reducer) or the store (the close-confirmation parks). The `toggledState` predicate is built
 // by the root from the live `WorkspaceChromeState` (macOS) or a no-op (iOS) and handed to the palette, so the
 // pure coordinator never learns about chrome. NATIVE styling only (system fonts / controls) — the overlays
-// carry their own content; the host adds no design-token chrome.
+// carry their own content; the host adds only the shared card surface.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -44,90 +43,90 @@ struct OverlayHostView: View {
     var sidebarCollapsed: Bool = false
 
     var body: some View {
-        // The always-mounted toast stack is the host's only in-tree content (it renders nothing when empty);
-        // every modal overlay is a native `.sheet`/`.alert` presented over the window. Transparent to hits
-        // unless a toast is up so the workspace beneath stays interactive.
-        ToastStackView(coordinator: coordinator, onJump: jumpToNotifiedPane)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .allowsHitTesting(!coordinator.toasts.isEmpty)
-            // The bottom-center transient chips, stacked so they can't overlap: the window-level
-            // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
-            // self-expiring via the chip's dwell task) above the durable connection indicator — a compact
-            // amber/red chip shown ONLY while the tabs panel is collapsed AND some pane is unhealthy. With
-            // the sidebar hidden a dropped/reconnecting pane otherwise has no per-pane surface; clicking
-            // the chip focuses the worst affected pane. Hidden when all panes are healthy (`nil` alert).
-            .overlay(alignment: .bottom) {
-                VStack(spacing: Slate.Metric.space2) {
-                    if let receipt = coordinator.copyReceipt {
-                        CopyReceiptChip(receipt: receipt, onExpire: { coordinator.clearCopyReceipt() })
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
+        // ⚠️ TWO LAYERS, deliberately not one chain. The ambient layer (toasts, chips, the ⌃⇥ readout)
+        // is TRANSPARENT TO HITS unless a toast is up, so the workspace beneath stays clickable — and
+        // `allowsHitTesting(false)` on it suppresses hits for everything composed into that chain,
+        // INCLUDING overlays attached further down it. A modal card hung off the same chain therefore
+        // took no clicks at all: neither its rows nor its dismiss-backdrop responded (measured — a
+        // palette row click ran nothing). So the modal is a SIBLING in a ZStack, owning its own hit
+        // testing.
+        ZStack {
+            ToastStackView(coordinator: coordinator, onJump: jumpToNotifiedPane)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(!coordinator.toasts.isEmpty)
+                // The bottom-center transient chips, stacked so they can't overlap: the window-level
+                // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
+                // self-expiring via the chip's dwell task) above the durable connection indicator — a compact
+                // amber/red chip shown ONLY while the tabs panel is collapsed AND some pane is unhealthy. With
+                // the sidebar hidden a dropped/reconnecting pane otherwise has no per-pane surface; clicking
+                // the chip focuses the worst affected pane. Hidden when all panes are healthy (`nil` alert).
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: Slate.Metric.space2) {
+                        if let receipt = coordinator.copyReceipt {
+                            CopyReceiptChip(receipt: receipt, onExpire: { coordinator.clearCopyReceipt() })
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
+                        if let notice = coordinator.notice {
+                            NoticeChip(notice: notice, onExpire: { coordinator.clearNotice() })
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
+                        if sidebarCollapsed, let alert = connectionAlert {
+                            ConnectionAlertChip(alert: alert) { store.jumpToPaneTree(alert.worstPane) }
+                                .transition(.opacity)
+                        }
                     }
-                    if let notice = coordinator.notice {
-                        NoticeChip(notice: notice, onExpire: { coordinator.clearNotice() })
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
-                    }
-                    if sidebarCollapsed, let alert = connectionAlert {
-                        ConnectionAlertChip(alert: alert) { store.jumpToPaneTree(alert.worstPane) }
-                            .transition(.opacity)
-                    }
+                    .padding(Slate.Metric.space4)
                 }
-                .padding(Slate.Metric.space4)
-            }
-            // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
-            // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
-            // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
-            .overlay(alignment: .center) { PaneSwitcherOverlay(store: store) }
-            .animation(Slate.Anim.smallFade, value: connectionAlert)
-            .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
-            .animation(Slate.Anim.smallFade, value: coordinator.notice)
-            .sheet(item: activeSheetBinding) { sheet in
-                // Every overlay is drawn on the SAME floating glass card the ⌃⇥ switcher is (see
-                // ``SlateOverlayCard``) — so the card, not the system window, is what the user sees. The
-                // sheet is kept for what it is genuinely good at (modality, key focus for the text fields,
-                // Esc / click-away routing back through the binding) and stripped of everything it draws:
-                //
-                //   * `.presentationBackground(.clear)` clears the SwiftUI-drawn ground, and
-                //     `.slateClearSheetWindow()` clears the `NSWindow` behind it. BOTH are required — the
-                //     first alone leaves the card nested inside a second white panel (photographed).
-                //   * ⚠️ NO PADDING around the card. A gutter was tried, to give the card's shadow room —
-                //     and it produced a visible HALO: the sheet still paints its own surface across the
-                //     whole window, so the gutter was a band of that surface ringing the card, brighter
-                //     than both the card and the workspace, and tinted by whatever the theme's ground is
-                //     (violet on Monokai Classic). Sized exactly to the card, the sheet's surface is
-                //     entirely underneath it and cannot be seen. The cost is the cast shadow, which the
-                //     window edge now clips — the rim carries the card alone.
-                //
-                // The tint stays SYSTEM (`nil`). The controls inside these cards are real AppKit controls
-                // and read as themselves; a theme-accented stock button looks like a recoloured system
-                // button, not like workspace furniture.
-                sheetContent(sheet)
-                    .slateGlassCard()
-                    .presentationBackground(.clear)
-                    .slateClearSheetWindow()
-                    .tint(nil)
-            }
-            .alert(
-                closeAlertTitle,
-                isPresented: closeAlertBinding,
-                actions: {
-                    // "Close" is the destructive action (it stops a running command / discards the pane/tab);
-                    // Cancel is the safe default. Native roles give the macOS alert its standard button
-                    // placement + tinting.
-                    Button("Close", role: .destructive) { store.confirmPendingClose() }
-                    Button("Cancel", role: .cancel) { store.cancelPendingClose() }
-                },
-                message: { Text(closeAlertMessage) },
-            )
-            // Native chrome uses the SYSTEM accent, not the workspace theme accent. The WindowGroup tints its
-            // whole subtree with `Slate.State.accent` (so stock controls in the workspace/pane chrome adopt the
-            // theme); resetting the tint to nil here scopes the overlays' sheets + the close `.alert` back to the
-            // macOS default accent so their toggles / bordered buttons / focus rings read as native System-Settings
-            // controls. Only affects THIS overlay subtree (+ the sheets/alert it presents) — the workspace beneath
-            // keeps the theme tint. Appearance (light/dark) still follows the parent window via each sheet's own
-            // `.preferredColorScheme`, matching how a real macOS sheet inherits its window's appearance.
-            .tint(nil)
+                // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
+                // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
+                // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
+                .overlay(alignment: .center) { PaneSwitcherOverlay(store: store) }
+                .animation(Slate.Anim.smallFade, value: connectionAlert)
+                .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
+                .animation(Slate.Anim.smallFade, value: coordinator.notice)
+                .animation(Slate.Anim.smallFade, value: activeSheet)
+
+            // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
+            // like the ⌃⇥ switcher — which is the whole point of the family.
+            //
+            // `glassEffect` refracts what is behind the view WITHIN its own backdrop. A sheet is a separate
+            // window, so there is nothing behind it to refract and the material silently degrades to a flat
+            // fill — measured: every interior pixel of the sheet-hosted card was one dead value, where the
+            // in-window card's vary with the terminal beneath. Two further symptoms had the same root: a
+            // sheet paints its own surface across its whole window, which flashed as a pale frame on open
+            // (and, when the card was inset to make room for its shadow, showed as a violet halo ringing
+            // it), and the sheet window's mask clipped the corner to the system's radius instead of ours.
+            //
+            // Substituting a behind-window `NSVisualEffectView` was tried and rejected on sight: it is a
+            // different material, so the cards read as cousins of the switcher rather than as the same
+            // object. There is no separate-window arrangement that matches an in-window glass card.
+            //
+            // The keyboard needs nothing from the sheet: it already yields on the COORDINATOR's flags
+            // (`capturesKeyboardWhileVisible` → the app's `isOverlayCapturingKeys` → the dispatcher's
+            // NSEvent monitor hands the event back to the responder chain), which is how a focused card
+            // here receives typing and its own ⌘-chords. Esc and click-away are the backdrop's job below.
+            modalOverlay
+        }
+        .alert(
+            closeAlertTitle,
+            isPresented: closeAlertBinding,
+            actions: {
+                // "Close" is the destructive action (it stops a running command / discards the pane/tab);
+                // Cancel is the safe default. Native roles give the macOS alert its standard button
+                // placement + tinting.
+                Button("Close", role: .destructive) { store.confirmPendingClose() }
+                Button("Cancel", role: .cancel) { store.cancelPendingClose() }
+            },
+            message: { Text(closeAlertMessage) },
+        )
+        // The WindowGroup tints its whole subtree with the THEME accent so stock controls in the workspace
+        // and pane chrome adopt the filter; resetting to nil here scopes this overlay layer and the close
+        // `.alert` back to the system accent. That is the same call the neutral overlay ink makes for
+        // colour generally (see ``SlateOverlayInk``): what floats above the workspace is not painted in the
+        // workspace's palette. Only affects THIS subtree — the workspace beneath keeps the theme tint.
+        .tint(nil)
     }
 
     /// The live connection-health fold, read once per body evaluation so the indicator
@@ -147,11 +146,11 @@ struct OverlayHostView: View {
         store.jumpToPaneTree(PaneID(raw: raw))
     }
 
-    // MARK: - Active sheet (single robust presentation seam)
+    // MARK: - Active overlay (single presentation seam)
 
     /// Which overlay (if any) should be presented, resolved from the coordinator flags in a fixed priority
-    /// order. The coordinator drives one flag at a time, so this is unambiguous; a `.sheet(item:)` keyed on it
-    /// presents exactly one overlay and re-presents cleanly when one overlay replaces another (palette → connect).
+    /// order. The coordinator drives one flag at a time, so this is unambiguous: exactly one card is
+    /// mounted, and one overlay replacing another (palette → connect) is a single swap.
     private enum ActiveSheet: Identifiable {
         case connect
         case palette
@@ -172,15 +171,39 @@ struct OverlayHostView: View {
         return nil
     }
 
-    /// The `item` binding for the single sheet. `get` mirrors ``activeSheet``; `set(nil)` (a system dismissal —
-    /// Esc / click-away) routes to the matching `close*()` so the coordinator flag is cleared. A state-driven
-    /// dismissal (a view calling its own `close*()`) flips the flag first, so `get` returns nil and the sheet
-    /// dismisses without `set` firing — the two paths never double-close (and the closes are idempotent anyway).
-    private var activeSheetBinding: Binding<ActiveSheet?> {
-        Binding(
-            get: { activeSheet },
-            set: { if $0 == nil { closeActiveSheet() } },
-        )
+    /// The presented card, centred over the workspace on a hit-catching backdrop.
+    ///
+    /// The backdrop does NOT dim. These are surfaces you summon over your work and dismiss in a second, and
+    /// the workspace behind is the context you summoned them about — the switcher makes the same call, and
+    /// a macOS sheet did not dim either, so nothing regresses. It is not `Color.clear` either: a truly
+    /// clear rectangle takes no hits, and catching the click that dismisses the card is its whole job.
+    ///
+    /// It is a SIBLING in the ZStack rather than an `.overlay` on the ambient chain, because that chain
+    /// carries `allowsHitTesting(false)` whenever no toast is up.
+    @ViewBuilder
+    private var modalOverlay: some View {
+        if let sheet = activeSheet {
+            ZStack {
+                // A BUTTON, not a tap gesture — see ``SlateClickTarget`` for why nothing on this layer
+                // may rely on SwiftUI gesture recognition.
+                SlateClickTarget { closeActiveSheet() }
+                sheetContent(sheet)
+                    .slateGlassCard()
+                    // The card must never run out of a small window; this is the margin it keeps.
+                    .padding(Slate.Metric.space4)
+                    // The controls inside these cards are real AppKit controls and read as themselves; a
+                    // theme-accented stock button looks like a recoloured system button, not like
+                    // workspace furniture.
+                    .tint(nil)
+            }
+            .transition(.opacity)
+            // Esc reaches the focused card's own handler in every case but one — the cheat sheet has no
+            // field to focus — so the backdrop carries the same escape as a floor. macOS spells it
+            // `onExitCommand` (unavailable on iOS, where the cards are reached by tap anyway).
+            #if os(macOS)
+                .onExitCommand { closeActiveSheet() }
+            #endif
+        }
     }
 
     private func closeActiveSheet() {

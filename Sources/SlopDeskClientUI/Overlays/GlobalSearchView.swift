@@ -94,8 +94,8 @@ struct GlobalSearchView: View {
             TextField("Search across all tabs…", text: queryBinding)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent) // the active caret is the accent colour
+                .foregroundStyle(SlateOverlayInk.primary)
+                .tint(SlateOverlayInk.accent) // the active caret is the accent colour
                 .focused($queryFocused)
                 // The query sinks into the shared field plate (``View/slateFieldPlate()``) — the same recipe
                 // the connect card's inputs take, so an editable field looks the same on every overlay. The
@@ -130,7 +130,7 @@ struct GlobalSearchView: View {
             Text(results.summary)
                 .font(.system(size: Slate.Typeface.footnote))
                 .monospacedDigit()
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .padding(.horizontal, Slate.Metric.space4)
                 .padding(.vertical, Slate.Metric.space2)
                 // Same numeric roll as the in-pane find counter: live re-runs tick the counts to their new
@@ -170,7 +170,7 @@ struct GlobalSearchView: View {
             ? "Search every tab’s scrollback."
             : "No results.")
             .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(Slate.Text.tertiary)
+            .foregroundStyle(SlateOverlayInk.tertiary)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, Slate.Metric.space4)
     }
@@ -190,7 +190,7 @@ struct GlobalSearchView: View {
             // footnote metric so it sits flush with the terminal glyph + title on the same baseline.
             Image(systemSymbol: collapsed ? .chevronRight : .chevronDown)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .frame(width: Slate.Typeface.body, alignment: .center)
             // `.appleTerminal` (rawValue "apple.terminal") renders the `>_` PROMPT-BOX terminal glyph that
             // global-search.png shows — it is NOT an Apple-logo mark (verified by rendering the symbol). It is
@@ -201,10 +201,10 @@ struct GlobalSearchView: View {
             // box; `.appleTerminal` is the non-deprecated spelling.
             Image(systemSymbol: .appleTerminal)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
             Text(group.groupTitle)
                 .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .lineLimit(1)
             Spacer(minLength: Slate.Metric.space2)
         }
@@ -212,7 +212,7 @@ struct GlobalSearchView: View {
         .padding(.top, Slate.Metric.space3)
         .padding(.bottom, Slate.Metric.space1)
         .contentShape(Rectangle())
-        .onTapGesture { collapse.toggle(group.paneID) }
+        .overlay { SlateClickTarget { collapse.toggle(group.paneID) } }
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(Text(group.groupTitle))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
@@ -240,16 +240,16 @@ struct GlobalSearchView: View {
             low <= high
         else {
             var flat = AttributedString(excerpt)
-            flat.foregroundColor = Slate.Text.secondary
+            flat.foregroundColor = SlateOverlayInk.secondary
             return flat
         }
         var before = AttributedString(String(excerpt[excerpt.startIndex..<low]))
-        before.foregroundColor = Slate.Text.secondary
+        before.foregroundColor = SlateOverlayInk.secondary
         var match = AttributedString(String(excerpt[low..<high]))
-        match.foregroundColor = Slate.Text.primary
+        match.foregroundColor = SlateOverlayInk.primary
         match.backgroundColor = Slate.Status.warn.opacity(0.35)
         var after = AttributedString(String(excerpt[high...]))
-        after.foregroundColor = Slate.Text.secondary
+        after.foregroundColor = SlateOverlayInk.secondary
         return before + match + after
     }
 
@@ -304,7 +304,7 @@ private struct GlobalSearchHitRow: View {
             // Horizontal → (global-search.png), hover-revealed: visible only on the row under the pointer.
             Image(systemSymbol: .arrowRight)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(SlateOverlayInk.tertiary)
                 .opacity(hovering ? 1 : 0)
         }
         .padding(.horizontal, Slate.Metric.space3)
@@ -316,7 +316,7 @@ private struct GlobalSearchHitRow: View {
         .padding(.horizontal, Slate.Metric.space3)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { onJump() }
+        .overlay { SlateClickTarget(action: onJump) }
     }
 }
 #endif

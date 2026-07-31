@@ -111,12 +111,12 @@ private struct RowView: View {
                     .font(.system(
                         size: Slate.Typeface.body, weight: row.isHighlighted ? .medium : .regular,
                     ))
-                    .foregroundStyle(row.isHighlighted ? Slate.Text.primary : Slate.Text.secondary)
+                    .foregroundStyle(row.isHighlighted ? SlateOverlayInk.primary : SlateOverlayInk.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let place {
                     place
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .foregroundStyle(SlateOverlayInk.tertiary)
                         .lineLimit(1)
                         // Truncate from the HEAD: a deep path's last components are the ones that say
                         // where the pane actually is.

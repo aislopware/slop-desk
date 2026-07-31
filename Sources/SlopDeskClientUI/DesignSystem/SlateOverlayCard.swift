@@ -21,63 +21,44 @@
 //   4. A key you can press right now is drawn as a KEYCAP in the instrument voice. A bare glyph run does not
 //      say "press this"; a cap does.
 //
-// `Slate` supplies every dimension — raw font/radius/height literals fail `scripts/check-ds-leaks.sh`. No
-// AppKit, so this compiles for iOS with the rest of `SlopDeskClientUI`.
+// ⚠️ THE INK IS NEUTRAL, NOT THE TERMINAL'S. `Slate` supplies every DIMENSION here (raw font/radius/height
+// literals fail `scripts/check-ds-leaks.sh`) and the mono FACE, but none of its colour. A floating card is
+// not part of the workspace's world: Monokai's greys are tinted — Classic's are violet, Ristretto's are
+// warm rose — and a dialog wearing them reads as a stained panel rather than as a neutral surface hovering
+// over coloured work. So the family's ink comes from the SYSTEM's semantic colours (``SlateOverlayInk``),
+// which are neutral by construction and follow light/dark on their own. The workspace keeps the filter; the
+// things that float above it do not.
+//
+// Status colour is the exception and stays: a blocked agent's mark and a validation warning MEAN something,
+// and neutrality is about the chrome not competing, never about suppressing a signal.
+//
+// No AppKit, so this compiles for iOS with the rest of `SlopDeskClientUI`.
 
 #if canImport(SwiftUI)
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#endif
 
-// MARK: - Letting a sheet get out of its card's way
+// MARK: - The neutral ink
 
-/// Strip the presenting SHEET WINDOW down to nothing so the glass card inside it is the only surface.
+/// The floating family's palette: system-semantic, neutral, theme-INDEPENDENT.
 ///
-/// ⚠️ `.presentationBackground(.clear)` DOES NOT DO THIS ON macOS. It was tried first and photographed: the
-/// palette rendered as a card nested inside a second, larger, white rounded panel — because the modifier
-/// clears the SwiftUI-drawn background while the sheet's `NSWindow` keeps painting its own opaque ground and
-/// casting its own shadow. Nothing reachable from SwiftUI turns those off, so this reaches the window itself.
-/// Keep `.presentationBackground(.clear)` alongside it: that one removes the SwiftUI layer, this one the
-/// window, and only both together leave the card alone.
-///
-/// Safe by construction: the representable lives INSIDE the sheet's content, so `view.window` is the sheet's
-/// own window and never the workspace's. A nil window (torn down mid-async) is a no-op, not a crash.
-#if canImport(AppKit)
-private struct ClearSheetWindow: NSViewRepresentable {
-    func makeNSView(context _: Context) -> NSView {
-        let view = NSView()
-        // The window is not yet attached while `makeNSView` runs — one runloop hop and it is.
-        DispatchQueue.main.async { strip(view.window) }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context _: Context) {
-        DispatchQueue.main.async { strip(nsView.window) }
-    }
-
-    private func strip(_ window: NSWindow?) {
-        guard let window else { return }
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        // The card casts its own shadow; the window's would sit at the sheet's rectangular bounds, a shadow
-        // around nothing.
-        window.hasShadow = false
-    }
-}
-#endif
-
-extension View {
-    /// Present this content as a FLOATING card rather than a filled sheet panel: the sheet contributes only
-    /// its geometry and modality. Pairs with ``SlateGlassCard`` — see ``ClearSheetWindow`` for why one
-    /// modifier is not enough.
-    func slateClearSheetWindow() -> some View {
-        #if canImport(AppKit)
-        background(ClearSheetWindow().allowsHitTesting(false))
-        #else
-        self
-        #endif
-    }
+/// Every value derives from `Color.primary` (the platform label colour) or the system accent, so it is a
+/// true grey on both appearances and repoints itself when the appearance changes — without ever reaching
+/// into `Slate.theme`, which is the terminal's filter and belongs to the workspace.
+enum SlateOverlayInk {
+    /// The thing being read.
+    static let primary = Color.primary
+    /// A supporting label.
+    static let secondary = Color.secondary
+    /// A caption, a section header, a resting keycap.
+    static let tertiary = Color.primary.opacity(0.45)
+    /// The plate a selected row rises onto, and the keycap's face.
+    static let plate = Color.primary.opacity(0.08)
+    /// A hairline: a plate's edge, the card's one internal rule.
+    static let hairline = Color.primary.opacity(0.12)
+    /// The ground an editable field sinks into — the opposite direction from ``plate``.
+    static let well = Color.primary.opacity(0.04)
+    /// The SYSTEM accent (a caret, a fuzzy-match run), never the theme's.
+    static let accent = Color.accentColor
 }
 
 // MARK: - The card surface
@@ -90,16 +71,23 @@ struct SlateGlassCard: ViewModifier {
     /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
     /// with Reduce Transparency on, the card takes a plain opaque material instead.
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    /// The APPEARANCE, not the theme: the rim and the shadow are lighting, and lighting follows light/dark.
+    @Environment(\.colorScheme) private var colorScheme
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: Slate.Metric.radiusPanel, style: .continuous)
     }
 
     /// The lit edge. Glass is legible at its BOUNDARY — over a dark terminal the blur alone leaves a grey
-    /// slab, and the rim is what says "pane of glass". Directed by theme: a light theme gets a darkened
-    /// edge, where a white one would disappear.
+    /// slab, and the rim is what says "pane of glass". Directed by appearance: a dark one gets a white
+    /// highlight, a light one a darkened edge, where a white one would disappear.
     private var rim: Color {
-        Slate.theme.isLight ? .black.opacity(0.10) : .white.opacity(0.14)
+        colorScheme == .light ? .black.opacity(0.10) : .white.opacity(0.14)
+    }
+
+    /// Black at two strengths — a shadow is an absence of light, so it is neutral by nature.
+    private var shadow: Color {
+        .black.opacity(colorScheme == .light ? 0.12 : 0.40)
     }
 
     func body(content: Content) -> some View {
@@ -111,7 +99,7 @@ struct SlateGlassCard: ViewModifier {
             }
         }
         .overlay { shape.strokeBorder(rim, lineWidth: Slate.Metric.hairline) }
-        .shadow(color: Slate.State.shadow, radius: Slate.Metric.panelShadowRadius, y: Slate.Metric.panelShadowY)
+        .shadow(color: shadow, radius: Slate.Metric.panelShadowRadius, y: Slate.Metric.panelShadowY)
     }
 }
 
@@ -127,10 +115,10 @@ extension View {
     func slateFieldPlate() -> some View {
         padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
+            .background(SlateOverlayInk.well, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline)
+                    .strokeBorder(SlateOverlayInk.hairline, lineWidth: Slate.Metric.hairline)
             }
     }
 
@@ -138,15 +126,41 @@ extension View {
     /// Unselected costs nothing — no fill, no border, no reserved inset — so a list at rest is just text.
     func slateSelectionPlate(_ selected: Bool) -> some View {
         background(
-            selected ? Slate.Surface.raised : .clear,
+            selected ? SlateOverlayInk.plate : .clear,
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
         )
         .overlay {
             if selected {
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
+                    .strokeBorder(SlateOverlayInk.hairline, lineWidth: Slate.Metric.cardBorderWidth)
             }
         }
+    }
+}
+
+// MARK: - Making a row clickable over the AppKit split
+
+/// An invisible BUTTON covering its parent, used to make a card row clickable.
+///
+/// ⚠️ This exists because `.onTapGesture` DOES NOT FIRE on these cards. The floating layer is a SwiftUI
+/// overlay above the workspace, which is an AppKit split (`NSViewControllerRepresentable`); its real
+/// `NSView` wins `hitTest:` against SwiftUI content drawn over it, so SwiftUI's own gesture recognition
+/// never sees the click. A real control does get it — measured both ways in one session: clicking a row
+/// backed by `.onTapGesture` ran nothing, while the connect card's native Cancel button, in the same
+/// overlay at the same moment, dismissed the card.
+///
+/// So: anything a user must be able to CLICK on one of these cards is a `Button`, never a tap gesture.
+/// Laid over the finished row rather than wrapped around it, so the row keeps its own layout, plate and
+/// truncation exactly as written.
+struct SlateClickTarget: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            // A clear fill still takes hits once it has a content shape, and it lets the row draw itself.
+            Color.clear.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -171,13 +185,13 @@ struct SlateKeycap: View {
     var body: some View {
         Text(label)
             .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
-            .foregroundStyle(lit ? Slate.Text.secondary : Slate.Text.tertiary)
+            .foregroundStyle(lit ? SlateOverlayInk.secondary : SlateOverlayInk.tertiary)
             .frame(height: Slate.Metric.heightControl)
             .padding(.horizontal, Slate.Metric.space2)
-            .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
+            .background(SlateOverlayInk.plate, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline)
+                    .strokeBorder(SlateOverlayInk.hairline, lineWidth: Slate.Metric.hairline)
             }
             .fixedSize()
     }
@@ -198,7 +212,7 @@ struct SlateKeycap: View {
 struct SlateCardSeparator: View {
     var body: some View {
         Rectangle()
-            .fill(Slate.Line.divider)
+            .fill(SlateOverlayInk.hairline)
             .frame(height: Slate.Metric.hairline)
     }
 }
@@ -232,7 +246,7 @@ struct SlateCardTitle<Trailing: View>: View {
             Text(title.uppercased())
                 .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
                 .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
             Spacer(minLength: Slate.Metric.space2)
             trailing()
         }
