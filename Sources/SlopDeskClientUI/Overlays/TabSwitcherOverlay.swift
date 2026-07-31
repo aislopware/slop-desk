@@ -1,4 +1,4 @@
-// TabSwitcherOverlay — the ⌃⇥ switcher's face: a floating card listing the session's tabs in
+// TabSwitcherOverlay — the ⌃⇥ switcher's face: a floating Liquid Glass card listing the session's tabs in
 // MOST-RECENTLY-USED order with the provisional highlight marked.
 //
 // Presented as a plain always-mounted `.overlay` rather than a `.sheet`, unlike every other surface in
@@ -11,28 +11,30 @@
 // view has no gestures, no buttons, and no state of its own. Clicking through it is impossible because it
 // never accepts hits.
 //
-// `Slate.*` tokens ONLY (raw font/radius literals fail `scripts/check-ds-leaks.sh`). No AppKit — this
-// compiles for iOS with the rest of `SlopDeskClientUI`, where the switcher is simply never opened.
+// NATIVE CHROME, not canvas (DECISIONS §native-chrome): the switcher floats OVER the workspace rather than
+// living in it, so it is dressed in the system's own materials — `glassEffect` for the card, system text
+// styles, semantic `.primary`/`.secondary` ink, the SF Symbol the pane chooser already names each kind by,
+// and the SYSTEM accent for the highlight (`.tint(nil)` resets the workspace's ambient theme tint, which
+// would otherwise repaint a native surface in the terminal's colour scheme). `Slate` supplies GEOMETRY only
+// — the spacing/radius ladder every floating surface shares — never ink.
+//
+// Raw font/radius/height literals fail `scripts/check-ds-leaks.sh`; no AppKit, so this compiles for iOS
+// with the rest of `SlopDeskClientUI`, where the switcher is simply never opened.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
-import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct TabSwitcherOverlay: View {
     let store: WorkspaceStore
 
-    /// One rendered row: the tab's ⌘-number, its title, and whether the highlight is on it.
-    private struct Row: Identifiable {
-        let id: TabID
-        let number: Int
-        let title: String
-        let isHighlighted: Bool
-    }
+    /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
+    /// with Reduce Transparency on, the card takes a plain opaque material instead.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         if let switcher = store.tabSwitcher {
-            card(rows(for: switcher))
+            card(TabSwitcherRowsBuilder.rows(for: switcher, store: store))
                 // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
                 // click here would strand a user who reached for the workspace behind it.
                 .allowsHitTesting(false)
@@ -40,72 +42,107 @@ struct TabSwitcherOverlay: View {
         }
     }
 
-    private func card(_ rows: [Row]) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+    private func card(_ rows: [TabSwitcherRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(rows) { row in
-                HStack(spacing: Slate.Metric.space2) {
-                    // The ⌘-number, so the switcher doubles as a reminder that ⌘N jumps straight here.
-                    Text("\(row.number)")
-                        .font(.system(size: Slate.Typeface.small, design: .monospaced))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .frame(minWidth: Slate.Metric.space3, alignment: .trailing)
-                    Text(row.title)
-                        .font(.system(size: Slate.Typeface.body))
-                        .foregroundStyle(row.isHighlighted ? Slate.Text.primary : Slate.Text.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Slate.Metric.space3)
-                .frame(height: Slate.Metric.heightRow)
-                .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
-                        .fill(row.isHighlighted ? Slate.State.selected : .clear),
-                )
+                TabSwitcherRowView(row: row)
             }
         }
-        .padding(Slate.Metric.space2)
+        .padding(Slate.Metric.space1)
         .frame(width: cardWidth)
-        .slateCard(radius: Slate.Metric.radiusCard, fill: Slate.Surface.raised)
-        .shadow(color: Slate.State.shadow, radius: Slate.Metric.space2, y: Slate.Metric.space1)
+        .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
+        // The system accent, not the workspace's: the window tints its whole subtree with the theme
+        // accent, and a native surface wearing Monokai green for its selection is exactly the "not
+        // native" reading this round set out to fix.
+        .tint(nil)
     }
 
-    /// Wide enough for a folder-name title without wrapping, narrow enough to read as a switcher rather
-    /// than a panel — the toast card's width, so the two floating surfaces share one measure.
-    private let cardWidth: CGFloat = 340
+    /// Wide enough for a two-register row — an agent's task intent on line 1 and `project/sub · 3 panes`
+    /// on line 2 — without either truncating on a normal workspace. Still narrow enough to read as a
+    /// switcher rather than a panel.
+    private let cardWidth: CGFloat = 380
+}
 
-    /// Maps the frozen candidate ring onto rows. The ORDER is the switcher's, not the tab bar's — that is
-    /// the point of the surface: it shows recency, which the tab bar cannot.
-    private func rows(for switcher: TabSwitcher) -> [Row] {
-        let tabs = store.tree.activeSession?.tabs ?? []
-        return switcher.candidates.enumerated().compactMap { index, id -> Row? in
-            guard let position = tabs.firstIndex(where: { $0.id == id }) else { return nil }
-            return Row(
-                id: id,
-                number: position + 1,
-                title: title(of: tabs[position]),
-                isHighlighted: index == switcher.highlightIndex,
+/// The card's SURFACE: Liquid Glass, or a plain material when the user asked for less transparency.
+/// Split into a modifier because the two branches must land on the same geometry — a `if/else` around
+/// the whole card would give SwiftUI two different view identities to cross-fade between.
+private struct SwitcherSurface: ViewModifier {
+    let reduceTransparency: Bool
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(
+                .regularMaterial,
+                in: .rect(cornerRadius: Slate.Metric.radiusPanel, style: .continuous),
             )
+        } else {
+            content.glassEffect(.regular, in: .rect(cornerRadius: Slate.Metric.radiusPanel))
+        }
+    }
+}
+
+/// One row: the pane's kind glyph, its identity over its place, the program label, and the ⌘-number.
+private struct TabSwitcherRowView: View {
+    let row: TabSwitcherRow
+
+    var body: some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Image(systemName: row.symbol)
+                .font(.body)
+                .foregroundStyle(row.isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .frame(width: Slate.Metric.space4)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(row.title)
+                    .font(.body)
+                    .foregroundStyle(row.isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let detail = row.detail {
+                    Text(detail)
+                        .font(.caption)
+                        // The place is the LONG field, so it truncates at the head — the tail
+                        // (`…/packages/api · 3 panes`) is the half that distinguishes.
+                        .truncationMode(.head)
+                        .foregroundStyle(
+                            row.isHighlighted
+                                ? AnyShapeStyle(.white.opacity(highlightedSecondary))
+                                : AnyShapeStyle(.secondary),
+                        )
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: Slate.Metric.space2)
+            if let slot = row.slot {
+                Text(slot)
+                    .font(.caption)
+                    .foregroundStyle(
+                        row.isHighlighted
+                            ? AnyShapeStyle(.white.opacity(highlightedSecondary))
+                            : AnyShapeStyle(.tertiary),
+                    )
+                    .lineLimit(1)
+            }
+            Text("\(row.number)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(
+                    row.isHighlighted
+                        ? AnyShapeStyle(.white.opacity(highlightedSecondary))
+                        : AnyShapeStyle(.tertiary),
+                )
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if row.isHighlighted {
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusItem, style: .continuous)
+                    .fill(.tint)
+            }
         }
     }
 
-    /// A tab's display name, resolved through the SAME `RailRowsBuilder.rowTitle` the sidebar rail and the
-    /// titlebar chip read — so a tab reads identically wherever it is named. An explicit rename wins; then
-    /// the active pane's cwd folder name; then its foreground program.
-    /// `SlopDeskWorkspaceModel.Tab` spelled out: SwiftUI ships its own `Tab` type, so the bare name is
-    /// ambiguous in a view file.
-    private func title(of tab: SlopDeskWorkspaceModel.Tab) -> String {
-        if !tab.title.isEmpty { return tab.title }
-        guard let pane = tab.activePane else { return "Tab" }
-        let spec = store.tree.activeSession?.specs[pane]
-        let kind = spec?.kind ?? .terminal
-        let cwd = store.paneCwd(for: pane)
-        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec, cwd: cwd)
-        let resolved = RailRowsBuilder.rowTitle(
-            kind: kind, spec: spec, cwd: cwd, liveTitle: store.liveProgramTitle(for: pane),
-            processLabel: titledByProcess ? store.paneForegroundProcess[pane] : nil,
-        )
-        return resolved.isEmpty ? "Tab" : resolved
-    }
+    /// The muted registers ON the accent fill. Secondary/tertiary system ink is tuned for a system
+    /// background and washes out over a saturated accent, so the highlighted row keeps one white ramp.
+    private let highlightedSecondary: Double = 0.75
 }
 #endif

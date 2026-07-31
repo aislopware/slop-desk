@@ -5577,3 +5577,36 @@ not what that policy is fed.
 `SettingsView.swift`, `AllSettingsListView.swift`, `AllSettingsCatalog.swift`,
 `CloseConfirmationPolicyTests.swift`. No wire change (golden byte-identical) — both keys are fire-time
 `Defaults` and `CloseConfirmationPolicy` keeps all three cases.
+
+## The ⌃⇥ switcher names the PANE, not the place — and wears the system's glass (2026-07-31)
+
+The switcher printed one line per tab through the folder-name rung, so a session with three panes open in
+one repo read `slopdesk` / `slopdesk` / `slopdesk`. The ring was ordered by RECENCY and named by PLACE: the
+only question the surface exists to answer — which of these am I flipping to — was the one it could not.
+The user also judged the hand-drawn Slate card un-native.
+
+- ✅ **A row speaks in the rail's two registers.** Line 1 is the pane's IDENTITY, resolved through
+  `RailRowsBuilder.liveRowTitle(...)` — the SAME chain the sidebar row and the window title read (rename →
+  agent task intent → running command → last command → folder), so a pane is named identically wherever it
+  is named and a fix to the chain reaches all three. Line 2 is its PLACE: the project, plus the relative
+  sub-path when the pane strayed from the root, plus `· N panes` when the tab is SPLIT (a tab that reads
+  `slopdesk` and holds three panes is not the destination that reads `slopdesk` and holds one). The trailing
+  slot keeps the sidebar's program label, suppressed whenever the title already carries it.
+- ✅ **`projectKey` IS threaded into the structural rung, on purpose.** At the project root that rung yields
+  the PROGRAM rather than the folder name, and an idle shell's empty result then falls through to the
+  running / last command / folder. That fall-through is the whole disambiguation: without the key every row
+  short-circuits at the folder name, which is the bug.
+- ✅ **The card is native chrome, not canvas.** `glassEffect(.regular)`, system text styles, semantic
+  `.primary`/`.secondary` ink, the SF Symbol `PaneChooserRegistry` already names each kind by, and the
+  SYSTEM accent for the highlight — `.tint(nil)`, because the window tints its whole subtree with the THEME
+  accent and a native surface wearing Monokai green for its selection is exactly the un-native reading. Slate
+  supplies GEOMETRY only (the shared spacing/radius ladder), never ink. Per the native-chrome research's
+  pitfall list the custom glass self-gates `accessibilityReduceTransparency` → `.regularMaterial`.
+- ⚠️ **Glass over the live terminal canvas WORKS.** The 2026-07-03 research said never layer glass over a
+  live `CAMetalLayer`; HW-photographed on mac-studio over a running `top` under libghostty, the backdrop
+  samples correctly in both a light and a dark theme. The rule stands for a pane's OWN surface (the
+  one-surface rule); a transient overlay ABOVE it is fine.
+
+→ touches `TabSwitcherOverlay.swift`, new `TabSwitcherRows.swift` (+ `TabSwitcherRowsTests.swift`). No wire
+change (golden byte-identical), no model change — `TabSwitcher` (the frozen ring) is untouched, and the
+dispatcher still owns open/step/commit/cancel.
