@@ -862,10 +862,12 @@ public final class WorkspaceStore {
     /// not "Undo History".
     public private(set) var recentlyClosed: RecentlyClosedPane?
 
-    /// The pane awaiting close CONFIRMATION because its shell reported a running command (⌘W on a
-    /// busy shell — killing the session would kill the command). The view observes this and shows a
-    /// confirmation dialog; ``confirmPendingClose()`` / ``cancelPendingClose()`` resolve it. `internal(set)`
-    /// so the `WorkspaceStore+CloseConfirmation` extension's park/resolve helpers can arm/clear it.
+    /// The pane awaiting close CONFIRMATION — because its shell reported a running command (⌘W on a
+    /// busy shell — killing the session would kill the command), or because it is its project's LAST
+    /// pane (closing it closes the whole project — ``projectClosed(byRemoving:)``). The view observes
+    /// this and shows a confirmation dialog; ``confirmPendingClose()`` / ``cancelPendingClose()`` resolve
+    /// it. `internal(set)` so the `WorkspaceStore+CloseConfirmation` extension's park/resolve helpers can
+    /// arm/clear it.
     public internal(set) var pendingClose: PaneID?
 
     /// The whole TAB awaiting close CONFIRMATION (⌘⇧W "Close Tab" on a tab whose policy/busy-shell guard
@@ -900,12 +902,15 @@ public final class WorkspaceStore {
 
     /// The TREE busy-shell close guard: the IDE-shell counterpart of ``requestClosePane(_:)``
     /// — an idle leaf closes immediately (cascading the tab/session), a leaf mid-command parks behind the
-    /// ``pendingClose`` confirmation. The chrome close button and ⌘W on a SPECIFIC leaf both route through
-    /// here so the busy-guard is honoured uniformly (the `closePaneTree(_:)` direct call stays for tests /
-    /// the active-pane convenience). No-op if `id` is not a live tree leaf.
+    /// ``pendingClose`` confirmation. A leaf that is its By-Project section's LAST pane
+    /// (``projectClosed(byRemoving:)``) parks too, whatever the policy says: closing it closes the whole
+    /// project, and the dialog warns before the rail section silently disappears. The chrome close
+    /// button and ⌘W on a SPECIFIC leaf both route through here so the guards are honoured uniformly
+    /// (the `closePaneTree(_:)` direct call stays for tests / the active-pane convenience). No-op if `id`
+    /// is not a live tree leaf.
     public func requestClosePaneTree(_ id: PaneID) {
         guard tree.contains(id) else { return }
-        if closeConfirmationNeeded(scope: .pane, pane: id) {
+        if closeConfirmationNeeded(scope: .pane, pane: id) || projectClosed(byRemoving: [id]) != nil {
             parkPaneClose(id)
         } else {
             closePaneTree(id)
@@ -2755,10 +2760,12 @@ public final class WorkspaceStore {
     /// `closeTab(_:)` does. Routed through ``closeConfirmationNeeded(scope:pane:)`` — under the default
     /// ``CloseConfirmationPolicy/process`` policy this closes immediately unless a pane in the tab is busy,
     /// while `.always` parks the close behind a confirmation. (`.multipleTabs` cannot fire here: closing one
-    /// tab loses exactly one tab, so the Settings tab row does not offer it.)
+    /// tab loses exactly one tab, so the Settings tab row does not offer it.) A tab holding a project's
+    /// LAST pane(s) (``projectClosed(byRemoving:)``) parks regardless of policy — closing it closes the
+    /// project, and the dialog warns before the rail section disappears.
     public func closeActiveTab() {
         guard let tab = tree.activeSession?.activeTab else { return }
-        if closeConfirmationNeeded(scope: .tab) {
+        if closeConfirmationNeeded(scope: .tab) || projectClosed(byRemoving: tab.allPaneIDs()) != nil {
             // Park the WHOLE tab (its `TabID`, not a single leaf): `confirmPendingClose` resolves a tab park
             // through `closeTab(_:)`, so confirming drops every pane in the tab. Parking a single leaf
             // instead would keep its siblings, regressing ⌘⇧W into a one-pane close.
@@ -4626,10 +4633,12 @@ public extension WorkspaceStore {
     }
 
     /// Closes the active pane through the busy-shell guard: an idle pane closes immediately,
-    /// a pane mid-command parks behind the `pendingClose` confirmation. No-op without an active pane.
+    /// a pane mid-command parks behind the `pendingClose` confirmation — and so does its project's
+    /// LAST pane (closing it closes the project; the dialog warns first, mirroring
+    /// ``requestClosePaneTree(_:)``). No-op without an active pane.
     func requestCloseActivePaneTree() {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        if closeConfirmationNeeded(scope: .pane, pane: active) {
+        if closeConfirmationNeeded(scope: .pane, pane: active) || projectClosed(byRemoving: [active]) != nil {
             parkPaneClose(active)
         } else {
             closePaneTree(active)

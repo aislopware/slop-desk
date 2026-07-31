@@ -368,6 +368,109 @@ final class CloseConfirmationStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "cancel keeps the tab")
     }
 
+    // MARK: - a project's LAST pane / tab parks a project-loss warning (policy-independent)
+
+    /// An IDLE pane that is its By-Project section's last pane parks — closing it would close the whole
+    /// project, so the dialog gets to warn first. `pendingCloseProjectName` carries the section header for
+    /// the warning line, and `pendingClosePolicyGated` stays false (the shell is idle — the dialog must not
+    /// print the "process is still running" policy line). Confirming still closes it.
+    func testIdleLastPaneOfProjectParksWithProjectWarning() {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+        store.setProjectKey("/w/alpha", for: panes[0])
+        store.setProjectKey("/w/beta", for: panes[1])
+
+        store.requestClosePaneTree(panes[0]) // idle — but the LAST pane of /w/alpha
+
+        XCTAssertEqual(store.pendingClose, panes[0], "a project's last pane parks even when idle")
+        XCTAssertEqual(store.pendingCloseProjectName, "alpha", "the warning names the dying section")
+        XCTAssertFalse(store.pendingClosePolicyGated, "no policy gated this park — the shell is idle")
+        XCTAssertTrue(store.tree.contains(panes[0]), "nothing closed while the warning is up")
+
+        store.confirmPendingClose()
+        XCTAssertNil(store.pendingClose, "the confirmation is consumed")
+        XCTAssertFalse(store.tree.contains(panes[0]), "confirming closes the project's last pane")
+    }
+
+    /// A pane whose project SURVIVES in another pane closes immediately — the warning fires only for the
+    /// section's last pane. The survivor's key differs by a trailing slash on purpose: the comparison must
+    /// fold through `normalizedProjectKey` (the rail's bucketing), not raw string equality.
+    func testIdlePaneWithProjectSurvivorClosesImmediately() {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+        store.setProjectKey("/w/alpha", for: panes[0])
+        store.setProjectKey("/w/alpha/", for: panes[1]) // same section once normalized
+
+        store.requestClosePaneTree(panes[0])
+
+        XCTAssertNil(store.pendingClose, "the project lives on in the sibling — no warning, no park")
+        XCTAssertFalse(store.tree.contains(panes[0]), "the pane closed immediately")
+    }
+
+    /// A busy shell that is ALSO its project's last pane parks with BOTH signals up: the policy gate
+    /// (busy) and the project warning — the dialog prints both lines.
+    func testBusyLastPaneOfProjectReportsBothPolicyAndProjectWarning() {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+        store.setProjectKey("/w/alpha", for: panes[0])
+        store.setProjectKey("/w/beta", for: panes[1])
+        (store.handle(for: panes[0]) as? FakePaneSession)?.isShellBusy = true
+
+        store.requestClosePaneTree(panes[0])
+
+        XCTAssertEqual(store.pendingClose, panes[0])
+        XCTAssertTrue(store.pendingClosePolicyGated, "the busy-shell guard gated this park too")
+        XCTAssertEqual(store.pendingCloseProjectName, "alpha", "and the project warning rides along")
+    }
+
+    /// Close Tab (⌘⇧W) on the tab holding a project's last pane parks the TAB with the project warning —
+    /// under the default `.process` policy an idle tab would otherwise close silently.
+    func testCloseActiveTabParksWhenTabHoldsProjectsLastPane() throws {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+        store.setProjectKey("/w/alpha", for: panes[0])
+        store.setProjectKey("/w/beta", for: panes[1])
+        let tabID = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
+
+        store.closeActiveTab() // idle — but the tab holds /w/alpha's last pane
+
+        XCTAssertEqual(store.pendingTabCloseID, tabID, "the project's last tab parks even when idle")
+        XCTAssertNil(store.pendingClose, "parked as a TAB close, not a pane close")
+        XCTAssertEqual(store.pendingCloseProjectName, "alpha", "the warning names the dying section")
+        XCTAssertFalse(store.pendingClosePolicyGated, "no policy gated this park — the tab is idle")
+
+        store.confirmPendingClose()
+        XCTAssertNil(store.pendingTabCloseID, "the confirmation is consumed")
+        XCTAssertFalse(store.tree.contains(panes[0]), "confirming closes the tab")
+    }
+
+    /// Close Tab on a tab whose project survives in ANOTHER tab closes immediately — same section key in
+    /// a surviving pane means no project is lost.
+    func testCloseActiveTabWithProjectSurvivorClosesImmediately() {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+        store.setProjectKey("/w/alpha", for: panes[0])
+        store.setProjectKey("/w/alpha", for: panes[1])
+
+        store.closeActiveTab()
+
+        XCTAssertNil(store.pendingTabCloseID, "the project lives on in the other tab — no park")
+        XCTAssertFalse(store.tree.contains(panes[0]), "the tab closed immediately")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, 1, "one tab remains")
+    }
+
+    /// KEYLESS panes (the "Other" bucket — no host key, no cwd) never trip the project warning: "Other"
+    /// is not a project. The default fixture carries no keys, so a plain idle close stays silent.
+    func testKeylessOtherBucketPaneNeverParksProjectWarning() {
+        let (tree, panes) = multiTabWorkspace(tabCount: 2)
+        let store = makeTreeStore(restoringTree: tree)
+
+        store.requestClosePaneTree(panes[0]) // idle, keyless
+
+        XCTAssertNil(store.pendingClose, "the Other bucket is not a project — no warning, no park")
+        XCTAssertFalse(store.tree.contains(panes[0]), "the pane closed immediately")
+    }
+
     /// A re-park MUST be mutually exclusive: parking a single-PANE close after a tab close was parked clears
     /// the stale tab park, so confirming closes only the pane (no leaked tab-scope close).
     func testPaneCloseReparkClearsStaleTabClosePark() throws {

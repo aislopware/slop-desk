@@ -39,6 +39,22 @@ final class CloseConfirmationPanelTests: XCTestCase {
         )
     }
 
+    // MARK: - the project-loss warning line (a project's last pane / tab)
+
+    func testProjectCloseReasonNamesTheProjectScopedToPane() {
+        XCTAssertEqual(
+            CloseConfirmationPanel.projectCloseReason(project: "alpha", scope: .pane),
+            "This is the last pane of “alpha”. Closing it will close the project.",
+        )
+    }
+
+    func testProjectCloseReasonScopedToTabSaysTab() {
+        XCTAssertEqual(
+            CloseConfirmationPanel.projectCloseReason(project: "alpha", scope: .tab),
+            "This is the last tab of “alpha”. Closing it will close the project.",
+        )
+    }
+
     /// The three policy branches must produce DISTINCT copy — the bug was a single hardcoded subtitle for all
     /// policies. (A non-tautological discriminator: the old panel could not pass this — there was no branch.)
     func testEachPolicyHasDistinctCopy() {

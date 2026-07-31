@@ -258,13 +258,26 @@ struct OverlayHostView: View {
         return "Close this tab?"
     }
 
-    /// The policy-aware alert body: branch the copy on the policy that ACTUALLY gated the
-    /// park, scoped to pane vs tab. Reuses the pure ``CloseConfirmationPanel/reason(for:scope:)`` copy the
-    /// tests pin, so the wording can't drift from the pinned strings.
+    /// The policy-aware alert body: the policy line only when a configured policy ACTUALLY gated the park
+    /// (`pendingClosePolicyGated` — a park raised purely for the project-loss warning must not claim "a
+    /// process is still running" over an idle shell), plus the project-loss line when the close takes a
+    /// project's last pane/tab with it. Both can apply (a busy shell that is also its project's last
+    /// pane). Reuses the pure ``CloseConfirmationPanel`` copy the tests pin, so the wording can't drift
+    /// from the pinned strings; the policy fallback keeps a park that matches neither gate (both resolved
+    /// live, so either can decay while the dialog is up) from rendering an empty body.
     private var closeAlertMessage: String {
-        let policy = store.pendingCloseReasonPolicy ?? .process
         let scope: CloseScope = store.pendingCloseSpec != nil ? .pane : .tab
-        return CloseConfirmationPanel.reason(for: policy, scope: scope)
+        var lines: [String] = []
+        if store.pendingClosePolicyGated {
+            lines.append(CloseConfirmationPanel.reason(for: store.pendingCloseReasonPolicy ?? .process, scope: scope))
+        }
+        if let project = store.pendingCloseProjectName {
+            lines.append(CloseConfirmationPanel.projectCloseReason(project: project, scope: scope))
+        }
+        if lines.isEmpty {
+            lines.append(CloseConfirmationPanel.reason(for: store.pendingCloseReasonPolicy ?? .process, scope: scope))
+        }
+        return lines.joined(separator: "\n\n")
     }
 
     /// The toggled-state predicate the root hands to ``PaletteView`` — built from the live chrome so the
@@ -361,6 +374,18 @@ enum CloseConfirmationPanel {
             }
         case .multipleTabs:
             "This window has multiple tabs."
+        }
+    }
+
+    /// The project-loss warning line: the parked close takes `project`'s LAST pane / tab with it, so the
+    /// whole By-Project section disappears. Appended to (or standing in for) the policy reason above.
+    static func projectCloseReason(project: String, scope: CloseScope) -> String {
+        switch scope {
+        case .pane:
+            "This is the last pane of “\(project)”. Closing it will close the project."
+        case .tab,
+             .window:
+            "This is the last tab of “\(project)”. Closing it will close the project."
         }
     }
 }
