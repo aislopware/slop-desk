@@ -15,13 +15,13 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
 /// How the palette was opened (warp-overlays-actions.md §2.1) — governs only the friendly omnibar label.
-/// BOTH entry points are the verbs-only ⌘⇧P Command Palette; the multi-source ⌘⇧O Open-Quickly jump-to is
-/// its OWN surface (`OpenQuicklyView`/`OpenQuicklyModel`), NOT a palette mode — so there is no `openQuickly`
-/// case / `multiSource` flag here.
+/// BOTH entry points are the ⌘⇧P Command Palette (verbs + the PANES jump rows); the multi-source ⌘⇧O
+/// Open-Quickly jump-to is its OWN surface (`OpenQuicklyView`/`OpenQuicklyModel`), NOT a palette mode — so
+/// there is no `openQuickly` case / `multiSource` flag here.
 public enum PaletteMode: Sendable, Equatable {
-    /// ⌘⇧P — the verbs-only Command Palette (actions/verbs grouped by category; NO filter chips).
+    /// ⌘⇧P — the Command Palette (actions/verbs grouped by category + the open panes; NO filter chips).
     case command
-    /// The title-bar omnibar entry (still verbs-only — a friendlier label over the command palette).
+    /// The title-bar omnibar entry (identical content — a friendlier label over the command palette).
     case titleBarSearch
 }
 
@@ -234,8 +234,8 @@ public final class OverlayCoordinator {
 
     // MARK: Recents (mirrors the store's recent commands into palette item ids)
 
-    /// The mixer that combines the verb-catalog sources (rebuilt per open; verbs-only — ⌘⇧P). `nil` until
-    /// first opened.
+    /// The mixer that combines the verb-catalog sources + the per-open PANES snapshot (rebuilt per
+    /// open — ⌘⇧P). `nil` until first opened.
     @ObservationIgnored public private(set) var mixer: SearchMixer?
 
     private weak var store: WorkspaceStore?
@@ -261,7 +261,7 @@ public final class OverlayCoordinator {
     /// Open the palette. `titleBarSearch` mode reads identically but starts empty (the omnibar friendly
     /// label); `command` mode is the ⌘⇧P entry. Rebuilds the mixer from a fresh store snapshot.
     public func openPalette(mode: PaletteMode = .command, query: String = "") {
-        paletteMode = mode // cosmetic (the friendly omnibar label); the mixer is verbs-only regardless of mode.
+        paletteMode = mode // cosmetic (the friendly omnibar label); the mixer is identical regardless of mode.
         rebuildMixer()
         paletteFilter = nil
         paletteQuery = query
@@ -284,11 +284,13 @@ public final class OverlayCoordinator {
         paletteSelection = 0
     }
 
-    /// Rebuild the verbs-only ⌘⇧P mixer: the action catalog grouped into fixed categories (Working Directory /
-    /// Window / Pane / Tab / View / Shell / Settings), one section header each, plus the DYNAMIC
-    /// "Move Pane to Tab: …" rows snapshotted from the live store (a fixed catalog can't enumerate
-    /// tabs — same per-open snapshot pattern the jump-to surface uses). The multi-source jump-to lives
-    /// entirely in `OpenQuicklyView`/`OpenQuicklyModel`, NOT here — this mixer stays verbs-only.
+    /// Rebuild the ⌘⇧P mixer: the action catalog grouped into fixed categories (Working Directory /
+    /// Window / Pane / Tab / View / Shell / Settings), one section header each, plus two DYNAMIC
+    /// per-open store snapshots — the "Move Pane to Tab: …" verbs and the PANES jump rows
+    /// (``TabsPaletteSource``: one row per open pane, searchable by live title / cwd, accept =
+    /// `jumpToPaneTree`). A fixed catalog can't enumerate tabs or panes, so both snapshot per open. The
+    /// richer multi-source jump-to (recents/folders/agents/files) stays in
+    /// `OpenQuicklyView`/`OpenQuicklyModel`, NOT here.
     public func rebuildMixer() {
         // The verb-catalog categories, one section header each.
         var sources = ActionsPaletteSource.categorySources()
@@ -300,8 +302,14 @@ public final class OverlayCoordinator {
             } else {
                 movePaneToTabItems = []
             }
+            // The PANES jump rows — verbs first, panes after, so an action title always outranks a
+            // pane row on a shared query (section order beats score across sections).
+            let panes = TabsPaletteSource.snapshot(store)
+            paneJumpItems = panes.candidates(query: "")
+            if !paneJumpItems.isEmpty { sources.append(panes) }
         } else {
             movePaneToTabItems = []
+            paneJumpItems = []
         }
         mixer = SearchMixer(sources: sources)
     }
@@ -309,6 +317,10 @@ public final class OverlayCoordinator {
     /// The per-open "Move Pane to Tab: …" rows — kept so the zero-state can list them too (the mixer
     /// alone only surfaces them for a typed query).
     @ObservationIgnored private var movePaneToTabItems: [PaletteItem] = []
+
+    /// The per-open PANES jump rows — kept so the zero-state lists the open panes too (discoverable
+    /// without typing), mirroring the Move-Pane snapshot above.
+    @ObservationIgnored private var paneJumpItems: [PaletteItem] = []
 
     // MARK: Palette results (view binds these)
 
@@ -368,6 +380,12 @@ public final class OverlayCoordinator {
         if !movePaneToTabItems.isEmpty {
             out.append(.separator("Move Pane", filter: .actions))
             out.append(contentsOf: movePaneToTabItems)
+        }
+        // The open panes (snapshotted in `rebuildMixer`) — the palette doubles as a pane switcher, so the
+        // list is visible before a query narrows it.
+        if !paneJumpItems.isEmpty {
+            out.append(.separator("Panes", filter: .tabs))
+            out.append(contentsOf: paneJumpItems)
         }
         return out
     }

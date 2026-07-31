@@ -220,6 +220,17 @@ struct PaletteView: View {
                 .font(.system(size: Slate.Typeface.body, weight: isSelected ? .medium : .regular))
                 .lineLimit(1)
 
+            // The subtitle (a PANES row's cwd / app name — verbs carry none) rides beside the title in
+            // the secondary ink: identically-titled "Terminal" panes are told apart by where they live.
+            // Head-truncated so a squeezed path keeps its leaf (the directory that identifies the pane).
+            if let subtitle = item.subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(SlateOverlayInk.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+
             Spacer(minLength: Slate.Metric.space2)
 
             // ONE cap for the whole chord ("⇧⌘L"), not a cap per glyph: the modifiers are not separate

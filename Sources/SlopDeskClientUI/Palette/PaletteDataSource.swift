@@ -5,8 +5,9 @@
 // per-item score, and groups them under section separators.
 //
 // All sources here are SYNCHRONOUS over a store SNAPSHOT (taken on the @MainActor) so the mixing/ranking is
-// pure + unit-testable without a view. The ⌘⇧P palette is verbs-only (the ACTIONS catalog grouped by
-// category); the multi-source jump-to (panes/recents/folders/agents/files) lives on its OWN surface
+// pure + unit-testable without a view. The ⌘⇧P palette mixes the ACTIONS catalog (grouped by category) plus
+// the PANES jump rows (`TabsPaletteSource` — a pane is searchable by title/cwd right in the palette); the
+// richer multi-source jump-to (recents/folders/agents/files) stays on its OWN surface
 // (`OpenQuicklyModel`/`OpenQuicklyView`), so the former `files`/`conversations`/`repos` empty-stub sources
 // were removed here — they were never reachable.
 
@@ -474,13 +475,16 @@ public struct MovePaneToTabSource: PaletteDataSource {
     }
 }
 
-// MARK: - TABS source (jump to a pane/tab) — REAL
+// MARK: - PANES source (jump to a pane) — REAL
 
-/// Jump-to-tab/pane source (warp-overlays-actions.md §2.2 navigation). One row per visible pane of the
-/// active session's tabs (the same enumeration the rail uses); selecting it focuses that pane. REAL.
+/// Jump-to-pane source (warp-overlays-actions.md §2.2 navigation). One row per visible pane of the
+/// active session's tabs (the same enumeration the rail uses); selecting it focuses that pane. Registered
+/// into the ⌘⇧P mixer by the overlay coordinator (a per-open snapshot, like ``MovePaneToTabSource``) so a
+/// pane is searchable by its live title / cwd without leaving the palette; the multi-source Open-Quickly
+/// picker remains the dedicated jump surface.
 public struct TabsPaletteSource: PaletteDataSource {
     public let filters: Set<QueryFilter> = [.tabs]
-    public let sectionTitle: String? = "Tabs"
+    public let sectionTitle: String? = "Panes"
 
     /// A snapshot row (the store read is done when the snapshot is built).
     public struct Entry: Sendable {
@@ -530,6 +534,8 @@ public struct TabsPaletteSource: PaletteDataSource {
                 icon: entry.isWindow ? "macwindow" : (entry.isAgent ? "asterisk" : "terminal"),
                 title: entry.title,
                 subtitle: entry.subtitle,
+                // Hidden synonyms so "pane"/"jump"/"tab 2" surface the row without polluting its title.
+                keywords: "pane jump go switch tab \(entry.tabIndex + 1)",
                 shortcut: nil,
                 filter: .tabs,
                 action: .store { store in store.jumpToPaneTree(entry.paneID) },

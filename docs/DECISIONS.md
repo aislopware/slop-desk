@@ -6078,3 +6078,24 @@ small semantic accent.
 - **Photographing it**: the glass surface is a GPU backdrop effect `ImageRenderer` cannot rasterise,
   so the gallery tests judge layout/type/marks only. `SLOPDESK_TOAST_DEMO=1` seeds a sticky demo
   stack in the shipping app for real-window shots — that seam is the new judging surface.
+
+## The command palette learns the panes: ⌘⇧P searches jump rows too (2026-07-31)
+
+E11 scoped ⌘⇧P to verbs-only and sent every jump-to to Open Quickly (⌘⇧O). That split kept the
+taxonomy clean but taxed the muscle memory every other tool trains: in VS Code / Zed the ⌘⇧P box
+is where you type the name of the thing you want, verb or not. Reaching for a pane in the palette
+and finding only verbs was a dead end that cost a re-open on the other chord.
+
+- **The ⌘⇧P mixer now registers `TabsPaletteSource`** (the pane-jump source that had no surface
+  since E11 folded jump-to into Open Quickly): one row per open pane of the active session,
+  snapshotted per open like the Move-Pane verbs, accept = `jumpToPaneTree` and close. The section
+  is titled **Panes** (the switcher's unit — the row is a pane, not a tab), registered AFTER the
+  verb categories so an action title always outranks a pane row on a shared query.
+- **The zero-state lists the open panes** under the Panes header after Move Pane, so the palette
+  doubles as a pane switcher before a query narrows it.
+- **Pane rows carry their cwd/app-name as a rendered subtitle** — the palette row view now shows
+  a subtitle in the secondary ink (head-truncated, so a squeezed path keeps its leaf), because
+  every fresh pane is titled "Terminal" and title-only rows would render indistinguishable twins.
+- **Open Quickly is unchanged** — it keeps the richer multi-source jump-to (recents / folders /
+  agents / files / command index). ⌘⇧P panes is the low-ceremony subset: the open panes, in the
+  box people already have under their fingers.

@@ -167,33 +167,62 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(after, before + 1, "accepting the namespaced recents row still runs the catalog New-Tab verb")
     }
 
-    // MARK: - The ⌘⇧P palette is VERBS-ONLY (no filter chips, no jump-to sources)
+    // MARK: - The ⌘⇧P palette mixes verbs + the PANES jump rows (still no Files/Conversations sources)
 
-    /// ⌘⇧P is the Command Palette (verbs) — the per-domain filter chips + the Tabs/Files/Conversations/Repos
-    /// jump-to belong to Open Quickly (⌘⇧O), now a SEPARATE surface. Pin that command mode mixes ONLY
-    /// the action sources (`availableFilters == [.actions]`) and that no jump-to row or section leaks in —
-    /// even with a second pane a Tabs source WOULD have surfaced. Fails on a palette that still registered the
-    /// Tabs/Files multi-source providers (the dead `multiSource` mixer branch) under ⌘⇧P.
-    func testCommandPaletteIsVerbsOnlyWithNoFilterChips() {
+    /// ⌘⇧P is the Command Palette: the verb catalog PLUS one jump row per open pane
+    /// (``TabsPaletteSource``), so a pane is searchable by title/cwd without switching to Open Quickly
+    /// (⌘⇧O keeps the richer recents/folders/agents/files jump-to). Pin that command mode mixes the action
+    /// sources and the panes source, that the zero-state lists the open panes under a "Panes" section, and
+    /// that the retired Files/Conversations stubs stay unregistered. Fails on the prior verbs-only mixer
+    /// (no `tab.*` row ever surfaced) and on a regression that re-registers the dead stub sources.
+    func testCommandPaletteMixesVerbsAndPaneJumpRows() {
         let (overlay, store) = makeCoordinator()
-        store.newTab(kind: .terminal) // a 2nd pane a Tabs jump-to source WOULD surface — proves it's excluded
+        store.newTab(kind: .terminal) // a 2nd pane so the Panes section carries multiple jump rows
 
         overlay.openPalette(mode: .command)
 
         XCTAssertEqual(
-            overlay.mixer?.availableFilters, [.actions],
-            "only the Actions category sources are mixed under ⌘⇧P (no Tabs/Files/Conversations/Repos)",
+            overlay.mixer?.availableFilters, [.actions, .tabs],
+            "⌘⇧P mixes the Actions category sources + the Panes jump source (no Files/Conversations/Repos)",
         )
 
-        // No jump-to section separators, and every selectable zero-state row is an action verb.
+        // The zero-state carries the Panes section with one jump row per open pane; the retired
+        // multi-source sections stay gone.
         let separatorTitles = Set(overlay.rankedResults.filter(\.item.isSeparator).map(\.item.title))
-        XCTAssertFalse(separatorTitles.contains("Tabs"), "no Tabs section under ⌘⇧P")
+        XCTAssertTrue(separatorTitles.contains("Panes"), "the zero-state lists the open panes under ⌘⇧P")
         XCTAssertFalse(separatorTitles.contains("Files"), "no Files section under ⌘⇧P")
         XCTAssertFalse(separatorTitles.contains("Conversations"), "no Conversations section under ⌘⇧P")
-        for row in overlay.selectableResults {
-            XCTAssertEqual(row.filter, .actions, "row \(row.id) is a verb, not a jump-to result")
-            XCTAssertFalse(row.id.hasPrefix("tab."), "row \(row.id) is not a Tabs jump-to row")
-        }
+        let paneRows = overlay.selectableResults.filter { $0.id.hasPrefix("tab.") }
+        XCTAssertEqual(
+            paneRows.count,
+            store.tree.allPaneIDs().count,
+            "one jump row per open pane of the active session",
+        )
+        XCTAssertTrue(paneRows.allSatisfy { $0.filter == .tabs }, "the pane rows carry the Tabs jump filter")
+    }
+
+    /// Accepting a PANES jump row focuses that pane (`jumpToPaneTree`) and closes the palette — the whole
+    /// point of listing panes under ⌘⇧P. Two tabs: the palette opens focused on the SECOND pane; running the
+    /// FIRST pane's row must land the focus back on it.
+    func testAcceptingPaneJumpRowFocusesThatPaneAndCloses() throws {
+        let (overlay, store) = makeCoordinator()
+        let first = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.newTab(kind: .terminal) // focus moves to the new (second) pane
+        let focused = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertNotEqual(first, focused, "precondition: the palette opens away from the first pane")
+
+        overlay.openPalette(mode: .command)
+        let row = try XCTUnwrap(
+            overlay.selectableResults.first { $0.id == "tab.\(first.raw.uuidString)" },
+            "the first pane's jump row is selectable in the zero-state",
+        )
+        overlay.run(row)
+
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.activePane, first,
+            "accepting the pane row jumps the focus to that pane",
+        )
+        XCTAssertFalse(overlay.paletteVisible, "a jump closes the palette")
     }
 
     /// "grouped by section": the verbs-only zero-state LEADS with the WORKING DIRECTORY section (which
