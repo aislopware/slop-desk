@@ -1,9 +1,9 @@
-// TabSwitcherRowsTests — pins what a ⌃⇥ switcher row SAYS.
+// TabSwitcherRowsTests — pins what a ⌃⇥ switcher row SAYS and where the section headers fall.
 //
 // The regression this guards: the switcher named every row through the folder-name rung, so three panes
 // opened in one repo read `slopdesk` / `slopdesk` / `slopdesk` and the ring's whole purpose (which one am
 // I flipping to?) was unanswerable. `testTwoTabsInOneProjectReadDifferently` fails against that build —
-// it asserts the two rows' titles DIFFER while both still name the shared project on line 2.
+// it asserts the two rows' titles DIFFER while both still sit under the one shared project header.
 //
 // Headless: the pure composers need no store at all; the live rows ride the same tree-model
 // `WorkspaceStore` + `MountTestPaneSession` fake the rail-row tests use (no socket, no video, no Metal).
@@ -15,83 +15,152 @@ import XCTest
 
 @MainActor
 final class TabSwitcherRowsTests: XCTestCase {
-    // MARK: - `place` (line 2's WHERE)
+    // MARK: - `header` (the section a row sits under)
 
-    /// A pane AT its project root prints the project's folder name — nothing more.
-    func testPlaceAtProjectRootIsTheProjectName() {
+    /// The header is the PROJECT's folder name, whatever the pane's own cwd is below it.
+    func testHeaderIsTheProjectFolderName() {
         XCTAssertEqual(
-            TabSwitcherRowsBuilder.place(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"), "slopdesk",
+            TabSwitcherRowsBuilder.header(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api"),
+            "slopdesk",
         )
     }
 
-    /// A pane that strayed INTO the project's subtree appends the relative path — the half that tells two
-    /// panes of one repo apart.
-    func testPlaceAppendsTheStrayedSubpath() {
-        XCTAssertEqual(
-            TabSwitcherRowsBuilder.place(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api"),
-            "slopdesk/packages/api",
-        )
+    /// A pane with no project key yet still lands under a place — its own folder.
+    func testHeaderWithoutAKeyIsTheOwnFolder() {
+        XCTAssertEqual(TabSwitcherRowsBuilder.header(projectKey: nil, cwd: "/w/scratch"), "scratch")
+        XCTAssertNil(TabSwitcherRowsBuilder.header(projectKey: nil, cwd: nil))
+    }
+
+    // MARK: - `relativePath` / `note` (the quiet remainder)
+
+    /// A pane AT its project root adds nothing — the header already said the place.
+    func testRootPaneHasNoNote() {
+        XCTAssertNil(TabSwitcherRowsBuilder.relativePath(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"))
+        XCTAssertNil(TabSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk", paneCount: 1))
     }
 
     /// A trailing slash on the cwd is not a stray — it is the same directory.
-    func testPlaceToleratesATrailingSlash() {
+    func testRelativePathToleratesATrailingSlash() {
+        XCTAssertNil(TabSwitcherRowsBuilder.relativePath(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/"))
+    }
+
+    /// A pane that strayed INTO the project's subtree carries the path after the root.
+    func testStrayedPaneCarriesTheSubPath() {
         XCTAssertEqual(
-            TabSwitcherRowsBuilder.place(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/"), "slopdesk",
+            TabSwitcherRowsBuilder.note(
+                projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api", paneCount: 1,
+            ),
+            "packages/api",
         )
     }
 
     /// A cwd OUTSIDE the key's subtree (a stale key across an un-re-pushed `cd`) names where the pane
-    /// actually is rather than claiming the project it left.
-    func testPlaceOutsideTheKeyFallsBackToTheOwnFolder() {
+    /// actually is rather than hiding it.
+    func testCwdOutsideTheKeyStillNamesItself() {
         XCTAssertEqual(
-            TabSwitcherRowsBuilder.place(projectKey: "/w/slopdesk", cwd: "/tmp/scratch"), "scratch",
+            TabSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/tmp/scratch", paneCount: 1),
+            "scratch",
         )
-    }
-
-    /// A keyless pane still says where it is.
-    func testPlaceWithoutAKeyIsTheFolderName() {
-        XCTAssertEqual(TabSwitcherRowsBuilder.place(projectKey: nil, cwd: "/w/slopdesk"), "slopdesk")
-        XCTAssertNil(TabSwitcherRowsBuilder.place(projectKey: nil, cwd: nil))
-    }
-
-    // MARK: - `detail` (the pane count)
-
-    /// A single-pane tab omits the count — `1 pane` on every row is noise.
-    func testDetailOmitsTheCountForASinglePaneTab() {
-        XCTAssertEqual(TabSwitcherRowsBuilder.detail(place: "slopdesk", paneCount: 1), "slopdesk")
     }
 
     /// A SPLIT tab says so: same project, different destination.
-    func testDetailCarriesThePaneCountForASplitTab() {
+    func testSplitTabNoteCarriesThePaneCount() {
         XCTAssertEqual(
-            TabSwitcherRowsBuilder.detail(place: "slopdesk", paneCount: 3), "slopdesk · 3 panes",
+            TabSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk", paneCount: 3),
+            "3 panes",
+        )
+        XCTAssertEqual(
+            TabSwitcherRowsBuilder.note(
+                projectKey: "/w/slopdesk", cwd: "/w/slopdesk/docs", paneCount: 2,
+            ),
+            "docs · 2 panes",
         )
     }
 
-    /// A placeless pane with a split still gets a line 2.
-    func testDetailSurvivesAMissingPlace() {
-        XCTAssertEqual(TabSwitcherRowsBuilder.detail(place: nil, paneCount: 2), "2 panes")
-        XCTAssertNil(TabSwitcherRowsBuilder.detail(place: nil, paneCount: 1))
-    }
+    // MARK: - `unrepeated` (a title must not restate its header)
 
-    // MARK: - `slot` (the trailing program label)
-
-    /// The slot keeps a bare shell — in the metadata column `zsh` answers "what is this pane running".
-    func testSlotKeepsABareShell() {
-        XCTAssertEqual(TabSwitcherRowsBuilder.slot(processLabel: "-zsh", title: "slopdesk"), "zsh")
-    }
-
-    /// …but never repeats the title.
-    func testSlotSuppressedWhenTheTitleAlreadyNamesIt() {
-        XCTAssertNil(TabSwitcherRowsBuilder.slot(processLabel: "zsh", title: "zsh"))
-        XCTAssertNil(TabSwitcherRowsBuilder.slot(processLabel: "/usr/bin/make", title: "make check"))
-    }
-
-    /// A prefix that is not the whole first WORD is a different program — `makefile-lint` is not `make`.
-    func testSlotSurvivesAPartialWordCollision() {
+    /// A row whose identity fell all the way through to the folder name would say the header twice —
+    /// it yields to the pane's program instead.
+    func testATitleThatRestatesTheHeaderYieldsToTheProgram() {
         XCTAssertEqual(
-            TabSwitcherRowsBuilder.slot(processLabel: "make", title: "makefile-lint"), "make",
+            TabSwitcherRowsBuilder.unrepeated("slopdesk", header: "slopdesk", processLabel: "-zsh"),
+            "zsh",
         )
+    }
+
+    /// …but only when it has a program to yield to: a blank line says less than a redundant one.
+    func testATitleRestatingTheHeaderSurvivesWithNoProgram() {
+        XCTAssertEqual(
+            TabSwitcherRowsBuilder.unrepeated("slopdesk", header: "slopdesk", processLabel: nil),
+            "slopdesk",
+        )
+    }
+
+    /// A real identity is never touched, even when a program is known.
+    func testARealTitleIsNeverReplaced() {
+        XCTAssertEqual(
+            TabSwitcherRowsBuilder.unrepeated("make check", header: "slopdesk", processLabel: "make"),
+            "make check",
+        )
+    }
+
+    // MARK: - `items` (headers fall on run boundaries, order untouched)
+
+    private func row(_ title: String, project: String?, number: Int = 1) -> TabSwitcherRow {
+        TabSwitcherRow(
+            id: TabID(), number: number, title: title, note: nil, project: project,
+            isHighlighted: false,
+        )
+    }
+
+    /// Panes of ONE project get ONE header over a clean list — the case this round was opened for.
+    func testOneProjectHeadsOneRun() {
+        let items = TabSwitcherRowsBuilder.items([
+            row("fix the rail flash", project: "slopdesk"),
+            row("nvim main.swift", project: "slopdesk"),
+            row("make check", project: "slopdesk"),
+        ])
+        XCTAssertEqual(items.count, 4, "one header + three rows")
+        XCTAssertEqual(items.first?.content, .section("slopdesk"))
+        XCTAssertEqual(
+            items.dropFirst().filter { if case .section = $0.content { true } else { false } }.count, 0,
+            "no second header for the same run",
+        )
+    }
+
+    /// ⚠️ THE ORDER IS THE RING'S. A project that comes back after another one heads a SECOND run rather
+    /// than pulling its rows up — re-sorting would make the ⇥ highlight jump around the card.
+    func testAReturningProjectHeadsASecondRunRatherThanReordering() {
+        let items = TabSwitcherRowsBuilder.items([
+            row("fix the rail flash", project: "slopdesk"),
+            row("zsh", project: "otty"),
+            row("nvim main.swift", project: "slopdesk"),
+        ])
+        let sections = items.compactMap { item -> String? in
+            if case let .section(name) = item.content { name } else { nil }
+        }
+        XCTAssertEqual(sections, ["slopdesk", "otty", "slopdesk"])
+        let titles = items.compactMap { item -> String? in
+            if case let .row(row) = item.content { row.title } else { nil }
+        }
+        XCTAssertEqual(
+            titles, ["fix the rail flash", "zsh", "nvim main.swift"], "row order is the ring's, untouched",
+        )
+        XCTAssertEqual(items.map(\.id), Array(0..<items.count), "ids are positions — names repeat")
+    }
+
+    /// A projectless row (a video pane, a cwd that has not landed) opens no section — it continues the
+    /// run above it instead of scattering an "Other" bucket through a recency-ordered list.
+    func testAProjectlessRowOpensNoSection() {
+        let items = TabSwitcherRowsBuilder.items([
+            row("fix the rail flash", project: "slopdesk"),
+            row("Safari", project: nil),
+            row("nvim main.swift", project: "slopdesk"),
+        ])
+        let sections = items.compactMap { item -> String? in
+            if case let .section(name) = item.content { name } else { nil }
+        }
+        XCTAssertEqual(sections, ["slopdesk"], "the projectless row neither heads nor breaks the run")
     }
 
     // MARK: - Live rows
@@ -120,8 +189,8 @@ final class TabSwitcherRowsTests: XCTestCase {
     }
 
     /// THE REGRESSION: two tabs rooted in the SAME project must read differently — one by its agent's
-    /// task intent, the other by its running program — while both still name the shared project on line
-    /// 2. Under the folder-name-only build both titles were `slopdesk`.
+    /// task intent, the other by its running program — while both sit under the one shared header.
+    /// Under the folder-name-only build both titles were `slopdesk`.
     func testTwoTabsInOneProjectReadDifferently() throws {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero)
@@ -140,8 +209,15 @@ final class TabSwitcherRowsTests: XCTestCase {
         XCTAssertEqual(titles[1], "fix the rail flash", "the agent tab is named by its task")
         XCTAssertEqual(titles[2], "nvim", "the other tab is named by its program")
         XCTAssertEqual(
-            Set(rows.compactMap(\.detail)), ["slopdesk"],
-            "both rows still name the project they share",
+            Set(rows.compactMap(\.project)), ["slopdesk"], "both sit under the project they share",
+        )
+        XCTAssertEqual(rows.compactMap(\.note), [], "a single-pane tab at its root adds nothing")
+        XCTAssertEqual(
+            TabSwitcherRowsBuilder.items(rows).filter {
+                if case .section = $0.content { true } else { false }
+            }.count,
+            1,
+            "one project, one header",
         )
     }
 
@@ -155,9 +231,23 @@ final class TabSwitcherRowsTests: XCTestCase {
             place(store, id, project: "/w/slopdesk")
         }
         let rows = try openedRows(store)
-        let split = rows.first { $0.number == 2 }
-        XCTAssertEqual(split?.detail, "slopdesk · 2 panes")
-        XCTAssertEqual(rows.first { $0.number == 1 }?.detail, "slopdesk", "the unsplit tab keeps one line")
+        XCTAssertEqual(rows.first { $0.number == 2 }?.note, "2 panes")
+        XCTAssertNil(rows.first { $0.number == 1 }?.note, "the unsplit tab stays quiet")
+    }
+
+    /// An idle shell at its project root would title itself by the folder — i.e. by its own header. It
+    /// yields to its program instead, so the row is not the header printed twice.
+    func testAnIdleRootShellDoesNotRestateItsHeader() throws {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let first = try pane(store, tab: 0)
+        place(store, first, project: "/w/slopdesk")
+        store.setForegroundProcess("zsh", for: first)
+
+        let rows = try openedRows(store)
+        let row = try XCTUnwrap(rows.first { $0.number == 1 })
+        XCTAssertEqual(row.project, "slopdesk")
+        XCTAssertEqual(row.title, "zsh")
     }
 
     /// The highlight lands on the row the ring points at — the frozen order is recency, so a forward open

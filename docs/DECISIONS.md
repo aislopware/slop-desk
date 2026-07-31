@@ -5585,13 +5585,25 @@ one repo read `slopdesk` / `slopdesk` / `slopdesk`. The ring was ordered by RECE
 only question the surface exists to answer — which of these am I flipping to — was the one it could not.
 The user also judged the hand-drawn Slate card un-native.
 
-- ✅ **A row speaks in the rail's two registers.** Line 1 is the pane's IDENTITY, resolved through
-  `RailRowsBuilder.liveRowTitle(...)` — the SAME chain the sidebar row and the window title read (rename →
-  agent task intent → running command → last command → folder), so a pane is named identically wherever it
-  is named and a fix to the chain reaches all three. Line 2 is its PLACE: the project, plus the relative
-  sub-path when the pane strayed from the root, plus `· N panes` when the tab is SPLIT (a tab that reads
-  `slopdesk` and holds three panes is not the destination that reads `slopdesk` and holds one). The trailing
-  slot keeps the sidebar's program label, suppressed whenever the title already carries it.
+- ✅ **The card is a grouped LIST: the project heads a section, a row is ONE line.** The first cut gave each
+  row an icon, two lines and a full-bleed selection bar; the user's verdict was *"xấu thế, nhìn nó không
+  thanh lịch tí nào"*. Ruling (chosen from three previews): project as a section header said ONCE, rows
+  reduced to identity + a quiet note + the ⌘-number, highlight an inset capsule. The icon goes (every row is
+  a terminal — the glyph was noise) and so does the second line (it restated the header on every row).
+  Identity resolves through `RailRowsBuilder.liveRowTitle(...)` — the SAME chain the sidebar row and the
+  window title read (rename → agent task intent → running command → last command → folder) — so a pane is
+  named identically wherever it is named. The note carries the sub-path below the project and `N panes` when
+  the tab is SPLIT (a tab in `slopdesk` holding three panes is not the destination holding one), and is
+  absent for the common at-root single-pane row, which is what makes the list read quiet.
+- ✅ **A header is a RUN BOUNDARY, not a re-sort.** The display order is the frozen ring's (recency) because
+  that is the order ⇥ steps in; grouping the rows by project would make the highlight jump around the card.
+  So a header is emitted wherever consecutive rows change project, and one project can head more than one
+  run. A projectless row (video pane, cwd not landed) heads nothing and continues the run above it rather
+  than scattering an "Other" bucket. `TabSwitcherItem.id` is the POSITION, not the name — names repeat.
+- ✅ **A title that only restates its header yields to its program.** The identity chain's last rung is the
+  folder name, which under a section header is the header printed twice; an idle root shell therefore reads
+  `zsh` (the sidebar's metadata slot). Only when no program is known does it restate the folder — a blank
+  line says less than a redundant one.
 - ✅ **`projectKey` IS threaded into the structural rung, on purpose.** At the project root that rung yields
   the PROGRAM rather than the folder name, and an idle shell's empty result then falls through to the
   running / last command / folder. That fall-through is the whole disambiguation: without the key every row

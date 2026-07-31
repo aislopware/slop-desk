@@ -6,14 +6,20 @@
 // one thing the surface exists to answer — WHICH of these am I flipping to — was the one thing it did
 // not say.
 //
-// So a row now speaks in two registers, the sidebar's split: line 1 is the pane's IDENTITY (the agent's
-// task intent, the running command, the program), line 2 is its PLACE (project, plus the sub-path when
-// the pane strayed from the root, plus the pane count when the tab is split). Identity comes from
+// The fix is the sidebar's own division of labour. The PROJECT is a section header, said once; a ROW is
+// one line carrying only what differs — the pane's identity, then a quiet note for the sub-path it
+// strayed into and the pane count when the tab is split. Identity comes from
 // ``RailRowsBuilder/liveRowTitle(...)`` — the SAME chain the sidebar row and the window title read, so a
 // pane is named identically wherever it is named, and a fix to the chain reaches all three.
 //
-// Pure `place` / `detail` / `slot` composers so the wording is unit-pinned without a view; the one
-// `@MainActor` entry is the store read.
+// ⚠️ A header is a RUN BOUNDARY, not a re-sort. The display order is the frozen ring's (recency), because
+// that is the order ⇥ steps in — grouping the rows by project would make the highlight jump around the
+// card. So a header is emitted wherever consecutive rows change project, and one project can head more
+// than one run. In the case this round was opened for — several panes in ONE repo — that is exactly one
+// header over a clean list.
+//
+// Pure composers (`header` / `relativePath` / `note` / `items`) so the wording and the header runs are
+// unit-pinned without a view; the one `@MainActor` entry is the store read.
 
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -24,23 +30,33 @@ struct TabSwitcherRow: Identifiable, Equatable {
     /// The tab's ⌘-number (1-based position in the tab bar) — the switcher doubles as a reminder that
     /// ⌘N jumps straight here.
     let number: Int
-    /// SF Symbol name for the pane's kind, read from ``PaneChooserRegistry`` (the one registry the
-    /// sidebar's iOS rows and the pane chooser share).
-    let symbol: String
-    /// Line 1 — the pane's identity.
+    /// The pane's identity — the only thing on the line that has to be read.
     let title: String
-    /// Line 2 — where it is, and how many panes the tab holds. `nil` ⇒ a single-line row.
-    let detail: String?
-    /// The trailing program label (`zsh`, `claude`, `make`), or `nil` when the title already says it.
-    let slot: String?
+    /// The quiet remainder: the sub-path below the project, the pane count when the tab is split.
+    /// `nil` for the common at-root single-pane tab.
+    let note: String?
+    /// The project this row sits in — the header text, carried per row so ``TabSwitcherRowsBuilder/items(_:)``
+    /// can find the boundaries.
+    let project: String?
     let isHighlighted: Bool
+}
+
+/// The card's display list: section headers interleaved with rows, in ring order.
+struct TabSwitcherItem: Identifiable, Equatable {
+    enum Content: Equatable {
+        case section(String)
+        case row(TabSwitcherRow)
+    }
+
+    /// Position in the display list. A plain index because a project may head more than one run, so its
+    /// NAME is not unique and cannot be the identity.
+    let id: Int
+    let content: Content
 }
 
 enum TabSwitcherRowsBuilder {
     /// The four store reads every part of a row needs, taken ONCE per row: what the pane is, where it
-    /// is, which project owns it, and the title its program asserted. Bundled because the title / place
-    /// / symbol resolvers each want a different subset and threading seven loose values through them is
-    /// how the same pane ends up read twice with two answers.
+    /// is, which project owns it, and the title its program asserted.
     @MainActor
     private struct PaneFacts {
         let pane: PaneID
@@ -60,6 +76,29 @@ enum TabSwitcherRowsBuilder {
         }
     }
 
+    /// The card's full display list for `switcher` — the one call a view makes.
+    @MainActor
+    static func items(for switcher: TabSwitcher, store: WorkspaceStore) -> [TabSwitcherItem] {
+        items(rows(for: switcher, store: store))
+    }
+
+    /// Interleave section headers into `rows` wherever the project CHANGES between consecutive rows.
+    /// A row with no project at all (a video pane, a shell whose cwd has not landed) heads nothing —
+    /// it simply continues the run above it rather than opening an "Other" section the ring's order
+    /// would scatter. Pure so the run rule is unit-pinned.
+    static func items(_ rows: [TabSwitcherRow]) -> [TabSwitcherItem] {
+        var out: [TabSwitcherItem] = []
+        var current: String?
+        for row in rows {
+            if let project = row.project, project != current {
+                current = project
+                out.append(TabSwitcherItem(id: out.count, content: .section(project)))
+            }
+            out.append(TabSwitcherItem(id: out.count, content: .row(row)))
+        }
+        return out
+    }
+
     /// Resolve the frozen candidate ring into rows. The ORDER is the switcher's (recency), not the tab
     /// bar's — that is the point of the surface. A candidate whose tab has been closed under the held ⌃
     /// is dropped, matching ``WorkspaceStore/commitTabSwitcher()``, which refuses to commit onto one.
@@ -77,35 +116,42 @@ enum TabSwitcherRowsBuilder {
                 paneID: pane, kind: facts.kind, spec: facts.spec, tabID: tab.id,
                 representativePane: pane, manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
             )
-            let paneName = title(tab: tab, facts: facts, chrome: chrome, store: store)
-            let panePlace = facts.kind == .terminal
-                ? place(projectKey: facts.projectKey, cwd: facts.cwd)
-                : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
+            let project = facts.kind == .terminal
+                ? header(projectKey: facts.projectKey, cwd: facts.cwd)
+                : nil
             return TabSwitcherRow(
                 id: id,
                 number: position + 1,
-                symbol: PaneChooserRegistry.option(for: facts.kind).symbol,
-                title: paneName,
-                detail: detail(place: panePlace, paneCount: tab.allPaneIDs().count),
-                slot: slot(processLabel: chrome.processLabel, title: paneName),
+                title: title(tab: tab, facts: facts, chrome: chrome, project: project, store: store),
+                note: facts.kind == .terminal
+                    ? note(
+                        projectKey: facts.projectKey, cwd: facts.cwd,
+                        paneCount: tab.allPaneIDs().count,
+                    )
+                    : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle),
+                project: project,
                 isHighlighted: index == switcher.highlightIndex,
             )
         }
     }
 
-    /// The row's LINE 1. An explicit TAB rename wins outright (the user named this tab; nothing the pane
-    /// is doing outranks that), then the pane's live identity chain — the same one
-    /// ``NavigatorColumn`` hands its rows, so the switcher and the sidebar can never call one pane two
-    /// things.
+    /// The row's LINE. An explicit TAB rename wins outright (the user named this tab; nothing the pane
+    /// is doing outranks that), then the pane's live identity chain — the same one ``NavigatorColumn``
+    /// hands its rows, so the switcher and the sidebar can never call one pane two things.
     ///
     /// `projectKey` IS passed to the structural rung on purpose: at the project root that yields the
     /// PROGRAM rather than the folder name, and an idle shell's empty result then falls through to the
     /// running command / last command / folder name. That fall-through is what tells two panes of one
     /// repo apart.
+    ///
+    /// The last rung of that chain is the folder name, which under a section header is the header said
+    /// twice — so a row that lands there yields to its program instead (`zsh`, the sidebar's metadata
+    /// slot). Only when even that is unknown does the row restate the folder, because a blank line says
+    /// less than a redundant one.
     @MainActor
     private static func title(
         tab: SlopDeskWorkspaceModel.Tab, facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome,
-        store: WorkspaceStore,
+        project: String?, store: WorkspaceStore,
     ) -> String {
         if !tab.title.isEmpty { return tab.title }
         let structural = RailRowsBuilder.rowTitle(
@@ -119,7 +165,7 @@ enum TabSwitcherRowsBuilder {
                 for: facts.pane, processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
             )
             : nil
-        return RailRowsBuilder.liveRowTitle(
+        let resolved = RailRowsBuilder.liveRowTitle(
             structuralTitle: structural,
             userRenamed: facts.spec?.userRenamed == true,
             isAgent: RailRowsBuilder.isAgentSession(
@@ -134,46 +180,47 @@ enum TabSwitcherRowsBuilder {
             cwdTitle: RailRowsBuilder.cwdFolderName(facts.cwd),
             fallback: PaneChooserRegistry.option(for: facts.kind).title,
         )
+        return unrepeated(resolved, header: project, processLabel: chrome.processLabel)
     }
 
-    /// WHERE a terminal pane is, as the row prints it: the project's folder name, and — when the pane
-    /// strayed INTO the project's subtree — the relative path after it (`slopdesk/packages/api`). A pane
-    /// whose cwd sits OUTSIDE its key's subtree (a stale key across an un-re-pushed `cd`) falls back to
-    /// its own folder name rather than claiming a project it left; a keyless pane keeps its folder name.
-    /// `nil` only when there is no cwd at all. Pure so the wording is unit-pinned.
-    static func place(projectKey: String?, cwd: String?) -> String? {
+    /// A title that only restates its section header yields to the pane's program. Pure so the rule is
+    /// unit-pinned.
+    static func unrepeated(_ title: String, header: String?, processLabel: String?) -> String {
+        guard let header, title == header else { return title }
+        return RailRowsBuilder.slotProcessName(processLabel) ?? title
+    }
+
+    /// The SECTION a terminal pane belongs to: its project's folder name, or — for a pane with no
+    /// project key yet — its own folder name, so it still lands under a place rather than nowhere.
+    /// `nil` when there is no cwd at all. Pure.
+    static func header(projectKey: String?, cwd: String?) -> String? {
         guard let key = TabOrderingEngine.normalizedProjectKey(projectKey) else {
             return RailRowsBuilder.cwdFolderName(cwd)
         }
-        let header = TabOrderingEngine.projectSectionHeader(for: key)
-        guard var path = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty
-        else { return header }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        if path == key { return header }
-        guard path.hasPrefix(key + "/") else { return RailRowsBuilder.cwdFolderName(path) }
-        return "\(header)/\(path.dropFirst(key.count + 1))"
+        return TabOrderingEngine.projectSectionHeader(for: key)
     }
 
-    /// LINE 2 = the place, then the pane count when the tab is SPLIT. The count is the other half of the
-    /// user's question: a tab that reads `slopdesk` and holds three panes is not the same destination as
-    /// a tab that reads `slopdesk` and holds one, and only this line can say so. A single-pane tab omits
-    /// it (`1 pane` on every row is noise). Pure.
-    static func detail(place: String?, paneCount: Int) -> String? {
+    /// Where the pane sits BELOW its project root, or `nil` at the root itself (the header already said
+    /// it). A cwd OUTSIDE the key's subtree — a stale key across an un-re-pushed `cd` — gives its own
+    /// folder name instead: hiding the location would lie, and a relative path cannot be formed. Pure.
+    static func relativePath(projectKey: String?, cwd: String?) -> String? {
+        guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),
+              var path = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty
+        else { return nil }
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        if path == key { return nil }
+        if path.hasPrefix(key + "/") { return String(path.dropFirst(key.count + 1)) }
+        return RailRowsBuilder.cwdFolderName(path)
+    }
+
+    /// The row's quiet remainder: the sub-path, then the pane count when the tab is SPLIT. The count is
+    /// the other half of the user's question — a tab in `slopdesk` holding three panes is not the same
+    /// destination as a tab in `slopdesk` holding one, and only this can say so. A single-pane tab at
+    /// its root has no note at all, which is the common row and the reason the list reads quiet. Pure.
+    static func note(projectKey: String?, cwd: String?, paneCount: Int) -> String? {
         var parts: [String] = []
-        if let place, !place.isEmpty { parts.append(place) }
+        if let relative = relativePath(projectKey: projectKey, cwd: cwd) { parts.append(relative) }
         if paneCount > 1 { parts.append("\(paneCount) panes") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// The trailing program label — the sidebar's metadata slot, which keeps a bare `zsh` (as a TITLE it
-    /// says nothing, in the slot it answers "what is this pane running" for an idle shell). Suppressed
-    /// when the title already carries it: a pane titled `zsh` must not print `zsh` twice, and a row
-    /// titled `make check` needs no `make` beside it. Pure.
-    static func slot(processLabel: String?, title: String) -> String? {
-        guard let name = RailRowsBuilder.slotProcessName(processLabel) else { return nil }
-        let lowered = title.lowercased()
-        let label = name.lowercased()
-        if lowered == label || lowered.hasPrefix(label + " ") { return nil }
-        return name
     }
 }

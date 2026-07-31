@@ -11,12 +11,16 @@
 // view has no gestures, no buttons, and no state of its own. Clicking through it is impossible because it
 // never accepts hits.
 //
-// NATIVE CHROME, not canvas (DECISIONS §native-chrome): the switcher floats OVER the workspace rather than
-// living in it, so it is dressed in the system's own materials — `glassEffect` for the card, system text
-// styles, semantic `.primary`/`.secondary` ink, the SF Symbol the pane chooser already names each kind by,
-// and the SYSTEM accent for the highlight (`.tint(nil)` resets the workspace's ambient theme tint, which
-// would otherwise repaint a native surface in the terminal's colour scheme). `Slate` supplies GEOMETRY only
-// — the spacing/radius ladder every floating surface shares — never ink.
+// The card is a grouped LIST, the shape macOS has for "these belong together": the project heads a section,
+// said once, and every row underneath is ONE line — the pane's identity, a quiet note for what differs, the
+// ⌘-number. No per-row icon (every row is a terminal; the glyph was noise), no second line restating the
+// header, no full-bleed selection bar — the highlight is an inset capsule, the way a menu marks its item.
+//
+// NATIVE CHROME, not canvas (DECISIONS §native-chrome): `glassEffect` for the card, system text styles,
+// semantic `.primary`/`.secondary` ink, and the SYSTEM accent for the highlight (`.tint(nil)` resets the
+// workspace's ambient theme tint, which would otherwise repaint a native surface in the terminal's colour
+// scheme). `Slate` supplies GEOMETRY only — the spacing/radius/height ladder every surface shares — never
+// ink.
 //
 // Raw font/radius/height literals fail `scripts/check-ds-leaks.sh`; no AppKit, so this compiles for iOS
 // with the rest of `SlopDeskClientUI`, where the switcher is simply never opened.
@@ -34,7 +38,7 @@ struct TabSwitcherOverlay: View {
 
     var body: some View {
         if let switcher = store.tabSwitcher {
-            card(TabSwitcherRowsBuilder.rows(for: switcher, store: store))
+            card(TabSwitcherRowsBuilder.items(for: switcher, store: store))
                 // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
                 // click here would strand a user who reached for the workspace behind it.
                 .allowsHitTesting(false)
@@ -42,13 +46,18 @@ struct TabSwitcherOverlay: View {
         }
     }
 
-    private func card(_ rows: [TabSwitcherRow]) -> some View {
+    private func card(_ items: [TabSwitcherItem]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(rows) { row in
-                TabSwitcherRowView(row: row)
+            ForEach(items) { item in
+                switch item.content {
+                case let .section(name):
+                    SectionHeader(name: name, isFirst: item.id == 0)
+                case let .row(row):
+                    RowView(row: row)
+                }
             }
         }
-        .padding(Slate.Metric.space1)
+        .padding(Slate.Metric.space2)
         .frame(width: cardWidth)
         .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
         // The system accent, not the workspace's: the window tints its whole subtree with the theme
@@ -57,14 +66,13 @@ struct TabSwitcherOverlay: View {
         .tint(nil)
     }
 
-    /// Wide enough for a two-register row — an agent's task intent on line 1 and `project/sub · 3 panes`
-    /// on line 2 — without either truncating on a normal workspace. Still narrow enough to read as a
-    /// switcher rather than a panel.
-    private let cardWidth: CGFloat = 380
+    /// Sized for one line of identity plus a short note — a switcher, not a panel. Narrower than the
+    /// two-line card it replaces, because a single line needs less measure to stay unbroken.
+    private let cardWidth: CGFloat = 320
 }
 
 /// The card's SURFACE: Liquid Glass, or a plain material when the user asked for less transparency.
-/// Split into a modifier because the two branches must land on the same geometry — a `if/else` around
+/// Split into a modifier because the two branches must land on the same geometry — an `if/else` around
 /// the whole card would give SwiftUI two different view identities to cross-fade between.
 private struct SwitcherSurface: ViewModifier {
     let reduceTransparency: Bool
@@ -81,68 +89,67 @@ private struct SwitcherSurface: ViewModifier {
     }
 }
 
-/// One row: the pane's kind glyph, its identity over its place, the program label, and the ⌘-number.
-private struct TabSwitcherRowView: View {
+/// A project, said once over the run of rows that share it.
+private struct SectionHeader: View {
+    let name: String
+    /// The first header sits flush against the card's own padding; later ones open a gap above so the
+    /// runs read as separate groups rather than one long list.
+    let isFirst: Bool
+
+    var body: some View {
+        Text(name)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .textCase(.uppercase)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.bottom, Slate.Metric.space1)
+            .padding(.top, isFirst ? 0 : Slate.Metric.space3)
+    }
+}
+
+/// One row: identity, the quiet remainder, and the ⌘-number.
+private struct RowView: View {
     let row: TabSwitcherRow
 
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
-            Image(systemName: row.symbol)
+            Text(row.title)
                 .font(.body)
-                .foregroundStyle(row.isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-                .frame(width: Slate.Metric.space4)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(row.title)
-                    .font(.body)
-                    .foregroundStyle(row.isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .foregroundStyle(row.isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                // The identity is what has to survive a narrow card; the note yields first.
+                .layoutPriority(1)
+            if let note = row.note {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(muted)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                if let detail = row.detail {
-                    Text(detail)
-                        .font(.caption)
-                        // The place is the LONG field, so it truncates at the head — the tail
-                        // (`…/packages/api · 3 panes`) is the half that distinguishes.
-                        .truncationMode(.head)
-                        .foregroundStyle(
-                            row.isHighlighted
-                                ? AnyShapeStyle(.white.opacity(highlightedSecondary))
-                                : AnyShapeStyle(.secondary),
-                        )
-                        .lineLimit(1)
-                }
+                    .truncationMode(.head)
             }
             Spacer(minLength: Slate.Metric.space2)
-            if let slot = row.slot {
-                Text(slot)
-                    .font(.caption)
-                    .foregroundStyle(
-                        row.isHighlighted
-                            ? AnyShapeStyle(.white.opacity(highlightedSecondary))
-                            : AnyShapeStyle(.tertiary),
-                    )
-                    .lineLimit(1)
-            }
-            Text("\(row.number)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(
-                    row.isHighlighted
-                        ? AnyShapeStyle(.white.opacity(highlightedSecondary))
-                        : AnyShapeStyle(.tertiary),
-                )
+            Text("⌘\(row.number)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(muted)
         }
         .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
+        .frame(height: Slate.Metric.heightRow)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             if row.isHighlighted {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusItem, style: .continuous)
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
                     .fill(.tint)
             }
         }
     }
 
-    /// The muted registers ON the accent fill. Secondary/tertiary system ink is tuned for a system
-    /// background and washes out over a saturated accent, so the highlighted row keeps one white ramp.
-    private let highlightedSecondary: Double = 0.75
+    /// The secondary register. Over the accent fill the system's own `.secondary` washes out, so the
+    /// highlighted row keeps one white ramp instead.
+    private var muted: AnyShapeStyle {
+        row.isHighlighted ? AnyShapeStyle(.white.opacity(0.7)) : AnyShapeStyle(.secondary)
+    }
 }
 #endif
