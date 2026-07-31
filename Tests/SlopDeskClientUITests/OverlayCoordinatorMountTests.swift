@@ -234,6 +234,52 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
+    /// An AGENT pane's identity leads with the static ✳ mark on EVERY surface that resolves it — the
+    /// palette row here, and the ⌃⇥ switcher through the same `identity(...)`. The rail draws its own
+    /// marker, so without this the palette/switcher showed the same pane bare while the rail showed it
+    /// marked. REVERT-TO-CONFIRM-FAIL: drop the mark from `identity` and the prefix assertion trips.
+    func testAgentPaneIdentityLeadsWithTheMark() throws {
+        let (overlay, store) = makeCoordinator()
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.setAgentStatus(.working, for: pane)
+
+        overlay.openPalette(mode: .command)
+        let row = try XCTUnwrap(
+            overlay.selectableResults.first { $0.id == "tab.\(pane.raw.uuidString)" },
+            "the agent pane's jump row is present",
+        )
+        XCTAssertTrue(
+            row.title.hasPrefix(RailRowsBuilder.agentTitleMark),
+            "an agent pane's palette/switcher identity leads with the static ✳ mark (got '\(row.title)')",
+        )
+        XCTAssertFalse(
+            row.title.hasPrefix("\(RailRowsBuilder.agentTitleMark) \(RailRowsBuilder.agentTitleMark)"),
+            "the mark is never doubled",
+        )
+    }
+
+    /// The palette's page/end navigation: ⇞/⇟ stride by a viewport of rows and clamp at the ends;
+    /// ⌘↑/⌘↓ jump to the first/last selectable row — the coordinator side of the platform list idioms
+    /// the view binds (PgUp/PgDn, ⌘-arrows, ⌃N/⌃P).
+    func testSelectionPagingAndEndJumpsClampToTheSelectableRows() {
+        let (overlay, _) = makeCoordinator()
+        overlay.openPalette()
+        let count = overlay.selectableResults.count
+        XCTAssertGreaterThan(count, 8, "the zero-state has more than one page of rows")
+
+        overlay.moveSelection(7) // one ⇟ page
+        XCTAssertEqual(overlay.paletteSelection, 7, "⇟ strides a viewport of rows")
+        overlay.moveSelection(7 * 100) // way past the end
+        XCTAssertEqual(overlay.paletteSelection, count - 1, "paging clamps at the last row")
+        overlay.moveSelection(-7 * 100)
+        XCTAssertEqual(overlay.paletteSelection, 0, "paging clamps at the first row")
+
+        overlay.moveSelectionToLast()
+        XCTAssertEqual(overlay.paletteSelection, count - 1, "⌘↓ jumps to the last selectable row")
+        overlay.moveSelectionToFirst()
+        XCTAssertEqual(overlay.paletteSelection, 0, "⌘↑ jumps back to the first")
+    }
+
     /// Accepting a PANES jump row focuses that pane (`jumpToPaneTree`) and closes the palette — the whole
     /// point of listing panes under ⌘⇧P. Two tabs: the palette opens focused on the SECOND pane; running the
     /// FIRST pane's row must land the focus back on it.

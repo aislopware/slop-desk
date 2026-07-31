@@ -180,8 +180,17 @@ enum PaneSwitcherRowsBuilder {
         let note = facts.kind == .terminal
             ? note(projectKey: facts.projectKey, cwd: facts.cwd)
             : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
+        let resolved = title(facts: facts, chrome: chrome, project: project, note: note, store: store)
+        // The agent's ✳ mark rides the IDENTITY, not just the sidebar view: the rail row draws its own
+        // marker (`SlateTabRow.agentMarker`), so without this the switcher and the palette would show
+        // the same pane bare while the rail shows it marked. Whatever rung titled the row — intent,
+        // running command, normalized program title, folder — an agent session leads with the ONE
+        // static mark; a title already led by it (the normalized-title rung) keeps its own.
+        let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
         return PaneIdentity(
-            title: title(facts: facts, chrome: chrome, project: project, note: note, store: store),
+            title: isAgent && !resolved.hasPrefix("✳")
+                ? "\(RailRowsBuilder.agentTitleMark) \(resolved)"
+                : resolved,
             project: project,
             note: note,
         )

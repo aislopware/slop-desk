@@ -49,6 +49,12 @@ struct PaletteView: View {
     private let panelWidth: CGFloat = 720
     private let resultsMaxHeight: CGFloat = 336
 
+    /// One ⇞/⇟ stride = the rows one results viewport shows (derived from the SAME two metrics that
+    /// size it, so a viewport retune re-tunes the page).
+    private var pageStride: Int {
+        max(1, Int(resultsMaxHeight / Slate.Metric.heightRowTall))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             searchBar
@@ -67,12 +73,34 @@ struct PaletteView: View {
         // guarding on `.command` (else `.ignored`) keeps the two from double-firing.
         // `OverlayKeyRepeat.phases` (not `.down`): a held arrow WALKS the list, the way every other list on
         // the platform does. `.down` alone moved the selection once per physical press.
-        .onKeyPress(.upArrow, phases: OverlayKeyRepeat.phases) { _ in
-            coordinator.moveSelection(-1)
+        //
+        // The full navigation vocabulary follows the platform's list idioms: ↑/↓ step, ⌘↑/⌘↓ jump to the
+        // ends (the NSTableView standard), ⇞/⇟ stride one viewport of rows (the VS Code palette page),
+        // and ⌃P/⌃N step via the macOS text-system's own previous/next bindings (the emacs pair every
+        // terminal user's fingers know). Home/End are deliberately NOT taken — in a focused text field
+        // they belong to the query caret, and stealing them would break editing the search text.
+        .onKeyPress(.upArrow, phases: OverlayKeyRepeat.phases) { press in
+            if press.modifiers.contains(.command) { coordinator.moveSelectionToFirst() }
+            else { coordinator.moveSelection(-1) }
             return .handled
         }
-        .onKeyPress(.downArrow, phases: OverlayKeyRepeat.phases) { _ in
-            coordinator.moveSelection(1)
+        .onKeyPress(.downArrow, phases: OverlayKeyRepeat.phases) { press in
+            if press.modifiers.contains(.command) { coordinator.moveSelectionToLast() }
+            else { coordinator.moveSelection(1) }
+            return .handled
+        }
+        .onKeyPress(.pageUp, phases: OverlayKeyRepeat.phases) { _ in
+            coordinator.moveSelection(-pageStride)
+            return .handled
+        }
+        .onKeyPress(.pageDown, phases: OverlayKeyRepeat.phases) { _ in
+            coordinator.moveSelection(pageStride)
+            return .handled
+        }
+        .onKeyPress(keys: ["n", "p"], phases: OverlayKeyRepeat.phases) { press in
+            // Only the CONTROL pair navigates — a bare `n`/`p` is query text and must reach the field.
+            guard press.modifiers.contains(.control) else { return .ignored }
+            coordinator.moveSelection(press.key == "n" ? 1 : -1)
             return .handled
         }
         .onKeyPress(.return, phases: .down) { press in

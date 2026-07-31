@@ -174,7 +174,10 @@ final class PaneSwitcherRowsTests: XCTestCase {
         let rows = try openedRows(store)
         XCTAssertEqual(rows.count, 2)
         let titles = Dictionary(uniqueKeysWithValues: rows.map { ($0.number, $0.title) })
-        XCTAssertEqual(titles[1], "fix the rail flash", "the agent pane is named by its task")
+        XCTAssertEqual(
+            titles[1], "\(RailRowsBuilder.agentTitleMark) fix the rail flash",
+            "the agent pane is named by its task, led by the static agent mark",
+        )
         XCTAssertEqual(titles[2], "nvim", "the other pane is named by its program")
         XCTAssertEqual(
             rows.compactMap(\.project), ["slopdesk", "slopdesk"],
@@ -288,7 +291,10 @@ final class PaneSwitcherRowsTests: XCTestCase {
         store.renameTab(tabID, to: "Release prep")
 
         let rows = try openedRows(store)
-        XCTAssertEqual(rows.first { $0.number == 1 }?.title, "fix the rail flash")
+        XCTAssertEqual(
+            rows.first { $0.number == 1 }?.title,
+            "\(RailRowsBuilder.agentTitleMark) fix the rail flash",
+        )
     }
 
     // MARK: - `PaneSwitcherMetrics` (how big the card is for the window it floats in)

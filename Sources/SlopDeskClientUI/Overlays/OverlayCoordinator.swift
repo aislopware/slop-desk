@@ -427,7 +427,8 @@ public final class OverlayCoordinator {
     // MARK: Palette keyboard / accept
 
     /// Move the keyboard selection by `delta`, clamped to the selectable rows (wrapping not done — Warp
-    /// clamps). A no-op when there are no selectable rows.
+    /// clamps). A no-op when there are no selectable rows. `delta` is ±1 for the arrows and ± one
+    /// viewport's worth for ⇞/⇟ (the view derives the stride from its own row metrics).
     public func moveSelection(_ delta: Int) {
         let n = selectableResults.count
         guard n > 0 else { paletteSelection = 0
@@ -435,6 +436,16 @@ public final class OverlayCoordinator {
         }
         let next = paletteSelection + delta
         paletteSelection = max(0, min(n - 1, next))
+    }
+
+    /// Jump the keyboard selection to the FIRST selectable row (⌘↑ — the macOS list idiom).
+    public func moveSelectionToFirst() {
+        paletteSelection = 0
+    }
+
+    /// Jump the keyboard selection to the LAST selectable row (⌘↓). A no-op-safe clamp when empty.
+    public func moveSelectionToLast() {
+        paletteSelection = max(0, selectableResults.count - 1)
     }
 
     /// Accept the currently keyboard-selected row (the ↩ chord): runs it AND closes the palette.
