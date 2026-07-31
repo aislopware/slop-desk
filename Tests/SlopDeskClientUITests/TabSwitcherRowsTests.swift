@@ -3,7 +3,7 @@
 // The regression this guards: the switcher named every row through the folder-name rung, so three panes
 // opened in one repo read `slopdesk` / `slopdesk` / `slopdesk` and the ring's whole purpose (which one am
 // I flipping to?) was unanswerable. `testTwoTabsInOneProjectReadDifferently` fails against that build —
-// it asserts the two rows' titles DIFFER while both still sit under the one shared project header.
+// it asserts the two rows' titles DIFFER while both still resolve to the one project they share.
 //
 // Headless: the pure composers need no store at all; the live rows ride the same tree-model
 // `WorkspaceStore` + `MountTestPaneSession` fake the rail-row tests use (no socket, no video, no Metal).
@@ -113,18 +113,17 @@ final class TabSwitcherRowsTests: XCTestCase {
         )
     }
 
-    /// Panes of ONE project get ONE header over a clean list — the case this round was opened for.
-    func testOneProjectHeadsOneRun() {
+    /// Panes of ONE project get NO header — the card IS that project, and a caption over a run with
+    /// nothing to be distinguished from is a label on a box holding one thing.
+    func testOneProjectGetsNoHeaderAtAll() {
         let items = TabSwitcherRowsBuilder.items([
             row("fix the rail flash", project: "slopdesk"),
             row("nvim main.swift", project: "slopdesk"),
             row("make check", project: "slopdesk"),
         ])
-        XCTAssertEqual(items.count, 4, "one header + three rows")
-        XCTAssertEqual(items.first?.content, .section("slopdesk"))
+        XCTAssertEqual(items.count, 3, "three rows, no header")
         XCTAssertEqual(
-            items.dropFirst().filter { if case .section = $0.content { true } else { false } }.count, 0,
-            "no second header for the same run",
+            items.filter { if case .section = $0.content { true } else { false } }.count, 0,
         )
     }
 
@@ -156,11 +155,14 @@ final class TabSwitcherRowsTests: XCTestCase {
             row("fix the rail flash", project: "slopdesk"),
             row("Safari", project: nil),
             row("nvim main.swift", project: "slopdesk"),
+            row("zsh", project: "otty"),
         ])
         let sections = items.compactMap { item -> String? in
             if case let .section(name) = item.content { name } else { nil }
         }
-        XCTAssertEqual(sections, ["slopdesk"], "the projectless row neither heads nor breaks the run")
+        XCTAssertEqual(
+            sections, ["slopdesk", "otty"], "the projectless row neither heads nor breaks the run",
+        )
     }
 
     // MARK: - Live rows
@@ -216,8 +218,8 @@ final class TabSwitcherRowsTests: XCTestCase {
             TabSwitcherRowsBuilder.items(rows).filter {
                 if case .section = $0.content { true } else { false }
             }.count,
-            1,
-            "one project, one header",
+            0,
+            "one project — the card is the project, so no header",
         )
     }
 

@@ -5622,3 +5622,60 @@ The user also judged the hand-drawn Slate card un-native.
 → touches `TabSwitcherOverlay.swift`, new `TabSwitcherRows.swift` (+ `TabSwitcherRowsTests.swift`). No wire
 change (golden byte-identical), no model change — `TabSwitcher` (the frozen ring) is untouched, and the
 dispatcher still owns open/step/commit/cancel.
+
+### Round 3 — the accent capsule loses, the shortcut becomes a KEY (2026-07-31)
+
+The grouped list was still rejected (*"vẫn xấu"*), with one hard defect attached: *"bên trái title dài quá
+thì bên phải sẽ bị cắt"*. This time the three candidates were BUILT and photographed side by side at true
+size over a live workspace, and the ruling was made on pixels — ASCII previews had already produced one
+approved-then-rejected round.
+
+- ✅ **The ⌘-number is a keycap with `fixedSize`, and that is a CORRECTNESS fix, not a style one.** The title
+  carried `layoutPriority(1)`, so in a narrow `HStack` it took its ideal width first and the shortcut was
+  truncated down to a bare `⌘`. A shortcut with its number cut off is not a shortcut. The keycap is laid out
+  first now; the title takes what is left and truncates; the note (`layoutPriority(-1)`) yields before both.
+  The key is also ABSENT past ⌘9, where the app binds no chord — an unpressable key drawn on a row is a lie.
+- ✅ **No hue anywhere: the highlight is a lifted plate + a heavier title.** The system-accent capsule read as
+  a foreign object on a quiet card. This restates the house rule the git line and the footer already follow
+  (*"có vấn đề" = brighter + bolder, never a colour*) — the switcher is a readout like the rest.
+- ✅ **Roomier: `heightRowTall` (44) joins the ladder, the card widens to 460.** A 32pt list beat is for
+  SCANNING; this surface is read at a glance for the length of a held modifier, and a real pane title (a
+  running command, an agent's stated intent) has to finish on the line.
+- ✅ **Glass needs a RIM and a SHADOW to read as glass.** Over a dark terminal `glassEffect` alone leaves a
+  grey slab. The surface adds the two things a physical pane of glass has: a specular edge (theme-directed —
+  light on dark, darkened on light) and a cast shadow. `.tint(nil)` is no longer needed, since nothing on
+  the card is tinted.
+- ✅ **One project ⇒ NO header.** A caption over a run that has nothing to be distinguished from is a label
+  on a box holding one thing; the header survives only where it does work — a list spanning several
+  projects. ⚠️ Trade-off taken knowingly: a single-project card no longer names the place. The
+  title-yields-to-its-header rule stays UNCONDITIONAL even when no header is drawn, because that rule exists
+  to stop every row collapsing to the folder name — which is the original bug, not a header artefact.
+
+## A Claude Code hook must never park on the host (2026-07-31)
+
+Editing through Claude Code kept freezing on `Update`, and `UserPromptSubmit` intermittently reported a 30s
+timeout. Both are the same defect, and it is ours: the installed `slopdesk-agent` hook POSTs each event over
+`nc -U` to the host's `AgentHookListener`, and Claude Code runs that hook SYNCHRONOUSLY — on `PreToolUse` /
+`PostToolUse`, i.e. around every single edit — waiting up to 30s.
+
+`UnixSocketAcceptor.acceptLoop` accepted ONE connection at a time and ran `onRecord` inline on the accept
+thread, so a slow sink left every other pane's connection unaccepted and `nc` sat there until Claude Code's
+ceiling killed it. Measured on a reproduction: a hook posted 0.5s behind a wedged one took **19.5s** to
+return.
+
+- ✅ **Delivery moved off the accept thread, onto a SERIAL queue.** Serial, not concurrent: hook events are a
+  per-pane state machine (`UserPromptSubmit → PreToolUse → Stop`) and arrival order is meaning. A slow sink
+  now delays only its own delivery, never the next client's POST.
+- ✅ **`SO_RCVTIMEO` on each accepted connection.** A peer that connects and never writes used to park the
+  drain `read` forever. The ceiling now exists (2s).
+- ✅ **`nc -U -w 2` in the hook script.** Belt to the host's braces: a wedged host costs seconds, never the
+  timeout. It stays SYNCHRONOUS on purpose — backgrounding the relay would let two `nc` processes race and
+  deliver `Stop` before the `PreToolUse` it follows.
+- ✅ **The one socket-binding test in the suite.** `testAWedgedSinkDoesNotBlockTheNextClient` binds a real
+  socket in a temp dir and asserts the CLIENT's contract (a POST returns promptly while a sink is wedged),
+  because the sink-side delay is deliberate. Hang-proof: every wait is an expectation with a timeout, so a
+  regression fails instead of hanging the suite. Mutation-checked — it fails in 3.7s against the inline
+  `onRecord?(record)` it replaced.
+
+→ touches `AgentHookListener.swift`, `AgentInstaller.hookScript()`. An already-installed hook script is
+stale until the host reinstalls it (or it is edited in place).

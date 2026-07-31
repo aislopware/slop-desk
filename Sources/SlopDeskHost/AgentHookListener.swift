@@ -208,6 +208,10 @@ public final class UnixSocketAcceptor: @unchecked Sendable {
     /// The filesystem path of the bound socket (so ``stop()`` can `unlink` it).
     private var boundPath: String?
 
+    /// Where `onRecord` runs — OFF the accept thread, so a slow sink cannot stall the listener,
+    /// and SERIAL, so records keep their arrival order (see ``acceptLoop(fd:)``).
+    private let deliveryQueue = DispatchQueue(label: "com.slopdesk.agent-hook.delivery")
+
     /// Called with each received record's raw bytes (newline already stripped). The owner
     /// routes them into the per-pane ``AgentHookHandler`` and enqueues the resulting type-27.
     public var onRecord: (@Sendable (Data) -> Void)?
@@ -294,15 +298,30 @@ public final class UnixSocketAcceptor: @unchecked Sendable {
     /// read into a bounded growing buffer until EOF, the trailing newline stripped, and the
     /// record handed to `onRecord` (which validate-then-drops). A read error / EOF closes the
     /// connection fd and loops. The loop ends when `accept` fails (the fd was closed by stop()).
+    ///
+    /// ⚠️ THE ACCEPT THREAD IS THE WHOLE HOST'S HOOK PATH — it must never be parked on anything a
+    /// peer controls, because the peer is Claude Code's hook script, which BLOCKS its agent until
+    /// the record is taken. Two ways that used to happen, both fixed here:
+    ///
+    /// - a wedged CLIENT (connected, wrote nothing, never closed) parked the drain `read` forever
+    ///   → `SO_RCVTIMEO` bounds each read, so the connection is dropped instead;
+    /// - a slow SINK parked the loop, because `onRecord` ran inline → delivery moved onto its own
+    ///   serial queue. SERIAL, not concurrent: hook events are a state machine per pane
+    ///   (UserPromptSubmit → PreToolUse → Stop) and arrival order is the only thing that keeps
+    ///   `AgentHookHandler` honest.
     private func acceptLoop(fd listenFD: Int32) {
         while true {
             let conn = accept(listenFD, nil, nil)
             if conn < 0 { return } // listen fd closed by stop() → exit the thread
+            var timeout = timeval(tv_sec: Self.readTimeoutSeconds, tv_usec: 0)
+            setsockopt(
+                conn, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size),
+            )
             var record = Data()
             var chunk = [UInt8](repeating: 0, count: 4096)
             while true {
                 let n = read(conn, &chunk, chunk.count)
-                if n <= 0 { break } // EOF or error
+                if n <= 0 { break } // EOF, error, or the read timeout expired
                 record.append(contentsOf: chunk[0..<n])
                 // Bound a hostile sender: a single hook record is tiny (< 64 KiB); past the
                 // cap, stop reading and drop (the handler caps the label anyway).
@@ -311,12 +330,21 @@ public final class UnixSocketAcceptor: @unchecked Sendable {
             close(conn)
             // Strip a single trailing newline (the `printf '…\n'` framing).
             if record.last == 0x0A { record.removeLast() }
-            if !record.isEmpty { onRecord?(record) }
+            if !record.isEmpty {
+                let delivered = record
+                let sink = onRecord
+                deliveryQueue.async { sink?(delivered) }
+            }
         }
     }
 
     /// Hard cap on one hook record (validate-then-drop a runaway sender).
     static let maxRecordBytes = 64 * 1024
+
+    /// How long one connection may go without producing bytes before it is dropped. A hook record
+    /// is one small write from a local process, so seconds is already generous; the point is that
+    /// the ceiling EXISTS.
+    static let readTimeoutSeconds = 2
 }
 
 /// Errors the ``UnixSocketAcceptor`` shim throws on bind/listen failure (the pure handler never

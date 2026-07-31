@@ -1,11 +1,13 @@
+import Darwin
+import Foundation
 import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// The PURE ``AgentHookHandler`` core (no real socket; the `UnixSocketAcceptor` shim is
-/// compiled + code-reviewed only). Feeds REAL Claude Code hook JSON bytes directly and asserts
+/// The PURE ``AgentHookHandler`` core, fed REAL Claude Code hook JSON bytes directly, plus the ONE
+/// socket-shim test that binds (``testAWedgedSinkDoesNotBlockTheNextClient``). Asserts
 /// the correct type-27 ``WireMessage/claudeStatus`` emission + the embedded machine state, plus
 /// validate-then-drop on malformed bytes.
 final class AgentHookListenerTests: XCTestCase {
@@ -178,5 +180,104 @@ final class AgentHookListenerTests: XCTestCase {
         var h = AgentHookHandler()
         let msg = h.handle(bytes: body, at: 0)
         XCTAssertEqual(msg, .claudeStatus(state: 3, kind: 0, label: ""), "framed UserPromptSubmit → working")
+    }
+
+    // MARK: - The socket shim's ACCEPT LOOP (the only test that binds a socket)
+
+    /// ⚠️ A SLOW SINK MUST NOT STALL THE LISTENER. `onRecord` used to run inline on the accept
+    /// thread, so while one pane's handler worked, every other pane's connection sat unaccepted —
+    /// and the peer is Claude Code's hook script, which BLOCKS the agent until its record is taken.
+    /// Measured before the fix: a hook posted 0.5s behind a wedged one took 19.5s to return, and
+    /// Claude Code's own 30s hook ceiling is what eventually unstuck it.
+    ///
+    /// So the assertion is the CLIENT's: a POST completes promptly even while a sink is wedged.
+    /// Delivery itself stays serialized behind that sink on purpose — hook events are a per-pane
+    /// state machine and order is meaning — which is why this cannot be asserted as "the second
+    /// record reaches the sink".
+    ///
+    /// Hang-proof: every wait is an expectation with a timeout, so a regression FAILS rather than
+    /// hangs the suite. The socket lives in a per-test temp dir and the listener is always stopped.
+    func testAWedgedSinkDoesNotBlockTheNextClient() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("slopdesk-hook-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("hook.sock").path
+
+        let wedged = expectation(description: "the first record reached the sink and parked there")
+        let release = DispatchSemaphore(value: 0)
+        let arrivals = Counter()
+
+        let acceptor = UnixSocketAcceptor()
+        acceptor.onRecord = { _ in
+            if arrivals.bump() == 1 {
+                wedged.fulfill()
+                release.wait() // hold the sink open — the listener must not be waiting on us
+            }
+        }
+        defer {
+            release.signal()
+            acceptor.stop()
+        }
+        try acceptor.start(path: path)
+
+        Self.post(Data("pane=a\n{}\n".utf8), to: path)
+        wait(for: [wedged], timeout: 5)
+
+        // The hook script's exact shape: write, then wait for the host to close. Off-thread so a
+        // regression times out here instead of hanging the suite.
+        let returned = expectation(description: "the next client's POST completed")
+        let socketPath = path
+        DispatchQueue.global().async {
+            Self.post(Data("pane=b\n{}\n".utf8), to: socketPath, awaitClose: true)
+            returned.fulfill()
+        }
+        wait(for: [returned], timeout: 3)
+    }
+
+    /// A lock-guarded arrival counter — the sink runs off the test's thread.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func bump() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            n += 1
+            return n
+        }
+    }
+
+    /// Connect to `path`, write `record`, close. The installed hook's `nc -U` in ~20 lines, so the
+    /// test drives the REAL wire rather than a seam.
+    private static func post(_ record: Data, to path: String, awaitClose: Bool = false) {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            XCTFail("socket() failed")
+            return
+        }
+        defer { close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let maxPath = MemoryLayout.size(ofValue: addr.sun_path) - 1
+        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            path.withCString { cstr in
+                strncpy(UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self), cstr, maxPath)
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let joined = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+        }
+        guard joined == 0 else {
+            XCTFail("connect() failed: \(errno)")
+            return
+        }
+        _ = record.withUnsafeBytes { buf in write(fd, buf.baseAddress, buf.count) }
+        shutdown(fd, SHUT_WR) // EOF for the drain loop
+        guard awaitClose else { return }
+        // What `nc` does after writing: block until the host closes. THIS is the wait that used to
+        // cost the agent 19.5s.
+        var sink = [UInt8](repeating: 0, count: 64)
+        while read(fd, &sink, sink.count) > 0 {}
     }
 }

@@ -15,8 +15,8 @@
 // ⚠️ A header is a RUN BOUNDARY, not a re-sort. The display order is the frozen ring's (recency), because
 // that is the order ⇥ steps in — grouping the rows by project would make the highlight jump around the
 // card. So a header is emitted wherever consecutive rows change project, and one project can head more
-// than one run. In the case this round was opened for — several panes in ONE repo — that is exactly one
-// header over a clean list.
+// than one run. And a list that spans ONE project gets no header at all — the case this round was opened
+// for is then a clean, uninterrupted list of identities.
 //
 // Pure composers (`header` / `relativePath` / `note` / `items`) so the wording and the header runs are
 // unit-pinned without a view; the one `@MainActor` entry is the store read.
@@ -82,15 +82,24 @@ enum TabSwitcherRowsBuilder {
         items(rows(for: switcher, store: store))
     }
 
+    /// The highest tab the app binds a ⌘-digit to (⌘1–9). Past it a row has no shortcut to show.
+    static let highestShortcut = 9
+
     /// Interleave section headers into `rows` wherever the project CHANGES between consecutive rows.
     /// A row with no project at all (a video pane, a shell whose cwd has not landed) heads nothing —
     /// it simply continues the run above it rather than opening an "Other" section the ring's order
     /// would scatter. Pure so the run rule is unit-pinned.
+    ///
+    /// A list that spans ONE project gets no header at all: the card is that project, and naming it
+    /// above a run that has nothing to be distinguished from is a caption on a box with one thing in
+    /// it. (The project still reaches ``title(tab:facts:chrome:project:store:)``, which uses it to keep
+    /// a row from merely restating its folder — that rule is about the ROW, not about the header.)
     static func items(_ rows: [TabSwitcherRow]) -> [TabSwitcherItem] {
+        let spansSeveral = Set(rows.compactMap(\.project)).count > 1
         var out: [TabSwitcherItem] = []
         var current: String?
         for row in rows {
-            if let project = row.project, project != current {
+            if spansSeveral, let project = row.project, project != current {
                 current = project
                 out.append(TabSwitcherItem(id: out.count, content: .section(project)))
             }

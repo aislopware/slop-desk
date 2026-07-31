@@ -168,6 +168,17 @@ public enum AgentInstaller {
     /// env by the host). Uses `nc -U` (Muxy's transport, docs/41 §2.1); a missing socket var is
     /// a silent no-op so a non-slopdesk shell that sources these hooks never errors.
     ///
+    /// ⚠️ `-w` IS LOAD-BEARING. Claude Code runs a hook SYNCHRONOUSLY and waits up to 30s for it,
+    /// on `PreToolUse`/`PostToolUse` — i.e. around every single edit. `nc` writes the record and
+    /// then waits for the peer to close, so a host that is slow to drain froze the agent until
+    /// that 30s timeout fired (measured: 19.5s per hook behind one wedged connection). The host's
+    /// accept loop no longer parks (``UnixSocketAcceptor``), and this bound is the belt to that
+    /// braces: a wedged host now costs seconds, never the timeout.
+    ///
+    /// It stays SYNCHRONOUS on purpose — backgrounding the relay would let two `nc` processes race
+    /// and deliver `Stop` before the `PreToolUse` it follows, and the host's per-pane hook handler
+    /// is a state machine that reads order as meaning.
+    ///
     /// The marker string is assembled at RUNTIME from parts so the on-disk script is recognized
     /// by `entryIsOurs` via its PATH, not by an inline secret-shaped literal (push-protection
     /// trap — see CLAUDE.md). It is plain shell, not a secret; the assembly is belt-and-braces.
@@ -185,8 +196,9 @@ public enum AgentInstaller {
         # One record = a `pane=<id>` header line (the host's SLOPDESK_PANE_ID), then the raw
         # hook JSON. The host routes by the pane id; an empty id still parses (the host drops it).
         payload="$(cat)"
+        # -w: never wait on the host longer than a hook is worth (Claude Code BLOCKS on this).
         { printf 'pane=%s\\n' "${SLOPDESK_PANE_ID:-}"; printf '%s\\n' "$payload"; } \\
-            | nc -U "$sock" 2>/dev/null || true
+            | nc -U -w 2 "$sock" 2>/dev/null || true
         exit 0
         """
     }

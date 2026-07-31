@@ -126,6 +126,9 @@ final class AgentInstallerTests: XCTestCase {
         XCTAssertTrue(script.hasPrefix("#!/bin/sh"), "the hook script is a POSIX-sh script")
         XCTAssertTrue(script.contains("SLOPDESK_SOCKET_PATH"), "it reads the host's socket path from env")
         XCTAssertTrue(script.contains("nc -U"), "it POSTs over the Unix socket (Muxy transport)")
+        // Claude Code waits on this script SYNCHRONOUSLY (30s ceiling) around every edit — an
+        // unbounded `nc` turned a slow host into a frozen agent. The bound is part of the contract.
+        XCTAssertTrue(script.contains("nc -U -w "), "the POST is time-bounded — it blocks the agent")
     }
 
     func testCommandCarriesTheMarkerViaScriptPath() {
