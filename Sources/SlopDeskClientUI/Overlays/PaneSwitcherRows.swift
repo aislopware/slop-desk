@@ -130,31 +130,61 @@ enum PaneSwitcherRowsBuilder {
         }
         return switcher.candidates.enumerated().compactMap { index, id -> PaneSwitcherRow? in
             guard let tab = owner[id], let position = number[id] else { return nil }
-            let facts = PaneFacts(pane: id, spec: session.specs[id], store: store)
-            // The pane's volatile chrome through the sidebar's ONE resolver — the badge it returns is
-            // what gates the running-command rung below (a fast `ls` must not flash into the title).
-            // The representative pane + manual badge are resolved exactly as the rail resolves them,
-            // so a manual `tab badge` lands on the same row in both surfaces.
-            let chrome = RailRowsBuilder.chrome(
-                paneID: id, kind: facts.kind, spec: facts.spec, tabID: tab.id,
-                representativePane: tab.activePane ?? tab.allPaneIDs().first,
-                manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
-            )
-            let project = facts.kind == .terminal
-                ? projectName(projectKey: facts.projectKey, cwd: facts.cwd)
-                : nil
-            let note = facts.kind == .terminal
-                ? note(projectKey: facts.projectKey, cwd: facts.cwd)
-                : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
+            let ident = identity(pane: id, spec: session.specs[id], tab: tab, store: store)
             return PaneSwitcherRow(
                 id: id,
                 number: position,
-                title: title(facts: facts, chrome: chrome, project: project, note: note, store: store),
-                note: note,
-                project: project,
+                title: ident.title,
+                note: ident.note,
+                project: ident.project,
                 isHighlighted: index == switcher.highlightIndex,
             )
         }
+    }
+
+    /// One pane's display identity — the (title, project, note) triple a ⌃⇥ row carries. Exposed so the
+    /// OTHER surfaces that name a pane (the ⌘⇧P Panes jump rows) resolve through this SAME chain: a pane
+    /// is named identically wherever it is named, and a fix to the chain reaches every surface at once.
+    struct PaneIdentity {
+        let title: String
+        let project: String?
+        let note: String?
+
+        /// The place line the switcher stacks under the title, as ONE string (`project › note`) — for
+        /// surfaces that carry a single subtitle slot. `nil` when the pane has neither half.
+        var placeLine: String? {
+            let joined = [project, note].compactMap(\.self).joined(separator: " › ")
+            return joined.isEmpty ? nil : joined
+        }
+    }
+
+    /// Resolve one pane's ``PaneIdentity`` off the live store — the switcher rows and the palette's
+    /// Panes rows both come through here.
+    @MainActor
+    static func identity(
+        pane: PaneID, spec: PaneSpec?, tab: SlopDeskWorkspaceModel.Tab, store: WorkspaceStore,
+    ) -> PaneIdentity {
+        let facts = PaneFacts(pane: pane, spec: spec, store: store)
+        // The pane's volatile chrome through the sidebar's ONE resolver — the badge it returns is
+        // what gates the running-command rung below (a fast `ls` must not flash into the title).
+        // The representative pane + manual badge are resolved exactly as the rail resolves them,
+        // so a manual `tab badge` lands on the same row in both surfaces.
+        let chrome = RailRowsBuilder.chrome(
+            paneID: pane, kind: facts.kind, spec: facts.spec, tabID: tab.id,
+            representativePane: tab.activePane ?? tab.allPaneIDs().first,
+            manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
+        )
+        let project = facts.kind == .terminal
+            ? projectName(projectKey: facts.projectKey, cwd: facts.cwd)
+            : nil
+        let note = facts.kind == .terminal
+            ? note(projectKey: facts.projectKey, cwd: facts.cwd)
+            : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
+        return PaneIdentity(
+            title: title(facts: facts, chrome: chrome, project: project, note: note, store: store),
+            project: project,
+            note: note,
+        )
     }
 
     /// The row's LINE — the pane's live identity chain, the same one ``NavigatorColumn`` hands its rows,

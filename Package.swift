@@ -243,6 +243,10 @@ let package = Package(
                 // the stringly-typed `@AppStorage`). Same pure-Foundation `Defaults` product as the core.
                 .product(name: "Defaults", package: "Defaults"),
             ],
+            // The bundled Symbols Nerd Font (the SAME fallback face ghostty gives the terminal grid),
+            // registered at first use by `NerdSymbolFont` so chrome text carrying nerd-font private-use
+            // glyphs (agent/program titles) renders them instead of tofu. MIT — licence ships beside it.
+            resources: [.copy("Resources/Fonts")],
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)

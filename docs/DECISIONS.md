@@ -6099,3 +6099,25 @@ and finding only verbs was a dead end that cost a re-open on the other chord.
 - **Open Quickly is unchanged** — it keeps the richer multi-source jump-to (recents / folders /
   agents / files / command index). ⌘⇧P panes is the low-ceremony subset: the open panes, in the
   box people already have under their fingers.
+
+## A pane is named once, and the chrome learns the terminal's alphabet (2026-07-31)
+
+Two reports against the day-old ⌘⇧P Panes rows, one root cause each:
+
+- **The palette named panes by `liveProgramTitle ?? spec.title` while the ⌃⇥ switcher resolved
+  the full identity chain** (`RailRowsBuilder.liveRowTitle` — rename → intent → running command →
+  stripped program title → process → blocks → folder), so the same pane wore two names two
+  keystrokes apart. Fixed by extracting the switcher's per-pane resolution as
+  `PaneSwitcherRowsBuilder.identity(pane:spec:tab:store:)` and pointing `TabsPaletteSource` at it:
+  the palette row now carries the switcher's title verbatim and its PLACE line (`project › note`)
+  as the subtitle, with the raw cwd demoted to a hidden search keyword so full-path queries still
+  land.
+- **A nerd-font glyph in a title drew as a notdef dot.** Private-use codepoints have no system
+  fallback BY DESIGN — only the terminal grid could draw them, because ghostty embeds a symbols
+  face. The app now bundles that SAME face (`SymbolsNerdFont-Regular.ttf`, MIT, licence beside it,
+  ~2.4 MiB) as a `SlopDeskClientUI` package resource, registered process-wide on first use.
+  `Text.nerdAware(_:size:)` splits a string into private-use vs ordinary runs (pure, unit-pinned)
+  and splices ONLY the symbol runs into the bundled face — ordinary titles stay plain `Text`,
+  byte-identical to before. Adopted by every chrome surface that renders live titles: the sidebar
+  row, the ⌃⇥ switcher (title + place), the ⌘⇧P palette (fzf highlight runs + subtitle), and
+  Open Quickly's highlight.

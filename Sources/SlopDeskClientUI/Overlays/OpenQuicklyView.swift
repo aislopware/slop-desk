@@ -337,21 +337,31 @@ struct OpenQuicklyView: View {
         let title = item.title
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, let ranges = FuzzyMatcher.score(trimmed, title)?.ranges, !ranges.isEmpty else {
-            return Text(title).foregroundStyle(SlateOverlayInk.primary)
+            return Text.nerdAware(title, size: Slate.Typeface.body).foregroundStyle(SlateOverlayInk.primary)
         }
         // The match is marked by CONTRAST, not colour (the palette makes the same call): the hit run keeps
-        // the reading ink at semibold and the letters around it step back.
+        // the reading ink at semibold and the letters around it step back. Runs go through `nerdAware`
+        // so a program title's private-use glyph draws from the bundled symbols face.
         var segments: [Text] = []
         var cursor = title.startIndex
         for range in ranges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.secondary))
+                segments.append(
+                    Text.nerdAware(title[cursor..<range.lowerBound], size: Slate.Typeface.body)
+                        .foregroundStyle(SlateOverlayInk.secondary),
+                )
             }
-            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold))
+            segments.append(
+                Text.nerdAware(title[range], size: Slate.Typeface.body)
+                    .foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold),
+            )
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
+            segments.append(
+                Text.nerdAware(title[cursor...], size: Slate.Typeface.body)
+                    .foregroundStyle(SlateOverlayInk.secondary),
+            )
         }
         return .spliced(segments)
     }

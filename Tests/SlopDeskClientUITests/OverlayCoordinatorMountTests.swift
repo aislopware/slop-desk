@@ -201,6 +201,39 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertTrue(paneRows.allSatisfy { $0.filter == .tabs }, "the pane rows carry the Tabs jump filter")
     }
 
+    /// The palette's pane rows resolve their identity through the SWITCHER's chain
+    /// (``PaneSwitcherRowsBuilder/identity(pane:spec:tab:store:)``) — the ⌘⇧P row and the ⌃⇥ row must
+    /// never call one pane two things. Pinned off the chain's cwd rung: with a known cwd and no live
+    /// title, the chain names the pane by its FOLDER and places it on the same line the switcher
+    /// stacks — the raw `liveProgramTitle ?? spec.title` shortcut this replaced said "Terminal" and
+    /// spelled the full cwd instead.
+    func testPaneJumpRowsShareTheSwitcherIdentityChain() throws {
+        let (overlay, store) = makeCoordinator()
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.setLastKnownCwd("/Users/dev/myproj", for: pane)
+
+        overlay.openPalette(mode: .command)
+        let row = try XCTUnwrap(
+            overlay.selectableResults.first { $0.id == "tab.\(pane.raw.uuidString)" },
+            "the pane's jump row is present",
+        )
+        let session = try XCTUnwrap(store.tree.activeSession)
+        let tab = try XCTUnwrap(session.tabs.first { $0.allPaneIDs().contains(pane) })
+        let ident = PaneSwitcherRowsBuilder.identity(
+            pane: pane, spec: session.specs[pane], tab: tab, store: store,
+        )
+        XCTAssertEqual(row.title, ident.title, "the palette row and the switcher name the pane identically")
+        XCTAssertEqual(row.subtitle, ident.placeLine, "the palette subtitle is the switcher's place line")
+        XCTAssertEqual(
+            row.title, "myproj",
+            "the identity chain's folder rung names the pane (the raw-title shortcut said 'Terminal')",
+        )
+        XCTAssertTrue(
+            row.keywords?.contains("/Users/dev/myproj") == true,
+            "the full cwd stays searchable as a hidden keyword",
+        )
+    }
+
     /// Accepting a PANES jump row focuses that pane (`jumpToPaneTree`) and closes the palette — the whole
     /// point of listing panes under ⌘⇧P. Two tabs: the palette opens focused on the SECOND pane; running the
     /// FIRST pane's row must land the focus back on it.

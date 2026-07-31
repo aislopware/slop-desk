@@ -352,7 +352,10 @@ public struct WorkspaceRootView: View {
             kind: kind, spec: spec, cwd: cwd, liveTitle: store.liveProgramTitle(for: paneID),
             processLabel: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
         )
-        return title.isEmpty ? productName : title
+        // The titlebar is SYSTEM-drawn — no custom-font splice can reach it, so a nerd-font glyph
+        // is STRIPPED rather than shown as a notdef box (the one surface that degrades by removal).
+        let stripped = NerdSymbolFont.strippingSymbols(title)
+        return stripped.isEmpty ? productName : stripped
     }
 
     /// The window-title fallback (empty workspace / no active pane) — the product name.

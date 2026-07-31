@@ -135,7 +135,9 @@ private struct TitleMenuButton: View {
     var body: some View {
         Button { show.toggle() } label: {
             HStack(spacing: 5) {
-                Text(title)
+                // `nerdAware` — the centre chip carries the pane's live title, which can hold a
+                // nerd-font glyph; it draws from the bundled symbols face instead of a notdef box.
+                Text.nerdAware(title, size: Slate.Typeface.body)
                     .font(.system(size: Slate.Typeface.body, weight: .medium))
                     .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)

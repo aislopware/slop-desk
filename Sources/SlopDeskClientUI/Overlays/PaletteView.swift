@@ -220,11 +220,11 @@ struct PaletteView: View {
                 .font(.system(size: Slate.Typeface.body, weight: isSelected ? .medium : .regular))
                 .lineLimit(1)
 
-            // The subtitle (a PANES row's cwd / app name — verbs carry none) rides beside the title in
-            // the secondary ink: identically-titled "Terminal" panes are told apart by where they live.
+            // The subtitle (a PANES row's place line / app name — verbs carry none) rides beside the
+            // title in the secondary ink: identically-titled panes are told apart by where they live.
             // Head-truncated so a squeezed path keeps its leaf (the directory that identifies the pane).
             if let subtitle = item.subtitle, !subtitle.isEmpty {
-                Text(subtitle)
+                Text.nerdAware(subtitle, size: Slate.Typeface.small)
                     .font(.system(size: Slate.Typeface.small))
                     .foregroundStyle(SlateOverlayInk.secondary)
                     .lineLimit(1)
@@ -271,8 +271,10 @@ struct PaletteView: View {
     /// thing on a machine whose accent is pink).
     private func highlightedTitle(_ ranked: RankedRow) -> Text {
         let title = ranked.item.title
+        // Every run goes through `nerdAware` so a PANES row's private-use glyph (an agent/program
+        // title's nerd-font mark) draws from the bundled symbols face inside the highlight run too.
         guard !ranked.titleRanges.isEmpty else {
-            return Text(title).foregroundStyle(SlateOverlayInk.primary)
+            return Text.nerdAware(title, size: Slate.Typeface.body).foregroundStyle(SlateOverlayInk.primary)
         }
         // Accumulate `Text` segments then splice them into one run (`Text.spliced` — the interpolation
         // fold that replaced the deprecated `Text + Text`).
@@ -280,13 +282,22 @@ struct PaletteView: View {
         var cursor = title.startIndex
         for range in ranked.titleRanges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.secondary))
+                segments.append(
+                    Text.nerdAware(title[cursor..<range.lowerBound], size: Slate.Typeface.body)
+                        .foregroundStyle(SlateOverlayInk.secondary),
+                )
             }
-            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold))
+            segments.append(
+                Text.nerdAware(title[range], size: Slate.Typeface.body)
+                    .foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold),
+            )
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
+            segments.append(
+                Text.nerdAware(title[cursor...], size: Slate.Typeface.body)
+                    .foregroundStyle(SlateOverlayInk.secondary),
+            )
         }
         return .spliced(segments)
     }

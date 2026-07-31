@@ -96,18 +96,25 @@ private struct RowView: View {
     /// rather than an empty lead-in; a pane with neither shows no second line at all.
     private var place: Text? {
         guard let project = row.project else {
-            return row.note.map { Text($0).font(.system(size: Slate.Typeface.footnote)) }
+            return row.note.map {
+                Text.nerdAware($0, size: Slate.Typeface.footnote)
+                    .font(.system(size: Slate.Typeface.footnote))
+            }
         }
-        let head = Text(project)
+        let head = Text.nerdAware(project, size: Slate.Typeface.footnote)
             .font(.system(size: Slate.Typeface.footnote, weight: .medium))
         guard let note = row.note else { return head }
-        return Text.spliced([head, Text(" › \(note)").font(.system(size: Slate.Typeface.footnote))])
+        return Text.spliced([
+            head,
+            Text.nerdAware(" › \(note)", size: Slate.Typeface.footnote)
+                .font(.system(size: Slate.Typeface.footnote)),
+        ])
     }
 
     var body: some View {
         HStack(spacing: Slate.Metric.space3) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(row.title)
+                Text.nerdAware(row.title, size: Slate.Typeface.body)
                     .font(.system(
                         size: Slate.Typeface.body, weight: row.isHighlighted ? .medium : .regular,
                     ))

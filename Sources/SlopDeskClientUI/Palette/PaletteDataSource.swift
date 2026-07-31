@@ -496,6 +496,9 @@ public struct TabsPaletteSource: PaletteDataSource {
         /// A VIDEO pane (window / desktop stream): rendered with the window glyph; its jump routes
         /// through the same `jumpToPaneTree` funnel as any pane.
         public var isWindow: Bool = false
+        /// The pane's raw cwd — a HIDDEN search keyword (the rendered subtitle is the switcher's quiet
+        /// place line, but a full-path query must still find the pane).
+        public var cwd: String?
     }
 
     private let entries: [Entry]
@@ -503,6 +506,9 @@ public struct TabsPaletteSource: PaletteDataSource {
     public init(entries: [Entry]) { self.entries = entries }
 
     /// Build a snapshot from the live store (active session's tabs → one entry per visible pane).
+    /// Title + subtitle come from ``PaneSwitcherRowsBuilder/identity(pane:spec:tab:store:)`` — the SAME
+    /// chain the ⌃⇥ switcher and the sidebar resolve, so the palette can never call a pane something
+    /// the switcher does not.
     @preconcurrency
     @MainActor
     public static func snapshot(_ store: WorkspaceStore) -> Self {
@@ -512,15 +518,14 @@ public struct TabsPaletteSource: PaletteDataSource {
             // Enumerate the tab's full pane set (`tab.allPaneIDs()`, pre-order DFS) — matching OpenQuickly.
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
-                let isVideo = spec?.kind.isVideo == true
-                let fallback = isVideo ? "Remote window" : "Terminal"
-                let title = store.liveProgramTitle(for: paneID) ?? spec?.title ?? fallback
-                let subtitle = isVideo ? spec?.video?.appName : store.paneCwd(for: paneID)
-                let isAgent = (store.paneAgentStatus[paneID] ?? .none) != .none
+                let ident = PaneSwitcherRowsBuilder.identity(pane: paneID, spec: spec, tab: tab, store: store)
                 out.append(Entry(
                     paneID: paneID, tabIndex: tabIndex,
-                    title: title.isEmpty ? fallback : title, subtitle: subtitle, isAgent: isAgent,
-                    isWindow: isVideo,
+                    title: ident.title,
+                    subtitle: ident.placeLine,
+                    isAgent: (store.paneAgentStatus[paneID] ?? .none) != .none,
+                    isWindow: spec?.kind.isVideo == true,
+                    cwd: store.paneCwd(for: paneID),
                 ))
             }
         }
@@ -534,8 +539,9 @@ public struct TabsPaletteSource: PaletteDataSource {
                 icon: entry.isWindow ? "macwindow" : (entry.isAgent ? "asterisk" : "terminal"),
                 title: entry.title,
                 subtitle: entry.subtitle,
-                // Hidden synonyms so "pane"/"jump"/"tab 2" surface the row without polluting its title.
-                keywords: "pane jump go switch tab \(entry.tabIndex + 1)",
+                // Hidden synonyms so "pane"/"jump"/"tab 2" — and the pane's FULL cwd, which the quiet
+                // place-line subtitle no longer spells out — surface the row without polluting it.
+                keywords: "pane jump go switch tab \(entry.tabIndex + 1) \(entry.cwd ?? "")",
                 shortcut: nil,
                 filter: .tabs,
                 action: .store { store in store.jumpToPaneTree(entry.paneID) },

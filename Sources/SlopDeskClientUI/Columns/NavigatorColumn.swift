@@ -604,7 +604,9 @@ struct SidebarSectionHeaderRow: View {
                 .foregroundStyle(Slate.State.header)
                 .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
+                // `nerdAware` — a project folder named with a nerd-font glyph draws it from the
+                // bundled symbols face instead of a notdef box.
+                Text.nerdAware(title, size: Slate.Typeface.footnote)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)

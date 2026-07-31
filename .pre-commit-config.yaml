@@ -44,7 +44,9 @@ repos:
         stages: [pre-commit]
       - id: check-added-large-files
         stages: [pre-commit]
-        args: [--maxkb=2048]
+        # 3072 admits the bundled Symbols Nerd Font (2.4 MiB) — still small enough to catch a stray
+        # binary/screenshot landing in the tree.
+        args: [--maxkb=3072]
       - id: mixed-line-ending
         stages: [pre-commit]
         args: [--fix=lf]
