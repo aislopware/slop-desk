@@ -1,24 +1,22 @@
 # SlopDesk brand
 
-Logo concepts grounded in the MERIDIAN design system: colour = live data, zero
-at-rest ornament (no gradients, no glows, no borders), one accent.
+Mark = **Slopcat**: a stand-less remote screen that grew small cat ears; the face is
+the shell prompt itself — `❯` winking eye, `▁` cursor eye. Flat, one colour,
+mono/neutral on purpose (chosen 2026-07-31 after the liquid-glass and Signal-S
+directions were retired; lineage: otty's glyph-face, neko/kitty's cat, GitHub's
+mascot pragmatism).
 
-Open `preview.html` for all concepts at 128/48/24/16 px on light + dark, wordmark
-lockups, and app-icon mockups.
+| File | Role |
+|------|------|
+| `logo-slopcat.svg` | The mark. `currentColor` with real cutout holes — drop it on any background, invert freely. Also the source for favicon and the macOS menu-bar template image (solid black + alpha). |
+| `appicon-slopcat.svg` | Static app-icon mock: paper plate `#F2F1EC`, ink mark `#23262B`. |
+| `SlopDesk.icon` | **Ship source** for the dock icon (all three app targets reference it from `Apps/*/project.yml`): Icon Composer bundle — solid paper fill + one flat `slopcat.png` layer (1024²); Tahoe applies its own material/shadow around flat art. Open in Icon Composer (Xcode 26) to preview default/dark/tinted. |
 
-| File | Concept |
-|------|---------|
-| `logo-signal-s.svg` | **A — Signal S** (chosen): one low-latency wire routed between two live machines, shaped as the monogram S. Wire = `currentColor`; the two endpoint nodes are the only colour (`#34E27A` "live"), sized 1.2× the stroke weight so the terminals anchor the eye. Greyscale = offline, matching the app's L1 drain rule. |
-| `logo-signal-s-kinetic.svg` | The brand's one orchestrated moment (runs once, mechanical easing, honours reduced-motion): host node lands → wire routes → client node pops live. For launch screens / socials / loading, never the at-rest lockup. |
-| `appicon-signal-s.svg` | Static app-icon mock for A: flat slate (`#17191D`) Apple-grid superellipse, paper wire, live nodes. |
-| `SlopDesk.icon` | **Ship source** for the macOS 26 dock icon: Icon Composer bundle — solid slate fill + two glass layers (`wire.png`, `nodes.png`, 1024²) so Tahoe applies native specular/shadow around a still-flat mark instead of auto-glassing a flat PNG. Open in Icon Composer (Xcode 26) to preview default/dark/tinted/clear. |
-| `logo-dual-caret.svg` | B (unpicked) — two shell prompts facing each other (`❯` local, `❮` remote), middle strokes parallel so the pair reads as one S-zigzag. |
-| `logo-meridian-dial.svg` | C (unpicked) — instrument dial with meridian line, needle at the connect-flood angle. |
+Palette: ink `#23262B` · paper `#F2F1EC`. No accent colour in the mark — colour
+stays reserved for live-data semantics inside the app (MERIDIAN L1).
 
-Palette: ink `#23262B` · paper `#F2F1EC` · live `#34E27A`.
-
-Trend grounding (researched 2026-07-22): mark sits in the LogoLounge-2026 "Faders"
-monoline-pathway family and the Vercel/Zed monochrome-geometric lineage; dark + single
-saturated green pairs like Supabase. Kept flat on purpose — 2026 gradients live in brand
-atmosphere, not in the symbol. Motion is the "baseline, not luxury" axis, hence the
-kinetic variant; at-rest stays static per MERIDIAN law.
+Geometry (viewBox 256): screen `rect x56 y68 w144 h120 rx30`; ears
+`M 74 76 L 81 46 Q 98 54 112 70 Z` (+ mirrored), rounded via stroke-join; eye
+`M 90 111 L 114 128 L 90 145` (w13, round caps); cursor `rect x140 y134 w34 h11 r5.5`.
+Ear/eye/cursor cuts are mask holes, not paint — keep it that way so the mark stays
+one-colour and background-agnostic.

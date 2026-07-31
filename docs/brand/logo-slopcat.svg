@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- SlopDesk — "Slopcat". A stand-less remote screen with small cat ears; the face
+       is the shell prompt itself: ❯ winking eye, ▁ cursor eye. One colour
+       (currentColor) — invert freely; the cutouts are real holes. -->
+  <defs>
+    <mask id="slopcat-cut">
+      <rect width="256" height="256" fill="#000"/>
+      <path d="M 74 76 L 81 46 Q 98 54 112 70 Z" fill="#fff" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+      <path d="M 182 76 L 175 46 Q 158 54 144 70 Z" fill="#fff" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+      <rect x="56" y="68" width="144" height="120" rx="30" fill="#fff"/>
+      <path d="M 90 111 L 114 128 L 90 145" fill="none" stroke="#000" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="140" y="134" width="34" height="11" rx="5.5" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="256" height="256" fill="currentColor" mask="url(#slopcat-cut)"/>
+</svg>

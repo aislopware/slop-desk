@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Static app-icon mock: paper plate, ink mark. Ship source is SlopDesk.icon
+       (Icon Composer applies the real superellipse + material at runtime). -->
+  <rect width="1024" height="1024" rx="229" fill="#F2F1EC"/>
+  <g transform="translate(512 512) scale(3.4) translate(-128 -128)" color="#23262B">
+    <defs>
+      <mask id="slopcat-appicon-cut">
+        <rect width="256" height="256" fill="#000"/>
+        <path d="M 74 76 L 81 46 Q 98 54 112 70 Z" fill="#fff" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+        <path d="M 182 76 L 175 46 Q 158 54 144 70 Z" fill="#fff" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+        <rect x="56" y="68" width="144" height="120" rx="30" fill="#fff"/>
+        <path d="M 90 111 L 114 128 L 90 145" fill="none" stroke="#000" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="140" y="134" width="34" height="11" rx="5.5" fill="#000"/>
+      </mask>
+    </defs>
+    <rect width="256" height="256" fill="currentColor" mask="url(#slopcat-appicon-cut)"/>
+  </g>
+</svg>
