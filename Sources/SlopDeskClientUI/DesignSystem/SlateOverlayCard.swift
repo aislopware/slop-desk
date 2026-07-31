@@ -29,6 +29,12 @@
 // which are neutral by construction and follow light/dark on their own. The workspace keeps the filter; the
 // things that float above it do not.
 //
+// Nor is the SYSTEM ACCENT part of the family. It was the last colour left — the caret, the fuzzy-match run,
+// the ✓ gutter, the default button — and a card that is otherwise monochrome reads as a system dialog the
+// moment one blue thing lands on it (and as a PINK one on a machine whose accent is pink, which is not a
+// decision this design gets to make). A match run is marked the way every other readout here marks
+// importance: heavier, against quieter neighbours. A filled control takes ``SlateOverlayInk/control``.
+//
 // Status colour is the exception and stays: a blocked agent's mark and a validation warning MEAN something,
 // and neutrality is about the chrome not competing, never about suppressing a signal.
 //
@@ -57,8 +63,12 @@ enum SlateOverlayInk {
     static let hairline = Color.primary.opacity(0.12)
     /// The ground an editable field sinks into — the opposite direction from ``plate``.
     static let well = Color.primary.opacity(0.04)
-    /// The SYSTEM accent (a caret, a fuzzy-match run), never the theme's.
-    static let accent = Color.accentColor
+    /// The fill a FILLED control takes — the default button, a filled toggle — in place of the system
+    /// accent. Neutral like the rest of the family: an accent-blue button on a monochrome card was the
+    /// last coloured thing left on these surfaces, and it read as a system dialog wearing our card. Grey
+    /// rather than ``primary`` because a filled control's label is drawn white by the platform on both
+    /// appearances, and a `primary`-filled button in dark mode is white text on a white plate.
+    static let control = Color.gray
 }
 
 // MARK: - The card surface
@@ -99,6 +109,13 @@ struct SlateGlassCard: ViewModifier {
             }
         }
         .overlay { shape.strokeBorder(rim, lineWidth: Slate.Metric.hairline) }
+        // ⚠️ The card is SOLID TO CLICKS, and that is a correctness fix, not polish. The card floats on a
+        // full-bleed dismiss floor; a click that lands on the card's own body — a label, the padding
+        // between two fields, the gap beside a disclosure row — is not a click on the floor, but nothing
+        // in the content is interactive there, so it fell straight through and DISMISSED the card the
+        // user was reaching into. The barrier goes BEHIND the content, so every real control on the card
+        // still gets its hit first; only what the content declines to take stops here.
+        .background { Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain) }
         .shadow(color: shadow, radius: Slate.Metric.panelShadowRadius, y: Slate.Metric.panelShadowY)
     }
 }
@@ -138,20 +155,15 @@ extension View {
     }
 }
 
-// MARK: - Making a row clickable over the AppKit split
+// MARK: - Clicking on a floating card
 
-/// An invisible BUTTON covering its parent, used to make a card row clickable.
+/// The card's DISMISS FLOOR: an invisible full-bleed button that closes the overlay when the click lands
+/// beside the card.
 ///
-/// ⚠️ This exists because `.onTapGesture` DOES NOT FIRE on these cards. The floating layer is a SwiftUI
-/// overlay above the workspace, which is an AppKit split (`NSViewControllerRepresentable`); its real
-/// `NSView` wins `hitTest:` against SwiftUI content drawn over it, so SwiftUI's own gesture recognition
-/// never sees the click. A real control does get it — measured both ways in one session: clicking a row
-/// backed by `.onTapGesture` ran nothing, while the connect card's native Cancel button, in the same
-/// overlay at the same moment, dismissed the card.
-///
-/// So: anything a user must be able to CLICK on one of these cards is a `Button`, never a tap gesture.
-/// Laid over the finished row rather than wrapped around it, so the row keeps its own layout, plate and
-/// truncation exactly as written.
+/// A `Button` rather than a tap gesture on a `Color`, because this layer floats over an AppKit split
+/// (`NSViewControllerRepresentable`) and a real control is the arrangement that is unambiguously hit-tested
+/// there. It is also why the card carries its own hit barrier (see ``SlateGlassCard``): a floor that spans
+/// the window would otherwise be reachable THROUGH the card's own inert body.
 struct SlateClickTarget: View {
     let action: () -> Void
 
@@ -161,6 +173,22 @@ struct SlateClickTarget: View {
             Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension View {
+    /// Make a finished card row CLICKABLE — as a real button wrapped AROUND the row, never as an invisible
+    /// one laid over it.
+    ///
+    /// ⚠️ The overlay form is what broke hover-select on the palette and Open Quickly. A click target laid
+    /// on TOP of a row is topmost for pointer purposes, so it eats the row's `onContinuousHover` along with
+    /// its clicks, and the selection stops following the mouse — the one thing a palette must do. Wrapped,
+    /// the hover modifier sits outside the button and sees every phase, while the button still owns the
+    /// click. The row draws exactly as written either way: `.plain` adds no chrome, and the label keeps the
+    /// row's own layout, plate and truncation.
+    func slateRowButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) { self }
+            .buttonStyle(.plain)
     }
 }
 

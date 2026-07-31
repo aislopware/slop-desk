@@ -109,11 +109,12 @@ struct CommandNavigatorView: View {
         // Keyboard: the focused search field consumes typed text + plain ↩ (`onSubmit`); bare arrows / Esc
         // bubble to these container handlers (the Jump-To idiom). The ⌃⌘O chord re-toggles to close via the
         // dispatcher → the pane model's `onRequestBlockNavigator`.
-        .onKeyPress(.upArrow, phases: .down) { _ in
+        // `OverlayKeyRepeat.phases`: a HELD arrow walks the list, like every other list on the platform.
+        .onKeyPress(.upArrow, phases: OverlayKeyRepeat.phases) { _ in
             moveSelection(-1)
             return .handled
         }
-        .onKeyPress(.downArrow, phases: .down) { _ in
+        .onKeyPress(.downArrow, phases: OverlayKeyRepeat.phases) { _ in
             moveSelection(1)
             return .handled
         }

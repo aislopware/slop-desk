@@ -191,12 +191,22 @@ struct OverlayHostView: View {
                     .slateGlassCard()
                     // The card must never run out of a small window; this is the margin it keeps.
                     .padding(Slate.Metric.space4)
-                    // The controls inside these cards are real AppKit controls and read as themselves; a
-                    // theme-accented stock button looks like a recoloured system button, not like
-                    // workspace furniture.
-                    .tint(nil)
+                    // The controls are real AppKit controls and read as themselves — but they are tinted
+                    // NEUTRAL, not with the system accent. A monochrome card with one blue filled button on
+                    // it reads as a system dialog wearing our surface (and as a pink one wherever the
+                    // machine's accent is pink). The theme accent is doubly wrong here and was rejected
+                    // earlier; `SlateOverlayInk.control` is the family's own filled-control ink.
+                    .tint(SlateOverlayInk.control)
             }
             .transition(.opacity)
+            // ⚠️ Closing the card must hand the KEYBOARD BACK. The card's field is the window's first
+            // responder while it is up, and tearing it down leaves the window itself holding the
+            // responder — so the pane the user was working in went deaf and had to be clicked before it
+            // would take a keystroke again. Nothing else fires here: the pane's own reclaim paths all gate
+            // on a focus TRANSITION or a click, and the workspace focus never changed. A sheet did not
+            // need this (AppKit restored the parent window's responder on dismissal); an in-window card
+            // does. Same call the find bar makes when it closes.
+            .onDisappear { store.reclaimKeyboardFocusInActivePane() }
             // Esc reaches the focused card's own handler in every case but one — the cheat sheet has no
             // field to focus — so the backdrop carries the same escape as a floor. macOS spells it
             // `onExitCommand` (unavailable on iOS, where the cards are reached by tap anyway).

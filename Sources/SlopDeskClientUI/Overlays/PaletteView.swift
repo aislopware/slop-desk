@@ -65,11 +65,13 @@ struct PaletteView: View {
         // bound chords), so they reach this focused overlay. Plain ↩ is handled by the field's `.onSubmit`
         // (TextField-native, reliable); ⌘↩ is NOT a TextField submit, so it reaches THIS container handler —
         // guarding on `.command` (else `.ignored`) keeps the two from double-firing.
-        .onKeyPress(.upArrow, phases: .down) { _ in
+        // `OverlayKeyRepeat.phases` (not `.down`): a held arrow WALKS the list, the way every other list on
+        // the platform does. `.down` alone moved the selection once per physical press.
+        .onKeyPress(.upArrow, phases: OverlayKeyRepeat.phases) { _ in
             coordinator.moveSelection(-1)
             return .handled
         }
-        .onKeyPress(.downArrow, phases: .down) { _ in
+        .onKeyPress(.downArrow, phases: OverlayKeyRepeat.phases) { _ in
             coordinator.moveSelection(1)
             return .handled
         }
@@ -99,7 +101,7 @@ struct PaletteView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.accent) // the active caret is the accent colour (spec)
+                .tint(SlateOverlayInk.primary) // the caret is the text's own ink, not an accent
                 .focused($searchFocused)
                 .onSubmit { coordinator.acceptSelected() } // plain ↩ runs + closes
         }
@@ -217,12 +219,13 @@ struct PaletteView: View {
         let item = ranked.item
         let isSelected = selectableIndex == coordinator.paletteSelection
         return HStack(spacing: Slate.Metric.space2) {
-            // Leading 24pt gutter: the ✓ toggled-state checkmark (Unicode check, dark accent), or empty.
+            // Leading 24pt gutter: the ✓ toggled-state checkmark, or empty. Set in the reading ink, not an
+            // accent — a checkmark already means one thing, and colouring it says nothing more.
             ZStack {
                 if toggledState(item) {
                     Image(systemSymbol: .checkmark)
                         .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                        .foregroundStyle(SlateOverlayInk.accent)
+                        .foregroundStyle(SlateOverlayInk.primary)
                 }
             }
             .frame(width: 20, alignment: .center)
@@ -247,6 +250,9 @@ struct PaletteView: View {
         .slateSelectionPlate(isSelected)
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
+        // The click is the row itself (a button WRAPPED around it, never one laid over it — an overlaid
+        // target is topmost for the pointer and eats the hover below).
+        .slateRowButton { coordinator.run(item) }
         // Hover moves the keyboard selection onto this row (spec: hover/tap → run) — but only on genuine
         // pointer MOVEMENT (`.global`-space location changed): a keyboard scrollTo sliding this row under a
         // parked pointer re-fires hover too, and admitting that would yank the selection back to the mouse.
@@ -256,14 +262,18 @@ struct PaletteView: View {
             hoverGate.noteHoverDrivenSelection()
             coordinator.paletteSelection = selectableIndex
         }
-        .overlay { SlateClickTarget { coordinator.run(item) } }
         .id(item.id)
     }
 
     // MARK: - Title highlight (fzf ranges)
 
-    /// The row title as a `Text`, with the fzf-matched code-point runs (``RankedRow/titleRanges``) tinted the
-    /// accent colour + semibold. A range-less row (separator / zero-state / subtitle-only match) renders flat.
+    /// The row title as a `Text`, with the fzf-matched code-point runs (``RankedRow/titleRanges``) marked. A
+    /// range-less row (separator / zero-state / subtitle-only match) renders flat.
+    ///
+    /// The mark is CONTRAST, not colour: the matched run keeps the reading ink at semibold while the letters
+    /// around it step back to `secondary`, so what the query hit reads as lit rather than as tinted. It was
+    /// the system accent, which put the one blue thing on an otherwise monochrome card (and the one PINK
+    /// thing on a machine whose accent is pink).
     private func highlightedTitle(_ ranked: RankedRow) -> Text {
         let title = ranked.item.title
         guard !ranked.titleRanges.isEmpty else {
@@ -275,13 +285,13 @@ struct PaletteView: View {
         var cursor = title.startIndex
         for range in ranked.titleRanges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.secondary))
             }
-            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.accent).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }

@@ -62,8 +62,13 @@ struct ConnectHostView: View {
                             .font(.system(size: Slate.Typeface.small, weight: .semibold))
                         Text("Video ports")
                             .font(.callout)
+                        Spacer(minLength: 0)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(SlateOverlayInk.secondary)
+                    // The WHOLE row is the target, the way a native disclosure row is — a hit area the
+                    // width of two words is a miss waiting to happen, and on this card a miss used to land
+                    // on the dismiss floor and take the card away mid-edit.
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -128,7 +133,7 @@ struct ConnectHostView: View {
             Text(label.uppercased())
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
                 .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(SlateOverlayInk.tertiary)
             TextField("", text: text, prompt: Text(prompt))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.large)

@@ -117,14 +117,21 @@ struct OpenQuicklyView: View {
         // fires behind it — the picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J/⌘E, ⌘1–9, ⌘K, Tab, arrows) reach
         // ``handleKey`` instead of switching the background tab / closing the focused pane. Plain ↩ is the
         // field's `.onSubmit` (TextField-native), so a single ↩ never double-fires.
-        .onKeyPress(phases: .down) { press in handleKey(press) }
+        // `.repeat` is admitted so a HELD arrow walks the list, but the picker routes its whole keyboard
+        // through this one handler — so the repeats of everything else (⌘1–9, ⌘K, Tab, the pill chords) are
+        // swallowed rather than re-fired. `.handled`, not `.ignored`: an ignored press walks on to the
+        // responder chain and beeps.
+        .onKeyPress(phases: OverlayKeyRepeat.phases) { press in
+            guard OverlayKeyRepeat.admits(press) else { return .handled }
+            return handleKey(press)
+        }
         #if os(macOS)
-            .onExitCommand { close() }
+        .onExitCommand { close() }
         #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                close()
-                return .handled
-            }
+        .onKeyPress(.escape, phases: .down) { _ in
+            close()
+            return .handled
+        }
         #endif
     }
 
@@ -144,7 +151,7 @@ struct OpenQuicklyView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.accent) // the active caret is the accent colour
+                .tint(SlateOverlayInk.primary) // the caret is the text's own ink, not an accent
                 .focused($searchFocused)
                 .onSubmit { actSelected() } // plain ↩ acts + closes
         }
@@ -304,6 +311,8 @@ struct OpenQuicklyView: View {
         .slateSelectionPlate(isSelected)
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
+        // The click is the row itself (WRAPPED, not overlaid — an overlaid target eats the hover below it).
+        .slateRowButton { act(item) }
         // Hover-select on genuine pointer MOVEMENT only — a keyboard scrollTo sliding this row under a
         // parked pointer re-fires hover too, and admitting that would yank the selection back to the mouse.
         .onContinuousHover(coordinateSpace: .global) { phase in
@@ -312,7 +321,6 @@ struct OpenQuicklyView: View {
             hoverGate.noteHoverDrivenSelection()
             selection = selectableIndex
         }
-        .overlay { SlateClickTarget { act(item) } }
         .id(item.id)
         // The Actions popover anchors on the SELECTED row (⌘K), reusing the per-kind action table.
         .popover(isPresented: Binding(
@@ -346,17 +354,19 @@ struct OpenQuicklyView: View {
         guard !trimmed.isEmpty, let ranges = FuzzyMatcher.score(trimmed, title)?.ranges, !ranges.isEmpty else {
             return Text(title).foregroundStyle(SlateOverlayInk.primary)
         }
+        // The match is marked by CONTRAST, not colour (the palette makes the same call): the hit run keeps
+        // the reading ink at semibold and the letters around it step back.
         var segments: [Text] = []
         var cursor = title.startIndex
         for range in ranges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(SlateOverlayInk.secondary))
             }
-            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.accent).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }
@@ -429,7 +439,10 @@ struct OpenQuicklyView: View {
         .background(SlateOverlayInk.well)
         // The popover owns the keyboard while open (its field is focused): ↑/↓ move the highlight over the
         // FILTERED list; ↩ is the field's `.onSubmit`; Esc closes just the popover (not the whole picker).
-        .onKeyPress(phases: .down) { press in handleActionsKey(press, count: actions.count) }
+        .onKeyPress(phases: OverlayKeyRepeat.phases) { press in
+            guard OverlayKeyRepeat.admits(press) else { return .handled }
+            return handleActionsKey(press, count: actions.count)
+        }
     }
 
     private var actionsSearchField: some View {
@@ -441,7 +454,7 @@ struct OpenQuicklyView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.accent)
+                .tint(SlateOverlayInk.primary)
                 .focused($actionsFocused)
                 .onSubmit { runHighlightedAction() }
         }

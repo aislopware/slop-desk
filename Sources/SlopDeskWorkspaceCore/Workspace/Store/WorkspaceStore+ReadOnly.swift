@@ -77,6 +77,20 @@ public extension WorkspaceStore {
         setPaneReadOnly(id, !paneReadOnly.contains(id))
     }
 
+    /// Hands the KEYBOARD back to the active pane after a floating card closes.
+    ///
+    /// The overlays are in-window glass cards, so a card with a text field holds the window's first
+    /// responder while it is up and leaves the WINDOW holding it on teardown — the pane goes deaf until it
+    /// is clicked. None of the surface's own reclaim paths fire, because they all gate on a focus TRANSITION
+    /// or a click and the workspace focus never changed while the card was open. This is the same hand-back
+    /// the find bar performs on close (``TerminalViewModel/reclaimKeyboardFocus()``), resolved against
+    /// whichever pane is active at the moment of the call — so a card that CHANGED the active pane on its
+    /// way out (a palette split, an Open Quickly jump) leaves the keyboard on the new pane, not the old one.
+    /// A graceful no-op for a non-terminal active pane or an empty shell (no live model).
+    func reclaimKeyboardFocusInActivePane() {
+        activeTerminalModel?.reclaimKeyboardFocus()
+    }
+
     /// TOGGLES the vi KEY-HINT BAR over the active pane. The `⌘/` chord routes here ONLY
     /// while the active pane is in vi / copy-mode (``WorkspaceBindingRegistry`` `route` resolves the contextual
     /// branch — out of copy-mode, `⌘/` stays the global keyboard cheat sheet). Drives the MODEL as the single

@@ -95,7 +95,7 @@ struct GlobalSearchView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(SlateOverlayInk.primary)
-                .tint(SlateOverlayInk.accent) // the active caret is the accent colour
+                .tint(SlateOverlayInk.primary) // the caret is the text's own ink, not an accent
                 .focused($queryFocused)
                 // The query sinks into the shared field plate (``View/slateFieldPlate()``) — the same recipe
                 // the connect card's inputs take, so an editable field looks the same on every overlay. The
@@ -212,7 +212,7 @@ struct GlobalSearchView: View {
         .padding(.top, Slate.Metric.space3)
         .padding(.bottom, Slate.Metric.space1)
         .contentShape(Rectangle())
-        .overlay { SlateClickTarget { collapse.toggle(group.paneID) } }
+        .slateRowButton { collapse.toggle(group.paneID) }
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(Text(group.groupTitle))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
@@ -315,8 +315,10 @@ private struct GlobalSearchHitRow: View {
         .slateSelectionPlate(hovering)
         .padding(.horizontal, Slate.Metric.space3)
         .contentShape(Rectangle())
+        // WRAPPED, not overlaid: a click target laid over the row is topmost for the pointer, so it eats
+        // the `.onHover` beneath it — and on this surface hover IS the selection.
+        .slateRowButton(onJump)
         .onHover { hovering = $0 }
-        .overlay { SlateClickTarget(action: onJump) }
     }
 }
 #endif

@@ -5923,3 +5923,54 @@ surface over coloured work. Every overlay colour now derives from `Color.primary
 it is a true grey on both appearances; `Slate` still supplies dimension and the mono face. The workspace
 keeps the filter. Status colour is the exception and stays: neutrality is about chrome not competing, never
 about suppressing a signal.
+
+**Follow-up 3 — the card behaves like a card: it swallows its own clicks, hands the keyboard back, and
+follows the mouse.**
+
+Four reports, three of them the SAME root as each other and one a self-correction of the round above.
+
+⚠️ **A dismiss floor that spans the window is reachable THROUGH the card.** Clicking a card's own body —
+a label, the padding between two fields, the gap beside the "Video ports" disclosure — hit nothing
+interactive, fell to the backdrop button beneath, and dismissed the card the user was reaching into. The
+card now carries its own hit barrier (a clear `Button` BEHIND its content, inside `slateGlassCard()`), so
+every real control still takes its hit first and only what the content declines stops there. The
+disclosure row also became full-width (`Spacer` + `contentShape`) — a hit area two words wide is a miss
+waiting to happen. Verified: an inside-click leaves the card up, "Video ports" expands, a click outside
+still closes.
+
+⚠️ **An in-window card must hand the KEYBOARD back on close.** The card's field is the window's first
+responder while it is up, and tearing it down leaves the WINDOW holding it, so the pane went deaf until it
+was clicked. None of the surface's reclaim paths fire — they gate on a focus TRANSITION or a click, and
+the workspace focus never changed. A sheet did not need this (AppKit restored the parent window's
+responder); the fix is `WorkspaceStore.reclaimKeyboardFocusInActivePane()` on the card's `onDisappear`,
+the same hand-back the find bar performs, resolved against whichever pane is active AT THE CALL (so a
+palette split leaves the keyboard on the pane it created).
+
+⚠️⚠️ **CORRECTION to Follow-up 2: `.onTapGesture` was never the problem — `allowsHitTesting(false)` was.**
+The dead palette row was the ambient layer's hit gate suppressing everything composed into that chain,
+which the same commit fixed by making the modal a ZStack SIBLING. `SlateClickTarget` was added in that
+commit too and wrongly credited. Worse, it caused a regression: a click target laid OVER a row is topmost
+for the pointer, so it ate the row's `onContinuousHover` and hover-select stopped working on the palette
+and Open Quickly. A row is now a real `Button` WRAPPED around itself (`slateRowButton`) with the hover
+modifier outside it. Measured on hardware: hover moves the selection on both surfaces, and the click still
+runs the row. `SlateClickTarget` survives as the dismiss floor only.
+⚠️ Automation trap: a cursor WARP (`CGWarpMouseCursorPosition`, what most drivers do) posts no mouse-move
+event, so tracking areas never fire and hover looks broken. Move with real `CGEvent` moves (`cliclick m:`).
+
+**A held arrow now WALKS the list** (`OverlayKeyRepeat`). `.onKeyPress` subscribes to `.down` only unless
+asked, so every card list moved once per physical press. Repeat is a WHITELIST — the pickers route their
+whole keyboard through one handler, so a held ⌘3 would otherwise re-open the third row every 30ms; the
+movement keys repeat and everything else's repeats are swallowed (`.handled`, not `.ignored`, which beeps).
+⚠️ Automation trap: `postToPid` drops synthetic auto-repeats. Post to `.cghidEventTap` with
+`kCGKeyboardEventAutorepeat = 1` (proved on a held letter first: 1 down + 6 repeats ⇒ 7 characters).
+
+**The SYSTEM ACCENT leaves the family too.** Neutral in Follow-up 2 meant "not the terminal's filter"; it
+now also means "not the machine's accent". The caret, the fzf match run, the ✓ gutter and the default
+button were the last coloured things on an otherwise monochrome card, and one blue (or, on another Mac,
+pink) element makes it read as a system dialog wearing our surface. A match run is marked the way every
+readout here marks importance — heavier, against quieter neighbours — and a filled control takes
+`SlateOverlayInk.control` (grey, because the platform draws a filled control's label white on both
+appearances, so a `primary` fill would be white-on-white in dark mode).
+⚠️ The native focus RING stays the system's blue: it is drawn from `NSColor.keyboardFocusIndicatorColor`,
+which `.tint` does not reach, and the only ways out are killing the ring or repainting the whole app's
+accent — both worse than one blue ring on a focused field.
