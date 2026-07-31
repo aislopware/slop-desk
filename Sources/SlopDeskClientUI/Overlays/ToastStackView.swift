@@ -13,11 +13,13 @@
 //     hues of engraving stacked in a corner read as an instrument panel, not as an app speaking. The words
 //     the eyebrow carried didn't die, they became the HEADLINE — a sentence-case event phrase ("Claude
 //     needs input", "make check failed") resolved from source + flavour by ``headline(for:)``.
-//   * The LEADING MARK is one filled SF symbol (`*.circle.fill`, status-hued) — the card's only colour.
-//     This is the native idiom (HIG banners, Linear, Sonner all lead with a filled status glyph), and it is
-//     NOT the mixed-family outline quartet an earlier round cut (four glyphs, four stroke weights): one
-//     family, one size, one weight. A routine notice's mark is NEUTRAL — cyan on every OSC notice was
-//     chrome pretending to be signal. The surface is never tinted by flavour and there is no coloured rail.
+//   * The LEADING MARK is a bare status glyph on a disc WASHED with its own hue — the card's only colour.
+//     Leading with a status mark is the native idiom (HIG banners, Linear, Sonner), but the SOLID
+//     `*.circle.fill` symbols were photographed first and read as flat stickers laid on the glass; the
+//     translucent wash lets the surface keep working through the disc. One glyph family, one size, one
+//     weight — NOT the mixed-family outline quartet an earlier round cut. A routine notice's mark is
+//     NEUTRAL — cyan on every OSC notice was chrome pretending to be signal. The surface itself is never
+//     tinted by flavour and there is no coloured rail.
 //   * The CARD IS A DOOR. Tapping it jumps to the pane it names (``Toast/paneKey`` → the mount site's
 //     `jumpToPaneTree`, the same seam `ConnectionAlertChip` uses, breadcrumb cue included). A notification
 //     about somewhere else that cannot take you there is a dead end.
@@ -280,23 +282,37 @@ struct ToastCardView: View {
         }
     }
 
-    /// The card's one point of colour — the filled status mark. Photographed against a status DOT (too
-    /// small to say anything at notification size — the same "tiny abstract speck" that killed the rail's
-    /// ring here) and against NO mark at all (elegant but blind: every card reads identical until the
-    /// words are parsed, and status colour is the one signal the neutral family explicitly keeps).
+    /// The disc a mark sits on — sized off the grid, a shade taller than the headline's cap height.
+    private var discSize: CGFloat { Slate.Metric.space4 + Slate.Metric.space1 }
+
+    /// How much of the mark's hue the disc takes: a WASH, not a fill. The first cut used the solid
+    /// `*.circle.fill` symbols and read as flat stickers laid ON the glass; a translucent tint lets the
+    /// glass keep working through the disc, which is what makes the mark look like part of the surface.
+    private static let discWash = 0.16
+
+    /// The card's one point of colour — a bare status glyph on a disc WASHED with its own hue.
+    /// Photographed against a bare glyph (untethered — the `!` especially read as a stray speck) and
+    /// against the family's neutral keycap plate (which muted the status hue to a whisper); the soft
+    /// self-tinted disc carries the signal and still reads as glass.
     private var leadingMark: some View {
         Image(systemSymbol: markSymbol)
-            .font(.system(size: Slate.Typeface.body))
+            .font(.system(size: Slate.Typeface.small, weight: .bold))
             .foregroundStyle(markTint)
+            .frame(width: discSize, height: discSize)
+            .background(markTint.opacity(Self.discWash), in: .circle)
+            // A disc has no baseline of its own — hang its CENTER just above the headline's baseline
+            // so it optically centres on the cap height instead of floating high.
+            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + Slate.Metric.space1 }
     }
 
-    /// One SF family (`*.circle.fill`), one weight — never the mixed-family quartet the old design cut.
+    /// One family of BARE glyphs, one weight — never the mixed-family quartet the old design cut. The
+    /// disc supplies the enclosure, so the glyphs themselves stay unenclosed.
     private var markSymbol: SFSymbol {
         switch toast.flavor {
-        case .success: .checkmarkCircleFill
-        case .error: .xmarkCircleFill
-        case .attention: .exclamationmarkCircleFill
-        case .default: .infoCircleFill
+        case .success: .checkmark
+        case .error: .xmark
+        case .attention: .exclamationmark
+        case .default: .info
         }
     }
 
