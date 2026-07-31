@@ -436,7 +436,7 @@ public final class PreferencesStore {
         .allowMouseCapture, .allowShiftClick, .clickToMove, .rightClickAction, .optionAsAlt,
         .undoAtPrompt,
         // Controls — the ⌃⇥ switcher's follow-along preview (edited from Appearance → Tabs)
-        .tabSwitcherPreview,
+        .paneSwitcherPreview,
         // Controls — link detection + hint patterns
         .linkDetection, .linkCmdClick, .linkCmdShiftClick, .autoDetectLinkSchemes, .customLinkSchemes,
         .hintPatterns, .hintPatternActions,

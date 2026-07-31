@@ -19,6 +19,17 @@ public extension WorkspaceStore {
         tree.activeSession?.tabs.map(\.id) ?? []
     }
 
+    /// The active session's panes in ONE flat order: tabs in creation order, and within each tab its
+    /// split tree in pre-order DFS (``Tab/allPaneIDs()`` — the same walk the reconcile diff and the
+    /// ⌘]/⌘[ cycle read).
+    ///
+    /// This is the numbering ⌘1…⌘9 lands on and the tail every ⌃⇥ ring falls back to, which is why it
+    /// has to be an order the workspace already has rather than a new one: a pane's number then moves
+    /// only when a pane is opened, closed or moved, never because the user looked somewhere.
+    func flatOrderedPaneIDs() -> [PaneID] {
+        tree.activeSession?.tabs.flatMap { $0.allPaneIDs() } ?? []
+    }
+
     /// This store's reading of ``TabOrderingEngine/paneProjectKey(_:projectKey:cwd:)`` — pane `id`'s
     /// HOST-pushed `pane/projectKey` (wire type 34), else its `pane/cwd` until the first push lands.
     /// `nil` ⇒ the pane lands in the "Other" bucket.
@@ -68,13 +79,18 @@ public extension WorkspaceStore {
         selectTab(next)
     }
 
-    /// Selects the `number`-th tab (1-based) of the active session, if it exists. The ⌘1…⌘9 command entry;
-    /// a number past the tab count is a no-op (clamps to nothing rather than the last tab — a missing tab
-    /// number simply does nothing, the native ⌘N tab idiom).
-    func selectTabNumber(_ number: Int) {
-        guard let session = tree.activeSession else { return }
+    /// Focuses the `number`-th PANE (1-based) of the active session in ``flatOrderedPaneIDs()`` order —
+    /// the ⌘1…⌘9 command entry. A number past the pane count is a no-op (it clamps to nothing rather
+    /// than the last pane: a missing number simply does nothing, the native ⌘-digit idiom).
+    ///
+    /// The digit names a PANE rather than a tab because the pane is this workspace's unit of work — it
+    /// is what the sidebar lists, what ⌃⇥ walks and what a notification points at. Numbering tabs while
+    /// every other surface counts panes made ⌘3 mean one thing in the chord and another on screen.
+    /// Landing goes through ``revealPaneTree(_:)``, so a pane in a background tab brings its tab with it.
+    func selectPaneNumber(_ number: Int) {
+        let panes = flatOrderedPaneIDs()
         let index = number - 1
-        guard session.tabs.indices.contains(index) else { return }
-        selectTab(index)
+        guard panes.indices.contains(index) else { return }
+        revealPaneTree(panes[index])
     }
 }

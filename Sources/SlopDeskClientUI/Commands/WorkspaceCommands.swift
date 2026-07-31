@@ -91,15 +91,15 @@ struct WorkspaceCommands: Commands {
         }
     }
 
-    /// One menu row. The collapsed ⌘1…⌘9 "Select Tab" representative expands into a real submenu (the
-    /// registry comment promises the menu "builds its own Select Tab submenu"); every other binding is a
+    /// One menu row. The collapsed ⌘1…⌘9 "Select Pane" representative expands into a real submenu (the
+    /// registry comment promises the menu "builds its own Select Pane submenu"); every other binding is a
     /// plain shortcut-LESS button that routes its action and shows its glyph as a trailing hint.
     @ViewBuilder
     private func menuItem(for binding: WorkspaceBinding) -> some View {
-        if binding.id == WorkspaceBindingRegistry.selectTabRepresentative.id {
-            Menu("Select Tab") {
-                ForEach(WorkspaceBindingRegistry.selectTabBindings, id: \.id) { tab in
-                    actionButton(tab)
+        if binding.id == WorkspaceBindingRegistry.selectPaneRepresentative.id {
+            Menu("Select Pane") {
+                ForEach(WorkspaceBindingRegistry.selectPaneBindings, id: \.id) { pane in
+                    actionButton(pane)
                 }
             }
         } else if binding.id == "view.pinWindow" {

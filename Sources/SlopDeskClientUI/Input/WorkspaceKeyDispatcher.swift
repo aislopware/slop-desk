@@ -165,7 +165,7 @@ final class WorkspaceKeyDispatcher {
         // never deliver the ⌃ key-up that would commit it, so the overlay would hang with a highlight the
         // user can no longer act on.
         if !isWorkspaceWindowKey() {
-            store.cancelTabSwitcher()
+            store.cancelPaneSwitcher()
             return event
         }
         // MODIFIER TRANSITIONS: releasing ⌃ COMMITS an armed ⌃⇥ switcher — that key-up IS the selection.
@@ -173,20 +173,20 @@ final class WorkspaceKeyDispatcher {
         // no characters and asking it for them raises `NSInternalInconsistencyException`. A transition is
         // never swallowed — the terminal tracks modifier state too.
         if event.type == .flagsChanged {
-            if !event.modifierFlags.contains(.control) { store.commitTabSwitcherOnModifierRelease() }
+            if !event.modifierFlags.contains(.control) { store.commitPaneSwitcherOnModifierRelease() }
             return event
         }
         // MODAL YIELD: while a keyboard-capturing overlay (the Open-Quickly picker) is presented, this monitor
         // — which PREEMPTS the responder chain — must NOT resolve the global chord table behind it, or ⌘1–9
-        // would switch the BACKGROUND tab and ⌘W would DESTROY the focused pane behind it. Pass every key
+        // would focus a pane BEHIND the picker and ⌘W would DESTROY the focused pane behind it. Pass every key
         // through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
         // ⌘1–9, ⌘K); Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
         if isOverlayCapturingKeys() { return event }
-        // The ⌃⇥ tab-switcher gesture, resolved BEFORE the chord table because it is not expressible as a
+        // The ⌃⇥ pane-switcher gesture, resolved BEFORE the chord table because it is not expressible as a
         // table row: one chord means open / step / commit depending on whether the switcher is already up,
         // and Escape — its cancel key — normalizes to no chord at all (`\u{1B}` is a control scalar the
         // normalizer rejects, precisely so a bare Esc always reaches the TUI).
-        if consumeTabSwitcher(event) { return nil }
+        if consumePaneSwitcher(event) { return nil }
         // A keystroke that does not normalize to a chord we model (a pure modifier, a dead key, …) is left
         // untouched — never swallow what we cannot classify.
         guard let chord = KeyChordNormalizer.chord(
@@ -231,10 +231,10 @@ final class WorkspaceKeyDispatcher {
     /// permission modes. Neither carries ⌃, and with the switcher closed neither is claimed here — they fall
     /// straight through to the PTY. Only ⌃⇥ opens the gesture; only while it is open do Esc / Return /
     /// arrows / a bare ⇥ mean anything to us.
-    private func consumeTabSwitcher(_ event: NSEvent) -> Bool {
+    private func consumePaneSwitcher(_ event: NSEvent) -> Bool {
         let control = event.modifierFlags.contains(.control)
         let shift = event.modifierFlags.contains(.shift)
-        let isOpen = store.tabSwitcher != nil
+        let isOpen = store.paneSwitcher != nil
         // ⇧ selects the direction: ⌃⇥ walks toward less-recent, ⌃⇧⇥ walks back.
         let forward = !shift
 
@@ -254,25 +254,25 @@ final class WorkspaceKeyDispatcher {
             if control { mods.insert(.control) }
             if shift { mods.insert(.shift) }
             if !isOpen, WorkspaceBindingRegistry.isUnbound(KeyChord(.tab, mods)) { return false }
-            store.openOrStepTabSwitcher(forward: forward, armedByModifier: control)
-            // A refusal (one tab ⇒ nothing to switch to) leaves the switcher nil; pass ⌃⇥ through rather
+            store.openOrStepPaneSwitcher(forward: forward, armedByModifier: control)
+            // A refusal (one pane ⇒ nothing to switch to) leaves the switcher nil; pass ⌃⇥ through rather
             // than swallowing it into a gesture that cannot happen.
-            return store.tabSwitcher != nil
+            return store.paneSwitcher != nil
         case 53: // Escape — abandon the walk
             guard isOpen else { return false }
-            store.cancelTabSwitcher()
+            store.cancelPaneSwitcher()
             return true
         // Return / keypad Enter — commit (the palette-opened switcher's only commit path)
         case 36,
              76:
             guard isOpen else { return false }
-            store.commitTabSwitcher()
+            store.commitPaneSwitcher()
             return true
         // ← / → — step the highlight while the switcher is up
         case 123,
              124:
             guard isOpen else { return false }
-            store.openOrStepTabSwitcher(forward: event.keyCode == 124, armedByModifier: false)
+            store.openOrStepPaneSwitcher(forward: event.keyCode == 124, armedByModifier: false)
             return true
         default:
             return false

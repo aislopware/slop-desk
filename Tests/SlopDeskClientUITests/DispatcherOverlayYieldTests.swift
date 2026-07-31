@@ -74,7 +74,7 @@ final class DispatcherOverlayYieldTests: XCTestCase {
         XCTAssertEqual(store.tree.allPaneIDs().count, 1, "the swallowed ⌘W routed .closePane → one leaf gone")
     }
 
-    /// While the picker is visible, ⌘2 (a global `.selectTab(2)` chord) is PASSED THROUGH to the picker (so
+    /// While the picker is visible, ⌘2 (a global `.selectPane(2)` chord) is PASSED THROUGH to the picker (so
     /// `OpenQuicklyView.onKeyPress` can quick-pick the 2nd result) instead of being resolved as the
     /// background tab-switch. Asserted via the swallow/passthrough contract: handle returns the event.
     func testPickerVisibleYieldsQuickPickDigitChord() {
@@ -87,7 +87,7 @@ final class DispatcherOverlayYieldTests: XCTestCase {
     }
 
     /// The control for the digit chord: with the picker HIDDEN ⌘2 is owned by the monitor (swallowed +
-    /// dispatched to `.selectTab(2)`), so handle returns `nil`. Proves the gate — not an accidental table miss
+    /// dispatched to `.selectPane(2)`), so handle returns `nil`. Proves the gate — not an accidental table miss
     /// — is what yields ⌘2 to the picker above.
     func testPickerHiddenOwnsQuickPickDigitChord() {
         let store = makeTwoLeafStore()

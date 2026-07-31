@@ -144,8 +144,8 @@ public enum WorkspaceAction: Hashable, Sendable {
     case newDesktopTab // ⌥⌘N — the remote-desktop WINDOW (historical case name; schemas persist it)
     case nextTab // ⌘⇧]
     case prevTab // ⌘⇧[
-    case selectTab(Int) // ⌘1…⌘9 (1-based)
-    case tabSwitcher // ⌃⇥ — the press-and-hold MRU switcher. CHORD-LESS in this table on purpose: the live
+    case selectPane(Int) // ⌘1…⌘9 (1-based, the session's flat pane order)
+    case paneSwitcher // ⌃⇥ — the press-and-hold MRU switcher. CHORD-LESS in this table on purpose: the live
     // gesture (open / step / commit-on-⌃-release) cannot be expressed as one chord row, so
     // `WorkspaceKeyDispatcher` owns ⌃⇥ directly. This entry exists so the switcher is DISCOVERABLE in the
     // palette / cheat sheet and openable without a keyboard; routing it opens an UNARMED switcher (Return
@@ -260,8 +260,8 @@ public extension WorkspaceAction {
              .newDesktopTab, // reveal-or-mint the desktop window — acts on the session, needs no active pane
              .nextTab,
              .prevTab,
-             .selectTab,
-             .tabSwitcher, // switches between TABS — a session-scope action, needs no active pane
+             .selectPane, // names a pane by NUMBER — resolves against the session, not the focused pane
+             .paneSwitcher, // walks the session's panes — a session-scope action, needs no active pane
              .closeTab,
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
@@ -497,10 +497,10 @@ public enum WorkspaceBindingRegistry {
         // keywords instead — the established idiom for a chord-less row whose key is worth advertising
         // (cf. `view.viKeyHints` carrying ⌘/).
         WorkspaceBinding(
-            id: "tab.switcher", action: .tabSwitcher, title: "Tab Switcher",
-            category: .tabs, chord: nil,
+            id: "pane.switcher", action: .paneSwitcher, title: "Pane Switcher",
+            category: .panes, chord: nil,
             symbol: "square.stack",
-            keywords: "⌃⇥ ctrl tab switcher recent recently used mru last previous quick switch alt-tab",
+            keywords: "⌃⇥ ctrl tab pane switcher recent recently used mru last previous quick switch alt-tab",
         ),
         WorkspaceBinding(
             id: "tab.close", action: .closeTab, title: "Close Tab",
@@ -892,20 +892,20 @@ public enum WorkspaceBindingRegistry {
         ),
     ]
 
-    /// The ⌘1…⌘9 "select tab N" bindings (generated, kept out of the main table for readability). One per
-    /// digit; carried so the chord table is complete + the conflict / prefix guards see them.
-    public static let selectTabBindings: [WorkspaceBinding] = (1...9).map { n in
+    /// The ⌘1…⌘9 "select pane N" bindings (generated, kept out of the main table for readability). One
+    /// per digit; carried so the chord table is complete + the conflict / prefix guards see them.
+    public static let selectPaneBindings: [WorkspaceBinding] = (1...9).map { n in
         WorkspaceBinding(
-            id: "tab.select.\(n)", action: .selectTab(n),
-            title: "Select Tab \(n)", category: .tabs,
+            id: "pane.select.\(n)", action: .selectPane(n),
+            title: "Select Pane \(n)", category: .panes,
             chord: KeyChord(character: Character("\(n)"), [.command]),
-            symbol: "\(n).square", keywords: "switch jump tab \(n)",
+            symbol: "\(n).square", keywords: "switch jump pane tab \(n)",
         )
     }
 
-    /// Every binding the registry knows — the main table plus the nine ⌘-digit select-tab chords. The
+    /// Every binding the registry knows — the main table plus the nine ⌘-digit select-pane chords. The
     /// chord-table guards (uniqueness, ⌘/⌥-prefix) run over this full set.
-    public static var allBindings: [WorkspaceBinding] { bindings + selectTabBindings }
+    public static var allBindings: [WorkspaceBinding] { bindings + selectPaneBindings }
 
     /// The binding for `action`, or `nil` if unregistered.
     public static func binding(for action: WorkspaceAction) -> WorkspaceBinding? {
@@ -994,32 +994,32 @@ public enum WorkspaceBindingRegistry {
     // MARK: - Grouped display (the cheat sheet sections + palette catalog order)
 
     /// The bindings grouped by category in display order (panes, tabs, focus, view), with the
-    /// nine ⌘-digit select-tab chords collapsed into ONE representative "⌘1…⌘9" row SYNTHESIZED here (see
-    /// ``selectTabRepresentative``) and appended to the Tabs group — the real per-digit chords live only in
-    /// ``selectTabBindings`` (keyboard bank / chord table), never in this display set. The menu builds its
-    /// own "Select Tab" submenu and the palette catalog omits the digits, so this synthesized row is the
-    /// only place the family surfaces in the cheat sheet. The SINGLE source the cheat sheet renders and the
-    /// palette catalog iterates — so they cannot drift.
+    /// nine ⌘-digit select-pane chords collapsed into ONE representative "⌘1…⌘9" row SYNTHESIZED here (see
+    /// ``selectPaneRepresentative``) and appended to the Panes group — the real per-digit chords live only
+    /// in ``selectPaneBindings`` (keyboard bank / chord table), never in this display set. The menu builds
+    /// its own "Select Pane" submenu and the palette catalog omits the digits, so this synthesized row is
+    /// the only place the family surfaces in the cheat sheet. The SINGLE source the cheat sheet renders and
+    /// the palette catalog iterates — so they cannot drift.
     /// `public` so the rebuilt ClientUI cheat-sheet overlay generates its rows from this one table.
     public static var groupedForDisplay: [(category: WorkspaceAction.Category, bindings: [WorkspaceBinding])] {
         WorkspaceAction.Category.allCases.compactMap { category in
             var rows = bindings.filter { $0.category == category }
-            if category == .tabs {
-                rows.append(selectTabRepresentative) // the collapsed ⌘1…⌘9 row the comments promise
+            if category == .panes {
+                rows.append(selectPaneRepresentative) // the collapsed ⌘1…⌘9 row the comments promise
             }
             guard !rows.isEmpty else { return nil }
             return (category, rows)
         }
     }
 
-    /// The single collapsed representative for the nine generated ⌘1…⌘9 select-tab chords (display only —
-    /// the real per-digit chords live in ``selectTabBindings``). `.selectTab(1)` is a stand-in action; the
+    /// The single collapsed representative for the nine generated ⌘1…⌘9 select-pane chords (display only —
+    /// the real per-digit chords live in ``selectPaneBindings``). `.selectPane(1)` is a stand-in action; the
     /// glyph range is hand-rendered into the title because one ``KeyChord`` can't represent the range, and
     /// `chord: nil` keeps the overlay from rendering a separate (single-chord) hint chip.
-    public static let selectTabRepresentative = WorkspaceBinding(
-        id: "tab.selectN", action: .selectTab(1),
-        title: "Select Tab (⌘1…⌘9)", category: .tabs,
+    public static let selectPaneRepresentative = WorkspaceBinding(
+        id: "pane.selectN", action: .selectPane(1),
+        title: "Select Pane (⌘1…⌘9)", category: .panes,
         chord: nil, symbol: "number.square",
-        keywords: "switch jump tab number digit 1 2 3 4 5 6 7 8 9",
+        keywords: "switch jump pane tab number digit 1 2 3 4 5 6 7 8 9",
     )
 }

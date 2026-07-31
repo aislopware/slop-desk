@@ -1,11 +1,11 @@
-// TabSwitcherOverlay — the ⌃⇥ switcher's face: a floating glass card listing the session's tabs in
+// PaneSwitcherOverlay — the ⌃⇥ switcher's face: a floating glass card listing the session's panes in
 // MOST-RECENTLY-USED order with the provisional highlight marked.
 //
 // Presented as a plain always-mounted `.overlay` rather than a `.sheet`, unlike every other surface in
 // `OverlayHostView`. A sheet is the wrong instrument here: it animates in over ~0.3s and takes key focus,
 // but this overlay's whole lifetime is the length of a held ⌃ — often under 200ms — and stealing focus
 // mid-gesture would break the `flagsChanged` release that commits it. It renders nothing when the store's
-// `tabSwitcher` is nil, so at rest it costs a branch.
+// `paneSwitcher` is nil, so at rest it costs a branch.
 //
 // It is a READOUT, not a control: the dispatcher owns the gesture (open / step / commit / cancel), and this
 // view has no gestures, no buttons, and no state of its own. Clicking through it is impossible because it
@@ -34,7 +34,7 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 
-struct TabSwitcherOverlay: View {
+struct PaneSwitcherOverlay: View {
     let store: WorkspaceStore
 
     /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
@@ -42,12 +42,12 @@ struct TabSwitcherOverlay: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        if let switcher = store.tabSwitcher {
+        if let switcher = store.paneSwitcher {
             // The container's size, not the card's: the card is measured AGAINST the window
-            // (``TabSwitcherMetrics``), so it needs to see it. `GeometryReader` fills the overlay's
+            // (``PaneSwitcherMetrics``), so it needs to see it. `GeometryReader` fills the overlay's
             // proposed space, and the card is re-centred inside it.
             GeometryReader { proxy in
-                card(TabSwitcherRowsBuilder.items(for: switcher, store: store), in: proxy.size)
+                card(PaneSwitcherRowsBuilder.items(for: switcher, store: store), in: proxy.size)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
@@ -57,8 +57,8 @@ struct TabSwitcherOverlay: View {
         }
     }
 
-    private func card(_ items: [TabSwitcherItem], in container: CGSize) -> some View {
-        // A session with more tabs than the window is tall must not draw a card taller than its host.
+    private func card(_ items: [PaneSwitcherItem], in container: CGSize) -> some View {
+        // A session with more panes than the window is tall must not draw a card taller than its host.
         // The rows scroll instead, and the highlight is kept in view as ⇥ walks past the fold.
         ScrollViewReader { scroller in
             ScrollView(.vertical) {
@@ -82,16 +82,16 @@ struct TabSwitcherOverlay: View {
                 withAnimation(Slate.Anim.smallFade) { scroller.scrollTo(id, anchor: .center) }
             }
         }
-        .frame(width: TabSwitcherMetrics.width(container: container.width))
-        .frame(maxHeight: TabSwitcherMetrics.maxHeight(container: container.height))
+        .frame(width: PaneSwitcherMetrics.width(container: container.width))
+        .frame(maxHeight: PaneSwitcherMetrics.maxHeight(container: container.height))
         // The card is only as tall as its rows until it hits that ceiling — `fixedSize` on the vertical
         // axis stops the ScrollView claiming the whole allowance for four rows.
         .fixedSize(horizontal: false, vertical: true)
         .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
     }
 
-    private func highlighted(_ items: [TabSwitcherItem]) -> TabID? {
-        items.lazy.compactMap { item -> TabSwitcherRow? in
+    private func highlighted(_ items: [PaneSwitcherItem]) -> PaneID? {
+        items.lazy.compactMap { item -> PaneSwitcherRow? in
             if case let .row(row) = item.content { row } else { nil }
         }.first(where: \.isHighlighted)?.id
     }
@@ -128,7 +128,7 @@ private struct SwitcherSurface: ViewModifier {
 }
 
 /// A project, said once over the run of rows that share it — emitted only when the list spans more than
-/// one project (``TabSwitcherRowsBuilder/items(_:)`` decides). Plain sentence case in the quiet register:
+/// one project (``PaneSwitcherRowsBuilder/items(_:)`` decides). Plain sentence case in the quiet register:
 /// this is a divider that happens to carry a name, not a label demanding to be read.
 private struct SectionHeader: View {
     let name: String
@@ -150,7 +150,7 @@ private struct SectionHeader: View {
 
 /// One row: identity, the quiet remainder, and the ⌘-key.
 private struct RowView: View {
-    let row: TabSwitcherRow
+    let row: PaneSwitcherRow
 
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
@@ -201,7 +201,7 @@ private struct Keycap: View {
     let lit: Bool
 
     var body: some View {
-        if number <= TabSwitcherRowsBuilder.highestShortcut {
+        if number <= PaneSwitcherRowsBuilder.highestShortcut {
             Text("⌘\(number)")
                 .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(lit ? Slate.Text.secondary : Slate.Text.tertiary)

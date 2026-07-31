@@ -1,4 +1,4 @@
-// DispatcherTabSwitcherTests — the ⌃⇥ press-and-hold tab switcher at the live NSEvent monitor.
+// DispatcherPaneSwitcherTests — the ⌃⇥ press-and-hold pane switcher at the live NSEvent monitor.
 //
 // The gesture is not expressible as a chord-table row: it OPENS on ⌃⇥, STEPS on each repeat while ⌃ is
 // still down, and COMMITS on the ⌃ key-up — three different meanings for one chord plus a modifier
@@ -17,7 +17,7 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
-final class DispatcherTabSwitcherTests: XCTestCase {
+final class DispatcherPaneSwitcherTests: XCTestCase {
     override func tearDown() {
         WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
         super.tearDown()
@@ -53,8 +53,8 @@ final class DispatcherTabSwitcherTests: XCTestCase {
     private static let escape: UInt16 = 53
     private static let returnKey: UInt16 = 36
 
-    /// A store whose active session has THREE tabs, left with a visit order where the recency answer and
-    /// the positional answer differ (active = A at index 0, MRU = [A, C, B]).
+    /// A store whose active session has THREE single-pane tabs, left with a visit order where the
+    /// recency answer and the positional answer differ (active = A at index 0, ring = [A, C, B]).
     private func makeThreeTabStore() -> WorkspaceStore {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
@@ -86,7 +86,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab))
 
         XCTAssertNotNil(result, "bare ⇥ reaches the PTY — it is shell completion, not a workspace chord")
-        XCTAssertNil(store.tabSwitcher, "and opens no switcher")
+        XCTAssertNil(store.paneSwitcher, "and opens no switcher")
     }
 
     /// ⇧⇥ is how Claude Code cycles permission modes. Claiming it would break the agent workflow this
@@ -98,7 +98,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, shift: true))
 
         XCTAssertNotNil(result, "⇧⇥ reaches the PTY (Claude Code's permission-mode cycle)")
-        XCTAssertNil(store.tabSwitcher, "and opens no switcher")
+        XCTAssertNil(store.paneSwitcher, "and opens no switcher")
     }
 
     /// A lone tab has nothing to switch between, so ⌃⇥ must fall through to the pane rather than being
@@ -112,7 +112,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
 
         XCTAssertNotNil(result, "nothing to switch to ⇒ ⌃⇥ is not ours")
-        XCTAssertNil(store.tabSwitcher)
+        XCTAssertNil(store.paneSwitcher)
     }
 
     // MARK: - The gesture
@@ -126,7 +126,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
 
         XCTAssertNil(result, "⌃⇥ is owned by the workspace (swallowed)")
-        XCTAssertNotNil(store.tabSwitcher, "the switcher is open")
+        XCTAssertNotNil(store.paneSwitcher, "the switcher is open")
         XCTAssertEqual(committedTab(store), before, "but no tab switch has been committed")
     }
 
@@ -141,8 +141,8 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(flagsChanged(control: false))
 
         XCTAssertNotNil(result, "a modifier transition is never swallowed")
-        XCTAssertNil(store.tabSwitcher, "the release closed the switcher")
-        XCTAssertEqual(activeTab(store), tabs[2], "committed to the recently-visited tab, not the next one")
+        XCTAssertNil(store.paneSwitcher, "the release closed the switcher")
+        XCTAssertEqual(activeTab(store), tabs[2], "committed to the recently-visited pane, not the next one")
     }
 
     /// A `.flagsChanged` that still carries ⌃ is a mid-gesture transition (e.g. ⇧ going down to reverse)
@@ -155,7 +155,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         _ = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
         _ = dispatcher.handle(flagsChanged(control: true))
 
-        XCTAssertNotNil(store.tabSwitcher, "still mid-gesture — ⌃ is down")
+        XCTAssertNotNil(store.paneSwitcher, "still mid-gesture — ⌃ is down")
         XCTAssertEqual(committedTab(store), before, "nothing committed")
     }
 
@@ -182,7 +182,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\u{1B}", keyCode: Self.escape, control: true))
 
         XCTAssertNil(result, "Esc is consumed by the open switcher")
-        XCTAssertNil(store.tabSwitcher, "the switcher closed")
+        XCTAssertNil(store.paneSwitcher, "the switcher closed")
         XCTAssertEqual(activeTab(store), before, "and committed nothing")
 
         // The release that follows a cancel must not resurrect the commit.
@@ -233,13 +233,13 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let dispatcher = WorkspaceKeyDispatcher(store: store, isWorkspaceWindowKey: { windowIsKey })
 
         _ = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
-        XCTAssertNotNil(store.tabSwitcher, "precondition: the switcher is open")
+        XCTAssertNotNil(store.paneSwitcher, "precondition: the switcher is open")
 
         windowIsKey = false
         let result = dispatcher.handle(keyDown("a", keyCode: 0))
 
         XCTAssertNotNil(result, "keys pass through to the other window")
-        XCTAssertNil(store.tabSwitcher, "the stranded switcher was abandoned")
+        XCTAssertNil(store.paneSwitcher, "the stranded switcher was abandoned")
         XCTAssertEqual(activeTab(store), before, "and committed nothing")
     }
 
@@ -258,7 +258,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
 
         XCTAssertNotNil(result, "the unbound chord reaches the pane")
-        XCTAssertNil(store.tabSwitcher, "and opens nothing")
+        XCTAssertNil(store.paneSwitcher, "and opens nothing")
     }
 
     /// Each chord is reclaimed INDIVIDUALLY, exactly as `unbind:` behaves everywhere else in the table:
@@ -274,7 +274,7 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true, shift: true))
 
         XCTAssertNil(result, "⌃⇧⇥ was not the chord that was unbound")
-        XCTAssertNotNil(store.tabSwitcher, "so it still opens the switcher")
+        XCTAssertNotNil(store.paneSwitcher, "so it still opens the switcher")
     }
 
     /// The unbind gates OPENING only. Once a switcher is up (here from the palette, which needs no chord
@@ -286,12 +286,12 @@ final class DispatcherTabSwitcherTests: XCTestCase {
         )
         let store = makeThreeTabStore()
         let dispatcher = WorkspaceKeyDispatcher(store: store)
-        store.openOrStepTabSwitcher(forward: true, armedByModifier: false) // the palette route
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: false) // the palette route
 
         let result = dispatcher.handle(keyDown("\t", keyCode: Self.tab, control: true))
 
         XCTAssertNil(result, "the open switcher consumes ⇥")
-        XCTAssertEqual(store.tabSwitcher?.highlightIndex, 2, "and stepped rather than passing through")
+        XCTAssertEqual(store.paneSwitcher?.highlightIndex, 2, "and stepped rather than passing through")
     }
 }
 #endif

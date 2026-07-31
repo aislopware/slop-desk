@@ -1,22 +1,18 @@
-// TabSwitcherRows — what one ⌃⇥ switcher row SAYS, resolved off the live store.
+// PaneSwitcherRows — what one ⌃⇥ switcher row SAYS, resolved off the live store.
 //
-// The switcher used to print `RailRowsBuilder.rowTitle` with no project key, which for a coding
-// workspace resolves to the cwd's FOLDER NAME on nearly every row. Three panes opened in one repo then
-// read `slopdesk` / `slopdesk` / `slopdesk`: the ring was ordered by recency but named by place, so the
-// one thing the surface exists to answer — WHICH of these am I flipping to — was the one thing it did
-// not say.
-//
-// The fix is the sidebar's own division of labour. The PROJECT is a section header, said once; a ROW is
-// one line carrying only what differs — the pane's identity, then a quiet note for the sub-path it
-// strayed into and the pane count when the tab is split. Identity comes from
+// A row is a PANE, the same unit the sidebar lists and the same unit ⌘1…⌘9 lands on. The card is
+// therefore the sidebar in recency order: one line per pane, carrying only what differs — the pane's
+// identity, then a quiet note for the sub-path it strayed into. Identity comes from
 // ``RailRowsBuilder/liveRowTitle(...)`` — the SAME chain the sidebar row and the window title read, so a
-// pane is named identically wherever it is named, and a fix to the chain reaches all three.
+// pane is named identically wherever it is named, and a fix to the chain reaches all three. A TAB rename
+// is deliberately NOT consulted: a tab is a container, and naming its pane after it is how three panes of
+// one repo all came to read `slopdesk` (the bug this builder exists to answer).
 //
 // ⚠️ A header is a RUN BOUNDARY, not a re-sort. The display order is the frozen ring's (recency), because
 // that is the order ⇥ steps in — grouping the rows by project would make the highlight jump around the
 // card. So a header is emitted wherever consecutive rows change project, and one project can head more
-// than one run. And a list that spans ONE project gets no header at all — the case this round was opened
-// for is then a clean, uninterrupted list of identities.
+// than one run. And a list that spans ONE project gets no header at all — the common case is then a
+// clean, uninterrupted list of identities.
 //
 // Pure composers (`header` / `relativePath` / `note` / `items`) so the wording and the header runs are
 // unit-pinned without a view; the one `@MainActor` entry is the store read.
@@ -25,28 +21,27 @@ import CoreGraphics
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
-/// One rendered switcher row: a tab, named by its representative (active) pane.
-struct TabSwitcherRow: Identifiable, Equatable {
-    let id: TabID
-    /// The tab's ⌘-number (1-based position in the tab bar) — the switcher doubles as a reminder that
-    /// ⌘N jumps straight here.
+/// One rendered switcher row: a pane.
+struct PaneSwitcherRow: Identifiable, Equatable {
+    let id: PaneID
+    /// The pane's ⌘-number (1-based position in ``WorkspaceStore/flatOrderedPaneIDs()``) — the switcher
+    /// doubles as a reminder that ⌘N jumps straight here.
     let number: Int
     /// The pane's identity — the only thing on the line that has to be read.
     let title: String
-    /// The quiet remainder: the sub-path below the project, the pane count when the tab is split.
-    /// `nil` for the common at-root single-pane tab.
+    /// The quiet remainder: the sub-path below the project. `nil` for the common at-root pane.
     let note: String?
-    /// The project this row sits in — the header text, carried per row so ``TabSwitcherRowsBuilder/items(_:)``
+    /// The project this row sits in — the header text, carried per row so ``PaneSwitcherRowsBuilder/items(_:)``
     /// can find the boundaries.
     let project: String?
     let isHighlighted: Bool
 }
 
 /// The card's display list: section headers interleaved with rows, in ring order.
-struct TabSwitcherItem: Identifiable, Equatable {
+struct PaneSwitcherItem: Identifiable, Equatable {
     enum Content: Equatable {
         case section(String)
-        case row(TabSwitcherRow)
+        case row(PaneSwitcherRow)
     }
 
     /// Position in the display list. A plain index because a project may head more than one run, so its
@@ -59,7 +54,7 @@ struct TabSwitcherItem: Identifiable, Equatable {
 /// supplies the container size.
 ///
 /// A fixed width is wrong for this surface in a way it is not wrong for a dialog: the switcher's rows
-/// carry LIVE text of wildly varying length (`zsh` … `nvim Sources/…/TabSwitcherOverlay.swift`), so the
+/// carry LIVE text of wildly varying length (`zsh` … `nvim Sources/…/PaneSwitcherOverlay.swift`), so the
 /// right measure depends on how much room the window can spare. The band below is MEASURED, not guessed
 /// — SF 13 in this row anatomy (card 12 + row 12 padding either side, a 30pt keycap and its 12pt gap =
 /// ~90pt of chrome):
@@ -67,14 +62,14 @@ struct TabSwitcherItem: Identifiable, Equatable {
 /// | content | card |
 /// |---|---|
 /// | 45 characters — the low end of a comfortable measure | 390 |
-/// | 60 characters — `swift test --filter TabSwitcherRowsTests` and friends land here | 490 |
+/// | 60 characters — `swift test --filter PaneSwitcherRowsTests` and friends land here | 490 |
 /// | 75 characters — the high end; past it the eye loses the line | 590 |
 ///
 /// So: ``minWidth`` 400 (a real command, untruncated), ``maxWidth`` 640 (the app's Open-Quickly rung —
 /// the widest list panel the chrome already uses), and between them a fraction of the window. The last
 /// clamp is the one that matters on a small window: an overlay that eats two thirds of its host has
 /// stopped reading as an overlay.
-enum TabSwitcherMetrics {
+enum PaneSwitcherMetrics {
     /// Below this a genuine title truncates on nearly every row.
     static let minWidth: CGFloat = 400
     /// The app's widest list-panel rung (Open Quickly). Past ~75 characters a line stops being scannable.
@@ -99,7 +94,7 @@ enum TabSwitcherMetrics {
     }
 }
 
-enum TabSwitcherRowsBuilder {
+enum PaneSwitcherRowsBuilder {
     /// The four store reads every part of a row needs, taken ONCE per row: what the pane is, where it
     /// is, which project owns it, and the title its program asserted.
     @MainActor
@@ -123,11 +118,11 @@ enum TabSwitcherRowsBuilder {
 
     /// The card's full display list for `switcher` — the one call a view makes.
     @MainActor
-    static func items(for switcher: TabSwitcher, store: WorkspaceStore) -> [TabSwitcherItem] {
+    static func items(for switcher: PaneSwitcher, store: WorkspaceStore) -> [PaneSwitcherItem] {
         items(rows(for: switcher, store: store))
     }
 
-    /// The highest tab the app binds a ⌘-digit to (⌘1–9). Past it a row has no shortcut to show.
+    /// The highest pane the app binds a ⌘-digit to (⌘1–9). Past it a row has no shortcut to show.
     static let highestShortcut = 9
 
     /// Interleave section headers into `rows` wherever the project CHANGES between consecutive rows.
@@ -137,51 +132,60 @@ enum TabSwitcherRowsBuilder {
     ///
     /// A list that spans ONE project gets no header at all: the card is that project, and naming it
     /// above a run that has nothing to be distinguished from is a caption on a box with one thing in
-    /// it. (The project still reaches ``title(tab:facts:chrome:project:store:)``, which uses it to keep
-    /// a row from merely restating its folder — that rule is about the ROW, not about the header.)
-    static func items(_ rows: [TabSwitcherRow]) -> [TabSwitcherItem] {
+    /// it. (The project still reaches ``title(facts:chrome:project:store:)``, which uses it to keep a
+    /// row from merely restating its folder — that rule is about the ROW, not about the header.)
+    static func items(_ rows: [PaneSwitcherRow]) -> [PaneSwitcherItem] {
         let spansSeveral = Set(rows.compactMap(\.project)).count > 1
-        var out: [TabSwitcherItem] = []
+        var out: [PaneSwitcherItem] = []
         var current: String?
         for row in rows {
             if spansSeveral, let project = row.project, project != current {
                 current = project
-                out.append(TabSwitcherItem(id: out.count, content: .section(project)))
+                out.append(PaneSwitcherItem(id: out.count, content: .section(project)))
             }
-            out.append(TabSwitcherItem(id: out.count, content: .row(row)))
+            out.append(PaneSwitcherItem(id: out.count, content: .row(row)))
         }
         return out
     }
 
-    /// Resolve the frozen candidate ring into rows. The ORDER is the switcher's (recency), not the tab
-    /// bar's — that is the point of the surface. A candidate whose tab has been closed under the held ⌃
-    /// is dropped, matching ``WorkspaceStore/commitTabSwitcher()``, which refuses to commit onto one.
+    /// Resolve the frozen candidate ring into rows. The ORDER is the switcher's (recency), not the
+    /// session's — that is the point of the surface; the NUMBER is the session's, because that is what
+    /// ⌘N obeys. A candidate whose pane has been closed under the held ⌃ is dropped, matching
+    /// ``WorkspaceStore/commitPaneSwitcher()``, which refuses to commit onto one.
     @MainActor
-    static func rows(for switcher: TabSwitcher, store: WorkspaceStore) -> [TabSwitcherRow] {
+    static func rows(for switcher: PaneSwitcher, store: WorkspaceStore) -> [PaneSwitcherRow] {
         guard let session = store.tree.activeSession else { return [] }
-        return switcher.candidates.enumerated().compactMap { index, id -> TabSwitcherRow? in
-            guard let position = session.tabs.firstIndex(where: { $0.id == id }) else { return nil }
-            let tab = session.tabs[position]
-            guard let pane = tab.activePane ?? tab.allPaneIDs().first else { return nil }
-            let facts = PaneFacts(pane: pane, spec: session.specs[pane], store: store)
+        // ONE pass over the session builds both sides of the join: which tab owns a pane (the chrome
+        // resolver is tab-scoped) and what number it wears.
+        var owner: [PaneID: SlopDeskWorkspaceModel.Tab] = [:]
+        var number: [PaneID: Int] = [:]
+        for tab in session.tabs {
+            for id in tab.allPaneIDs() {
+                owner[id] = tab
+                number[id] = number.count + 1
+            }
+        }
+        return switcher.candidates.enumerated().compactMap { index, id -> PaneSwitcherRow? in
+            guard let tab = owner[id], let position = number[id] else { return nil }
+            let facts = PaneFacts(pane: id, spec: session.specs[id], store: store)
             // The pane's volatile chrome through the sidebar's ONE resolver — the badge it returns is
             // what gates the running-command rung below (a fast `ls` must not flash into the title).
+            // The representative pane + manual badge are resolved exactly as the rail resolves them,
+            // so a manual `tab badge` lands on the same row in both surfaces.
             let chrome = RailRowsBuilder.chrome(
-                paneID: pane, kind: facts.kind, spec: facts.spec, tabID: tab.id,
-                representativePane: pane, manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
+                paneID: id, kind: facts.kind, spec: facts.spec, tabID: tab.id,
+                representativePane: tab.activePane ?? tab.allPaneIDs().first,
+                manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
             )
             let project = facts.kind == .terminal
                 ? header(projectKey: facts.projectKey, cwd: facts.cwd)
                 : nil
-            return TabSwitcherRow(
+            return PaneSwitcherRow(
                 id: id,
-                number: position + 1,
-                title: title(tab: tab, facts: facts, chrome: chrome, project: project, store: store),
+                number: position,
+                title: title(facts: facts, chrome: chrome, project: project, store: store),
                 note: facts.kind == .terminal
-                    ? note(
-                        projectKey: facts.projectKey, cwd: facts.cwd,
-                        paneCount: tab.allPaneIDs().count,
-                    )
+                    ? note(projectKey: facts.projectKey, cwd: facts.cwd)
                     : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle),
                 project: project,
                 isHighlighted: index == switcher.highlightIndex,
@@ -189,9 +193,8 @@ enum TabSwitcherRowsBuilder {
         }
     }
 
-    /// The row's LINE. An explicit TAB rename wins outright (the user named this tab; nothing the pane
-    /// is doing outranks that), then the pane's live identity chain — the same one ``NavigatorColumn``
-    /// hands its rows, so the switcher and the sidebar can never call one pane two things.
+    /// The row's LINE — the pane's live identity chain, the same one ``NavigatorColumn`` hands its rows,
+    /// so the switcher and the sidebar can never call one pane two things.
     ///
     /// `projectKey` IS passed to the structural rung on purpose: at the project root that yields the
     /// PROGRAM rather than the folder name, and an idle shell's empty result then falls through to the
@@ -204,10 +207,8 @@ enum TabSwitcherRowsBuilder {
     /// less than a redundant one.
     @MainActor
     private static func title(
-        tab: SlopDeskWorkspaceModel.Tab, facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome,
-        project: String?, store: WorkspaceStore,
+        facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome, project: String?, store: WorkspaceStore,
     ) -> String {
-        if !tab.title.isEmpty { return tab.title }
         let structural = RailRowsBuilder.rowTitle(
             kind: facts.kind, spec: facts.spec, cwd: facts.cwd, liveTitle: facts.liveTitle,
             processLabel: chrome.processLabel, projectKey: facts.projectKey,
@@ -267,14 +268,13 @@ enum TabSwitcherRowsBuilder {
         return RailRowsBuilder.cwdFolderName(path)
     }
 
-    /// The row's quiet remainder: the sub-path, then the pane count when the tab is SPLIT. The count is
-    /// the other half of the user's question — a tab in `slopdesk` holding three panes is not the same
-    /// destination as a tab in `slopdesk` holding one, and only this can say so. A single-pane tab at
-    /// its root has no note at all, which is the common row and the reason the list reads quiet. Pure.
-    static func note(projectKey: String?, cwd: String?, paneCount: Int) -> String? {
-        var parts: [String] = []
-        if let relative = relativePath(projectKey: projectKey, cwd: cwd) { parts.append(relative) }
-        if paneCount > 1 { parts.append("\(paneCount) panes") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    /// The row's quiet remainder: where the pane sits below its project. A pane at its root has no note
+    /// at all, which is the common row and the reason the list reads quiet.
+    ///
+    /// The tab's pane COUNT used to ride here, back when a row was a tab and the count was the only
+    /// thing that could say "this destination holds three shells". A row is now one of those shells, so
+    /// the count would be a fact about the row's neighbours rather than about the row. Pure.
+    static func note(projectKey: String?, cwd: String?) -> String? {
+        relativePath(projectKey: projectKey, cwd: cwd)
     }
 }

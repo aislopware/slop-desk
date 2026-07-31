@@ -5728,3 +5728,46 @@ other client on the workspace.
 → touches `TabSwitcherOverlay.swift`, `TabSwitcherRows.swift` (new `TabSwitcherMetrics`),
 `WorkspaceStore+TabSwitcher.swift`, `SettingsKey`/`AllSettingsCatalog`/`PreferencesStore` (+ both
 Settings surfaces). New ladder rung `Slate.Metric.heightRowTall`. No wire change (golden byte-identical).
+
+## The switcher's unit is the PANE, and so is the ⌘-digit (2026-07-31)
+
+⌃⇥ walked TABS and ⌘1…⌘9 selected tabs, while every other surface in the app counts PANES: the sidebar
+lists panes, a notification points at a pane, `⌘]`/`⌘[` cycles panes, the window title names a pane. The
+container was the only thing the keyboard could reach, so ⌘3 meant one thing in the chord and another on
+screen — and inside a split ⌃⇥ was a dead gesture, because a tab-keyed ring cannot tell two panes of one
+tab apart.
+
+- ✅ **One unit, one order.** `PaneSwitcher` (was `TabSwitcher`) rings PANES across the whole active
+  session — every tab's panes, not the active tab's. A ring scoped to the active tab would be a switcher
+  that cannot reach most of the workspace.
+- ✅ **⌘1…⌘9 counts `flatOrderedPaneIDs()`** — tabs in creation order, panes within a tab in pre-order
+  DFS (the walk the reconcile diff and `⌘]` already read). A split therefore renumbers what follows it,
+  which is exactly what makes the number mean "the Nth pane". It lands through `revealPaneTree`, so a
+  pane in a background tab brings its tab with it and that tab's badges clear on arrival.
+- ✅ **The ring is PER-CLIENT** (`WorkspaceStore.paneVisitMRU`, cap 32, session-only) — tmux's
+  `client->last_session`, and what docs/45 §7.3 already filed beside the latched video modes. The SHARED
+  `session/focusMRU` stays tab-keyed because it exists for a different reason: close is an intent, and
+  two clients computing successors from two local rings pick two different tabs. "The pane I was just
+  in" is a fact about one keyboard. **No wire change** — golden byte-identical.
+- ✅ **A fresh client is not blind.** Its own ring is empty on reconnect, so `paneSwitcherMRU` appends
+  each remembered tab's `activePane` BEHIND the local entries — the host's recency, at the granularity
+  the host has it. `candidates(active:mru:ordered:)` dedupes, so the overlap costs nothing.
+- ✅ **Recorded at the ONE choke point**, `stageFocus(tab:)` / `stageFocus(pane:)`, which every
+  deliberate navigation already passes through. The preview writes `DeviceFocus` directly and so records
+  nothing — a walk must not reorder the ring it is walking.
+- ⚠️ **A TAB rename no longer names a row.** The old builder let `tab.title` outrank the pane's live
+  identity; with a row per pane that is the container's name stamped on each of its contents — the exact
+  shape of the bug this builder was written to fix. The row keeps the pane's own chain, which is also
+  what the sidebar shows for it. The note loses its "3 panes" segment for the same reason: it described
+  the row's neighbours.
+- ⚠️ **`goto_tab:N` keeps its name** and now resolves to `pane.select.<n>`. The name is Ghostty's, not
+  ours; a config asking for "the Nth thing" gets the Nth thing this workspace counts.
+
+The positional gestures are untouched and stay independent: `⌘⇧]`/`⌘⇧[` still steps the tab BAR, `⌘]`/
+`⌘[` still walks the active tab's split tree. ⌃⇥ is the only recency walk, and now it can reach
+everything.
+
+→ renames `TabSwitcher`→`PaneSwitcher`, `TabSwitcherOverlay`/`TabSwitcherRows`→`PaneSwitcher*`,
+`WorkspaceStore+TabSwitcher`→`+PaneSwitcher`; `.selectTab(Int)`→`.selectPane(Int)` and
+`.tabSwitcher`→`.paneSwitcher` (binding ids `pane.select.<n>` / `pane.selectN` / `pane.switcher`, all
+moved to the Panes group); `controls.tabSwitcherPreview`→`controls.paneSwitcherPreview`.

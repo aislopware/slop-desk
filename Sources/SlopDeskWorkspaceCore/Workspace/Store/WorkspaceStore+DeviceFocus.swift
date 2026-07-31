@@ -94,9 +94,18 @@ extension WorkspaceStore {
     /// switcher opened without a held modifier has no key-up coming to end it — left up, its next Return
     /// would commit a highlight chosen for a workspace the user has already left. Ordering matters: the
     /// switcher's own commit clears itself BEFORE calling `selectTab`, so this never eats its selection.
+    ///
+    /// Being that choke point is also why the ⌃⇥ ring is recorded here (``WorkspaceStore/notePaneVisit(_:)``):
+    /// every deliberate navigation lands in it exactly once, whatever surface asked for it. A tab focus
+    /// records the tab's OWN active pane, because that is the pane the user ends up looking at.
     @discardableResult
     func stageFocus(tab: TabID) -> Bool {
-        cancelTabSwitcher()
+        cancelPaneSwitcher()
+        if let landing = tree.sessions.lazy
+            .compactMap({ $0.tabs.first { $0.id == tab } }).first?.activePane
+        {
+            notePaneVisit(landing)
+        }
         guard devicePreferences.followSessionFocus else {
             return setDeviceFocus(DeviceFocus(tab: tab, pane: nil))
         }
@@ -108,7 +117,8 @@ extension WorkspaceStore {
     /// switch this device to that tab as well, exactly as the applier does.
     @discardableResult
     func stageFocus(pane: PaneID) -> Bool {
-        cancelTabSwitcher()
+        cancelPaneSwitcher()
+        notePaneVisit(pane)
         guard devicePreferences.followSessionFocus else {
             guard let (_, tab) = tree.tab(containing: pane) else { return false }
             return setDeviceFocus(DeviceFocus(tab: tab, pane: pane))

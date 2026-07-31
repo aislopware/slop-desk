@@ -1308,7 +1308,7 @@ private struct AppearanceSettingsTab: View {
     @Bindable var store: PreferencesStore
 
     @Default(.newTabPosition) private var newTabPosition
-    @Default(.tabSwitcherPreview) private var tabSwitcherPreview
+    @Default(.paneSwitcherPreview) private var paneSwitcherPreview
     // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
     // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`, which drives `chrome.sidebarCollapsed`.
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
@@ -1356,9 +1356,9 @@ private struct AppearanceSettingsTab: View {
                 // the WORKSPACE does while a chord is held, not what the chord is.
                 SettingsGlyphToggleRow(
                     .rectangleOnRectangle,
-                    "Preview While Switching Tabs",
-                    "As ⌃⇥ walks the tab list, show each tab underneath the switcher.",
-                    isOn: $tabSwitcherPreview,
+                    "Preview While Switching Panes",
+                    "As ⌃⇥ walks the pane list, show each pane underneath the switcher.",
+                    isOn: $paneSwitcherPreview,
                 )
                 pickerRow(
                     "Auto Hide Tabs Panel",

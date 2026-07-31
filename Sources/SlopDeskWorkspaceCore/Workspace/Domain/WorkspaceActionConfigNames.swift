@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Config action-name → registry bindingID resolver (the N5 resolver core)
 
 /// Maps config action NAMES (`new_tab`, `split_right`, `goto_tab:N`, …) to this registry's stable
-/// binding ids (`tab.new`, `pane.splitRight`, `tab.select.<n>`, …).
+/// binding ids (`tab.new`, `pane.splitRight`, `pane.select.<n>`, …).
 ///
 /// **Why this exists (the N5 gap).** ``KeybindGrammar/parseAction`` already turns a config line's
 /// right-hand side into `.named(id:arg:)` for a name like `new_tab` or `goto_tab:1`, and
@@ -27,9 +27,9 @@ import Foundation
 /// `spec/customization__custom-keybindings.md`.
 public extension WorkspaceBindingRegistry {
     /// The bare config name → registry bindingID table (the non-parameterized actions). The values
-    /// are exactly the `WorkspaceBinding.id`s in ``bindings`` / ``selectTabBindings`` — pinned to have no
-    /// orphan by `WorkspaceActionConfigNamesTests`. The parameterized `goto_tab:N` family is resolved
-    /// separately (it expands to nine per-digit ids in ``selectTabBindings``).
+    /// are exactly the `WorkspaceBinding.id`s in ``bindings`` / ``selectPaneBindings`` — pinned to have
+    /// no orphan by `WorkspaceActionConfigNamesTests`. The parameterized `goto_tab:N` family is resolved
+    /// separately (it expands to nine per-digit ids in ``selectPaneBindings``).
     private static let configNameToBindingID: [String: String] = [
         // Panes
         "new_tab": "tab.new",
@@ -57,17 +57,19 @@ public extension WorkspaceBindingRegistry {
     /// `nil` if the name is unknown, the arg is out of range, or the action is a libghostty-only responder
     /// action with no ``WorkspaceAction`` (validate-then-drop — never a trap, never an invented id).
     ///
-    /// - `goto_tab` requires a base-10 `arg` in `1...9` → `tab.select.<n>`; any other arg (`0`, `10`,
-    ///   non-numeric, surrounding whitespace, or a missing arg) is dropped.
+    /// - `goto_tab` requires a base-10 `arg` in `1...9` → `pane.select.<n>`; any other arg (`0`, `10`,
+    ///   non-numeric, surrounding whitespace, or a missing arg) is dropped. The NAME stays `goto_tab`
+    ///   because it is Ghostty's, not ours — what a ⌘-digit lands on in this app is a pane, and a config
+    ///   that asks for "the Nth thing" gets the Nth thing this workspace counts.
     /// - Every other supported name is a bare action looked up in ``configNameToBindingID``; a stray `arg`
     ///   on a bare action is ignored (the action takes none).
     /// - `copy_to_clipboard` / `paste_from_clipboard` / `select_all` and any unrecognised name → `nil`.
     static func bindingID(forConfigName name: String, arg: String?) -> String? {
-        // The ONE parameterized action: `goto_tab:N`, N ∈ 1…9 → tab.select.<n>. Validate the arg as a
+        // The ONE parameterized action: `goto_tab:N`, N ∈ 1…9 → pane.select.<n>. Validate the arg as a
         // base-10 integer in range BEFORE building the id (no `!`, no out-of-range id).
         if name == "goto_tab" {
             guard let arg, let n = Int(arg), (1...9).contains(n) else { return nil }
-            return "tab.select.\(n)"
+            return "pane.select.\(n)"
         }
         // A bare action — the arg (if any) is irrelevant. Unknown name → nil (drop).
         return configNameToBindingID[name]

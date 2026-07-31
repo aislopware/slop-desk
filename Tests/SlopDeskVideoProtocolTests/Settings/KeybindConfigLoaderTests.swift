@@ -153,10 +153,10 @@ final class KeybindConfigLoaderTests: XCTestCase {
             """,
             resolveNamedBinding: { named in
                 guard named.id == "goto_tab", let arg = named.arg else { return nil }
-                return (bindingID: "tab.select.\(arg)", chord: named.chord)
+                return (bindingID: "pane.select.\(arg)", chord: named.chord)
             },
         )
-        XCTAssertEqual(prefs.overrides["tab.select.1"], .init(key: "1", command: true))
+        XCTAssertEqual(prefs.overrides["pane.select.1"], .init(key: "1", command: true))
         // The unknown action resolved to nil ⇒ dropped, no stray override.
         XCTAssertEqual(prefs.overrides.count, 1)
     }
@@ -193,7 +193,7 @@ final class KeybindConfigLoaderTests: XCTestCase {
         let bindingID: String? =
             if named.id == "goto_tab" {
                 if let arg = named.arg, let n = Int(arg), (1...9).contains(n) {
-                    "tab.select.\(n)"
+                    "pane.select.\(n)"
                 } else {
                     nil
                 }
@@ -218,14 +218,14 @@ final class KeybindConfigLoaderTests: XCTestCase {
         XCTAssertTrue(prefs.unbinds.isEmpty)
     }
 
-    /// The parameterized `goto_tab:N` action folds per-digit: `cmd+3:goto_tab:3` → `overrides["tab.select.3"]`
+    /// The parameterized `goto_tab:N` action folds per-digit: `cmd+3:goto_tab:3` → `overrides["pane.select.3"]`
     /// on ⌘3 (the resolver expands the arg into the per-digit registry id).
     func testParameterizedGotoTabFoldsPerDigitViaResolver() {
         let prefs = KeybindConfigLoader.apply(
             configText: "keybind = cmd+3:goto_tab:3",
             resolveNamedBinding: handBuiltResolver,
         )
-        XCTAssertEqual(prefs.overrides["tab.select.3"], .init(key: "3", command: true))
+        XCTAssertEqual(prefs.overrides["pane.select.3"], .init(key: "3", command: true))
         XCTAssertEqual(prefs.overrides.count, 1)
     }
 

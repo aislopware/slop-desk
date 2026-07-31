@@ -1031,25 +1031,52 @@ public final class WorkspaceStore {
         reconcile()
     }
 
-    // MARK: - Tab switcher (⌃⇥ press-and-hold, MRU-ordered)
+    // MARK: - Pane switcher (⌃⇥ press-and-hold, MRU-ordered)
 
-    /// The live ⌃⇥ switcher, or `nil` while it is closed. Set by ``openOrStepTabSwitcher(forward:armedByModifier:)``,
-    /// cleared by ``commitTabSwitcher()`` / ``cancelTabSwitcher()``.
+    /// The live ⌃⇥ switcher, or `nil` while it is closed. Set by ``openOrStepPaneSwitcher(forward:armedByModifier:)``,
+    /// cleared by ``commitPaneSwitcher()`` / ``cancelPaneSwitcher()``.
     ///
-    /// PURELY LOCAL, deliberately: a tab focus is a host-owned intent (`.focusTab`), so staging one per
-    /// highlight step would broadcast every intermediate tab of a cycle to every other client attached to
+    /// PURELY LOCAL, deliberately: a pane focus is a host-owned intent (`.focusPane`), so staging one per
+    /// highlight step would broadcast every intermediate pane of a cycle to every other client attached to
     /// this workspace. The highlight moves here; only the commit stages.
-    public internal(set) var tabSwitcher: TabSwitcher?
+    public internal(set) var paneSwitcher: PaneSwitcher?
 
-    /// `true` while a step is showing its highlighted tab LOCALLY (the follow-along preview, on by
-    /// default — ``SettingsKey/tabSwitcherPreviewEnabled``). Set with ``tabSwitcherFocusBeforePreview``,
+    /// `true` while a step is showing its highlighted pane LOCALLY (the follow-along preview, on by
+    /// default — ``SettingsKey/paneSwitcherPreviewEnabled``). Set with ``paneSwitcherFocusBeforePreview``,
     /// which is what a cancel puts back; the pair is one piece of state in two fields because "no preview
     /// running" and "preview running over a nil device focus" are different things.
-    var tabSwitcherPreviewing = false
+    var paneSwitcherPreviewing = false
 
     /// The device focus in force when the preview began — restored on cancel AND before a commit, so the
     /// transient overlay never outlives the gesture that made it.
-    var tabSwitcherFocusBeforePreview: DeviceFocus?
+    var paneSwitcherFocusBeforePreview: DeviceFocus?
+
+    /// The TREE panes this device has navigated to, most-recent first, deduped and capped. The switcher's
+    /// recency source (``WorkspaceStore/paneSwitcherMRU`` composes it with the host's tab ring).
+    ///
+    /// Per-client, like tmux's `client->last_session` and unlike `session/focusMRU`: that shared ring
+    /// exists because CLOSE is an intent and two clients must pick the same successor, while "the pane I
+    /// was just in" is a fact about one keyboard. Session state, never persisted — a ring restored from
+    /// disk would send the first ⌃⇥ of a launch somewhere the user has no memory of being.
+    ///
+    /// Fed at the ONE choke point every local navigation passes through (``stageFocus(tab:)`` /
+    /// ``stageFocus(pane:)``), so a rail click, a ⌘-digit, a palette jump and the switcher's own commit
+    /// all record identically — and the preview, which writes device focus directly, records nothing.
+    public private(set) var paneVisitMRU: [PaneID] = []
+
+    /// Deep enough to cover a working set, short enough that a stale id cannot linger for a whole
+    /// session. Matches ``WorkspaceTopology/focusMRUCap`` doubled, because panes outnumber tabs.
+    public static let paneVisitMRUCap = 32
+
+    /// Fronts `id` in the visit ring. Dead ids are not pruned here — ``PaneSwitcher/candidates(active:mru:ordered:)``
+    /// intersects with the live pane set on every open, so a pane that closes simply stops being offered.
+    func notePaneVisit(_ id: PaneID) {
+        paneVisitMRU.removeAll { $0 == id }
+        paneVisitMRU.insert(id, at: 0)
+        if paneVisitMRU.count > Self.paneVisitMRUCap {
+            paneVisitMRU.removeLast(paneVisitMRU.count - Self.paneVisitMRUCap)
+        }
+    }
 
     // MARK: - Recent-pane MRU (quick-switch to the previously-focused pane)
 

@@ -188,17 +188,21 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(leaves(store).count, leafCount, "cycling tabs never changes the leaf set")
     }
 
-    /// `.selectTab(N)` (1-based) selects the Nth tab of the active session.
-    func testSelectTabNumberSelectsThatTab() {
+    /// `.selectPane(N)` (1-based) focuses the Nth PANE of the active session in flat order — with one
+    /// pane per tab that is the Nth tab, which is what makes this a fair replacement for the old chord.
+    func testSelectPaneNumberFocusesThatPane() {
         let store = makeTreeStore()
         route(.newTab, store)
-        route(.newTab, store) // three tabs (indices 0,1,2), index 2 active
+        route(.newTab, store) // three single-pane tabs (indices 0,1,2), index 2 active
+        let panes = store.flatOrderedPaneIDs()
 
-        route(.selectTab(1), store) // 1-based ⇒ index 0
-        XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 0, "selectTab(1) selected the first tab")
+        route(.selectPane(1), store) // 1-based ⇒ the first pane
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, panes.first)
+        XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 0, "and its tab came with it")
 
-        route(.selectTab(3), store) // 1-based ⇒ index 2
-        XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 2, "selectTab(3) selected the third tab")
+        route(.selectPane(3), store)
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, panes.last)
+        XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 2)
     }
 
     /// `.breakPaneToTab` ejects the active pane into a new tab of its session (the source tab collapses).
@@ -633,31 +637,31 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    /// The cheat sheet's SINGLE source (``groupedForDisplay``) must surface a Tabs-group row collapsing the
-    /// nine generated ⌘1…⌘9 select-tab chords — the doc contract (lines 204-207 / 524-526) promises one
-    /// representative row, yet the nine per-digit chords live only in ``selectTabBindings`` (absent from the
-    /// `bindings` table groupedForDisplay iterates). Without it the cheat sheet silently omits the whole
-    /// "switch to tab N" family. FAILS on the un-fixed code (no such row exists).
-    func testGroupedForDisplaySurfacesCollapsedSelectTabRow() {
-        let tabs = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .tabs }
-        XCTAssertNotNil(tabs, "the Tabs group is present in the cheat-sheet display set")
-        let selectTabRow = tabs?.bindings.first { $0.title.contains("⌘1…⌘9") }
+    /// The cheat sheet's SINGLE source (``groupedForDisplay``) must surface a Panes-group row collapsing
+    /// the nine generated ⌘1…⌘9 select-pane chords — the doc contract promises one representative row, yet
+    /// the nine per-digit chords live only in ``selectPaneBindings`` (absent from the `bindings` table
+    /// groupedForDisplay iterates). Without it the cheat sheet silently omits the whole "switch to pane N"
+    /// family.
+    func testGroupedForDisplaySurfacesCollapsedSelectPaneRow() {
+        let panes = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .panes }
+        XCTAssertNotNil(panes, "the Panes group is present in the cheat-sheet display set")
+        let selectPaneRow = panes?.bindings.first { $0.title.contains("⌘1…⌘9") }
         XCTAssertNotNil(
-            selectTabRow,
-            "groupedForDisplay surfaces ONE representative ⌘1…⌘9 select-tab row (the doc-promised collapse)",
+            selectPaneRow,
+            "groupedForDisplay surfaces ONE representative ⌘1…⌘9 select-pane row (the doc-promised collapse)",
         )
         // The representative is display-only: chord:nil so the overlay renders the glyph baked into the
-        // title (no single-chord hint chip), and the real per-digit chords stay in selectTabBindings.
-        XCTAssertNil(selectTabRow?.chord, "the collapsed row carries no single chord (glyph is in the title)")
+        // title (no single-chord hint chip), and the real per-digit chords stay in selectPaneBindings.
+        XCTAssertNil(selectPaneRow?.chord, "the collapsed row carries no single chord (glyph is in the title)")
         XCTAssertEqual(
-            WorkspaceBindingRegistry.selectTabBindings.count, 9,
-            "the nine real per-digit chords still live in selectTabBindings (not the display set)",
+            WorkspaceBindingRegistry.selectPaneBindings.count, 9,
+            "the nine real per-digit chords still live in selectPaneBindings (not the display set)",
         )
     }
 
     /// Every chord-carrying binding the DISPATCHER sees (``allBindings``) is ⌘- or ⌥-prefixed (the
     /// load-bearing §5 conflict rule: a bare key / Ctrl-letter must fall through to the focused terminal).
-    /// Iterating `allBindings` (not just `bindings`) covers the nine ⌘-digit select-tab chords too.
+    /// Iterating `allBindings` (not just `bindings`) covers the nine ⌘-digit select-pane chords too.
     func testEveryChordIsCommandOrOptionPrefixed() {
         for binding in WorkspaceBindingRegistry.allBindings {
             guard let chord = binding.chord else { continue }
@@ -757,8 +761,8 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(
             chord(.toggleSidebar), KeyChord(character: "l", [.command, .shift]), "toggle sidebar = ⌘⇧L",
         )
-        XCTAssertEqual(chord(.selectTab(1)), KeyChord(character: "1", [.command]), "select tab 1 = ⌘1")
-        XCTAssertEqual(chord(.selectTab(9)), KeyChord(character: "9", [.command]), "select tab 9 = ⌘9")
+        XCTAssertEqual(chord(.selectPane(1)), KeyChord(character: "1", [.command]), "select pane 1 = ⌘1")
+        XCTAssertEqual(chord(.selectPane(9)), KeyChord(character: "9", [.command]), "select pane 9 = ⌘9")
         XCTAssertEqual(chord(.find), KeyChord(character: "f", [.command]), "find = ⌘F (W14)")
         // Warp-style Blocks chords.
         XCTAssertEqual(

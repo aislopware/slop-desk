@@ -498,9 +498,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// toggles `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` + the `Pin Window` toggle —
     /// all palette/menu-only, `chord: nil` (bindable in Settings → Keybindings; Pin Window pinned chord-less
     /// by `WorkspaceBindingRoutingTests`). The representative bakes its hint into its title instead. The trap:
-    /// `glyph(for:)` of the representative's stand-in `.selectTab(1)` action resolves the REAL ⌘1 binding, so
-    /// the view MUST gate on the row's own `chord` (not the action's glyph) or it stamps a "⌘1" chip onto the
-    /// "Select Tab (⌘1…⌘9)" row.
+    /// `glyph(for:)` of the representative's stand-in `.selectPane(1)` action resolves the REAL ⌘1 binding,
+    /// so the view MUST gate on the row's own `chord` (not the action's glyph) or it stamps a "⌘1" chip onto
+    /// the "Select Pane (⌘1…⌘9)" row.
     func testCheatSheetGlyphChipsGateOnRowChord() {
         let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
 
@@ -510,7 +510,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(
             chordLessIDs,
             [
-                "tab.selectN", "pane.rename", "tab.close",
+                "pane.selectN", "pane.rename", "tab.close",
                 "view.readOnly", "view.secureKeyboardEntry", "view.viKeyHints",
                 // Hint to Reveal in Finder is chord-less.
                 "view.hintReveal",
@@ -525,15 +525,15 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 // Fit Viewport to Pane + Reset Viewport Zoom are chord-less (palette/menu
                 // discoverability verbs for the footer's viewport cluster).
                 "view.fitViewportToPane", "view.resetViewportZoom",
-                // Tab Switcher is chord-less BY CONSTRUCTION, not by omission: its ⌃⇥ gesture means
+                // Pane Switcher is chord-less BY CONSTRUCTION, not by omission: its ⌃⇥ gesture means
                 // open/step/commit depending on state and ends on a modifier RELEASE, which no single
                 // chord row can express — `WorkspaceKeyDispatcher` owns the keys and this row exists
                 // purely so the switcher is discoverable + openable without one.
-                "tab.switcher",
+                "pane.switcher",
             ],
-            "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
+            "the no-chip rows: collapsed select-pane representative + chord-less Rename/Close Tab "
                 + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + Reattach All "
-                + "+ the two viewport verbs + the dispatcher-owned Tab Switcher",
+                + "+ the two viewport verbs + the dispatcher-owned Pane Switcher",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.
@@ -545,7 +545,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
         // The representative carries its range in the title and has no chord — yet its action's glyph resolves
         // the real ⌘1 binding, which is exactly why the view gates on `chord == nil` (no chip) here.
-        let representative = WorkspaceBindingRegistry.selectTabRepresentative
+        let representative = WorkspaceBindingRegistry.selectPaneRepresentative
         XCTAssertNil(representative.chord, "the ⌘1…⌘9 representative has no single chord (renders no chip)")
         XCTAssertTrue(
             representative.title.contains("⌘1") && representative.title.contains("⌘9"),

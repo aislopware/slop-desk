@@ -230,7 +230,7 @@ struct KeybindingsEditorView: View {
     private func bindings(in category: WorkspaceAction.Category) -> [WorkspaceBinding] {
         WorkspaceBindingRegistry.allBindings.filter {
             $0.category == category
-                && $0.id != WorkspaceBindingRegistry.selectTabRepresentative.id
+                && $0.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
                 && KeybindingsEditorModel.matches(
                     $0, effectiveChord: effectiveChord(for: $0), query: searchQuery,
                 )

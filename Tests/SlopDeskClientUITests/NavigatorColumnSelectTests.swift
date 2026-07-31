@@ -89,7 +89,7 @@ final class NavigatorColumnSelectTests: XCTestCase {
     // MARK: - Badge auto-clear on keyboard tab switch (⌘1–⌘9)
 
     /// REVERT-TO-CONFIRM-FAIL: before `WorkspaceStore.selectTab` gained its badge-clearing loop, switching
-    /// tabs via ⌘1–⌘9 (which routes `selectTabNumber → selectTab` WITHOUT going through
+    /// tabs via ⌘1–⌘9 (which routes `selectPaneNumber → revealPaneTree → selectTab` WITHOUT going through
     /// `NavigatorColumn.selectRow`) left the `.done` badge intact — failing the `.idle` assertion below.
     /// With the fix `selectTab` itself clears badges so keyboard-driven tab switches are equivalent to
     /// sidebar-click tab switches: the badge auto-clears whenever the tab gains focus.

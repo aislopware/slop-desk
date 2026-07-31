@@ -261,10 +261,10 @@ public extension WorkspaceBindingRegistry {
             store.openDesktopWindow()
         case .nextTab: store.cycleTab(by: 1)
         case .prevTab: store.cycleTab(by: -1)
-        case let .selectTab(n): store.selectTabNumber(n)
+        case let .selectPane(n): store.selectPaneNumber(n)
         // Opened without a held modifier (palette / menu), so it is UNARMED: Return commits, Esc cancels.
         // The ⌃⇥ gesture takes the armed path straight through `WorkspaceKeyDispatcher`.
-        case .tabSwitcher: store.openOrStepTabSwitcher(forward: true, armedByModifier: false)
+        case .paneSwitcher: store.openOrStepPaneSwitcher(forward: true, armedByModifier: false)
         case .closeTab: store.closeActiveTab()
         // Close Window (⌘⇧W / View ▸ Close Window): a window maps to a ``Session``. ACTUATE the close
         // through the passed-in closure — the live app wires it to `window.performClose(nil)`, firing the
@@ -432,8 +432,8 @@ public extension WorkspaceBindingRegistry {
         case .openQuickly: toggles.openQuickly?()
         case .nextTab,
              .prevTab,
-             .selectTab,
-             .tabSwitcher,
+             .selectPane,
+             .paneSwitcher,
              .closeTab: break // no canvas tab model (the tree shell owns sessions)
         // Close Window: a window-level `NSWindow.performClose` concern (not a model op),
         // so the canvas path forwards the SAME actuator closure as the tree path — a graceful no-op when none
