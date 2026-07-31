@@ -217,6 +217,42 @@ final class RailRowsMemoTests: XCTestCase {
         XCTAssertEqual(after[0].title, "vim", "and the rebuilt row shows it")
     }
 
+    /// ⚠️ A RETITLE MUST NOT REPLACE THE LEAF — the pair of pins that keeps the rail from blinking.
+    ///
+    /// A pane that titles by its program retitles on every command edge (`sleep 5` → `sleep` → back),
+    /// and with the title inside ``RailRow/leafIdentity`` each of those tore the row's leaf down and
+    /// stood a new one up — measured on hardware as the row's chrome flashing once per command. The
+    /// title is out of the identity now, and the two halves of that decision are pinned together
+    /// HERE, because either one alone is a bug: the identity must hold ACROSS the retitle, and the
+    /// memo must MISS on it (that miss is what re-runs the navigator body and hands the surviving
+    /// leaf its new row — the freshness the identity used to force).
+    func testARetitleKeepsTheLeafAndStillRebuildsTheRows() {
+        let store = makeStore() // single cwd-less pane → titled by its foreground process
+        let memo = RailRowsMemo()
+        let before = memo.rows(for: store)
+        store.setForegroundProcess("sleep", for: before[0].id)
+        let running = memo.rows(for: store)
+        XCTAssertEqual(running[0].title, "sleep", "the row retitled")
+        XCTAssertEqual(memo.buildCount, 2, "…and the retitle MISSED the memo, so the body re-runs")
+        XCTAssertEqual(
+            running[0].leafIdentity, before[0].leafIdentity,
+            "the leaf must SURVIVE the retitle — replacing it is the flash",
+        )
+
+        // …and back, which is the other half of every command's churn.
+        store.setForegroundProcess(nil, for: before[0].id)
+        let settled = memo.rows(for: store)
+        XCTAssertEqual(memo.buildCount, 3)
+        XCTAssertEqual(settled[0].leafIdentity, before[0].leafIdentity)
+
+        // The identity still answers what it is FOR: a different pane, kind or place is a different
+        // leaf, and those are the changes that must never reuse a surface.
+        XCTAssertNotEqual(
+            before[0].retitled("anything").leafIdentity.isEmpty, true,
+            "identity is never blank — a leaf with no key would collapse every row into one",
+        )
+    }
+
     // MARK: - Search path (perf audit follow-up: an active query must NOT bypass the memo)
 
     /// The sidebar's search path composes `filtered`/`sectionedByProject(query:)` over the MEMOIZED rows

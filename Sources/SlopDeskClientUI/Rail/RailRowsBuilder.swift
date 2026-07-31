@@ -55,16 +55,26 @@ struct RailRow: Identifiable, Equatable {
     var projectKey: String?
 
     /// The SwiftUI view identity for this row's LEAF view (`SidebarLiveRow` / `IOSSidebarLiveRow`) —
-    /// the pane id plus every MEMOIZED field the leaf renders from this row value (title / kind / cwd
-    /// tooltip). Inside the sidebar's lazy container, a leaf whose Observation deps (the volatile chrome
-    /// dicts) fire re-renders with the row value it was CREATED with — a structural rebuild that changes
-    /// this row's title (cwd landed, a chooser resolved to a terminal, a rename) updates the memoized
-    /// model but would never repaint the leaf without this, so the rail would show "New Pane"/a stale
-    /// folder name forever while its subtitle stayed live. Keying the leaf's `.id(_:)` on this string
-    /// forces a fresh leaf whenever a rendered-from-row field changes; volatile chrome keeps flowing
-    /// through `liveChrome` unchanged.
+    /// the pane id plus the memoized fields whose change means this leaf is standing for a DIFFERENT
+    /// thing (its kind, its place on disk). Inside the sidebar's lazy container a leaf whose
+    /// Observation deps (the volatile chrome dicts) fire re-renders with the row value it was CREATED
+    /// with, so a structural rebuild that never reaches the leaf would leave stale chrome on screen.
+    ///
+    /// ⚠️ The TITLE is deliberately NOT here, and this is measured rather than reasoned. A pane's
+    /// structural title is its foreground PROCESS whenever the pane titles by program (the at-root
+    /// rung), so it flips `sleep 5` → `sleep` → `sleep 5` across one command — and with the title in
+    /// this key that is a leaf REPLACEMENT on every command edge: the rail row visibly blinks its
+    /// chrome as SwiftUI tears one leaf down and stands another up. Instrumented on hardware
+    /// (`[ROW] … leaf=37353` → `leaf=63174` at the exit instant, with no hover, badge or selection
+    /// change anywhere near it) — the blink and the swap are the same event.
+    ///
+    /// Dropping it is safe because the memo's own fingerprint already covers it: ``RailStructureKey``
+    /// carries the spec, the cwd, the freshness-gated live title AND the title's process fallback, so
+    /// a retitle is always a cache MISS — the navigator body re-runs and hands the leaf the new row.
+    /// The identity was a second guard against a case the first one cannot let through, and it cost a
+    /// flash per command to stand there.
     var leafIdentity: String {
-        "\(id.raw.uuidString)|\(title)|\(kind.rawValue)|\(cwd ?? "")"
+        "\(id.raw.uuidString)|\(kind.rawValue)|\(cwd ?? "")"
     }
 
     /// A copy of this row with a new `title` (collision disambiguation) — every other field is
