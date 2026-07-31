@@ -2,7 +2,7 @@
   <!-- Static app-icon mock: paper plate, ink mark. Ship source is SlopDesk.icon
        (Icon Composer applies the real superellipse + material at runtime). -->
   <rect width="1024" height="1024" rx="229" fill="#F2F1EC"/>
-  <g transform="translate(512 512) scale(3.4) translate(-128 -128)" color="#23262B">
+  <g transform="translate(512 512) scale(4.6) translate(-128 -116)" color="#23262B">
     <defs>
       <mask id="slopcat-appicon-cut">
         <rect width="256" height="256" fill="#000"/>
