@@ -1,4 +1,5 @@
-// PaneSwitcherRowsTests — pins what a ⌃⇥ switcher row SAYS and where the section headers fall.
+// PaneSwitcherRowsTests — pins what a ⌃⇥ switcher row SAYS, both halves of it: the identity, and the
+// PLACE line under it that each row now carries for itself instead of borrowing from a section header.
 //
 // The regression this guards: the switcher named every row through the folder-name rung, so three panes
 // opened in one repo read `slopdesk` / `slopdesk` / `slopdesk` and the ring's whole purpose (which one am
@@ -15,25 +16,27 @@ import XCTest
 
 @MainActor
 final class PaneSwitcherRowsTests: XCTestCase {
-    // MARK: - `header` (the section a row sits under)
+    // MARK: - `projectName` (the first half of a row's place line)
 
-    /// The header is the PROJECT's folder name, whatever the pane's own cwd is below it.
-    func testHeaderIsTheProjectFolderName() {
+    /// The project is its folder name, whatever the pane's own cwd is below it.
+    func testProjectNameIsTheProjectFolderName() {
         XCTAssertEqual(
-            PaneSwitcherRowsBuilder.header(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api"),
+            PaneSwitcherRowsBuilder.projectName(
+                projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api",
+            ),
             "slopdesk",
         )
     }
 
-    /// A pane with no project key yet still lands under a place — its own folder.
-    func testHeaderWithoutAKeyIsTheOwnFolder() {
-        XCTAssertEqual(PaneSwitcherRowsBuilder.header(projectKey: nil, cwd: "/w/scratch"), "scratch")
-        XCTAssertNil(PaneSwitcherRowsBuilder.header(projectKey: nil, cwd: nil))
+    /// A pane with no project key yet still names a place — its own folder.
+    func testProjectNameWithoutAKeyIsTheOwnFolder() {
+        XCTAssertEqual(PaneSwitcherRowsBuilder.projectName(projectKey: nil, cwd: "/w/scratch"), "scratch")
+        XCTAssertNil(PaneSwitcherRowsBuilder.projectName(projectKey: nil, cwd: nil))
     }
 
     // MARK: - `relativePath` / `note` (the quiet remainder)
 
-    /// A pane AT its project root adds nothing — the header already said the place.
+    /// A pane AT its project root adds nothing — the project half of the line already said the place.
     func testRootPaneHasNoNote() {
         XCTAssertNil(PaneSwitcherRowsBuilder.relativePath(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"))
         XCTAssertNil(PaneSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"))
@@ -69,21 +72,51 @@ final class PaneSwitcherRowsTests: XCTestCase {
         )
     }
 
-    // MARK: - `unrepeated` (a title must not restate its header)
+    // MARK: - `unrepeated` (a title must not restate the project under it)
 
-    /// A row whose identity fell all the way through to the folder name would say the header twice —
-    /// it yields to the pane's program instead.
-    func testATitleThatRestatesTheHeaderYieldsToTheProgram() {
+    /// A row whose identity fell all the way through to the folder name would say its own place line
+    /// twice — it yields to the pane's program instead.
+    func testATitleThatRestatesTheProjectYieldsToTheProgram() {
         XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated("slopdesk", header: "slopdesk", processLabel: "-zsh"),
+            PaneSwitcherRowsBuilder.unrepeated(
+                "slopdesk", project: "slopdesk", note: nil, processLabel: "-zsh",
+            ),
             "zsh",
         )
     }
 
-    /// …but only when it has a program to yield to: a blank line says less than a redundant one.
-    func testATitleRestatingTheHeaderSurvivesWithNoProgram() {
+    /// ⚠️ THE NOTE COUNTS TOO. A shell deep in a project titles itself by its folder name, which is the
+    /// last thing its own place line already says — photographed as `Overlays` sitting over
+    /// `slopdesk › Sources/SlopDeskClientUI/Overlays`. The section-header era could not see this,
+    /// because the path was not on the row.
+    func testATitleThatRestatesTheNotesLastComponentAlsoYields() {
         XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated("slopdesk", header: "slopdesk", processLabel: nil),
+            PaneSwitcherRowsBuilder.unrepeated(
+                "Overlays", project: "slopdesk", note: "Sources/SlopDeskClientUI/Overlays",
+                processLabel: "-zsh",
+            ),
+            "zsh",
+        )
+    }
+
+    /// …but only the LAST component: a title that happens to match a directory higher up the path is
+    /// saying something the eye does not read as a repeat.
+    func testATitleMatchingAnInnerPathComponentIsLeftAlone() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.unrepeated(
+                "Sources", project: "slopdesk", note: "Sources/SlopDeskClientUI/Overlays",
+                processLabel: "-zsh",
+            ),
+            "Sources",
+        )
+    }
+
+    /// …and only when it has a program to yield to: a blank line says less than a redundant one.
+    func testATitleRestatingTheProjectSurvivesWithNoProgram() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.unrepeated(
+                "slopdesk", project: "slopdesk", note: nil, processLabel: nil,
+            ),
             "slopdesk",
         )
     }
@@ -91,69 +124,10 @@ final class PaneSwitcherRowsTests: XCTestCase {
     /// A real identity is never touched, even when a program is known.
     func testARealTitleIsNeverReplaced() {
         XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated("make check", header: "slopdesk", processLabel: "make"),
+            PaneSwitcherRowsBuilder.unrepeated(
+                "make check", project: "slopdesk", note: "docs", processLabel: "make",
+            ),
             "make check",
-        )
-    }
-
-    // MARK: - `items` (headers fall on run boundaries, order untouched)
-
-    private func row(_ title: String, project: String?, number: Int = 1) -> PaneSwitcherRow {
-        PaneSwitcherRow(
-            id: PaneID(), number: number, title: title, note: nil, project: project,
-            isHighlighted: false,
-        )
-    }
-
-    /// Panes of ONE project get NO header — the card IS that project, and a caption over a run with
-    /// nothing to be distinguished from is a label on a box holding one thing.
-    func testOneProjectGetsNoHeaderAtAll() {
-        let items = PaneSwitcherRowsBuilder.items([
-            row("fix the rail flash", project: "slopdesk"),
-            row("nvim main.swift", project: "slopdesk"),
-            row("make check", project: "slopdesk"),
-        ])
-        XCTAssertEqual(items.count, 3, "three rows, no header")
-        XCTAssertEqual(
-            items.filter { if case .section = $0.content { true } else { false } }.count, 0,
-        )
-    }
-
-    /// ⚠️ THE ORDER IS THE RING'S. A project that comes back after another one heads a SECOND run rather
-    /// than pulling its rows up — re-sorting would make the ⇥ highlight jump around the card.
-    func testAReturningProjectHeadsASecondRunRatherThanReordering() {
-        let items = PaneSwitcherRowsBuilder.items([
-            row("fix the rail flash", project: "slopdesk"),
-            row("zsh", project: "otty"),
-            row("nvim main.swift", project: "slopdesk"),
-        ])
-        let sections = items.compactMap { item -> String? in
-            if case let .section(name) = item.content { name } else { nil }
-        }
-        XCTAssertEqual(sections, ["slopdesk", "otty", "slopdesk"])
-        let titles = items.compactMap { item -> String? in
-            if case let .row(row) = item.content { row.title } else { nil }
-        }
-        XCTAssertEqual(
-            titles, ["fix the rail flash", "zsh", "nvim main.swift"], "row order is the ring's, untouched",
-        )
-        XCTAssertEqual(items.map(\.id), Array(0..<items.count), "ids are positions — names repeat")
-    }
-
-    /// A projectless row (a video pane, a cwd that has not landed) opens no section — it continues the
-    /// run above it instead of scattering an "Other" bucket through a recency-ordered list.
-    func testAProjectlessRowOpensNoSection() {
-        let items = PaneSwitcherRowsBuilder.items([
-            row("fix the rail flash", project: "slopdesk"),
-            row("Safari", project: nil),
-            row("nvim main.swift", project: "slopdesk"),
-            row("zsh", project: "otty"),
-        ])
-        let sections = items.compactMap { item -> String? in
-            if case let .section(name) = item.content { name } else { nil }
-        }
-        XCTAssertEqual(
-            sections, ["slopdesk", "otty"], "the projectless row neither heads nor breaks the run",
         )
     }
 
@@ -203,16 +177,59 @@ final class PaneSwitcherRowsTests: XCTestCase {
         XCTAssertEqual(titles[1], "fix the rail flash", "the agent pane is named by its task")
         XCTAssertEqual(titles[2], "nvim", "the other pane is named by its program")
         XCTAssertEqual(
-            Set(rows.compactMap(\.project)), ["slopdesk"], "both sit under the project they share",
+            rows.compactMap(\.project), ["slopdesk", "slopdesk"],
+            "each row says the project for itself — there is no header to borrow it from",
         )
         XCTAssertEqual(rows.compactMap(\.note), [], "a pane at its project root adds nothing")
+    }
+
+    /// ⚠️ NO GROUPING, NO RE-SORT. Panes interleave across projects in a recency ring, so the rows keep
+    /// the ring's order and each one carries its own project — the shape that replaced the section
+    /// headers, which under this order would have captioned nearly every row.
+    func testInterleavedProjectsKeepTheRingsOrderAndEachRowNamesItsOwn() throws {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let panes = try (0..<3).map { try pane(store, tab: $0) }
+        place(store, panes[0], project: "/w/slopdesk")
+        place(store, panes[1], project: "/w/otty")
+        place(store, panes[2], project: "/w/slopdesk", cwd: "/w/slopdesk/docs")
+        for id in panes { store.setForegroundProcess("zsh", for: id) }
+
+        // Visit them in an order that interleaves the two projects, so the ring is A, B, A.
+        store.revealPaneTree(panes[2])
+        store.revealPaneTree(panes[1])
+        store.revealPaneTree(panes[0])
+
+        let rows = try openedRows(store)
+        XCTAssertEqual(rows.count, 3)
         XCTAssertEqual(
-            PaneSwitcherRowsBuilder.items(rows).filter {
-                if case .section = $0.content { true } else { false }
-            }.count,
-            0,
-            "one project — the card is the project, so no header",
+            rows.map(\.project), ["slopdesk", "otty", "slopdesk"],
+            "the project alternates down the card — one header per row is what this replaced",
         )
+        XCTAssertEqual(
+            Set(rows.map(\.number)), [1, 2, 3], "the numbers are still the session's flat pane order",
+        )
+        XCTAssertEqual(
+            rows.compactMap(\.note), ["docs"],
+            "only the strayed pane adds a sub-path; the two at their roots stay quiet",
+        )
+    }
+
+    /// A pane with NO project (its cwd has not landed) has no place lead-in to say — the row must not
+    /// invent one, and its note stands alone.
+    func testAPaneWithoutAProjectCarriesNoProjectAtAll() throws {
+        let store = makeStore()
+        let first = try pane(store, tab: 0)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let second = try pane(store, tab: 1)
+        place(store, second, project: "/w/slopdesk")
+        store.setForegroundProcess("zsh", for: first)
+
+        let rows = try openedRows(store)
+        let orphan = try XCTUnwrap(rows.first { $0.id == first })
+        XCTAssertNil(orphan.project, "no cwd ⇒ no project half")
+        XCTAssertNil(orphan.note, "and nothing below it either")
     }
 
     /// A SPLIT gets its own row, and the numbers are the session's flat pane order — so the second pane
@@ -231,9 +248,9 @@ final class PaneSwitcherRowsTests: XCTestCase {
         XCTAssertEqual(Set(rows.map(\.id)).count, 3, "and each row names a distinct pane")
     }
 
-    /// An idle shell at its project root would title itself by the folder — i.e. by its own header. It
-    /// yields to its program instead, so the row is not the header printed twice.
-    func testAnIdleRootShellDoesNotRestateItsHeader() throws {
+    /// An idle shell at its project root would title itself by the folder — i.e. by the very word its
+    /// own place line carries. It yields to its program instead, so the row is not one word twice.
+    func testAnIdleRootShellDoesNotRestateItsProject() throws {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero)
         let first = try pane(store, tab: 0)

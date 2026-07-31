@@ -373,11 +373,13 @@ enum Slate {
         static let heightBar: CGFloat = 28
         /// The standard single-line list row (palette results, footers).
         static let heightRow: CGFloat = 32
-        /// The ROOMY single-line row — a list read at a GLANCE rather than scanned: the ⌃⇥ switcher,
-        /// where the whole surface lives for the length of a held modifier and a 32pt beat reads
-        /// cramped. One rung above `heightRow`, and above `heightStrip` so a row can never be mistaken
-        /// for chrome.
+        /// The ROOMY single-line row — a list read at a GLANCE rather than scanned. One rung above
+        /// `heightRow`, and above `heightStrip` so a row can never be mistaken for chrome.
         static let heightRowTall: CGFloat = 44
+        /// The TWO-REGISTER row: an identity with its place set under it (the ⌃⇥ switcher). Two type
+        /// sizes stacked (13 over 11) come to ~29pt of ink, so this rung is that plus a breath either
+        /// side — one step above `heightRowTall`, which is the same row with only one thing to say.
+        static let heightRowStacked: CGFloat = 48
         /// The sidebar TAB row — the standard single-line row rung (`heightRow`), so the tab list
         /// keeps the ladder's beat: denser than a lounge list, taller than a menu row.
         static let heightTabRow: CGFloat = heightRow

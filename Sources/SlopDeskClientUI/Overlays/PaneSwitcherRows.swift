@@ -8,14 +8,16 @@
 // is deliberately NOT consulted: a tab is a container, and naming its pane after it is how three panes of
 // one repo all came to read `slopdesk` (the bug this builder exists to answer).
 //
-// ⚠️ A header is a RUN BOUNDARY, not a re-sort. The display order is the frozen ring's (recency), because
-// that is the order ⇥ steps in — grouping the rows by project would make the highlight jump around the
-// card. So a header is emitted wherever consecutive rows change project, and one project can head more
-// than one run. And a list that spans ONE project gets no header at all — the common case is then a
-// clean, uninterrupted list of identities.
+// ⚠️ THE PROJECT RIDES THE ROW, it does not head a section. Section headers were the tab-era shape and
+// they do not survive the unit change: the display order is the frozen ring's (recency), and a header is
+// only worth its line when consecutive rows share it. Tabs came in project-sized runs; PANES interleave —
+// walk between two repos and the ring reads slopdesk, otty, slopdesk, otty, which under a run-boundary
+// rule is a caption above every single row. Re-sorting to fix that is worse still: the card's order is
+// the order ⇥ steps in, so grouping would make the highlight jump around the list. So each row says its
+// own place, on its own second line.
 //
-// Pure composers (`header` / `relativePath` / `note` / `items`) so the wording and the header runs are
-// unit-pinned without a view; the one `@MainActor` entry is the store read.
+// Pure composers (`projectName` / `relativePath` / `note`) so the wording is unit-pinned without a view;
+// the one `@MainActor` entry is the store read.
 
 import CoreGraphics
 import SlopDeskWorkspaceCore
@@ -31,23 +33,10 @@ struct PaneSwitcherRow: Identifiable, Equatable {
     let title: String
     /// The quiet remainder: the sub-path below the project. `nil` for the common at-root pane.
     let note: String?
-    /// The project this row sits in — the header text, carried per row so ``PaneSwitcherRowsBuilder/items(_:)``
-    /// can find the boundaries.
+    /// The project this row sits in — the first half of its PLACE line. `nil` for a pane with no project
+    /// at all (a video pane, a shell whose cwd has not landed), where the note stands alone.
     let project: String?
     let isHighlighted: Bool
-}
-
-/// The card's display list: section headers interleaved with rows, in ring order.
-struct PaneSwitcherItem: Identifiable, Equatable {
-    enum Content: Equatable {
-        case section(String)
-        case row(PaneSwitcherRow)
-    }
-
-    /// Position in the display list. A plain index because a project may head more than one run, so its
-    /// NAME is not unique and cannot be the identity.
-    let id: Int
-    let content: Content
 }
 
 /// How big the card is, as a function of the window it floats in. Pure + unit-pinned; the view only
@@ -64,6 +53,9 @@ struct PaneSwitcherItem: Identifiable, Equatable {
 /// | 45 characters — the low end of a comfortable measure | 390 |
 /// | 60 characters — `swift test --filter PaneSwitcherRowsTests` and friends land here | 490 |
 /// | 75 characters — the high end; past it the eye loses the line | 590 |
+///
+/// The row is now TWO registers stacked (identity over place), so the title owns that measure alone
+/// rather than sharing it with the sub-path — the band holds, with more slack than it had.
 ///
 /// So: ``minWidth`` 400 (a real command, untruncated), ``maxWidth`` 640 (the app's Open-Quickly rung —
 /// the widest list panel the chrome already uses), and between them a fraction of the window. The last
@@ -116,37 +108,8 @@ enum PaneSwitcherRowsBuilder {
         }
     }
 
-    /// The card's full display list for `switcher` — the one call a view makes.
-    @MainActor
-    static func items(for switcher: PaneSwitcher, store: WorkspaceStore) -> [PaneSwitcherItem] {
-        items(rows(for: switcher, store: store))
-    }
-
     /// The highest pane the app binds a ⌘-digit to (⌘1–9). Past it a row has no shortcut to show.
     static let highestShortcut = 9
-
-    /// Interleave section headers into `rows` wherever the project CHANGES between consecutive rows.
-    /// A row with no project at all (a video pane, a shell whose cwd has not landed) heads nothing —
-    /// it simply continues the run above it rather than opening an "Other" section the ring's order
-    /// would scatter. Pure so the run rule is unit-pinned.
-    ///
-    /// A list that spans ONE project gets no header at all: the card is that project, and naming it
-    /// above a run that has nothing to be distinguished from is a caption on a box with one thing in
-    /// it. (The project still reaches ``title(facts:chrome:project:store:)``, which uses it to keep a
-    /// row from merely restating its folder — that rule is about the ROW, not about the header.)
-    static func items(_ rows: [PaneSwitcherRow]) -> [PaneSwitcherItem] {
-        let spansSeveral = Set(rows.compactMap(\.project)).count > 1
-        var out: [PaneSwitcherItem] = []
-        var current: String?
-        for row in rows {
-            if spansSeveral, let project = row.project, project != current {
-                current = project
-                out.append(PaneSwitcherItem(id: out.count, content: .section(project)))
-            }
-            out.append(PaneSwitcherItem(id: out.count, content: .row(row)))
-        }
-        return out
-    }
 
     /// Resolve the frozen candidate ring into rows. The ORDER is the switcher's (recency), not the
     /// session's — that is the point of the surface; the NUMBER is the session's, because that is what
@@ -178,15 +141,16 @@ enum PaneSwitcherRowsBuilder {
                 manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
             )
             let project = facts.kind == .terminal
-                ? header(projectKey: facts.projectKey, cwd: facts.cwd)
+                ? projectName(projectKey: facts.projectKey, cwd: facts.cwd)
                 : nil
+            let note = facts.kind == .terminal
+                ? note(projectKey: facts.projectKey, cwd: facts.cwd)
+                : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
             return PaneSwitcherRow(
                 id: id,
                 number: position,
-                title: title(facts: facts, chrome: chrome, project: project, store: store),
-                note: facts.kind == .terminal
-                    ? note(projectKey: facts.projectKey, cwd: facts.cwd)
-                    : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle),
+                title: title(facts: facts, chrome: chrome, project: project, note: note, store: store),
+                note: note,
                 project: project,
                 isHighlighted: index == switcher.highlightIndex,
             )
@@ -201,13 +165,14 @@ enum PaneSwitcherRowsBuilder {
     /// running command / last command / folder name. That fall-through is what tells two panes of one
     /// repo apart.
     ///
-    /// The last rung of that chain is the folder name, which under a section header is the header said
-    /// twice — so a row that lands there yields to its program instead (`zsh`, the sidebar's metadata
-    /// slot). Only when even that is unknown does the row restate the folder, because a blank line says
-    /// less than a redundant one.
+    /// The last rung of that chain is the folder name, which beside the row's own place line is the same
+    /// word twice — so a row that lands there yields to its program instead (`zsh`, the sidebar's
+    /// metadata slot). Only when even that is unknown does the row restate the folder, because a blank
+    /// line says less than a redundant one.
     @MainActor
     private static func title(
-        facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome, project: String?, store: WorkspaceStore,
+        facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome, project: String?, note: String?,
+        store: WorkspaceStore,
     ) -> String {
         let structural = RailRowsBuilder.rowTitle(
             kind: facts.kind, spec: facts.spec, cwd: facts.cwd, liveTitle: facts.liveTitle,
@@ -235,28 +200,38 @@ enum PaneSwitcherRowsBuilder {
             cwdTitle: RailRowsBuilder.cwdFolderName(facts.cwd),
             fallback: PaneChooserRegistry.option(for: facts.kind).title,
         )
-        return unrepeated(resolved, header: project, processLabel: chrome.processLabel)
+        return unrepeated(resolved, project: project, note: note, processLabel: chrome.processLabel)
     }
 
-    /// A title that only restates its section header yields to the pane's program. Pure so the rule is
-    /// unit-pinned.
-    static func unrepeated(_ title: String, header: String?, processLabel: String?) -> String {
-        guard let header, title == header else { return title }
+    /// A title that only restates the place line under it yields to the pane's program. Pure so the rule
+    /// is unit-pinned.
+    ///
+    /// BOTH halves of that line count. The project is the obvious case (`slopdesk` over `slopdesk`), but
+    /// the note's LAST component is the same stutter one level down: a shell sitting in
+    /// `Sources/…/Overlays` titles itself by the folder-name rung, and the row then reads `Overlays`
+    /// over `slopdesk › Sources/SlopDeskClientUI/Overlays`. That was invisible while the path lived in a
+    /// section header the row could not see; with the place on the row it is a line saying one word
+    /// twice.
+    static func unrepeated(
+        _ title: String, project: String?, note: String?, processLabel: String?,
+    ) -> String {
+        let noteTail = note?.split(separator: "/").last.map(String.init)
+        guard title == project || title == noteTail else { return title }
         return RailRowsBuilder.slotProcessName(processLabel) ?? title
     }
 
-    /// The SECTION a terminal pane belongs to: its project's folder name, or — for a pane with no
-    /// project key yet — its own folder name, so it still lands under a place rather than nowhere.
+    /// The PROJECT a terminal pane belongs to: its project's folder name, or — for a pane with no
+    /// project key yet — its own folder name, so the row still names a place rather than nowhere.
     /// `nil` when there is no cwd at all. Pure.
-    static func header(projectKey: String?, cwd: String?) -> String? {
+    static func projectName(projectKey: String?, cwd: String?) -> String? {
         guard let key = TabOrderingEngine.normalizedProjectKey(projectKey) else {
             return RailRowsBuilder.cwdFolderName(cwd)
         }
         return TabOrderingEngine.projectSectionHeader(for: key)
     }
 
-    /// Where the pane sits BELOW its project root, or `nil` at the root itself (the header already said
-    /// it). A cwd OUTSIDE the key's subtree — a stale key across an un-re-pushed `cd` — gives its own
+    /// Where the pane sits BELOW its project root, or `nil` at the root itself (the project half of the
+    /// place line already said it). A cwd OUTSIDE the key's subtree — a stale key across an un-re-pushed `cd` — gives its own
     /// folder name instead: hiding the location would lie, and a relative path cannot be formed. Pure.
     static func relativePath(projectKey: String?, cwd: String?) -> String? {
         guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),

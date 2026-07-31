@@ -5796,3 +5796,35 @@ tap, and a 10pt corner marker 900pt away is not something the eye finds in 200ms
   view makes (`showsSwitcherRecede` × `SplitContainer.isPaneFocused`) — what can break is the JOIN.
 
 → new `PaneRecedeScrim.swift`, one overlay + one static gate in `PaneContainer`.
+
+### The project rides the row, and the row grows a second line (2026-07-31)
+
+Section headers were the TAB era's shape and they do not survive the unit change. A header earns its line
+only when consecutive rows share it; tabs arrived in project-sized runs, but PANES interleave — walk
+between two repos and the recency ring reads `slopdesk, otty, slopdesk, otty`, which under a run-boundary
+rule is a caption above almost every row. Re-sorting to repair that is worse: the card's order IS the
+order ⇥ steps in, so grouping would make the highlight jump around the list.
+
+- ✅ **Headers deleted; every row says its own place.** `PaneSwitcherItem` (the section/row display list)
+  is gone — the view iterates rows directly.
+- ✅ **The row is TWO REGISTERS**: the identity, and under it the place — project, then the sub-path it
+  strayed into. Built as ONE `Text` so the two halves flow and truncate as a single run (head-truncated:
+  a deep path's last components are the ones that say where the pane is).
+- ✅ **The project is set a shade heavier than the path under it.** Weight, not ink: both halves are
+  equally quiet next to the identity, so what separates them is which one the eye should catch running
+  down a column. This is also what replaces the header's grouping cue — a run of rows from one repo still
+  lines up down the card.
+- ✅ **`Slate.Metric.heightRowStacked` (48)** — a new rung for a two-register row: ~29pt of stacked ink
+  (13 over 11) plus a breath either side. It also answers the shrink the header removal would otherwise
+  have caused: the same six panes now read as an object rather than a strip.
+- ⚠️ **`unrepeated` had to learn the note.** With the path on the row, a shell deep in a project titles
+  itself by the folder-name rung and the row reads `Overlays` over `slopdesk › …/Overlays` — the same
+  stutter the project rule already caught, one level down. It now yields to the pane's program when the
+  title matches EITHER the project or the note's last component. Photographed before and after; only the
+  LAST component counts, since a match higher up the path does not read as a repeat.
+- ⚠️ Aesthetic choice made from PIXELS: three anatomies were built for real and rendered side by side
+  over a mock terminal (stacked / stacked + leading glyph / one line with the place trailing). The glyph
+  column was dropped — every pane is a terminal, so it repeated a mark that said nothing.
+
+→ `PaneSwitcherRows` loses `items`/`PaneSwitcherItem` and renames `header`→`projectName`;
+`PaneSwitcherOverlay` loses `SectionHeader` and rebuilds `RowView`.

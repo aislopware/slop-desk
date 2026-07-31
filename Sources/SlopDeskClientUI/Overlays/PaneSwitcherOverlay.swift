@@ -11,15 +11,17 @@
 // view has no gestures, no buttons, and no state of its own. Clicking through it is impossible because it
 // never accepts hits.
 //
-// A row is ONE roomy line — the pane's identity, a quiet note for what differs, and the ⌘-number set in a
-// KEYCAP, because that number is a key the reader can press right now and a bare glyph did not say so.
-// Nothing here is coloured: the highlight is a lifted plate and a heavier title, the house rule that a
-// readout marks importance with LIGHT and WEIGHT rather than hue (DECISIONS §git-line-two-registers). The
-// row is read at a glance for the length of a held modifier, so it rides `heightRowTall` — a 32pt list
-// beat is for scanning, not glancing.
+// A row is TWO REGISTERS stacked: the pane's identity, and under it the PLACE that identity lives in —
+// its project, then the sub-path it strayed into. Beside them the ⌘-number set in a KEYCAP, because that
+// number is a key the reader can press right now and a bare glyph did not say so. Nothing here is
+// coloured: the highlight is a lifted plate and a heavier title, the house rule that a readout marks
+// importance with LIGHT and WEIGHT rather than hue (DECISIONS §git-line-two-registers).
 //
-// The project heads a section ONLY when the list actually spans more than one; with a single project the
-// card IS that project, and a header there is a label on a box with one thing in it.
+// Why the second line and not a section header: see ``PaneSwitcherRows``. Panes interleave across projects
+// in a recency ring, so a header per run degenerates into a caption per row. It also gives the card the
+// presence a bare one-line list lacked — the same six panes now read as an object rather than a strip.
+// The place line uses WEIGHT to separate its halves as well: the project is set a shade heavier than the
+// path under it, so a run of rows from one repo still lines up down the card without a header saying so.
 //
 // The card must read as GLASS and not as a grey box: `glassEffect` alone all but vanishes over a dark
 // terminal, so the surface adds the two things a physical pane of glass has — a specular RIM at the edge
@@ -47,7 +49,7 @@ struct PaneSwitcherOverlay: View {
             // (``PaneSwitcherMetrics``), so it needs to see it. `GeometryReader` fills the overlay's
             // proposed space, and the card is re-centred inside it.
             GeometryReader { proxy in
-                card(PaneSwitcherRowsBuilder.items(for: switcher, store: store), in: proxy.size)
+                card(PaneSwitcherRowsBuilder.rows(for: switcher, store: store), in: proxy.size)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             // A readout never takes hits: the gesture lives entirely on the keyboard, and swallowing a
@@ -57,19 +59,14 @@ struct PaneSwitcherOverlay: View {
         }
     }
 
-    private func card(_ items: [PaneSwitcherItem], in container: CGSize) -> some View {
+    private func card(_ rows: [PaneSwitcherRow], in container: CGSize) -> some View {
         // A session with more panes than the window is tall must not draw a card taller than its host.
         // The rows scroll instead, and the highlight is kept in view as ⇥ walks past the fold.
         ScrollViewReader { scroller in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(items) { item in
-                        switch item.content {
-                        case let .section(name):
-                            SectionHeader(name: name, isFirst: item.id == 0)
-                        case let .row(row):
-                            RowView(row: row).id(row.id)
-                        }
+                    ForEach(rows) { row in
+                        RowView(row: row).id(row.id)
                     }
                 }
                 .padding(Slate.Metric.space3)
@@ -77,7 +74,7 @@ struct PaneSwitcherOverlay: View {
             }
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
-            .onChange(of: highlighted(items)) { _, id in
+            .onChange(of: rows.first(where: \.isHighlighted)?.id) { _, id in
                 guard let id else { return }
                 withAnimation(Slate.Anim.smallFade) { scroller.scrollTo(id, anchor: .center) }
             }
@@ -88,12 +85,6 @@ struct PaneSwitcherOverlay: View {
         // axis stops the ScrollView claiming the whole allowance for four rows.
         .fixedSize(horizontal: false, vertical: true)
         .modifier(SwitcherSurface(reduceTransparency: reduceTransparency))
-    }
-
-    private func highlighted(_ items: [PaneSwitcherItem]) -> PaneID? {
-        items.lazy.compactMap { item -> PaneSwitcherRow? in
-            if case let .row(row) = item.content { row } else { nil }
-        }.first(where: \.isHighlighted)?.id
     }
 }
 
@@ -127,55 +118,51 @@ private struct SwitcherSurface: ViewModifier {
     }
 }
 
-/// A project, said once over the run of rows that share it — emitted only when the list spans more than
-/// one project (``PaneSwitcherRowsBuilder/items(_:)`` decides). Plain sentence case in the quiet register:
-/// this is a divider that happens to carry a name, not a label demanding to be read.
-private struct SectionHeader: View {
-    let name: String
-    /// The first header sits flush against the card's own padding; later ones open a gap above so the
-    /// runs read as separate groups rather than one long list.
-    let isFirst: Bool
-
-    var body: some View {
-        Text(name)
-            .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-            .foregroundStyle(Slate.Text.tertiary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .padding(.horizontal, Slate.Metric.space3)
-            .padding(.top, isFirst ? Slate.Metric.space1 : Slate.Metric.space4)
-            .padding(.bottom, Slate.Metric.space2)
-    }
-}
-
-/// One row: identity, the quiet remainder, and the ⌘-key.
+/// One row: the identity, the place under it, and the ⌘-key.
 private struct RowView: View {
     let row: PaneSwitcherRow
 
+    /// The PLACE line, built as one `Text` so its two halves flow and truncate as a single run: the
+    /// project set a shade heavier, then the sub-path below it in the plain weight. Weight rather than
+    /// ink, because both halves are equally quiet next to the identity — what differs is which of them
+    /// the eye should catch when it runs down a column of rows.
+    ///
+    /// A pane with no project (a video pane, a shell whose cwd has not landed) shows its note alone
+    /// rather than an empty lead-in; a pane with neither shows no second line at all.
+    private var place: Text? {
+        guard let project = row.project else {
+            return row.note.map { Text($0).font(.system(size: Slate.Typeface.footnote)) }
+        }
+        let head = Text(project)
+            .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+        guard let note = row.note else { return head }
+        return head + Text(" › \(note)").font(.system(size: Slate.Typeface.footnote))
+    }
+
     var body: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Text(row.title)
-                .font(.system(
-                    size: Slate.Typeface.body, weight: row.isHighlighted ? .medium : .regular,
-                ))
-                .foregroundStyle(row.isHighlighted ? Slate.Text.primary : Slate.Text.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if let note = row.note {
-                Text(note)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+        HStack(spacing: Slate.Metric.space3) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(row.title)
+                    .font(.system(
+                        size: Slate.Typeface.body, weight: row.isHighlighted ? .medium : .regular,
+                    ))
+                    .foregroundStyle(row.isHighlighted ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)
-                    .truncationMode(.head)
-                    // The note is the FIRST thing to go when the line runs out — it is the remainder, and
-                    // a squeezed remainder is worth less than an intact identity.
-                    .layoutPriority(-1)
+                    .truncationMode(.tail)
+                if let place {
+                    place
+                        .foregroundStyle(Slate.Text.tertiary)
+                        .lineLimit(1)
+                        // Truncate from the HEAD: a deep path's last components are the ones that say
+                        // where the pane actually is.
+                        .truncationMode(.head)
+                }
             }
             Spacer(minLength: Slate.Metric.space3)
             Keycap(number: row.number, lit: row.isHighlighted)
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: Slate.Metric.heightRowTall)
+        .frame(height: Slate.Metric.heightRowStacked)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             row.isHighlighted ? Slate.Surface.raised : .clear,
