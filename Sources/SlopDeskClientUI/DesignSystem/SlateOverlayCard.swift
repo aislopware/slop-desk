@@ -74,6 +74,12 @@ enum SlateOverlayInk {
 /// land on the SAME geometry — an `if/else` around the whole card would hand SwiftUI two view identities to
 /// cross-fade between when the accessibility setting flips.
 struct SlateGlassCard: ViewModifier {
+    /// Whether the card carries the click barrier below. The MODAL cards (which float on a full-bleed
+    /// dismiss floor) need it; a card that is ITSELF a button — the notification card, whose whole body
+    /// is its jump action — must NOT, because a `Button` in the background outranks the wrapping button
+    /// for any click the content declines, and the card's own action would silently stop firing.
+    var hitBarrier = true
+
     /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
     /// with Reduce Transparency on, the card takes a plain opaque material instead.
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -111,14 +117,21 @@ struct SlateGlassCard: ViewModifier {
         // in the content is interactive there, so it fell straight through and DISMISSED the card the
         // user was reaching into. The barrier goes BEHIND the content, so every real control on the card
         // still gets its hit first; only what the content declines to take stops here.
-        .background { Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain) }
+        .background {
+            if hitBarrier {
+                Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain)
+            }
+        }
         .shadow(color: shadow, radius: Slate.Metric.panelShadowRadius, y: Slate.Metric.panelShadowY)
     }
 }
 
 extension View {
-    /// Draw this content as a floating glass card (see ``SlateGlassCard``).
-    func slateGlassCard() -> some View { modifier(SlateGlassCard()) }
+    /// Draw this content as a floating glass card (see ``SlateGlassCard``). `hitBarrier: false` is for a
+    /// card whose whole body is already a button (the notification card) — see the modifier's note.
+    func slateGlassCard(hitBarrier: Bool = true) -> some View {
+        modifier(SlateGlassCard(hitBarrier: hitBarrier))
+    }
 
     /// Sink an editable field into its plate: the pane face, ringed by a hairline, at the small radius.
     ///

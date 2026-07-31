@@ -109,11 +109,14 @@ final class ToastSecretRedactionTests: XCTestCase {
         XCTAssertEqual(toast.flavor, .error, "a non-zero exit is an error toast")
     }
 
-    /// An empty pane title falls back to the fixed "Command finished" string (never blank, never redacted —
-    /// there is no untrusted text to mask).
+    /// An empty pane title falls back to the fixed "Command" SUBJECT (never blank, never redacted — there
+    /// is no untrusted text to mask). The subject is deliberately verb-less: the derived headline appends
+    /// the outcome ("\(title) finished"), so a sentence fallback would render "Command finished finished".
+    @MainActor
     func testLongCommandToastEmptyTitleFallsBack() {
         SettingsKey.store.set(true, forKey: SettingsKey.redactSecrets)
         let toast = Toast.longCommand(paneIDKey: UUID().uuidString, paneTitle: "", exitCode: 0, durationMS: 10000)
-        XCTAssertEqual(toast.title, "Command finished")
+        XCTAssertEqual(toast.title, "Command")
+        XCTAssertEqual(ToastStackView.headline(for: toast), "Command finished")
     }
 }

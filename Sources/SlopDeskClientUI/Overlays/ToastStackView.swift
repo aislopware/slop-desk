@@ -6,21 +6,18 @@
 // A notification is A PANE SPEAKING FROM OFF-SCREEN. Every push site is gated on the source pane NOT being
 // focused, so a card always names a place the user is not looking at — which is what the design answers:
 //
-//   * There is NO LEADING GLYPH. The event class is spoken by an EYEBROW — a caps micro-label in the
-//     instrument voice, letterspaced with `instrumentTracking`, inked with the flavour hue — followed by
-//     `·` and the subject on the same line. This is MERIDIAN L2 taken literally ("typography is the only
-//     ornament"), and it is the DS's existing engraving treatment (`SlateRow`, `SlatePopover`,
-//     `InstrumentChip`, `NavigatorColumn`), not a new device. Two earlier leading elements were cut: the
-//     SF Symbol quartet (`bell` / `checkmark.circle` / `exclamationmark.triangle` / `asterisk` — four
-//     glyphs from four families that never shared a stroke weight, and the very pictograms rounds 19–21
-//     pulled off the rail), then the rail's own `StatusDotView` ring/dot, which is right in the sidebar's
-//     narrow mark column but read as a tiny abstract speck where a notification wants something concrete. A coloured
-//     caps word carries the same bit with far more legible ink — and with no glyph column, every line
-//     starts on ONE left rail.
-//   * COLOUR LIVES IN EXACTLY ONE PLACE — the eyebrow. The surface is never tinted by flavour (chromatic
-//     spread is the v5 slop bar) and there is no coloured edge rail. A monogram identity plate was probed
-//     as the leading element and rejected for the same reason: `SlateMonogram`'s per-identity hue would put
-//     a SECOND colour system on the card, fighting the status hue and breaking the one-hue budget.
+//   * The card is a member of the FLOATING FAMILY (``SlateOverlayCard``): the same glass, the same neutral
+//     system ink, sentence-case in one voice, hierarchy by size and weight. The previous design spoke the
+//     instrument register — a coloured caps-mono EYEBROW (`DONE · Claude`) over a mono subject on an opaque
+//     plate — and it was rejected wholesale the same week the form cards shed their caps-mono titles: four
+//     hues of engraving stacked in a corner read as an instrument panel, not as an app speaking. The words
+//     the eyebrow carried didn't die, they became the HEADLINE — a sentence-case event phrase ("Claude
+//     needs input", "make check failed") resolved from source + flavour by ``headline(for:)``.
+//   * The LEADING MARK is one filled SF symbol (`*.circle.fill`, status-hued) — the card's only colour.
+//     This is the native idiom (HIG banners, Linear, Sonner all lead with a filled status glyph), and it is
+//     NOT the mixed-family outline quartet an earlier round cut (four glyphs, four stroke weights): one
+//     family, one size, one weight. A routine notice's mark is NEUTRAL — cyan on every OSC notice was
+//     chrome pretending to be signal. The surface is never tinted by flavour and there is no coloured rail.
 //   * The CARD IS A DOOR. Tapping it jumps to the pane it names (``Toast/paneKey`` → the mount site's
 //     `jumpToPaneTree`, the same seam `ConnectionAlertChip` uses, breadcrumb cue included). A notification
 //     about somewhere else that cannot take you there is a dead end.
@@ -29,17 +26,11 @@
 //     bottom edge was built and cut for reading as ornament. The fix for "it vanished while I was reading"
 //     is that it stops, not that it announces how long it has left.
 //   * The SPINE. Only the newest ``ToastStackLayout/expandedCount`` cards carry a detail line; older ones
-//     collapse to the eyebrow + subject row alone, so four simultaneous notifications cost a third of the
+//     collapse to the headline row alone, so four simultaneous notifications cost a third of the
 //     corner instead of blanketing the prompt. Hovering a collapsed row expands just it, and a row is
 //     promoted as the cards below it expire — no information is stranded on any platform.
 //   * The X IS HOVER-ONLY (always present on a sticky card, which has no other exit). Four permanent ✕
 //     marching down the corner was chrome for something that leaves by itself.
-//
-// Typography is the INSTRUMENT voice (MERIDIAN L2): a body like `exit 1 · 42s` is a technical readout, and
-// setting it in proportional system text was what made the stack read as a web toast pasted into a
-// terminal app. The surface is `Slate.Surface.raised` — the rung ABOVE the pane, like every other floating
-// chip; the old `Surface.face` fill was the exact tone of the terminal behind it, leaving a dark-on-dark
-// shadow as the only thing separating card from content.
 //
 // SEAM discipline: the view OWNS no notification state — every read goes through the coordinator (the
 // single `@Observable` reducer) and its only mutations are `dismissToast(_:)` (the X, the dwell, a jump)
@@ -121,7 +112,8 @@ struct ToastStackView: View {
 
     // MARK: - Flavour tint
 
-    /// The eyebrow's ink for a toast flavour: success → OK, error → error, attention → WARN, default → info.
+    /// The status mark's ink for a toast flavour: success → OK, error → error, attention → WARN,
+    /// default → info (the card itself renders a default-flavour mark NEUTRAL — see `markTint`).
     ///
     /// `.attention` is AMBER, not the theme accent. Two reasons, and the first is parity: the rail already
     /// fixed this mapping — "green = an unread finish, **amber = a question waiting**, red = failed"
@@ -144,24 +136,25 @@ struct ToastStackView: View {
         }
     }
 
-    /// The EYEBROW — the caps micro-label that opens the card, resolved from ``Toast/source`` and
-    /// ``Toast/flavor`` TOGETHER. Flavour alone cannot decide it: `.success` is "the agent finished its turn"
-    /// for an agent and "the command exited 0" for a command, and those are two different speakers saying
-    /// two different words. A toast may carry its own ``Toast/eyebrow`` when it knows a truer one than this
-    /// derivation can reach. Pure + `static` for the same reason as ``tint(for:)``.
-    static func eyebrow(for toast: Toast) -> String {
-        if let explicit = toast.eyebrow, !explicit.isEmpty { return explicit }
+    /// The HEADLINE — the sentence-case event phrase that leads the card, resolved from ``Toast/source``
+    /// and ``Toast/flavor`` TOGETHER. Flavour alone cannot decide it: `.success` is "the agent finished
+    /// its turn" for an agent and "the command exited 0" for a command, and those are two different
+    /// speakers saying two different words. A toast may carry its own ``Toast/headline`` override when it
+    /// knows a truer phrase than this derivation can reach. Pure + `static` for the same reason as
+    /// ``tint(for:)``.
+    static func headline(for toast: Toast) -> String {
+        if let explicit = toast.headline, !explicit.isEmpty { return explicit }
         switch (toast.source, toast.flavor) {
-        case (.agent, .attention): return "NEEDS INPUT"
-        case (.agent, .success): return "DONE"
-        case (.agent, .error): return "FAILED"
-        case (.agent, .default): return "WORKING"
-        case (.command, .success): return "FINISHED"
-        case (.command, .error): return "FAILED"
-        // An advisory, not an alarm: the one command-flavour that asks the user to NOTICE something without
-        // anything having gone wrong (a host-resolved cwd that may not exist there).
-        case (.command, .attention): return "ADVISORY"
-        case (.command, .default): return "NOTICE"
+        case (.agent, .attention): return "\(toast.title) needs input"
+        case (.agent, .success): return "\(toast.title) is done"
+        case (.agent, .error): return "\(toast.title) failed"
+        case (.agent, .default): return "\(toast.title) is working"
+        case (.command, .success): return "\(toast.title) finished"
+        case (.command, .error): return "\(toast.title) failed"
+        // A notice/advisory speaks its own words — the title IS the message (an OSC 9 program line, a
+        // cwd advisory), and prefixing an event verb onto someone else's sentence garbles it.
+        case (.command, .default),
+             (.command, .attention): return toast.title
         }
     }
 }
@@ -178,7 +171,7 @@ struct ToastStackView: View {
 /// the real at-rest value, so no shipping call site passes it.
 struct ToastCardView: View {
     let toast: Toast
-    /// Whether this card shows its detail line, or collapses to the eyebrow + subject row alone. Hovering
+    /// Whether this card shows its detail line, or collapses to the headline row alone. Hovering
     /// expands a collapsed card regardless (macOS only — `.onHover` never fires on iOS).
     let expanded: Bool
     let onDismiss: () -> Void
@@ -222,13 +215,13 @@ struct ToastCardView: View {
     var body: some View {
         content
             .padding(.horizontal, Slate.Metric.space3)
-            .padding(.vertical, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space3)
             // One uniform column edge — see `Slate.Metric.toastWidth` for why the cards do NOT hug.
             .frame(width: Slate.Metric.toastWidth, alignment: .leading)
-            .slateCard(radius: Slate.Metric.radiusPanel)
-            // Lift it off the pane. The `raised` fill + hairline do the real separating (MERIDIAN L5:
-            // depth by light, not lines); the shadow is a soft assist, not the structure.
-            .shadow(color: Slate.State.shadow, radius: Slate.Metric.space2, y: Slate.Metric.space1)
+            // The SAME glass every floating surface wears (rim + cast shadow included) — the toast was
+            // the last opaque outlier of the family. No hit barrier: this card's whole body is already
+            // its jump button, and a background barrier would swallow the very clicks it exists to take.
+            .slateGlassCard(hitBarrier: false)
             .onHover { hovering = $0 }
             // Body reveal / spine promotion resize the card — a relayout, so the standard curve.
             .animation(Slate.Anim.standard, value: showsBody)
@@ -257,50 +250,73 @@ struct ToastCardView: View {
     // MARK: Pieces
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
-                // The EYEBROW carries the event class in the flavour ink — the card's only colour, and the
-                // replacement for the leading rail mark. Caps + `instrumentTracking` is the DS's existing
-                // engraving treatment (`SlateRow`, `SlatePopover`, `InstrumentChip`).
-                Text(ToastStackView.eyebrow(for: toast))
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                    .tracking(Slate.Typeface.instrumentTracking)
-                    .foregroundStyle(ToastStackView.tint(for: toast.flavor))
-                    .fixedSize()
-                Text("·")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
-                Text(toast.title)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-                    // A subject is usually a command line, where the informative ends are the program and
-                    // its last argument — so a too-long one loses its MIDDLE, not its tail.
-                    .truncationMode(.middle)
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
+            leadingMark
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
+                    // The HEADLINE speaks the event as a sentence-case phrase in the floating family's
+                    // reading ink — hierarchy by size and weight in ONE voice, like every card title.
+                    Text(ToastStackView.headline(for: toast))
+                        .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                        .foregroundStyle(SlateOverlayInk.primary)
+                        .lineLimit(1)
+                        // A subject is usually a command line, where the informative ends are the program
+                        // and its last argument — so a too-long one loses its MIDDLE, not its tail.
+                        .truncationMode(.middle)
 
-                // The ✕ keeps its slot even while hidden: a card that changed WIDTH or reflowed its subject
-                // on hover would be worse than one that reserves the button's corner.
-                Spacer(minLength: Slate.Metric.space2)
-                closeButton
-                    .opacity(showsClose ? 1 : 0)
+                    // The ✕ keeps its slot even while hidden: a card that changed WIDTH or reflowed its
+                    // subject on hover would be worse than one that reserves the button's corner.
+                    Spacer(minLength: Slate.Metric.space2)
+                    closeButton
+                        .opacity(showsClose ? 1 : 0)
+                }
+                if showsBody, let detail = toast.body, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: Slate.Typeface.base))
+                        .foregroundStyle(SlateOverlayInk.secondary)
+                        .lineLimit(2)
+                }
             }
-            if showsBody, let detail = toast.body, !detail.isEmpty {
-                Text(detail)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .lineLimit(2)
-            }
+        }
+    }
+
+    /// The card's one point of colour — the filled status mark. Photographed against a status DOT (too
+    /// small to say anything at notification size — the same "tiny abstract speck" that killed the rail's
+    /// ring here) and against NO mark at all (elegant but blind: every card reads identical until the
+    /// words are parsed, and status colour is the one signal the neutral family explicitly keeps).
+    private var leadingMark: some View {
+        Image(systemSymbol: markSymbol)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(markTint)
+    }
+
+    /// One SF family (`*.circle.fill`), one weight — never the mixed-family quartet the old design cut.
+    private var markSymbol: SFSymbol {
+        switch toast.flavor {
+        case .success: .checkmarkCircleFill
+        case .error: .xmarkCircleFill
+        case .attention: .exclamationmarkCircleFill
+        case .default: .infoCircleFill
+        }
+    }
+
+    /// Status hues keep their meaning (green finish / amber question / red failure); a routine notice
+    /// stays NEUTRAL — the old cyan on every OSC notice was chrome pretending to be signal.
+    private var markTint: Color {
+        switch toast.flavor {
+        case .default: SlateOverlayInk.secondary
+        default: ToastStackView.tint(for: toast.flavor)
         }
     }
 
     private var closeButton: some View {
         // A comfortable square target, sized off the 8pt grid rather than the glyph so it stays a
-        // finger/pointer target at the eyebrow's 10pt type size.
+        // finger/pointer target at the headline's type size.
         let target = Slate.Metric.space3 + Slate.Metric.space2
         return Button(action: onDismiss) {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(SlateOverlayInk.secondary)
                 .frame(width: target, height: target)
                 .contentShape(Rectangle())
         }

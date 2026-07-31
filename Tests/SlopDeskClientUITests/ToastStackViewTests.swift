@@ -1,6 +1,7 @@
 // ToastStackViewTests — pins the toast host's view-level behaviour (the model-level de-dupe /
 // cap / dismiss is pinned by `OverlayCoordinatorMountTests`). Two things this view owns that the coordinator
-// does not: the flavour → tint mapping (the leading glyph colour) and that the card stack renders headlessly.
+// does not: the flavour → tint mapping (the status mark's colour) and the headline derivation — plus that
+// the card stack renders headlessly.
 //
 // Headless-only (per the hang-safety rule): no SCStream/VT/Metal — `ImageRenderer` of a pure SwiftUI view is
 // CPU rasterisation (the same `SlateSnapshotRender` pattern the repo already uses in this target).
@@ -13,9 +14,9 @@ import XCTest
 
 @MainActor
 final class ToastStackViewTests: XCTestCase {
-    // MARK: - Flavour tint mapping (the leading-glyph colour role)
+    // MARK: - Flavour tint mapping (the status mark's colour role)
 
-    /// The eyebrow ink per flavour: success → OK, error → error, default → info, attention → WARN.
+    /// The mark's ink per flavour: success → OK, error → error, default → info, attention → WARN.
     /// `.attention` is AMBER for rail parity — ``StatusDot`` already fixed "amber = a question waiting" — and
     /// the view + this test read the SAME `tint(for:)`, so the rendered colour cannot drift from the pin.
     func testToastFlavorTintMapping() {
@@ -45,45 +46,50 @@ final class ToastStackViewTests: XCTestCase {
         }
     }
 
-    // MARK: - Eyebrow (WHO is speaking, said in words)
+    // MARK: - Headline (WHO is speaking, said as a sentence-case phrase)
 
-    /// The eyebrow is resolved from ``Toast/source`` and ``Toast/flavor`` TOGETHER, and this pins why: a
-    /// `.success` toast says `DONE` when an agent finished its turn but `FINISHED` when a command exited 0.
-    /// Flavour alone cannot tell those apart, so a resolver that keyed on it would announce a finished
-    /// `make` as an agent turn — the same fusion bug `TabBadgeResolver` had (docs/DECISIONS.md round 21).
-    func testEyebrowSplitsAgentFromCommand() {
-        func eyebrow(_ source: Toast.Source, _ flavor: Toast.Flavor) -> String {
-            ToastStackView.eyebrow(for: Toast(id: "x", flavor: flavor, source: source, title: "t"))
+    /// The headline is resolved from ``Toast/source`` and ``Toast/flavor`` TOGETHER, and this pins why: a
+    /// `.success` toast says "is done" when an agent finished its turn but "finished" when a command
+    /// exited 0. Flavour alone cannot tell those apart, so a resolver that keyed on it would announce a
+    /// finished `make` as an agent turn — the same fusion bug `TabBadgeResolver` had (round 21).
+    func testHeadlineSplitsAgentFromCommand() {
+        func headline(_ source: Toast.Source, _ flavor: Toast.Flavor, _ title: String = "t") -> String {
+            ToastStackView.headline(for: Toast(id: "x", flavor: flavor, source: source, title: title))
         }
-        // Same flavour, two speakers, two DIFFERENT words — the whole point of carrying `source`.
-        XCTAssertEqual(eyebrow(.agent, .success), "DONE")
-        XCTAssertEqual(eyebrow(.command, .success), "FINISHED")
+        // Same flavour, two speakers, two DIFFERENT sentences — the whole point of carrying `source`.
+        XCTAssertEqual(headline(.agent, .success, "Claude"), "Claude is done")
+        XCTAssertEqual(headline(.command, .success, "make check"), "make check finished")
         XCTAssertNotEqual(
-            eyebrow(.agent, .success), eyebrow(.command, .success),
+            headline(.agent, .success), headline(.command, .success),
             "an agent's finished turn and a command's clean exit must not read as the same event",
         )
-        XCTAssertEqual(eyebrow(.agent, .attention), "NEEDS INPUT")
-        XCTAssertEqual(eyebrow(.command, .default), "NOTICE")
-        // An advisory is the one attention-flavour where nothing went WRONG (a host-resolved cwd).
-        XCTAssertEqual(eyebrow(.command, .attention), "ADVISORY")
-        // Every eyebrow is caps — the engraving register the DS reserves for micro-labels.
+        XCTAssertEqual(headline(.agent, .attention, "Claude"), "Claude needs input")
+        // A notice/advisory speaks its own words — the title IS the message, passed through untouched.
+        XCTAssertEqual(headline(.command, .default, "npm run dev"), "npm run dev")
+        XCTAssertEqual(headline(.command, .attention, "cd'd on host"), "cd'd on host")
+        // Every derived headline is a phrase, never the caps-mono register the old eyebrow spoke.
         for source in [Toast.Source.agent, .command] {
             for flavor in [Toast.Flavor.default, .success, .error, .attention] {
-                let label = eyebrow(source, flavor)
+                let label = headline(source, flavor, "subject")
                 XCTAssertFalse(label.isEmpty, "every (source, flavour) pair must name an event")
-                XCTAssertEqual(label, label.uppercased(), "\(label) must be caps")
+                XCTAssertNotEqual(
+                    label, label.uppercased(),
+                    "\(label) must stay sentence-case — the caps register left the floating family",
+                )
             }
         }
     }
 
-    /// A toast may carry its OWN eyebrow when it knows a truer word than the derivation can reach — the
-    /// reconnect verdict is `REATTACHED` vs `RECONNECTED`, a distinction no flavour encodes. An explicit
-    /// eyebrow must WIN over the derived one, and an empty one must fall back rather than render a blank.
-    func testExplicitEyebrowOverridesTheDerivedOne() {
-        let explicit = Toast(id: "x", flavor: .success, source: .command, title: "t", eyebrow: "REATTACHED")
-        XCTAssertEqual(ToastStackView.eyebrow(for: explicit), "REATTACHED")
-        let blank = Toast(id: "x", flavor: .success, source: .command, title: "t", eyebrow: "")
-        XCTAssertEqual(ToastStackView.eyebrow(for: blank), "FINISHED", "an empty eyebrow falls back")
+    /// A toast may carry its OWN headline when it knows a truer phrase than the derivation can reach — the
+    /// reconnect verdict is "Session reattached", which no flavour+title suffix encodes. An explicit
+    /// headline must WIN over the derived one, and an empty one must fall back rather than render a blank.
+    func testExplicitHeadlineOverridesTheDerivedOne() {
+        let explicit = Toast(
+            id: "x", flavor: .success, source: .command, title: "t", headline: "Session reattached",
+        )
+        XCTAssertEqual(ToastStackView.headline(for: explicit), "Session reattached")
+        let blank = Toast(id: "x", flavor: .success, source: .command, title: "t", headline: "")
+        XCTAssertEqual(ToastStackView.headline(for: blank), "t finished", "an empty headline falls back")
     }
 
     // MARK: - Stack spine (which cards speak in full)
@@ -123,8 +129,10 @@ final class ToastStackViewTests: XCTestCase {
     /// Renders the stack with one card of every flavour and asserts `ImageRenderer` produces a bitmap — a
     /// crash-free proof the card layout + every `tint(for:)` branch resolves under the live token layer. Opt-in
     /// file write (mirrors `SlateSnapshotRender`): set `SLOPDESK_TOAST_SNAPSHOT_OUT=<path.png>` to dump the PNG.
-    /// Covers BOTH speakers (so the ring and the dot are both drawn) and BOTH stack tiers (4 cards ⇒ two
-    /// collapsed spine rows above two full cards).
+    /// Covers BOTH speakers and BOTH stack tiers (4 cards ⇒ two collapsed spine rows above two full
+    /// cards). NOTE the card's glass surface is a GPU backdrop effect `ImageRenderer` cannot rasterise —
+    /// this smoke proves layout + tint resolution, while the REAL surface is judged in the running app
+    /// (`SLOPDESK_TOAST_DEMO=1` seeds a sticky demo stack for that).
     func testToastStackRenderSmoke() throws {
         let coordinator = OverlayCoordinator()
         coordinator.pushToast(Toast(

@@ -319,6 +319,13 @@ public struct SlopDeskClientApp: App {
             appearance.theme = Self.nextBuiltinTheme(after: appearance.theme)
             preferences.appearance = appearance
         }
+        // SCREENSHOT FIXTURE ONLY (default-OFF): `SLOPDESK_TOAST_DEMO=1` seeds a representative STICKY
+        // notification stack at launch, because the card's glass surface is a GPU backdrop effect that
+        // `ImageRenderer` cannot rasterise — the real window is the only place the shipping card can be
+        // photographed. Sticky (no dwell) so the shot is stable; no real event path sets this.
+        if WorkspaceStore.automationInputs()["SLOPDESK_TOAST_DEMO"] == "1" {
+            Self.seedDemoToasts(overlay)
+        }
 
         #if os(macOS)
         // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777) + long-command + agent-attention → local macOS
@@ -431,15 +438,15 @@ public struct SlopDeskClientApp: App {
                 overlay?.pushToast(Toast(
                     id: "pane.\(paneIDKey)",
                     flavor: needsInput ? .attention : .success,
-                    // `.agent` is what earns this card the `NEEDS INPUT` / `DONE` eyebrow instead of a
-                    // command's `FINISHED` — flavour alone cannot tell "the agent finished its turn" from
-                    // "the command exited 0".
+                    // `.agent` is what earns this card the "needs input" / "is done" headline instead of
+                    // a command's "finished" — flavour alone cannot tell "the agent finished its turn"
+                    // from "the command exited 0".
                     source: .agent,
                     title: Toast.redactSecretsIfEnabled(name),
-                    // The toast's detail line is the DETAIL ONLY. The eyebrow already says "NEEDS INPUT" /
-                    // "DONE", so passing `body` (which prefixes that same headline for the OS banner) would
-                    // print the state twice on one card. The OS banner still gets the full sentence below —
-                    // it has no eyebrow to carry the headline for it.
+                    // The toast's detail line is the DETAIL ONLY. The derived headline already says
+                    // "needs input" / "is done", so passing `body` (which prefixes that same phrase for
+                    // the OS banner) would print the state twice on one card. The OS banner still gets
+                    // the full sentence below — it has no derived headline to carry it.
                     body: detail.map { Toast.redactSecretsIfEnabled($0) },
                     paneKey: paneIDKey,
                 ))
@@ -1032,6 +1039,29 @@ public struct SlopDeskClientApp: App {
     {
         let keys = ["SLOPDESK_AUTOCONNECT_HOST", "SLOPDESK_VIDEO_AUTOCONNECT_HOST"]
         return keys.contains { (env[$0]?.isEmpty == false) }
+    }
+
+    /// The `SLOPDESK_TOAST_DEMO` fixture stack: one card per state a design pass has to judge —
+    /// both speakers, the collapsed spine tier, a failure, and the highest-signal attention card
+    /// flush to the corner. Sticky so a screenshot never races the dwell.
+    @MainActor
+    private static func seedDemoToasts(_ overlay: OverlayCoordinator) {
+        overlay.pushToast(Toast(
+            id: "demo.osc", flavor: .default, source: .command,
+            title: "npm run dev", body: "listening on :3000", autoDismiss: nil,
+        ))
+        overlay.pushToast(Toast(
+            id: "demo.fail", flavor: .error, source: .command,
+            title: "make check", body: "exit 1 · 42s", autoDismiss: nil,
+        ))
+        overlay.pushToast(Toast(
+            id: "demo.done", flavor: .success, source: .agent,
+            title: "Claude", body: "refactor the reducer", autoDismiss: nil,
+        ))
+        overlay.pushToast(Toast(
+            id: "demo.input", flavor: .attention, source: .agent,
+            title: "Claude", body: "slop-desk ▸ api", autoDismiss: nil,
+        ))
     }
 
     #if os(macOS)

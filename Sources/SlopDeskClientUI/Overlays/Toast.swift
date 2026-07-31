@@ -7,9 +7,9 @@
 // (title/body), and WHERE to go (``paneKey``, the jump target). `autoDismiss` is the dwell the view
 // spends down (nil ⇒ sticky, closed only by the X).
 //
-// The mark the view draws is resolved from ``source`` + ``flavor`` TOGETHER, never from flavour alone —
+// The headline the view sets is resolved from ``source`` + ``flavor`` TOGETHER, never from flavour alone —
 // `.success` means "agent finished its turn" for an agent and "command exited 0" for a command, and those
-// are two different speakers in the rail's status vocabulary (ring vs dot, docs/DECISIONS.md round 21).
+// are two different speakers saying two different sentences ("Claude is done" vs "make check finished").
 // Fusing them into one flavour and letting the view guess is the exact mistake `TabBadgeResolver` made.
 
 import Foundation
@@ -30,15 +30,11 @@ public struct Toast: Identifiable, Sendable, Equatable {
     /// card a door back to the place it names. `nil` for the window-level notices with nowhere to go (a
     /// host-path action that failed, the dropped-folder cwd advisory), which render as plain cards.
     public let paneKey: String?
-    /// The EYEBROW: the caps micro-label that opens the card and carries the event class in the flavour ink
-    /// (MERIDIAN L2 — typography is the only ornament). `nil` ⇒ derived from ``source`` + ``flavor`` by
-    /// ``ToastStackView/eyebrow(for:)``; a factory sets it explicitly when it knows a truer word than the
-    /// derivation can reach (a reconnect verdict is `REATTACHED` / `RECONNECTED`, which no flavour encodes).
-    ///
-    /// This REPLACED the leading `StatusDotView` mark. The ring/dot pair is the RAIL's vocabulary — correct
-    /// in a 10pt sidebar column, but in a notification it was a tiny abstract speck where the eye expects
-    /// something concrete, and a coloured caps word carries the same bit with far more legible ink.
-    public let eyebrow: String?
+    /// The HEADLINE override: the sentence-case event phrase that leads the card. `nil` ⇒ derived from
+    /// ``source`` + ``flavor`` + ``title`` by ``ToastStackView/headline(for:)`` ("Claude needs input",
+    /// "make check failed"); a factory sets it explicitly when it knows a truer phrase than the derivation
+    /// can reach (a reconnect verdict is "Session reattached", which no flavour+title suffix encodes).
+    public let headline: String?
     /// Dwell-timer identity, stamped by ``OverlayCoordinator/pushToast(_:)``. A re-push of the SAME `id`
     /// must RESTART the dwell, but `.task(id:)` keyed on the id alone would not re-fire (the id is
     /// unchanged), leaving the replacement card to inherit the dead one's nearly-elapsed timer — the bug
@@ -46,12 +42,12 @@ public struct Toast: Identifiable, Sendable, Equatable {
     public var epoch: Int = 0
 
     /// Which of the workspace's two status speakers raised this notification. Not a style knob: it picks
-    /// the mark's geometry, so it must name a real distinction in the rail's vocabulary.
+    /// the headline's VERB, so it must name a real distinction between the speakers.
     public enum Source: String, Sendable, Equatable {
-        /// A living agent session with a lifecycle (needs input / finished a turn) ⇒ the RING.
+        /// A living agent session with a lifecycle — its `.success` is "finished a turn" ("Claude is done").
         case agent
-        /// A command's outcome, or any other one-off event at a pane (OSC 9/777, a reconnect verdict)
-        /// ⇒ the DOT. An event that happened while you were away, not a state that persists.
+        /// A command's outcome, or any other one-off event at a pane (OSC 9/777, a reconnect verdict) —
+        /// its `.success` is "exited clean" ("make check finished").
         case command
     }
 
@@ -70,7 +66,7 @@ public struct Toast: Identifiable, Sendable, Equatable {
         body: String? = nil,
         autoDismiss: Duration? = .seconds(4),
         paneKey: String? = nil,
-        eyebrow: String? = nil,
+        headline: String? = nil,
     ) {
         self.id = id
         self.flavor = flavor
@@ -79,7 +75,7 @@ public struct Toast: Identifiable, Sendable, Equatable {
         self.body = body
         self.autoDismiss = autoDismiss
         self.paneKey = paneKey
-        self.eyebrow = eyebrow
+        self.headline = headline
     }
 
     // MARK: - Secret redaction (parity with the OS banner + the pane title)
@@ -128,9 +124,9 @@ public struct Toast: Identifiable, Sendable, Equatable {
             id: "pane.\(paneIDKey)",
             flavor: cleanExit ? .success : .error,
             source: .command,
-            title: paneTitle.isEmpty ? "Command finished" : redactSecretsIfEnabled(paneTitle),
-            // `exit N · Ms` — the instrument register the card sets this line in (mono, secondary ink),
-            // so it reads as the technical readout it is rather than a sentence about one.
+            // The derived headline appends the verb ("\(title) finished" / "\(title) failed"), so a
+            // title-less pane falls back to the bare SUBJECT — never to a sentence that would double up.
+            title: paneTitle.isEmpty ? "Command" : redactSecretsIfEnabled(paneTitle),
             body: "exit \(exitCode.map(String.init) ?? "?") · \(secs)s",
             paneKey: paneIDKey,
         )
@@ -147,26 +143,27 @@ public struct Toast: Identifiable, Sendable, Equatable {
         paneIDKey: String, outcome: SlopDeskClient.SessionResumeOutcome,
     ) -> Self? {
         switch outcome {
-        // The verdict itself is the EYEBROW (no flavour encodes "reattached vs reconnected"), which frees
-        // the subject line to say what it MEANS for the user's context.
+        // The verdict is an explicit HEADLINE (no flavour+title suffix encodes "reattached vs fresh"),
+        // which frees the detail line to say what it MEANS for the user's context.
         case .resumedSession:
             Self(
                 id: "pane.\(paneIDKey)",
                 flavor: .success,
                 source: .command,
-                title: "session preserved",
+                title: "Session reattached",
+                body: "Same shell — context preserved",
                 paneKey: paneIDKey,
-                eyebrow: "REATTACHED",
+                headline: "Session reattached",
             )
         case .freshShell:
             Self(
                 id: "pane.\(paneIDKey)",
                 flavor: .attention,
                 source: .command,
-                title: "fresh shell",
-                body: "previous session ended",
+                title: "Reconnected to a fresh shell",
+                body: "The previous session ended",
                 paneKey: paneIDKey,
-                eyebrow: "RECONNECTED",
+                headline: "Reconnected to a fresh shell",
             )
         case .undetermined:
             nil

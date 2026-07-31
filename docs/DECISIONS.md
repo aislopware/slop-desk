@@ -6042,3 +6042,39 @@ So the floating family's hierarchy is now SIZE AND WEIGHT in one voice, not a vo
 The cheat sheet inherits the same real title through the shared component. Peek & Reply keeps its own
 header (the agent pane's title IS that card's identity — it was already content-first) and the
 search-led overlays (palette / Open Quickly / global search) were never titled at all.
+
+## The notification card joins the floating family: glass, sentence-case headline, one filled status mark (2026-07-31)
+
+The in-app notification was reported disliked WHOLESALE — no part of the previous round's design
+survived contact with the new floating-family grammar. It was the family's last opaque outlier: a
+coloured caps-mono EYEBROW (`DONE · Claude`, `NEEDS INPUT · Claude`) over a mono subject on a
+`Surface.raised` plate, which after the form-card round read as four hues of instrument engraving
+stacked in a corner. Research (Warp's `ex-toast` — the closest analog, a terminal speaking 14px
+sentence-case in ONE voice; Linear's toast tokens; Sonner's neutral-card default; HIG/`hudWindow`
+restraint) agrees the modern in-app toast is a quiet neutral card, sentence-case, with at most one
+small semantic accent.
+
+- **The card is the family's glass card** (`slateGlassCard(hitBarrier: false)`) with the neutral
+  system ink — the same object as the switcher/palette/connect card. The barrier is OFF because the
+  toast's whole body is already its jump button; a background barrier would eat the clicks the card
+  exists to take (measured against the modal cards, where the barrier is load-bearing).
+- **The eyebrow's words became the HEADLINE**: a sentence-case event phrase derived from
+  source + flavour + title ("Claude needs input", "Claude is done", "make check failed",
+  "make check finished") — the two-speakers bit lives on, it just picks a VERB now instead of a caps
+  word. Notices/advisories pass their title through untouched (the title IS the message). Factories
+  override with a truer phrase where the derivation can't reach ("Session reattached" /
+  "Reconnected to a fresh shell"). The long-command fallback title became the verb-less "Command" so
+  the derivation can append the outcome without doubling.
+- **The leading mark is ONE filled SF family** (`*.circle.fill`) in the status hue — checkmark/xmark/
+  exclamationmark, `info` NEUTRAL (cyan on every routine OSC notice was chrome pretending to be
+  signal). Three variants were photographed in the real window: the filled-symbol card won; a 6px
+  status dot re-committed the "tiny abstract speck" mistake that killed the rail's ring here, and a
+  no-mark card was elegant but blind — every card read identical until parsed, forfeiting the one
+  signal (status colour) the neutral family explicitly keeps. This does NOT re-run the rejected
+  SF-symbol quartet of two rounds ago: that was four glyphs from four families at four stroke
+  weights; this is one family, one size, one weight.
+- **Behaviour is untouched**: card-is-a-door jump, dwell pause-on-hover with nothing drawn,
+  hover-only ✕ (unconditional on sticky), the 2-expanded spine, epoch-keyed dwell restart.
+- **Photographing it**: the glass surface is a GPU backdrop effect `ImageRenderer` cannot rasterise,
+  so the gallery tests judge layout/type/marks only. `SLOPDESK_TOAST_DEMO=1` seeds a sticky demo
+  stack in the shipping app for real-window shots — that seam is the new judging surface.

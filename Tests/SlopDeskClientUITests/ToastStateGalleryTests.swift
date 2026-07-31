@@ -14,6 +14,10 @@
 //
 // Every card is rendered over `Slate.Surface.face` — the PANE tone, which is where a notification actually
 // appears. On a bare backdrop the card's separation from the terminal cannot be judged at all.
+//
+// ⚠️ The card's GLASS surface is a GPU backdrop effect that `ImageRenderer` cannot rasterise — these dumps
+// judge layout, type and the status marks, NOT the surface. To judge the real card, run the app with
+// `SLOPDESK_TOAST_DEMO=1` (a sticky demo stack) and photograph the window.
 
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
@@ -32,33 +36,37 @@ final class ToastStateGalleryTests: XCTestCase {
 
     // MARK: - The gallery groups
 
-    /// Every (source, flavour) pair — the full eyebrow vocabulary. This is the group that shows the
+    /// Every (source, flavour) pair — the full headline vocabulary. This is the group that shows the
     /// round-21 split doing its job: the two `Claude` cards differ ONLY in flavour, and that turns the
-    /// eyebrow from `NEEDS INPUT` to `DONE`, while the two `make check` cards say `FINISHED` / `FAILED`.
-    func testGalleryEyebrows() throws {
-        try dump("1-eyebrows", captioned: [
-            ("agent · attention → NEEDS INPUT, warn (amber)", card(.agent, .attention, "Claude", "slop-desk ▸ api")),
-            ("agent · success → DONE, ok", card(.agent, .success, "Claude", "refactor the reducer")),
-            ("agent · error → FAILED, err", card(.agent, .error, "Claude", "turn failed")),
-            ("agent · default → WORKING, info", card(.agent, .default, "Claude", "slop-desk ▸ api")),
-            ("command · success → FINISHED, ok", card(.command, .success, "make check", "exit 0 · 42s")),
-            ("command · error → FAILED, err", card(.command, .error, "make check", "exit 1 · 42s")),
-            ("command · default → NOTICE, info", card(.command, .default, "npm run dev", "listening on :3000")),
+    /// headline from "Claude needs input" to "Claude is done", while the two `make check` cards say
+    /// "finished" / "failed".
+    func testGalleryHeadlines() throws {
+        try dump("1-headlines", captioned: [
+            ("agent · attention → needs input, warn (amber)", card(.agent, .attention, "Claude", "slop-desk ▸ api")),
+            ("agent · success → is done, ok", card(.agent, .success, "Claude", "refactor the reducer")),
+            ("agent · error → failed, err", card(.agent, .error, "Claude", "turn failed")),
+            ("agent · default → is working, neutral mark", card(.agent, .default, "Claude", "slop-desk ▸ api")),
+            ("command · success → finished, ok", card(.command, .success, "make check", "exit 0 · 42s")),
+            ("command · error → failed, err", card(.command, .error, "make check", "exit 1 · 42s")),
             (
-                "command · attention → ADVISORY, warn (amber)",
+                "command · default → title passthrough, neutral mark",
+                card(.command, .default, "npm run dev", "listening on :3000"),
+            ),
+            (
+                "command · attention → title passthrough, warn (amber)",
                 card(.command, .attention, "cd'd on host", "may not exist there"),
             ),
-            ("explicit eyebrow (reconnect verdict)", reconnectCard()),
+            ("explicit headline (reconnect verdict)", reconnectCard()),
         ])
     }
 
-    /// The one factory that overrides the derived eyebrow — no flavour encodes "reattached vs reconnected".
+    /// The one factory that overrides the derived headline — no flavour+title suffix encodes the verdict.
     private func reconnectCard() -> ToastCardView {
         ToastCardView(
             toast: Toast(
                 id: "gallery.reconnect", flavor: .attention, source: .command,
-                title: "fresh shell", body: "previous session ended",
-                paneKey: UUID().uuidString, eyebrow: "RECONNECTED",
+                title: "Reconnected to a fresh shell", body: "The previous session ended",
+                paneKey: UUID().uuidString, headline: "Reconnected to a fresh shell",
             ),
             expanded: true, onDismiss: {}, onJump: {},
         )
