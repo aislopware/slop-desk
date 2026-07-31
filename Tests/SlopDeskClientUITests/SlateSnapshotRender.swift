@@ -750,14 +750,18 @@ private struct SlateShowcase: View {
 
     private func terminalPane(promptPath: String, command: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            (Text("\(promptPath) ").foregroundStyle(Slate.Status.info)
-                + Text("via ").foregroundStyle(Slate.Text.secondary)
-                + Text("🥭 jmango").foregroundStyle(Slate.Status.ok))
-                .font(.system(size: 13, design: .monospaced))
-            (Text("/\\ - τ -▽ ").foregroundStyle(Slate.Text.secondary)
-                + Text("❯ ").foregroundStyle(Slate.State.accent) // the ONLY green — accent rationing
-                + Text(command ?? "").foregroundStyle(Slate.Text.primary))
-                .font(.system(size: 13, design: .monospaced))
+            Text.spliced([
+                Text("\(promptPath) ").foregroundStyle(Slate.Status.info),
+                Text("via ").foregroundStyle(Slate.Text.secondary),
+                Text("🥭 jmango").foregroundStyle(Slate.Status.ok),
+            ])
+            .font(.system(size: 13, design: .monospaced))
+            Text.spliced([
+                Text("/\\ - τ -▽ ").foregroundStyle(Slate.Text.secondary),
+                Text("❯ ").foregroundStyle(Slate.State.accent), // the ONLY green — accent rationing
+                Text(command ?? "").foregroundStyle(Slate.Text.primary),
+            ])
+            .font(.system(size: 13, design: .monospaced))
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

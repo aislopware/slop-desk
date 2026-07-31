@@ -353,7 +353,7 @@ struct OpenQuicklyView: View {
         if cursor < title.endIndex {
             segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
         }
-        return segments.reduce(Text(verbatim: "")) { $0 + $1 }
+        return .spliced(segments)
     }
 
     // MARK: - Footer bar (Quick Select ⌘ · <default action> ↩ · Actions ⌘K)

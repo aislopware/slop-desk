@@ -101,7 +101,7 @@ private struct RowView: View {
         let head = Text(project)
             .font(.system(size: Slate.Typeface.footnote, weight: .medium))
         guard let note = row.note else { return head }
-        return head + Text(" › \(note)").font(.system(size: Slate.Typeface.footnote))
+        return Text.spliced([head, Text(" › \(note)").font(.system(size: Slate.Typeface.footnote))])
     }
 
     var body: some View {

@@ -274,8 +274,8 @@ struct PaletteView: View {
         guard !ranked.titleRanges.isEmpty else {
             return Text(title).foregroundStyle(SlateOverlayInk.primary)
         }
-        // Accumulate `Text` segments then fold with `+` — `Text` has no `+=`, so a `result = result + …`
-        // reassignment can't be a shorthand op; the array fold keeps it clean.
+        // Accumulate `Text` segments then splice them into one run (`Text.spliced` — the interpolation
+        // fold that replaced the deprecated `Text + Text`).
         var segments: [Text] = []
         var cursor = title.startIndex
         for range in ranked.titleRanges where range.lowerBound >= cursor {
@@ -288,7 +288,7 @@ struct PaletteView: View {
         if cursor < title.endIndex {
             segments.append(Text(title[cursor...]).foregroundStyle(SlateOverlayInk.secondary))
         }
-        return segments.reduce(Text(verbatim: "")) { $0 + $1 }
+        return .spliced(segments)
     }
 
     // MARK: - Derived data

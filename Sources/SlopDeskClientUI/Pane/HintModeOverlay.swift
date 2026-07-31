@@ -122,13 +122,11 @@ private struct HintLabelBadge: View {
     /// The 2 uppercase letters — already-typed letters faded (progress cue), the rest solid black. Black on the
     /// fixed-yellow plate is theme-independent + high-contrast (the hint-mode spec; the secure-input-pill rationale).
     private var labelText: Text {
-        // Concatenate per-character `Text` runs left-to-right. `reduce` (not `out = out + …`) because SwiftUI's
-        // `Text` defines `+` but no `+=`, so the shorthand the loop form would invite does not exist.
-        Array(label.uppercased()).enumerated().reduce(Text(verbatim: "")) { accumulated, item in
-            let faded = item.offset < typed.count
-            let glyph = Text(String(item.element)).foregroundStyle(faded ? Color.black.opacity(0.35) : Color.black)
-            return accumulated + glyph
-        }
+        // Splice the per-character `Text` runs left-to-right into one run (`Text.spliced`).
+        Text.spliced(Array(label.uppercased()).enumerated().map { offset, element in
+            let faded = offset < typed.count
+            return Text(String(element)).foregroundStyle(faded ? Color.black.opacity(0.35) : Color.black)
+        })
     }
 }
 

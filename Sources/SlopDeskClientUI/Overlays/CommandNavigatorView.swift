@@ -391,7 +391,7 @@ struct CommandNavigatorView: View {
         if cursor < title.endIndex {
             segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
         }
-        return segments.reduce(Text(verbatim: "")) { $0 + $1 }
+        return .spliced(segments)
     }
 
     // MARK: - Footer hint bar
