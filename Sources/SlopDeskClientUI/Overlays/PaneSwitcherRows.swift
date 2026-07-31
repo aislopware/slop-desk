@@ -223,7 +223,7 @@ enum PaneSwitcherRowsBuilder {
             ),
             intent: store.paneAgentIntent[facts.pane],
             runningCommand: running,
-            programTitle: RailRowsBuilder.strippedProgramTitle(facts.liveTitle),
+            programTitle: RailRowsBuilder.normalizedProgramTitle(facts.liveTitle),
             processTitle: RailRowsBuilder.processDisplayName(chrome.processLabel),
             blocks: store.commandBlocks(for: facts.pane),
             kind: facts.kind,

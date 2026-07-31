@@ -986,7 +986,7 @@ private struct SidebarLiveRow: View {
             // The running PROGRAM's own OSC title, gated on the workspace document's `titleFresh`
             // verdict (agent glyphs stripped) — beats the raw command line wherever the running rung
             // would title the row.
-            programTitle: RailRowsBuilder.strippedProgramTitle(store.liveProgramTitle(for: row.id)),
+            programTitle: RailRowsBuilder.normalizedProgramTitle(store.liveProgramTitle(for: row.id)),
             processTitle: RailRowsBuilder.processDisplayName(chrome.processLabel),
             blocks: blocks,
             kind: row.kind,
@@ -1096,7 +1096,7 @@ private struct IOSSidebarLiveRow: View {
             ),
             intent: store.paneAgentIntent[row.id],
             runningCommand: runningCommand,
-            programTitle: RailRowsBuilder.strippedProgramTitle(store.liveProgramTitle(for: row.id)),
+            programTitle: RailRowsBuilder.normalizedProgramTitle(store.liveProgramTitle(for: row.id)),
             processTitle: RailRowsBuilder.processDisplayName(chrome.processLabel),
             blocks: blocks,
             kind: row.kind,

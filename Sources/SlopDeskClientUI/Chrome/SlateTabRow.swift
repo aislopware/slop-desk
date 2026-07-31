@@ -100,21 +100,26 @@ struct SlateTabRow: View {
                 renameField
             } else {
                 // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
-                // Apple platforms, which would break the ink-only title run. `nerdAware` so a
-                // private-use glyph riding a program title draws from the bundled symbols face.
-                Text.nerdAware(agentMarker ? "✳\u{FE0E} \(title)" : title, size: Slate.Typeface.body)
-                    // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
-                    // bold says "something changed", the ring's hue says what) — the same
-                    // `.medium` step the active card takes, so the two signals share one scale.
-                    .font(.system(
-                        size: Slate.Typeface.body,
-                        weight: active || attentionLabel != nil ? .medium : .regular,
-                    ))
-                    .foregroundStyle(titleInk)
-                    .lineLimit(1)
-                    // The state the ink and the AX-hidden trailing mark speak visually, kept
-                    // legible for VoiceOver.
-                    .accessibilityValue(workingLabel ?? attentionLabel ?? "")
+                // Apple platforms, which would break the ink-only title run. A title already led by
+                // the normalized agent mark (`normalizedProgramTitle`) keeps its own — no double ✳.
+                // `nerdAware` so a private-use glyph riding a program title draws from the bundled
+                // symbols face.
+                Text.nerdAware(
+                    agentMarker && !title.hasPrefix("✳") ? "✳\u{FE0E} \(title)" : title,
+                    size: Slate.Typeface.body,
+                )
+                // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
+                // bold says "something changed", the ring's hue says what) — the same
+                // `.medium` step the active card takes, so the two signals share one scale.
+                .font(.system(
+                    size: Slate.Typeface.body,
+                    weight: active || attentionLabel != nil ? .medium : .regular,
+                ))
+                .foregroundStyle(titleInk)
+                .lineLimit(1)
+                // The state the ink and the AX-hidden trailing mark speak visually, kept
+                // legible for VoiceOver.
+                .accessibilityValue(workingLabel ?? attentionLabel ?? "")
             }
             Spacer(minLength: 6)
             if !isEditing { trailing }

@@ -330,7 +330,7 @@ extension WorkspaceStore {
     /// (an empty wire-21 — the agent giving up ownership), which stays distinct from absent all the
     /// way down.
     ///
-    /// The caller strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
+    /// The caller normalizes agent glyph prefixes (``RailRowsBuilder`` `normalizedProgramTitle`).
     public func liveProgramTitle(for id: PaneID) -> String? {
         observeWorkspaceMirror()
         let objectID = documentPaneID(id)

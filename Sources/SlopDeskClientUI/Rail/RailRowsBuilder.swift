@@ -393,7 +393,11 @@ enum RailRowsBuilder {
     /// ring mark/badge — while any other leading symbol (`★ prod`) is user content and stays. Whitespace
     /// trimmed; empty → `nil` so the caller's chain falls through. The herdr `stripped_terminal_title`
     /// rule. Pure + static so the cleanup is unit-pinned.
-    static func strippedProgramTitle(_ title: String?) -> String? {
+    /// The canonical agent mark a normalized program title leads with — `✳` pinned to TEXT
+    /// presentation (`\u{FE0E}`; bare U+2733 renders as emoji on Apple platforms).
+    static let agentTitleMark = "✳\u{FE0E}"
+
+    static func normalizedProgramTitle(_ title: String?) -> String? {
         guard let title else { return nil }
         var text = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if let first = text.first, let scalar = first.unicodeScalars.first,
@@ -401,7 +405,12 @@ enum RailRowsBuilder {
         {
             let rest = text.dropFirst()
             if rest.isEmpty || rest.first?.isWhitespace == true {
-                text = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+                // NORMALIZE, don't drop: every frame of the agent's spinner family (braille frames,
+                // the ✢✳✶✻✽· asterisk cycle) maps to the ONE static ✳ mark, so the mark shows
+                // WITHOUT the title's text changing on every animation tick (the churn that made
+                // rows flash and SwiftUI replace leaves — the reason this used to strip).
+                let body = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+                text = body.isEmpty ? "" : "\(agentTitleMark) \(body)"
             }
         }
         return text.isEmpty ? nil : text
@@ -449,7 +458,7 @@ enum RailRowsBuilder {
     /// gates `runningCommand` on the busy-badge reveal, so the title upgrades with the spinner
     /// and a fast `ls` never flashes in. Wherever the RUNNING command would title the row, a FRESH
     /// `programTitle` (an OSC title the running program itself asserted —
-    /// ``WorkspaceStore/liveProgramTitle(for:)`` + `strippedProgramTitle`) out-ranks it: nvim's
+    /// ``WorkspaceStore/liveProgramTitle(for:)`` + `normalizedProgramTitle`) out-ranks it: nvim's
     /// "main.swift - NVIM" says more than `vi .` (a program that sets no title keeps the command
     /// line; a FOLDER structural title is an identity and never yields). Pure + static so the
     /// chain is unit-pinned without a view.

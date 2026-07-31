@@ -135,22 +135,41 @@ final class RailRowReadoutTests: XCTestCase {
 
     // MARK: - The program-set title cleanup
 
-    /// `strippedProgramTitle` drops exactly ONE leading agent-activity glyph (braille spinner frame /
-    /// `·✢✳✶✻✽`, variation selector tolerated) when followed by whitespace/end — any other leading
-    /// symbol is user content and stays; whitespace-only / empty collapse to `nil`.
-    func testStrippedProgramTitleDropsOneAgentGlyph() {
-        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("⠙ Explain FEC recovery"), "Explain FEC recovery")
-        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("✳ topic"), "topic")
-        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("✳\u{FE0E} topic"), "topic")
-        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("main.swift - NVIM"), "main.swift - NVIM")
-        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("★ production"), "★ production")
+    /// `normalizedProgramTitle` maps exactly ONE leading agent-activity glyph (braille spinner frame /
+    /// `·✢✳✶✻✽`, variation selector tolerated) onto the canonical static `✳\u{FE0E}` mark when
+    /// followed by whitespace/end — the mark SHOWS (it used to be dropped) without the title text
+    /// changing per animation frame. Any other leading symbol is user content and stays;
+    /// whitespace-only / empty collapse to `nil`.
+    func testNormalizedProgramTitleCanonicalizesTheAgentGlyph() {
+        let mark = RailRowsBuilder.agentTitleMark
         XCTAssertEqual(
-            RailRowsBuilder.strippedProgramTitle("task ⠋ detail"), "task ⠋ detail",
+            RailRowsBuilder.normalizedProgramTitle("⠙ Explain FEC recovery"),
+            "\(mark) Explain FEC recovery",
+        )
+        XCTAssertEqual(RailRowsBuilder.normalizedProgramTitle("✳ topic"), "\(mark) topic")
+        XCTAssertEqual(
+            RailRowsBuilder.normalizedProgramTitle("\(mark) topic"), "\(mark) topic",
+            "an already-normalized title is a fixed point",
+        )
+        // THE FLICKER KILL: every frame of the spinner family yields the IDENTICAL string, so an
+        // animating agent title never changes the row text tick to tick.
+        XCTAssertEqual(
+            RailRowsBuilder.normalizedProgramTitle("⠹ build"),
+            RailRowsBuilder.normalizedProgramTitle("⠸ build"),
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.normalizedProgramTitle("✻ build"),
+            RailRowsBuilder.normalizedProgramTitle("· build"),
+        )
+        XCTAssertEqual(RailRowsBuilder.normalizedProgramTitle("main.swift - NVIM"), "main.swift - NVIM")
+        XCTAssertEqual(RailRowsBuilder.normalizedProgramTitle("★ production"), "★ production")
+        XCTAssertEqual(
+            RailRowsBuilder.normalizedProgramTitle("task ⠋ detail"), "task ⠋ detail",
             "a glyph past the first character is content, not an activity prefix",
         )
-        XCTAssertNil(RailRowsBuilder.strippedProgramTitle("✳"), "a bare glyph carries no title")
-        XCTAssertNil(RailRowsBuilder.strippedProgramTitle(nil))
-        XCTAssertNil(RailRowsBuilder.strippedProgramTitle("   "))
+        XCTAssertNil(RailRowsBuilder.normalizedProgramTitle("✳"), "a bare glyph carries no title")
+        XCTAssertNil(RailRowsBuilder.normalizedProgramTitle(nil))
+        XCTAssertNil(RailRowsBuilder.normalizedProgramTitle("   "))
     }
 
     // MARK: - The project header's tooltip

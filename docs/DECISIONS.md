@@ -6121,3 +6121,14 @@ Two reports against the day-old ⌘⇧P Panes rows, one root cause each:
   byte-identical to before. Adopted by every chrome surface that renders live titles: the sidebar
   row, the ⌃⇥ switcher (title + place), the ⌘⇧P palette (fzf highlight runs + subtitle), and
   Open Quickly's highlight.
+
+### The agent mark returns to the title — normalized, never animated (2026-07-31)
+
+The follow-up ask: stop STRIPPING the agent glyph now that the chrome can draw glyphs. The strip
+existed for a real reason — the leading glyph is the agent's SPINNER (braille frames, the `✢✳✶✻✽·`
+asterisk cycle), and keeping the raw frame means the title's text changes on every animation tick:
+the row-flash bug (`e551dc0b`) and the R23 no-motion-on-text rule both trace to exactly that. So
+`strippedProgramTitle` became `normalizedProgramTitle`: every frame of the spinner family maps to
+the ONE static `✳︎` mark ("⠙ build" / "⠹ build" / "✻ build" → `✳︎ build`, pinned identical), other
+leading symbols stay user content, a bare glyph still carries no title. The mark shows; nothing
+moves. The sidebar row's own `✳` agent marker skips itself when the title already leads with one.
