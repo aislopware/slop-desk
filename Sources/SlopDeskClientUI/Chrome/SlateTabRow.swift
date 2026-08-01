@@ -99,13 +99,13 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
-                // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
-                // Apple platforms, which would break the ink-only title run. A title already led by
-                // the normalized agent mark (`normalizedProgramTitle`) keeps its own — no double ✳.
+                // `agentMarkedTitle` pins the ✳ to TEXT presentation (bare U+2733 renders as emoji
+                // on Apple platforms, which would break the ink-only title run) and keeps a title
+                // already led by the normalized mark (`normalizedProgramTitle`) single-marked.
                 // `nerdAware` so a private-use glyph riding a program title draws from the bundled
                 // symbols face.
                 Text.nerdAware(
-                    agentMarker && !title.hasPrefix("✳") ? "✳\u{FE0E} \(title)" : title,
+                    agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
                     size: Slate.Typeface.body,
                 )
                 // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:

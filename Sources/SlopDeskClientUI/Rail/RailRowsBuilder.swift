@@ -397,6 +397,15 @@ enum RailRowsBuilder {
     /// presentation (`\u{FE0E}`; bare U+2733 renders as emoji on Apple platforms).
     static let agentTitleMark = "✳\u{FE0E}"
 
+    /// `title` led with the agent mark unless it already leads with one. The dedupe compares the
+    /// first SCALAR against U+2733, never `hasPrefix("✳")`: the variation selector rides the ✳'s
+    /// own grapheme cluster, so against the normalized `✳\u{FE0E}` lead that character-wise prefix
+    /// check answered FALSE — and a fresh agent whose program title still carried its own glyph
+    /// ("✳ Claude Code", no intent asserted yet) wore the mark TWICE on every surface that adds it.
+    static func agentMarkedTitle(_ title: String) -> String {
+        title.unicodeScalars.first == "✳" ? title : "\(agentTitleMark) \(title)"
+    }
+
     static func normalizedProgramTitle(_ title: String?) -> String? {
         guard let title else { return nil }
         var text = title.trimmingCharacters(in: .whitespacesAndNewlines)

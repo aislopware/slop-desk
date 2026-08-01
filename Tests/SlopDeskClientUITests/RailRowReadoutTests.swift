@@ -172,6 +172,30 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.normalizedProgramTitle("   "))
     }
 
+    /// `agentMarkedTitle` is a FIXED POINT on a title that already leads with the mark — in either
+    /// spelling. The regression this pins: a fresh agent's own launch title ("✳ Claude Code", no
+    /// intent yet) normalizes to the `✳\u{FE0E}` lead, and the old `hasPrefix("✳")` dedupe missed it
+    /// (the variation selector rides the ✳'s grapheme cluster, so the character-wise prefix check
+    /// says "unmarked") — every marking surface then prepended a SECOND ✳.
+    func testAgentMarkedTitleNeverDoublesTheMark() {
+        let mark = RailRowsBuilder.agentTitleMark
+        let normalized = RailRowsBuilder.normalizedProgramTitle("✳ Claude Code")
+        XCTAssertEqual(normalized, "\(mark) Claude Code")
+        XCTAssertEqual(
+            RailRowsBuilder.agentMarkedTitle(normalized ?? ""), "\(mark) Claude Code",
+            "a normalized lead keeps its ONE mark",
+        )
+        // The trap the scalar comparison exists to dodge — if this ever starts passing, the
+        // platform's grapheme semantics changed and the helper can simplify back to `hasPrefix`.
+        XCTAssertFalse("\(mark) Claude Code".hasPrefix("✳"))
+        XCTAssertEqual(RailRowsBuilder.agentMarkedTitle("✳ bare-marked"), "✳ bare-marked")
+        XCTAssertEqual(
+            RailRowsBuilder.agentMarkedTitle("fix the rail flash"),
+            "\(mark) fix the rail flash",
+            "an unmarked identity (the intent rung) takes exactly one mark",
+        )
+    }
+
     // MARK: - The project header's tooltip
 
     /// The header tooltip: full project path, then the git line — only the non-empty parts.

@@ -188,9 +188,7 @@ enum PaneSwitcherRowsBuilder {
         // static mark; a title already led by it (the normalized-title rung) keeps its own.
         let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
         return PaneIdentity(
-            title: isAgent && !resolved.hasPrefix("✳")
-                ? "\(RailRowsBuilder.agentTitleMark) \(resolved)"
-                : resolved,
+            title: isAgent ? RailRowsBuilder.agentMarkedTitle(resolved) : resolved,
             project: project,
             note: note,
         )
