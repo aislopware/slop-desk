@@ -1905,6 +1905,10 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        // The tracking area is rect-based and fires under a modal overlay card — while one is up,
+        // pointer traffic must not reach the TUI (or steal focus) through the card. See
+        // `TerminalPointerShield`; the drag variants funnel here, so they are shielded too.
+        if TerminalPointerShield.isActive() { return }
         let mods = Self.ghosttyMods(event.modifierFlags)
         let p = surfacePoint(event)
         surface?.sendMousePos(x: p.x, y: p.y, mods: mods)
@@ -1925,6 +1929,8 @@ final class GhosttyLayerBackedView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        // Shielded like `mouseMoved` — an enter under a modal card is not a hover on this pane.
+        if TerminalPointerShield.isActive() { return }
         // Reset the cursor position on enter — lots of mouse-report logic depends on the position being
         // inside the viewport (upstream SurfaceView_AppKit.swift:936-952).
         let mods = Self.ghosttyMods(event.modifierFlags)

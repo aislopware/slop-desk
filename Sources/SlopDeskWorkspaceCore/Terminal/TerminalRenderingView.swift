@@ -62,4 +62,26 @@ public final class TerminalRendererFactory {
         return AnyView(EmptyView())
     }
 }
+
+/// The MODAL POINTER SHIELD — whether a modal overlay card (command palette / Open Quickly /
+/// connect / cheat sheet / Peek & Reply) is floating over the workspace, read by the production
+/// renderer's `mouseMoved`/`mouseEntered` before it forwards a pointer position to libghostty.
+///
+/// The shield exists because an AppKit `NSTrackingArea` is RECT-based: it keeps firing no matter
+/// what is composited above it, so with the palette open the terminal underneath kept feeding
+/// cursor positions to a mouse-reporting TUI (hover highlights tracked the pointer THROUGH the
+/// card) and focus-follows-mouse could steal the workspace focus mid-palette. Clicks never had
+/// this problem — the card's dismiss floor takes them via ordinary hit-testing — so this closure
+/// makes the pointer's hover traffic obey the same occlusion its clicks already do.
+///
+/// Same injection idiom as ``TerminalRendererFactory/shared``: the app root binds it once to the
+/// live overlay coordinator's modal flag; the default (headless / tests / previews) is never
+/// shielded. The SwiftUI chrome columns gate the same flag through `allowsHitTesting` — one flag,
+/// two event systems.
+@preconcurrency
+@MainActor
+public enum TerminalPointerShield {
+    /// Whether pointer traffic into the terminal is currently shielded by a modal overlay.
+    public static var isActive: () -> Bool = { false }
+}
 #endif

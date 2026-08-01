@@ -20,6 +20,11 @@ struct ContentColumn: View {
     /// pane drag canvas-only.
     var paneDrag: PaneDragCoordinator?
 
+    /// The scene overlay reducer, re-injected by the split host (the hosted column does not inherit
+    /// the WindowGroup environment). Read for the modal pointer shield below; `nil` (previews /
+    /// tests) reads as "no modal up".
+    @Environment(\.overlayCoordinator) private var overlayCoordinator
+
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
     var body: some View {
@@ -39,6 +44,16 @@ struct ContentColumn: View {
                 SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
             }
         #endif
+            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay
+            // too. This column lives in its OWN NSHostingView inside the AppKit split, and the
+            // floating overlay layer lives in the window root's — so a card floating over this
+            // column does NOT occlude its hover tracking: AppKit tracking areas are rect-based and
+            // keep firing under the card, and the hover-reveal titlebar (and any row hover) lit up
+            // while the pointer was on the palette. While a modal card is up the column goes
+            // hit-test-deaf, which silences its hover the way the card's dismiss floor already
+            // silences its clicks. Global Search (non-modal by design) leaves this open; the
+            // terminal's own AppKit tracking is shielded by `TerminalPointerShield` off the same flag.
+            .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
     /// On macOS the pane area is pushed below the hover-reveal titlebar strip (so the terminal starts under

@@ -103,12 +103,26 @@ struct NavigatorColumn: View {
         store.tree.activeSession?.activeTab?.activePane
     }
 
+    /// The scene overlay reducer, re-injected by the split host (the hosted column does not inherit
+    /// the WindowGroup environment). Read for the modal pointer shield below; `nil` (previews /
+    /// tests) reads as "no modal up".
+    @Environment(\.overlayCoordinator) private var overlayCoordinator
+
     var body: some View {
-        #if os(macOS)
-        macSidebar
-        #else
-        iosSidebar
-        #endif
+        Group {
+            #if os(macOS)
+            macSidebar
+            #else
+            iosSidebar
+            #endif
+        }
+        // ⚠️ THE MODAL POINTER SHIELD — the sidebar lives in its OWN NSHostingView inside the AppKit
+        // split, so a modal card floating over it (the window root's overlay layer) does NOT occlude
+        // its hover tracking: AppKit tracking areas are rect-based and keep firing under the card,
+        // and the tab rows lit their hover plates while the pointer was on the palette. While a
+        // modal card is up the column goes hit-test-deaf — hover obeys the same occlusion the card's
+        // dismiss floor already imposes on clicks. Global Search (non-modal by design) leaves it open.
+        .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
     // MARK: - Sections (store-derived order × pane rows × search filter)

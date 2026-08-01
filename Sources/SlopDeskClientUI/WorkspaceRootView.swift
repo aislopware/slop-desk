@@ -222,6 +222,11 @@ public struct WorkspaceRootView: View {
         // to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }
         installPinToggle? { [chrome] in chrome.togglePin() }
+        // The terminal's AppKit tracking area fires under a modal card (rect-based — no occlusion),
+        // so the production renderer reads this shield before forwarding pointer positions to a
+        // mouse-reporting TUI. Bound to the SAME modal flag the hosted columns gate their SwiftUI
+        // hit-testing on, so the whole workspace goes pointer-deaf under a card at once.
+        TerminalPointerShield.isActive = { [overlay] in overlay.anyModalVisible }
         wireOverlayCwdResolver()
     }
     #endif
