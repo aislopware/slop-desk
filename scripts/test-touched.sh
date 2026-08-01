@@ -16,12 +16,25 @@
 # full green run on a clean tree does (same condition as pre-push-test.sh), so a partial
 # pass can't make a push skip tests it never ran.
 #
+# ⚠️ The dependency graph cannot see SUBPROCESS SPAWNS or RUNTIME FILE READS; those edges
+# are hand-mapped in the python below (slopdesk-hostd / slopdesk-client → SlopDeskClientTests
+# for SubprocessE2ETests; scripts/ → SlopDeskClientUITests for the gate-contract tests).
+# A new test that spawns a built binary or reads a repo path outside its own target dir
+# MUST add its edge here, or its tests go silently unselected.
+#
 # Usage:
 #   scripts/test-touched.sh                          # auto-detect from the change set
 #   scripts/test-touched.sh SlopDeskHostTests ...    # explicit target override
+#   scripts/test-touched.sh --dry-run                # print the selection, run nothing
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
+
+dry_run=0
+if [[ ${1:-} == "--dry-run" ]]; then
+  dry_run=1
+  shift
+fi
 
 # The dependency graph, cached — `swift package describe` costs ~1s+, Package.swift
 # changes rarely.
@@ -33,17 +46,23 @@ fi
 
 if [[ $# -gt 0 ]]; then
   selection="$*"
+elif [[ ! -f .build/pre-push-green-tree ]] ||
+  ! git cat-file -e "$(cat .build/pre-push-green-tree)" 2> /dev/null; then
+  # No known-green baseline to diff against (fresh clone, wiped .build) — a diff vs bare
+  # HEAD would silently absolve every commit since the last full run. Fail toward FULL;
+  # one full green on a clean tree writes the marker and ends the penalty.
+  echo "test-touched: no full-green baseline — running the FULL suite to establish one"
+  selection=FULL
 else
-  marker=.build/pre-push-green-tree
-  base=HEAD
-  if [[ -f ${marker} ]] && git cat-file -e "$(cat "${marker}")" 2> /dev/null; then
-    base=$(cat "${marker}")
-  fi
+  base=$(cat .build/pre-push-green-tree)
 
+  # The pathspec must list every repo path the tests CONSUME, not just what they compile:
+  # scripts/ is read at runtime by the ClientUITests gate-contract tests, golden/ by the
+  # sniffer golden guard, Package.resolved decides external dependency versions.
   selection=$(
     {
-      git diff --name-only "${base}" -- Package.swift Sources Tests golden
-      git ls-files --others --exclude-standard -- Package.swift Sources Tests golden
+      git diff --name-only "${base}" -- Package.swift Package.resolved Sources Tests golden scripts
+      git ls-files --others --exclude-standard -- Package.swift Package.resolved Sources Tests golden scripts
     } | sort -u | python3 -c '
 import json
 import sys
@@ -68,8 +87,13 @@ def closure(name):
 reach = {test: closure(test) for test in tests}
 picked, full = set(), False
 for path in changed:
-    if path == "Package.swift" or path.startswith("golden/"):
+    if path in ("Package.swift", "Package.resolved") or path.startswith("golden/"):
         full = True
+        continue
+    if path.startswith("scripts/"):
+        # GuiGateLaunchContractTests + LaunchRestoreGateContractTests read every
+        # scripts/*.sh (and scripts/fixtures/) off disk at runtime.
+        picked.add("SlopDeskClientUITests")
         continue
     hit = next((t for p, t in by_path if path.startswith(p + "/")), None)
     if hit is None:
@@ -80,8 +104,9 @@ for path in changed:
         picked.add(hit["name"])
         continue
     picked.update(test for test in tests if hit["name"] in reach[test])
-    if hit["name"] == "slopdesk-hostd":
-        # SubprocessE2ETests spawns the real hostd binary — the graph cannot see that.
+    if hit["name"] in ("slopdesk-hostd", "slopdesk-client"):
+        # SubprocessE2ETests spawns the real hostd + client binaries — the graph
+        # cannot see a subprocess edge.
         picked.add("SlopDeskClientTests")
 
 if full or picked == tests:
@@ -92,6 +117,11 @@ else:
     print("NONE")
 ' "${graph}"
   )
+fi
+
+if [[ ${dry_run} == 1 ]]; then
+  echo "test-touched (dry-run): ${selection}"
+  exit 0
 fi
 
 swift build --build-tests
