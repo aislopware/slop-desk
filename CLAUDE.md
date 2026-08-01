@@ -10,6 +10,7 @@ Clean checkout builds headless with no prerequisite: `swift build`/`swift test` 
 
 | Gate | When / what it uniquely covers |
 |------|-------------------------------|
+| `scripts/test-touched.sh` (`make test-touched`) | **Default inner-loop gate after Swift edits** — incremental build + only the test targets whose dependency closure reaches the changed files (~10-50s vs ~100s full `swift test --parallel`). Diffs against the last full-green tree, so scope grows until a full run resets it; Package.swift/golden/unattributable paths escalate to full; a partial green never warms the pre-push cache. Full suite (`make test`) before push / after big cross-cutting changes |
 | `.build/release/slopdesk-loopback-validate` (`--smoke`/`--frames N`) | FEC / packetizer / reassembler changes — real VT encode→decode, no GUI |
 | `scripts/check-ios.sh` | `#if os(iOS)` / UIKit changes — type-checks the iOS slice (`swift build` skips iOS); runs zero tests |
 | `scripts/check-ios-tests.sh` | ONLY executor of iOS tests (host-less bundle, booted simulator, iOS triple). `swift test` compiles the **macOS** side of every `#if os(iOS)` fork — an iOS default asserted there is asserted about the wrong branch |

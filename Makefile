@@ -89,7 +89,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (compiles the package first)
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check build test golden
+.PHONY: check build test test-touched golden
 check: lint build test golden ## lint + build + test + golden pin (full local gate)
 
 build: ## swift build (Swift + CSlopDeskSIMD, no prerequisites)
@@ -97,6 +97,9 @@ build: ## swift build (Swift + CSlopDeskSIMD, no prerequisites)
 
 test: ## swift test --parallel + green-tree cache (same gate the pre-push hook runs)
 	bash scripts/pre-push-test.sh
+
+test-touched: ## Fast inner loop: incremental build + only the test targets the change set reaches
+	bash scripts/test-touched.sh
 
 # Golden regression pin: regenerate the wire corpus from the live native-Swift codecs and assert
 # byte-identity to golden/golden_vectors.json (replaces the old cross-language Rust golden_parity).
