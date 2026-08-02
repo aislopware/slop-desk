@@ -3541,6 +3541,18 @@ final class MuxChannelSession: @unchecked Sendable {
                 sendControl([response], to: id)
                 return
             }
+            // ensureCodeServer = 18 lazily spawns / reports the project's code-server instance
+            // (the right sidebar's embedded VS Code) via the process-wide `CodeServerManager`.
+            // Side-effecting, so handled HERE — BEFORE, and never reaching, the read-only
+            // `MetadataResponseBuilder`. `response` returns nil for every OTHER verb. It replies
+            // IMMEDIATELY with the current state (starting/ready/unavailable) — `ensure` never
+            // waits out a cold boot, so the client's 5 s registry timeout cannot starve.
+            if let response = HostCodeServerPerformer.response(
+                requestID: requestID, verb: verb, payload: payload,
+            ) {
+                sendControl([response], to: id)
+                return
+            }
             let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
             let response = MetadataResponseBuilder(query: probe)
                 .response(requestID: requestID, verb: verb, payload: payload)

@@ -238,6 +238,20 @@ public final class MetadataClient {
         return try? MetadataCodec.decodeClipboardReadResponse(payload)
     }
 
+    /// Ensures the HOST runs a code-server for `projectRoot` and reports where it stands
+    /// (``MetadataVerb/ensureCodeServer``; the right sidebar's embedded VS Code). `projectRoot` is
+    /// the pane's `projectKey` — the absolute host path of the project. The host replies
+    /// immediately with the CURRENT state (it never waits out a cold boot); the caller polls until
+    /// ``MetadataCodec/CodeServerState/ready``, then loads
+    /// `http://<target-host>:<port>/?folder=<root>`. `nil` on any failure — a malformed reply, the
+    /// root vanishing host-side (`.notFound`), an OLD host answering `.unsupportedVerb` (the
+    /// sidebar shows its update hint), or a dropped reply (the registry timeout → `.error`).
+    public func ensureCodeServer(projectRoot: String) async -> MetadataCodec.CodeServerEndpoint? {
+        let (status, payload) = await request(.ensureCodeServer, payload: Data(projectRoot.utf8))
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeCodeServerEndpoint(payload)
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

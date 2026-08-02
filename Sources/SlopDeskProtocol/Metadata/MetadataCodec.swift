@@ -650,6 +650,64 @@ public enum MetadataCodec {
         )
     }
 
+    // MARK: - Code-server endpoint  (ensureCodeServer = 18)
+
+    /// The host's answer to ``MetadataVerb/ensureCodeServer``: where (and whether) the project's
+    /// code-server instance is. The `port` is meaningful ONLY when ``state`` is
+    /// ``CodeServerState/ready`` — a starting instance may not have bound its socket yet (the host
+    /// spawns with port `0` and learns the real port from the child's own log line), and an
+    /// unavailable one has no port at all; both carry `0`.
+    public struct CodeServerEndpoint: Equatable, Sendable {
+        /// The lifecycle state as a RAW byte (forward-tolerant carry, like
+        /// ``HostVitals/pressureByte``); see ``state``.
+        public var stateByte: UInt8
+        /// The TCP port the instance listens on — `0` unless ``state`` is ``CodeServerState/ready``.
+        public var port: UInt16
+
+        public init(stateByte: UInt8, port: UInt16) {
+            self.stateByte = stateByte
+            self.port = port
+        }
+
+        public init(state: CodeServerState, port: UInt16) {
+            self.init(stateByte: state.rawValue, port: port)
+        }
+
+        /// The typed state. An unknown future byte reads ``CodeServerState/starting`` — "keep
+        /// polling" is the benign fallback; a state this build cannot interpret must never render
+        /// the install-hint error surface it cannot justify.
+        public var state: CodeServerState {
+            CodeServerState(rawValue: stateByte) ?? .starting
+        }
+    }
+
+    /// The meaning of ``CodeServerEndpoint/stateByte``.
+    public enum CodeServerState: UInt8, Sendable, Equatable, CaseIterable {
+        /// Spawned but not confirmed listening — the client polls the verb again.
+        case starting = 0
+        /// Listening; ``CodeServerEndpoint/port`` is live and the WKWebView can load.
+        case ready = 1
+        /// No code-server binary on the host — the sidebar shows the install hint.
+        case unavailable = 2
+    }
+
+    /// Encodes a ``MetadataVerb/ensureCodeServer`` response payload: `[UInt8 state][UInt16 BE port]`.
+    public static func encodeCodeServerEndpoint(_ endpoint: CodeServerEndpoint) -> Data {
+        var data = Data([endpoint.stateByte])
+        data.appendBE(endpoint.port)
+        return data
+    }
+
+    /// Decodes a ``MetadataVerb/ensureCodeServer`` response payload (validate-then-drop): a body
+    /// shorter than 3 bytes throws ``SlopDeskError/truncated``; a longer body is tolerated, its
+    /// trailer ignored, so a future field can be appended without breaking this reader.
+    public static func decodeCodeServerEndpoint(_ data: Data) throws -> CodeServerEndpoint {
+        var reader = BigEndianReader(data)
+        let state = try reader.readUInt8()
+        let port = try reader.readUInt16()
+        return CodeServerEndpoint(stateByte: state, port: port)
+    }
+
     // MARK: - Shared encode/decode helpers
 
     /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry

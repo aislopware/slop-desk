@@ -555,6 +555,9 @@ public final class HostServer: @unchecked Sendable {
         drainWorkspaceChannels()
         // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
+        // Terminate the per-project code-server children (the right sidebar's embedded VS Code).
+        // They self-reap on idle, but a daemon stop must not strand Node processes.
+        HostCodeServerPerformer.sharedManager.shutdown()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
         // refcounts above; this is the belt-and-braces daemon-stop sweep).
         repoWatcher.shutdown()

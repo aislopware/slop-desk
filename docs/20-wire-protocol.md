@@ -189,15 +189,16 @@ never offers or falls back to another version.
     `10` revealPath (E10), the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
     `14` hostInfo (a **pure read** returning the host machine's own hostname), the **clipboard-sync**
-    verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), and `17` hostVitals
-    (a **pure read** returning the host machine's CPU/memory/disk pulse). `payload` is the
+    verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), `17` hostVitals
+    (a **pure read** returning the host machine's CPU/memory/disk pulse), and `18` ensureCodeServer
+    (**side-effecting** — lazily spawns/reports the project's code-server instance). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
-    path** for `openPath`/`revealPath`, and the `MetadataCodec` clipboard encodings for
-    `setClipboard`/`readClipboard` (below).
+    path** for `openPath`/`revealPath`/`ensureCodeServer`, and the `MetadataCodec` clipboard encodings
+    for `setClipboard`/`readClipboard` (below).
   - **`openPath` (9) / `revealPath` (10) are the ONLY side-effecting verbs** (E10 — the ⌘click /
     ⌘⇧click link actions; the file lives on the host Mac, not the client). The host opens the path in its
     default app / Finder (`NSWorkspace.open`) or reveals it in Finder
@@ -280,6 +281,27 @@ never offers or falls back to another version.
     whichever pane carries a live channel; an old host answers `unsupportedVerb` and the footer simply
     stays one line. Served by the read-only responder (`MetadataResponseBuilder` →
     `HostMetadataProbe.hostVitals()` → the process-wide `HostVitalsSampler`).
+  - **`ensureCodeServer` (18) is the embedded-VS Code verb** (the client's right sidebar): the host
+    lazily spawns ONE code-server (VS Code web workbench) per project root via `CodeServerManager`
+    and replies **immediately** with the current state — it never waits out the multi-second cold
+    boot (the client registry's 5 s timeout must not starve). Request payload: raw UTF-8 **absolute
+    host project-root path** (the same path the host itself published as `projectKey` — git
+    toplevel, else the pane cwd; trailing-`/` normalized so one project cannot spawn twins).
+    Response: status `ok` + the **3-byte** `[UInt8 state][UInt16 BE port]` payload — state `0`
+    starting (poll again), `1` ready (`port` is live; the client loads
+    `http://<target-host>:<port>/?folder=<root>`), `2` unavailable (no code-server binary on the
+    host → the sidebar shows the install hint). `port` is meaningful ONLY when ready (the child is
+    spawned with port `0` and the real port is learned from its own log line); an unknown future
+    state byte reads *starting* client-side (keep polling — never a false error surface), and a
+    trailing payload byte is tolerated so a future field can be appended. `notFound` = the root is
+    not an existing host directory; `error` = a malformed (empty/relative/non-UTF-8) payload.
+    **Host-global** like 11/12 (one instance per project serves every pane and every client of that
+    project; the manager is process-wide, children reap themselves after 2 h idle and hostd stop
+    terminates them). **No auth token rides the URL**: the child runs `--auth none` on `0.0.0.0` —
+    security = the WireGuard mesh, the same trust model as every other port hostd opens
+    (docs/DECISIONS — no app-layer auth). The host routes 18 to `HostCodeServerPerformer` BEFORE
+    the read-only responder; an OLD host answers `unsupportedVerb` and the sidebar shows its
+    host-update hint.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

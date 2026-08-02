@@ -273,10 +273,12 @@ final class MetadataWireMessageTests: XCTestCase {
         XCTAssertEqual(MetadataVerb.readClipboard.rawValue, 16)
         // The host-pulse pure read (3-byte [cpu%][mem%][pressure] payload, docs/20).
         XCTAssertEqual(MetadataVerb.hostVitals.rawValue, 17)
+        // The code-server ensure (side-effecting spawn; [state][UInt16 port] payload, docs/20).
+        XCTAssertEqual(MetadataVerb.ensureCodeServer.rawValue, 18)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap. The probe
-        // moves up with each verb added (it was 17 before hostVitals).
+        // moves up with each verb added (it was 18 before ensureCodeServer).
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 18))
+        XCTAssertNil(MetadataVerb(rawValue: 19))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

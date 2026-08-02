@@ -1,0 +1,307 @@
+import Foundation
+import SlopDeskProtocol
+
+/// One live (or launching) code-server child, held by ``CodeServerManager``. A protocol seam so unit
+/// tests drive the manager with a fake — the hang-safety rule extends here: a unit test must NEVER
+/// spawn a real code-server (a multi-second Node boot, a network listener, a Homebrew dependency).
+protocol CodeServerProcessHandle: AnyObject, Sendable {
+    /// Whether the child is still alive. `false` (crash, idle-timeout self-exit) makes the next
+    /// ``CodeServerManager/ensure(projectRoot:)`` respawn.
+    var isRunning: Bool { get }
+    /// Asks the child to exit (SIGTERM). Idempotent.
+    func terminate()
+}
+
+/// Supervises the HOST's per-project code-server (VS Code web workbench) instances — the backend of
+/// the client's right-sidebar embedded editor (``MetadataVerb/ensureCodeServer``).
+///
+/// **One instance per project root, lazily.** The project identity is the same absolute path the
+/// host publishes as `projectKey` (git toplevel, else the pane cwd), so every pane — and every
+/// client — of one project shares one workbench, one extension host, one unsaved-buffer state.
+///
+/// **`ensure` never waits.** It spawns (or observes) and returns the CURRENT state immediately: the
+/// caller sits on the metadata queue answering an RPC whose client-side timeout is 5 s, and a
+/// code-server cold start can exceed that. The child is spawned with port `0` (the OS picks) and
+/// the real port is learned from the child's own `HTTP server listening on http://…` log line — no
+/// pre-bind allocation race. `ready` means a TCP connect to the learned port succeeded, probed
+/// at most once per ``probeInterval`` (the client polls ~1 Hz; a dead-port connect costs a syscall,
+/// not a hang — the probe's timeout is bounded).
+///
+/// **Crash/idle recovery is implicit** (the cmux `VSCodeServeWebController` lesson): a child that
+/// exited — including by its own `--idle-timeout-seconds` reaper — reads `isRunning == false` on
+/// the next `ensure`, which drops the record and respawns fresh.
+///
+/// **No auth token.** The child runs `--auth none` on `0.0.0.0`: security = the WireGuard mesh,
+/// identical to every other port hostd opens (docs/DECISIONS — no app-layer crypto/auth).
+///
+/// Thread-safe (`NSLock`): `ensure` runs on per-session metadata queues, so two panes' requests race.
+final class CodeServerManager: @unchecked Sendable {
+    /// Finds the code-server executable, or `nil` when the host has none (→ `.unavailable`).
+    typealias BinaryLocator = @Sendable () -> String?
+    /// Spawns the child; `onLogLine` receives each line of its merged stdout/stderr (the port
+    /// parse). Throws when the exec itself fails (missing/broken binary → `.unavailable`).
+    typealias Spawner = @Sendable (
+        _ binary: String, _ arguments: [String], _ onLogLine: @escaping @Sendable (String) -> Void,
+    ) throws -> any CodeServerProcessHandle
+    /// Whether a TCP connect to `127.0.0.1:port` succeeds (bounded, never hangs).
+    typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
+
+    /// Idle self-shutdown handed to the child (`--idle-timeout-seconds`): a workbench nobody has
+    /// open for 2 h reaps itself instead of holding a Node runtime forever; the next sidebar expand
+    /// transparently respawns it.
+    static let idleTimeoutSeconds = 7200
+
+    private struct Instance {
+        var handle: any CodeServerProcessHandle
+        /// Learned from the child's log line; `nil` until it prints one.
+        var port: UInt16?
+        /// Latched on the first successful probe — a listening server is never un-probed.
+        var ready = false
+        var lastProbe: ContinuousClock.Instant?
+    }
+
+    private let lock = NSLock()
+    private var instances: [String: Instance] = [:]
+    private let locateBinary: BinaryLocator
+    private let spawn: Spawner
+    private let probe: ReadinessProbe
+    private let probeInterval: Duration
+    private let clock = ContinuousClock()
+
+    init(
+        binaryLocator: @escaping BinaryLocator = CodeServerManager.defaultBinaryLocator,
+        spawner: @escaping Spawner = CodeServerManager.defaultSpawner,
+        readinessProbe: @escaping ReadinessProbe = CodeServerManager.defaultReadinessProbe,
+        probeInterval: Duration = .milliseconds(500),
+    ) {
+        locateBinary = binaryLocator
+        spawn = spawner
+        probe = readinessProbe
+        self.probeInterval = probeInterval
+    }
+
+    /// Ensures a code-server for `projectRoot` and reports where it stands RIGHT NOW (never waits).
+    /// `nil` when the root is not an absolute path to an existing host directory (→ `.notFound` on
+    /// the wire — never spawn a server on a path the host cannot see).
+    func ensure(projectRoot: String) -> MetadataCodec.CodeServerEndpoint? {
+        guard let root = Self.canonicalRoot(projectRoot) else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let existing = instances[root] {
+            if existing.handle.isRunning {
+                return endpointLocked(for: existing, key: root)
+            }
+            instances[root] = nil
+        }
+
+        guard let binary = locateBinary() else {
+            return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
+        }
+        let arguments = Self.launchArguments(projectRoot: root)
+        let onLine: @Sendable (String) -> Void = { [weak self] line in
+            guard let port = Self.parseListeningPort(fromLogLine: line) else { return }
+            self?.recordPort(port, forRoot: root)
+        }
+        guard let handle = try? spawn(binary, arguments, onLine) else {
+            return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
+        }
+        instances[root] = Instance(handle: handle)
+        return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+    }
+
+    /// Terminates every child (host shutdown). The children also self-reap on idle, but hostd going
+    /// down must not strand Node processes.
+    func shutdown() {
+        lock.lock()
+        let stranded = instances
+        instances.removeAll()
+        lock.unlock()
+        for (_, instance) in stranded {
+            instance.handle.terminate()
+        }
+    }
+
+    // MARK: - Locked helpers
+
+    /// Computes the endpoint for a LIVE instance, probing readiness at most once per
+    /// ``probeInterval``. Caller holds `lock`.
+    private func endpointLocked(
+        for instance: Instance, key root: String,
+    ) -> MetadataCodec.CodeServerEndpoint {
+        guard let port = instance.port else {
+            return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+        }
+        if instance.ready {
+            return MetadataCodec.CodeServerEndpoint(state: .ready, port: port)
+        }
+        var updated = instance
+        let now = clock.now
+        let due = instance.lastProbe.map { now - $0 >= probeInterval } ?? true
+        if due {
+            updated.lastProbe = now
+            updated.ready = probe(port)
+            instances[root] = updated
+        }
+        return MetadataCodec.CodeServerEndpoint(state: updated.ready ? .ready : .starting, port: port)
+    }
+
+    private func recordPort(_ port: UInt16, forRoot root: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var instance = instances[root], instance.port == nil else { return }
+        instance.port = port
+        instances[root] = instance
+    }
+
+    // MARK: - Pure helpers (unit-tested directly)
+
+    /// Normalizes a request root: absolute, trailing-`/` trimmed (matching `projectKey`'s own
+    /// normalization so one project cannot spawn twins), and an EXISTING directory. `nil` otherwise.
+    static func canonicalRoot(
+        _ path: String, fileManager: FileManager = .default,
+    ) -> String? {
+        guard path.hasPrefix("/") else { return nil }
+        var root = path
+        while root.count > 1, root.hasSuffix("/") { root.removeLast() }
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: root, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        return root
+    }
+
+    /// The child's argv (after the binary path). Port `0` = the OS picks; the real port comes back
+    /// through ``parseListeningPort(fromLogLine:)``. `0.0.0.0` so mesh clients can reach it —
+    /// the same exposure as every hostd listener.
+    static func launchArguments(projectRoot: String) -> [String] {
+        [
+            "--auth", "none",
+            "--bind-addr", "0.0.0.0:0",
+            "--disable-telemetry",
+            "--disable-update-check",
+            "--disable-workspace-trust",
+            "--idle-timeout-seconds", String(idleTimeoutSeconds),
+            projectRoot,
+        ]
+    }
+
+    /// Extracts the bound port from code-server's own announcement, e.g.
+    /// `[…] info  HTTP server listening on http://0.0.0.0:62636/`. `nil` for every other line.
+    static func parseListeningPort(fromLogLine line: String) -> UInt16? {
+        guard let markerRange = line.range(of: "HTTP server listening on http://") else { return nil }
+        let rest = line[markerRange.upperBound...]
+        guard let colon = rest.lastIndex(of: ":") else { return nil }
+        let digits = rest[rest.index(after: colon)...].prefix(while: \.isNumber)
+        guard !digits.isEmpty, let port = UInt16(digits), port > 0 else { return nil }
+        return port
+    }
+
+    // MARK: - Production seams
+
+    /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`
+    /// misses when hostd is launched outside a login shell.
+    static let defaultBinaryLocator: BinaryLocator = {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["SLOPDESK_CODE_SERVER_BIN"], !override.isEmpty {
+            return FileManager.default.isExecutableFile(atPath: override) ? override : nil
+        }
+        var directories = (env["PATH"] ?? "").split(separator: ":").map(String.init)
+        directories.append(contentsOf: ["/opt/homebrew/bin", "/usr/local/bin"])
+        for directory in directories {
+            let candidate = directory + "/code-server"
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return nil
+    }
+
+    /// Foundation `Process` + a line-splitting pipe drain on a utility queue. stdout and stderr are
+    /// MERGED into one pipe — code-server logs the listening line to stdout, but merging means a
+    /// future build moving it cannot silently break the port parse.
+    static let defaultSpawner: Spawner = { binary, arguments, onLogLine in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        let lines = LineSplitter()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            for line in lines.append(chunk) {
+                onLogLine(line)
+            }
+        }
+        try process.run()
+        return ProcessHandleAdapter(process: process)
+    }
+
+    /// Accumulates pipe chunks and yields complete lines (lock-guarded — the readability handler
+    /// runs on a FileHandle-owned queue, and Sendable closures may not mutate captured vars).
+    private final class LineSplitter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffer = Data()
+
+        func append(_ chunk: Data) -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            buffer.append(chunk)
+            var complete: [String] = []
+            while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                let lineBytes = buffer[buffer.startIndex..<newline]
+                buffer.removeSubrange(buffer.startIndex...newline)
+                if let line = String(bytes: lineBytes, encoding: .utf8) {
+                    complete.append(line)
+                }
+            }
+            return complete
+        }
+    }
+
+    /// Bounded TCP connect to `127.0.0.1:port` (~250 ms): listening ⇒ `true`. Non-blocking socket +
+    /// `poll(2)` — a filtered/blackholed port times out instead of hanging the metadata queue.
+    static let defaultReadinessProbe: ReadinessProbe = { port in
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connectResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if connectResult == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+        var pollFD = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pollFD, 1, 250) == 1 else { return false }
+        var soError: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &length) == 0 else { return false }
+        return soError == 0
+    }
+
+    /// The production ``CodeServerProcessHandle``.
+    private final class ProcessHandleAdapter: CodeServerProcessHandle, @unchecked Sendable {
+        private let process: Process
+
+        init(process: Process) {
+            self.process = process
+        }
+
+        var isRunning: Bool { process.isRunning }
+
+        func terminate() {
+            guard process.isRunning else { return }
+            process.terminate()
+        }
+    }
+}
