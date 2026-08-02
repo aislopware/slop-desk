@@ -37,9 +37,18 @@ public extension WorkspaceStore {
     /// needsPermission/done notifies once (coalesced), a flap does not.
     func setAgentStatus(_ status: ClaudeStatus, for id: PaneID, at date: Date = Date()) {
         guard paneAgentStatus[id] != status else { return }
+        let previous = paneAgentStatus[id] ?? .none
         let lastNotified = lastNotifiedStatus[id] ?? .none
         if status == .none { paneAgentStatus.removeValue(forKey: id) } else { paneAgentStatus[id] = status }
         applyAttentionEdge(for: id, lastNotified: lastNotified, status: status)
+        // The HOOK-LESS completion edge (herdr `Working|Blocked → Idle`): a screen-detected agent
+        // (codex, gemini, … — no Stop hook to mint `.done`) finishing its turn fires the SAME
+        // attention sink as a Claude Stop, so its toast/banner/sound coverage matches herdr's.
+        // Distinct from `applyAttentionEdge` on purpose: this edge needs the REAL previous status
+        // (`.done → .idle` decay must stay silent), not the last-notified coalescing state.
+        if AttentionEdge.isCompletion(prev: previous, current: status) {
+            fireAgentAttention(for: id, status: status)
+        }
         // The NEEDS-ATTENTION `since` fallback: a genuine status transition (past the idempotency guard)
         // stamps the pane — a BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is
         // where its menu-row age comes from.

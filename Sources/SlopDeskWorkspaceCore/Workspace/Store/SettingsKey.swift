@@ -169,6 +169,12 @@ public enum SettingsKey {
     public static let agentNotifyTaskComplete = "notifications.agentTaskComplete"
     /// "Code Agent — Notify When Awaiting Input" — agent needs approval / input (default ON; Claude-only).
     public static let agentNotifyAwaitInput = "notifications.agentAwaitInput"
+    /// "Code Agent — Sound When Task Completes" — Submarine on a background finish (default ON; macOS-only).
+    /// Read by ``AgentSoundPolicy``.
+    public static let agentSoundTaskComplete = "notifications.agentSoundTaskComplete"
+    /// "Code Agent — Sound When Awaiting Input" — Glass when the agent blocks on input, even for the
+    /// focused pane (default ON; macOS-only). Read by ``AgentSoundPolicy``.
+    public static let agentSoundAwaitInput = "notifications.agentSoundAwaitInput"
     // (agents__agents-overview.md "Agent Behaviour"). The three BADGE toggles — fire-time
     // `Defaults.Keys` flags, never folded into a typed prefs model → golden-safe. They gate which fused tab
     // badge the sidebar SHOWS via the pure ``AgentBadgeGates``; a per-pane override in ``WorkspaceStore`` beats
@@ -866,6 +872,8 @@ public extension Defaults.Keys {
     static let soundOnErrorExit = Key<Bool>(slopDesk: SettingsKey.soundOnErrorExit, default: false)
     static let agentNotifyTaskComplete = Key<Bool>(slopDesk: SettingsKey.agentNotifyTaskComplete, default: true)
     static let agentNotifyAwaitInput = Key<Bool>(slopDesk: SettingsKey.agentNotifyAwaitInput, default: true)
+    static let agentSoundTaskComplete = Key<Bool>(slopDesk: SettingsKey.agentSoundTaskComplete, default: true)
+    static let agentSoundAwaitInput = Key<Bool>(slopDesk: SettingsKey.agentSoundAwaitInput, default: true)
     // Agent badge gates (agents__agents-overview.md "Agent Behaviour"). Fire-time flags → golden-safe.
     // Consumed via `SettingsKey.agentBadgeGates` → `TabBadgeGating.resolve`. `whileProcessing` defaults OFF
     // (progress-state.md "Claude Code — While Processing (off by default)"); the other two default ON.

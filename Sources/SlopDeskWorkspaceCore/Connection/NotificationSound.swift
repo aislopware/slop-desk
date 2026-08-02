@@ -23,3 +23,34 @@ public enum ErrorSoundPolicy {
         return (exit ?? 0) != 0
     }
 }
+
+// MARK: - Code-agent attention sounds
+
+/// Which macOS system sound announces an agent attention edge. The rawValue is the `NSSound(named:)`
+/// name resolved from `/System/Library/Sounds` — kept as a plain string here so the policy module stays
+/// AppKit-free; the actuation site owns the `NSSound` call.
+public enum AgentSound: String, Sendable {
+    /// The agent finished its task and went idle.
+    case taskComplete = "Submarine"
+    /// The agent is blocked waiting for approval / input.
+    case awaitInput = "Glass"
+}
+
+/// The PURE decision for the **Code Agent sound** cues, riding the same `onAgentAttention` edge as the
+/// toast/banner. The two events gate differently on purpose: awaiting-input plays even while the source
+/// pane is focused (the agent is standing still until the user acts — being "on screen" is no guarantee
+/// of being noticed), while task-complete stays silent for a watched pane (the finished turn is right
+/// there; only a background finish earns a cue).
+public enum AgentSoundPolicy {
+    public static func sound(
+        needsInput: Bool,
+        sourcePaneFocused: Bool,
+        soundTaskComplete: Bool,
+        soundAwaitInput: Bool,
+    ) -> AgentSound? {
+        if needsInput {
+            return soundAwaitInput ? .awaitInput : nil
+        }
+        return soundTaskComplete && !sourcePaneFocused ? .taskComplete : nil
+    }
+}

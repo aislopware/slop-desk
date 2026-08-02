@@ -96,6 +96,8 @@ struct AllSettingsListView: View {
     @Default(.soundOnErrorExit) private var soundOnErrorExit
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
+    @Default(.agentSoundTaskComplete) private var agentSoundTaskComplete
+    @Default(.agentSoundAwaitInput) private var agentSoundAwaitInput
     // The privilege surface (title gate + OSC-52 master) — the genuinely advanced-only keys
     // (Advanced → Privileges).
     @Default(.titleShellControlled) private var titleShellControlled
@@ -342,6 +344,8 @@ struct AllSettingsListView: View {
         case SettingsKey.soundOnErrorExit: boolControl($soundOnErrorExit)
         case SettingsKey.agentNotifyTaskComplete: boolControl($agentNotifyTaskComplete)
         case SettingsKey.agentNotifyAwaitInput: boolControl($agentNotifyAwaitInput)
+        case SettingsKey.agentSoundTaskComplete: boolControl($agentSoundTaskComplete)
+        case SettingsKey.agentSoundAwaitInput: boolControl($agentSoundAwaitInput)
         // The privilege surface. `clipboardShellControlled` is the OSC-52 master gate that feeds the libghostty
         // clipboard-read/write tokens, so it refreshes the live config; the title gate is read fire-time
         // (no config rebuild).

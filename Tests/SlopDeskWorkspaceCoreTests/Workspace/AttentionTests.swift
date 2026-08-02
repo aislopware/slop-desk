@@ -68,6 +68,27 @@ final class AttentionTests: XCTestCase {
         XCTAssertFalse(AttentionEdge.shouldNotify(prev: .working, current: .none))
     }
 
+    // MARK: - AttentionEdge.isCompletion (the hook-less finish edge)
+
+    /// `working|needsPermission → idle` is a COMPLETION (herdr `Working|Blocked → Idle`) — the
+    /// hook-free agent's finish, which never mints `.done`.
+    func testCompletionFiresLeavingActiveStatesForIdle() {
+        XCTAssertTrue(AttentionEdge.isCompletion(prev: .working, current: .idle))
+        XCTAssertTrue(AttentionEdge.isCompletion(prev: .needsPermission, current: .idle))
+    }
+
+    /// `.done → .idle` is the decay of an ALREADY-notified finish; `.none → .idle` is presence
+    /// appearing; `idle → idle` cannot occur past the store's idempotency guard but is still false.
+    func testCompletionSilentOnDecayPresenceAndNonIdleTargets() {
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .done, current: .idle))
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .none, current: .idle))
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .idle, current: .idle))
+        // Non-idle targets are the shouldNotify edge's business, never a completion.
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .done))
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .needsPermission))
+        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .none))
+    }
+
     /// `isAttention` is the level predicate the ring/glow read.
     func testIsAttentionLevelPredicate() {
         XCTAssertTrue(AttentionEdge.isAttention(.needsPermission))
@@ -242,6 +263,42 @@ final class AttentionTests: XCTestCase {
         store.setAgentStatus(.needsPermission, for: pane)
         XCTAssertEqual(fired.count, 2, "done → needsPermission re-fires (a genuine escalation edge)")
         XCTAssertEqual(fired.last?.needsInput, true, "the escalation edge carries needsInput == true")
+    }
+
+    /// The HOOK-LESS completion edge: a screen-detected agent going `working → idle` (no Stop hook,
+    /// so `.done` is never minted) fires the sink with `needsInput == false` — herdr's
+    /// `Working|Blocked → Idle` completion. The Claude decay (`done → idle`) stays silent: `.done`
+    /// already notified on entry, and its decay is not a second finish.
+    func testStoreHookLessCompletionFiresAndDecayStaysSilent() throws {
+        let store = makeTreeStore()
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        var fired: [(needsInput: Bool, name: String)] = []
+        store.onAgentAttention = { _, name, needsInput, _ in fired.append((needsInput, name)) }
+
+        // Screen-only agent finish: working → idle (never .done).
+        store.setAgentStatus(.working, for: pane)
+        store.setAgentStatus(.idle, for: pane)
+        XCTAssertEqual(fired.count, 1, "working → idle is a hook-less completion — it notifies")
+        XCTAssertEqual(fired.last?.needsInput, false, "a completion is not a needs-input edge")
+
+        // Blocked resolved off-screen: needsPermission → idle also completes (herdr Blocked → Idle).
+        store.setAgentStatus(.needsPermission, for: pane)
+        XCTAssertEqual(fired.count, 2, "entering needsPermission notifies (Request)")
+        store.setAgentStatus(.idle, for: pane)
+        XCTAssertEqual(fired.count, 3, "needsPermission → idle is a completion — it notifies")
+        XCTAssertEqual(fired.last?.needsInput, false)
+
+        // The hook path: working → done fires ONCE on done; the later done → idle decay is silent.
+        store.setAgentStatus(.working, for: pane)
+        store.setAgentStatus(.done, for: pane)
+        XCTAssertEqual(fired.count, 4, "entering done notifies")
+        store.setAgentStatus(.idle, for: pane)
+        XCTAssertEqual(fired.count, 4, "done → idle is the decay, never a second finish")
+
+        // Presence appearing (none → idle) is not a finish.
+        store.setAgentStatus(.none, for: pane)
+        store.setAgentStatus(.idle, for: pane)
+        XCTAssertEqual(fired.count, 4, "none → idle (presence floor) stays silent")
     }
 
     /// The host label is captured and surfaced as the notification detail.

@@ -536,6 +536,8 @@ private struct ShellSettingsTab: View {
     // CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
+    @Default(.agentSoundTaskComplete) private var agentSoundTaskComplete
+    @Default(.agentSoundAwaitInput) private var agentSoundAwaitInput
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
@@ -726,6 +728,22 @@ private struct ShellSettingsTab: View {
                 "Notify when a coding agent needs approval or input.",
                 isOn: $agentNotifyAwaitInput,
             )
+            #if os(macOS)
+            // The sound cues are macOS-only (`NSSound` + the system-sound library) — iOS omits the
+            // toggles rather than showing dead controls.
+            glyphToggle(
+                .speakerWave2,
+                "Sound When Task Completes",
+                "Play a sound when a coding agent finishes in an unfocused pane.",
+                isOn: $agentSoundTaskComplete,
+            )
+            glyphToggle(
+                .speakerWave3,
+                "Sound When Awaiting Input",
+                "Play a sound when a coding agent needs approval or input.",
+                isOn: $agentSoundAwaitInput,
+            )
+            #endif
             timingFooter(.live)
         }
     }

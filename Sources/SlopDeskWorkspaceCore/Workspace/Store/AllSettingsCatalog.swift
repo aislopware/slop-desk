@@ -261,6 +261,22 @@ public enum AllSettingsCatalog {
             bucket: .advancedOnly,
             keywords: "agent claude notification awaiting input approval permission code",
         ),
+        SettingEntry(
+            key: SettingsKey.agentSoundTaskComplete,
+            label: "Code Agent — Sound When Task Completes",
+            description: "Play a sound when a coding agent finishes in an unfocused pane.",
+            defaultText: "On",
+            bucket: .advancedOnly,
+            keywords: "agent claude sound task complete done finish submarine audio macos code",
+        ),
+        SettingEntry(
+            key: SettingsKey.agentSoundAwaitInput,
+            label: "Code Agent — Sound When Awaiting Input",
+            description: "Play a sound when a coding agent needs approval or input.",
+            defaultText: "On",
+            bucket: .advancedOnly,
+            keywords: "agent claude sound awaiting input approval permission glass audio macos code",
+        ),
 
         SettingEntry(
             key: SettingsKey.workingDirectoryNewWindowKey,
@@ -661,6 +677,7 @@ public enum AllSettingsCatalog {
         SettingsKey.notifyWhileForegroundKey, SettingsKey.bounceDockIcon,
         SettingsKey.soundShellControlled, SettingsKey.soundOnErrorExit,
         SettingsKey.agentNotifyTaskComplete, SettingsKey.agentNotifyAwaitInput,
+        SettingsKey.agentSoundTaskComplete, SettingsKey.agentSoundAwaitInput,
         // Shell — working directory
         SettingsKey.workingDirectoryNewWindowKey, SettingsKey.workingDirectoryNewTabKey,
         SettingsKey.workingDirectoryNewSplitKey,

@@ -30,6 +30,64 @@ final class BellSoundPolicyTests: XCTestCase {
     }
 }
 
+/// The PURE Code Agent sound decisions (the herdr done/request cue semantics): awaiting-input plays
+/// even for the focused pane (the agent stands still until the user acts); a task-complete plays only
+/// for a BACKGROUND pane (a watched finish is on screen already). Each cue rides its own toggle.
+final class AgentSoundPolicyTests: XCTestCase {
+    /// Awaiting-input ignores focus — it plays for a focused pane too, gated only by its toggle.
+    func testAwaitInputPlaysRegardlessOfFocus() {
+        for focused in [true, false] {
+            XCTAssertEqual(
+                AgentSoundPolicy.sound(
+                    needsInput: true, sourcePaneFocused: focused,
+                    soundTaskComplete: true, soundAwaitInput: true,
+                ),
+                .awaitInput,
+                "awaiting-input plays whether or not the pane is focused (focused=\(focused))",
+            )
+            XCTAssertNil(
+                AgentSoundPolicy.sound(
+                    needsInput: true, sourcePaneFocused: focused,
+                    soundTaskComplete: true, soundAwaitInput: false,
+                ),
+                "the awaiting-input toggle alone silences the request cue",
+            )
+        }
+    }
+
+    /// Task-complete plays only for a BACKGROUND pane, gated by its toggle; the awaiting-input
+    /// toggle has no say over it.
+    func testTaskCompletePlaysOnlyUnfocused() {
+        XCTAssertEqual(
+            AgentSoundPolicy.sound(
+                needsInput: false, sourcePaneFocused: false,
+                soundTaskComplete: true, soundAwaitInput: false,
+            ),
+            .taskComplete,
+        )
+        XCTAssertNil(
+            AgentSoundPolicy.sound(
+                needsInput: false, sourcePaneFocused: true,
+                soundTaskComplete: true, soundAwaitInput: true,
+            ),
+            "a watched finish is already on screen — no cue",
+        )
+        XCTAssertNil(
+            AgentSoundPolicy.sound(
+                needsInput: false, sourcePaneFocused: false,
+                soundTaskComplete: false, soundAwaitInput: true,
+            ),
+            "the task-complete toggle alone silences the done cue",
+        )
+    }
+
+    /// The rawValues ARE the `NSSound(named:)` system-sound names — the actuation contract.
+    func testSystemSoundNames() {
+        XCTAssertEqual(AgentSound.taskComplete.rawValue, "Submarine")
+        XCTAssertEqual(AgentSound.awaitInput.rawValue, "Glass")
+    }
+}
+
 /// E14/K10 WIRING: the bell + error-exit beeps actuate through ``TerminalViewModel``'s existing injected
 /// `beep` seam, gated by the pure policies. Revert-to-confirm-fail: before the wiring the `.bell` /
 /// `.commandStatus(.idle)` arms never rang the seam, so these counts would all be 0.

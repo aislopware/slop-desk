@@ -6,6 +6,7 @@
 // the AUTOCONNECT env seams (auto-connect + front-on-autoconnect), and renders `WorkspaceRootView`.
 
 #if canImport(SwiftUI)
+import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import SlopDeskTransport // ConnectionRegistry + LiveMuxConnectionFactory (the per-host shared mux pool)
 import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 import SlopDeskWorkspaceCore
@@ -424,48 +425,11 @@ public struct SlopDeskClientApp: App {
             )
             #endif
         }
-        store.onAgentAttention = { [weak overlay, weak store] paneIDKey, name, needsInput, detail in
-            let headline = needsInput ? "needs your input" : "finished"
-            let body: String = {
-                guard let detail, !detail.isEmpty else { return headline }
-                return "\(headline) — \(detail)"
-            }()
-            guard let store else { return }
-            // Agent-needs-input is the highest-signal background event → `.attention`; a finish is `.success`.
-            // FOCUS-gated like the OSC toast: the agent pane the user is watching announces its own edge
-            // on screen (the blocked prompt / finished turn is right there) — no toast on top of it.
-            // The agent `detail` is host-provided (Claude label); mask any secret in it (and the name) for
-            // the same reason as the OSC toast above — the toast is the only iOS notification surface.
-            if !store.isSourcePaneFocused(byIDString: paneIDKey) {
-                overlay?.pushToast(Toast(
-                    id: "pane.\(paneIDKey)",
-                    flavor: needsInput ? .attention : .success,
-                    // `.agent` is what earns this card the "needs input" / "is done" headline instead of
-                    // a command's "finished" — flavour alone cannot tell "the agent finished its turn"
-                    // from "the command exited 0".
-                    source: .agent,
-                    title: Toast.redactSecretsIfEnabled(name),
-                    // The toast's detail line is the DETAIL ONLY. The derived headline already says
-                    // "needs input" / "is done", so passing `body` (which prefixes that same phrase for
-                    // the OS banner) would print the state twice on one card. The OS banner still gets
-                    // the full sentence below — it has no derived headline to carry it.
-                    body: detail.map { Toast.redactSecretsIfEnabled($0) },
-                    paneKey: paneIDKey,
-                ))
-            }
-            #if os(macOS)
-            // Agent edges (Claude-only, reusing AttentionSupervision) ride their OWN per-event
-            // toggles — awaiting-input vs task-complete — NOT the shell-app master switch, then the
-            // Notify-While-Foreground gate.
-            explicitNotifier.notifyExplicit(
-                event: needsInput ? .agentAwaitInput : .agentTaskComplete,
-                paneIDKey: paneIDKey, paneTitle: name, title: name, body: body,
-                appActive: store.isAppActive,
-                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
-                settings: SettingsKey.notificationSettings,
-            )
-            #endif
-        }
+        #if os(macOS)
+        Self.wireAgentAttention(store: store, overlay: overlay, notifier: explicitNotifier)
+        #else
+        Self.wireAgentAttention(store: store, overlay: overlay, notifier: nil)
+        #endif
 
         // The app-launch monitor: polls the host while connected.
         let launchMonitor = AppLaunchMonitor(
@@ -950,6 +914,85 @@ public struct SlopDeskClientApp: App {
     /// `MetadataClient` is one-per-pane, so it routes through whichever pane is connected; a `nil` here lets
     /// the card show "Connect a session to manage hooks" instead of a dead button. Resolved at CALL time so a
     /// reconnect transparently re-points the seam.
+    #if os(macOS)
+    /// The OS-banner actuator `wireAgentAttention` takes — ``CommandCompletionNotifier`` is a
+    /// macOS-only type, so the alias keeps the helper's ONE signature compiling on iOS too.
+    private typealias AgentBannerNotifier = CommandCompletionNotifier
+    #else
+    /// iOS has no OS-banner path (the toast is the only notification surface) — always nil.
+    private typealias AgentBannerNotifier = Never
+    #endif
+
+    /// Wires the agent attention sink — the ONE per-edge fan-out to the three surfaces: the sound cue
+    /// (macOS), the in-app toast, and the OS banner (macOS; `notifier` is nil on iOS, where the toast is
+    /// the only notification surface). Split from `init` so the scene body stays under the length lint.
+    @MainActor
+    private static func wireAgentAttention(
+        store: WorkspaceStore,
+        overlay: OverlayCoordinator,
+        notifier: AgentBannerNotifier?,
+    ) {
+        store.onAgentAttention = { [weak overlay, weak store] paneIDKey, name, needsInput, detail in
+            let headline = needsInput ? "needs your input" : "finished"
+            let body: String = {
+                guard let detail, !detail.isEmpty else { return headline }
+                return "\(headline) — \(detail)"
+            }()
+            guard let store else { return }
+            let sourcePaneFocused = store.isSourcePaneFocused(byIDString: paneIDKey)
+            #if os(macOS)
+            // The herdr-style sound cues (Submarine on a finish, Glass on awaiting-input), gated by the
+            // pure ``AgentSoundPolicy``: awaiting-input plays even for the focused pane; a finish only
+            // for a background one. System sounds via `NSSound(named:)` — nothing bundled.
+            if let sound = AgentSoundPolicy.sound(
+                needsInput: needsInput,
+                sourcePaneFocused: sourcePaneFocused,
+                soundTaskComplete: Defaults[.agentSoundTaskComplete],
+                soundAwaitInput: Defaults[.agentSoundAwaitInput],
+            ) {
+                NSSound(named: sound.rawValue)?.play()
+            }
+            #endif
+            // Agent-needs-input is the highest-signal background event → `.attention`; a finish is `.success`.
+            // FOCUS-gated like the OSC toast: the agent pane the user is watching announces its own edge
+            // on screen (the blocked prompt / finished turn is right there) — no toast on top of it.
+            // The agent `detail` is host-provided (Claude label); mask any secret in it (and the name) for
+            // the same reason as the OSC toast above — the toast is the only iOS notification surface.
+            if !sourcePaneFocused {
+                overlay?.pushToast(Toast(
+                    id: "pane.\(paneIDKey)",
+                    flavor: needsInput ? .attention : .success,
+                    // `.agent` is what earns this card the "needs input" / "is done" headline instead of
+                    // a command's "finished" — flavour alone cannot tell "the agent finished its turn"
+                    // from "the command exited 0".
+                    source: .agent,
+                    title: Toast.redactSecretsIfEnabled(name),
+                    // The toast's detail line is the DETAIL ONLY. The derived headline already says
+                    // "needs input" / "is done", so passing `body` (which prefixes that same phrase for
+                    // the OS banner) would print the state twice on one card. The OS banner still gets
+                    // the full sentence below — it has no derived headline to carry it.
+                    body: detail.map { Toast.redactSecretsIfEnabled($0) },
+                    paneKey: paneIDKey,
+                ))
+            }
+            #if os(macOS)
+            // Agent edges (reusing AttentionSupervision) ride their OWN per-event toggles —
+            // awaiting-input vs task-complete — NOT the shell-app master switch, then the
+            // Notify-While-Foreground gate.
+            notifier?.notifyExplicit(
+                event: needsInput ? .agentAwaitInput : .agentTaskComplete,
+                paneIDKey: paneIDKey, paneTitle: name, title: name, body: body,
+                appActive: store.isAppActive,
+                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
+                settings: SettingsKey.notificationSettings,
+            )
+            #else
+            _ = notifier // Never? — no banner surface on iOS; `body` feeds only the macOS banner.
+            _ = body
+            #endif
+        }
+    }
+
     /// The three workspace-level transient notices, wired to the overlay coordinator's chip.
     ///
     /// Grouped out of `init()` because they are one idea — a layout event with no visible trace of its

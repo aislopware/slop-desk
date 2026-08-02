@@ -35,6 +35,24 @@ public enum AttentionEdge {
         }
     }
 
+    /// Whether `prev → current` is a HOOK-LESS COMPLETION edge: the agent left an active state
+    /// (working / blocked) and settled to plain `.idle` without ever minting `.done` — only the
+    /// Claude Stop hook does that; the screen-detect engine has no done concept. This is herdr's
+    /// `is_completion_transition` (`Working|Blocked → Idle`), the trigger that lets a hook-free
+    /// agent's finish (codex, gemini, …) notify like a Claude Stop. `.done → .idle` is the decay
+    /// of an already-notified finish, never a completion; `.none → .idle` is presence appearing,
+    /// not a finish.
+    public static func isCompletion(prev: ClaudeStatus, current: ClaudeStatus) -> Bool {
+        guard current == .idle else { return false }
+        switch prev {
+        case .working,
+             .needsPermission: return true
+        case .none,
+             .idle,
+             .done: return false
+        }
+    }
+
     /// Whether `status` is an ATTENTION state — the level predicate the ring / tab-glow read (a pure
     /// function of the CURRENT status; no history). `needsPermission` (blocked, the most urgent) and
     /// `done` (finished, waiting to be seen) draw the attention chrome; everything else is quiet.
