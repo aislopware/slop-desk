@@ -352,6 +352,15 @@ public enum SettingsKey {
     /// ``WorkspaceChromeState/sidebarCollapsed`` from it. `Key` suffix frees the bare ``autoHideTabsPanel`` name.
     public static let autoHideTabsPanelKey = "shell.autoHideTabsPanel" // AutoHideTabsPanelMode.rawValue
 
+    /// Whether the RIGHT code panel (project-scoped embedded VS Code) is collapsed
+    /// (`shell.codeSidebarCollapsed`), default `true` — a fresh install hides it (opt-in chrome; the
+    /// embedded editor is a companion surface, not the resting silhouette). PERSISTED, unlike the left
+    /// panel's session-scoped collapse: expanding the code panel is a workstyle choice that should
+    /// survive relaunch, and re-expanding it re-ensures the per-project code-server lazily. Read once
+    /// into ``WorkspaceChromeState`` at init; written back on every manual toggle. `Key` suffix frees
+    /// the bare ``codeSidebarCollapsed`` name for the typed accessor.
+    public static let codeSidebarCollapsedKey = "shell.codeSidebarCollapsed"
+
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
     /// (`inherit` / `home` / an absolute path). Read at the new-window fire-site.
@@ -903,6 +912,9 @@ public extension Defaults.Keys {
         slopDesk: SettingsKey.autoHideTabsPanelKey,
         default: .default,
     )
+    // The RIGHT code panel's collapse flag — persisted (a workstyle choice, see the key's doc);
+    // default `true` (hidden on a fresh install).
+    static let codeSidebarCollapsed = Key<Bool>(slopDesk: SettingsKey.codeSidebarCollapsedKey, default: true)
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
     static let workingDirectoryNewWindow = Key<String>(

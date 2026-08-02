@@ -36,6 +36,10 @@ struct WorkspaceCommands: Commands {
     var toggleFind: (() -> Void)?
     var togglePeekReply: (() -> Void)?
     var toggleSidebar: (() -> Void)?
+    /// The View ▸ Toggle Code Panel menu item toggle (⌘⇧R — the right sidebar's embedded VS Code). The
+    /// app threads `chrome.toggleCodeSidebar()` here (chrome is app-owned, no overlay round-trip); `nil`
+    /// keeps the row a graceful no-op via `route`, never dead.
+    var toggleCodeSidebar: (() -> Void)?
     /// The cross-tab Global Search overlay toggle (⇧⌘F, the View ▸ Global Search… menu item). `nil` keeps
     /// the menu item a graceful no-op via `route`, never dead.
     var toggleGlobalSearch: (() -> Void)?
@@ -137,6 +141,7 @@ struct WorkspaceCommands: Commands {
                 toggleFind: toggleFind,
                 togglePeekReply: togglePeekReply,
                 toggleSidebar: toggleSidebar,
+                toggleCodeSidebar: toggleCodeSidebar,
                 toggleGlobalSearch: toggleGlobalSearch,
                 toggleJumpTo: toggleJumpTo,
                 openQuickly: openQuickly,

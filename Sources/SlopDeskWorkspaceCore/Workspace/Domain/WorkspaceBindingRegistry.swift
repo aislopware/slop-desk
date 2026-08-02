@@ -97,6 +97,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     // terminal (own paste pipeline) / empty / read-only pane.
     case pasteAsKeystrokes
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
+    // View → Toggle Code Panel: show/hide the RIGHT sidebar hosting the project-scoped embedded
+    // VS Code (code-server in a WKWebView — every pane of one project shares the ONE instance opened
+    // at that project's root). ⌘⇧R, mirroring ⌘⇧L on the left panel. Window-scope chrome → needs no
+    // active pane; iOS has no code panel (documented no-op — the closure is never installed there).
+    case toggleCodeSidebar
     // View → Pin Window: keep the window floating above ALL other apps' windows. CHORD-LESS;
     // the live macOS app flips `WorkspaceChromeState.pinned` → `NSWindow.level = .floating` via the route
     // closure. Window-scope → needs no active pane; iOS has no window level (documented no-op).
@@ -111,7 +116,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     // Hint Mode (`terminal-features__hint-mode`): overlay 2-letter Vimium labels on every
     // detected target in the active pane's viewport; type the label to run the action — no mouse. Three
     // intents: ⌘⇧J open (paths→host / URLs→client), ⌘⇧Y copy (→ client clipboard), reveal-in-Finder (host),
-    // CHORD-LESS (⌘⇧R is reserved for Toggle Details — see `view.toggleDetails`) so palette/menu-surfaced +
+    // CHORD-LESS (⌘⇧R is Toggle Code Panel — see `view.toggleCodeSidebar`) so palette/menu-surfaced +
     // an in-overlay action switch. Hint Mode owns ⌘⇧J for Hint to Open, so `.peekAndReply` binds ⌘⌥J instead
     // (see `view.peekReply`). Each targets the active terminal pane (a no-op off-terminal).
     case hintToOpen // ⌘⇧J
@@ -266,6 +271,7 @@ public extension WorkspaceAction {
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
+             .toggleCodeSidebar, // the right code panel — window-scope chrome, like the left sidebar
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
@@ -742,6 +748,19 @@ public enum WorkspaceBindingRegistry {
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
             symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
+        ),
+        // Toggle Code Panel ⌘⇧R — the RIGHT sidebar (project-scoped embedded VS Code, a code-server
+        // WKWebView; all panes of one project share the one instance at that project's root). ⌘⇧R
+        // mirrors ⌘⇧L (the two panels flank the content column). ⌘⇧R is FREE: the historical "reserved
+        // for Toggle Details" claim died with the Details column (no `view.toggleDetails` row exists),
+        // and no other `r` chord is registered. Routed through a `toggleCodeSidebar` view-closure onto
+        // the live `WorkspaceChromeState.codeSidebarCollapsed` (like the left panel — there is no store
+        // flag to fall back to). Pinned by E1KeymapParityTests.
+        WorkspaceBinding(
+            id: "view.toggleCodeSidebar", action: .toggleCodeSidebar, title: "Toggle Code Panel",
+            category: .view, chord: KeyChord(character: "r", [.command, .shift]),
+            symbol: "sidebar.right",
+            keywords: "code panel vscode editor ide right sidebar hide show collapse code-server",
         ),
         // Pin Window ("View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord: nil`

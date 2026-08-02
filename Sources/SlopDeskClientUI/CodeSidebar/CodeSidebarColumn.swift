@@ -1,0 +1,168 @@
+// CodeSidebarColumn — the RIGHT sidebar: the project-scoped embedded VS Code (code-server in a
+// pooled WKWebView). Project-scoped means the ACTIVE pane picks the project (its host-pushed
+// `projectKey` — the same key the left panel's sections group by), and every pane of that project
+// shares the ONE workbench opened at the project root; focusing a pane of another project swaps the
+// warm webview for THAT project back in (see `CodeSidebarWebViewPool`).
+//
+// The column is macOS-only chrome hosted in its own plain `NSSplitViewItem` (a THIRD column beside
+// navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
+// webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the
+// `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
+
+#if os(macOS)
+import SFSafeSymbols
+import SlopDeskProtocol
+import SlopDeskWorkspaceCore
+import SwiftUI
+
+struct CodeSidebarColumn: View {
+    let store: WorkspaceStore
+    /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
+    /// (`target.host`), on the per-project port the ensure RPC reports.
+    let connection: AppConnection
+
+    @State private var model = CodeSidebarModel()
+
+    /// The active pane's project root (host-pushed `projectKey`, else its cwd until the first push
+    /// lands — `WorkspaceStore.paneProjectKey`). `nil` ⇒ no pane focused / a pane with no project.
+    private var activeProjectRoot: String? {
+        guard let pane = store.tree.activeSession?.activeTab?.activePane else { return nil }
+        return store.paneProjectKey(pane)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            if let root = activeProjectRoot {
+                content(projectRoot: root)
+                    // Restart the poll on a project switch or a manual reload — SwiftUI cancels the
+                    // running loop with the old id, so at most one loop ensures at a time.
+                    .task(id: "\(root)#\(model.generation)") {
+                        await model.poll(
+                            projectRoot: root,
+                            host: { [connection] in connection.target.host },
+                            ensure: { [store] in await Self.ensureEndpoint(projectRoot: $0, store: store) },
+                        )
+                    }
+            } else {
+                placeholder(
+                    symbol: .folder,
+                    title: "No project in focus",
+                    detail: "Focus a terminal pane to open its project here.",
+                )
+            }
+        }
+        .background(Slate.Surface.ground)
+    }
+
+    /// The caps panel header on the titlebar strip (the column starts at the window's top edge —
+    /// `safeAreaRegions = []` like its sibling columns): the otty "CODE" label leading, the active
+    /// project's folder name center-trailing, and the reload button trailing.
+    private var header: some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Text("CODE")
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .tracking(Slate.Typeface.capsTracking)
+                .foregroundStyle(Slate.State.header)
+            Spacer(minLength: 0)
+            if let root = activeProjectRoot {
+                Text(URL(fileURLWithPath: root).lastPathComponent)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help(root)
+                Button {
+                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                    model.requestReload()
+                } label: {
+                    Image(systemSymbol: .arrowClockwise)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                        .foregroundStyle(Slate.State.header)
+                }
+                .buttonStyle(.plain)
+                .help("Reload the embedded editor")
+            }
+        }
+        .padding(.horizontal, Slate.Metric.space2 + Slate.Metric.tabRowInset)
+        .frame(height: Slate.Metric.titlebarHeight)
+    }
+
+    /// The phase surface for the active project. The webview mounts ONLY in `.ready` — the pooled
+    /// instance underneath survives the unmount (project switches are warm swaps).
+    @ViewBuilder
+    private func content(projectRoot: String) -> some View {
+        switch model.phase {
+        case let .ready(url):
+            CodeSidebarWebView(projectRoot: projectRoot, url: url)
+        case .starting:
+            VStack(spacing: Slate.Metric.space2) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Starting code-server…")
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .unavailable:
+            placeholder(
+                symbol: .shippingbox,
+                title: "code-server not found on host",
+                detail: "brew install code-server",
+                detailIsCommand: true,
+            )
+        case .offline:
+            placeholder(
+                symbol: .boltSlash,
+                title: "Host unreachable",
+                detail: "The editor opens once a pane is connected.",
+            )
+        }
+    }
+
+    /// A centered empty-state: dim glyph, one-line title, secondary detail (optionally set in the
+    /// instrument face for a copyable shell command).
+    private func placeholder(
+        symbol: SFSymbol, title: String, detail: String, detailIsCommand: Bool = false,
+    ) -> some View {
+        VStack(spacing: Slate.Metric.space2) {
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.display * 0.6))
+                .foregroundStyle(Slate.Text.tertiary)
+            Text(title)
+                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .foregroundStyle(Slate.Text.primary)
+            Text(detail)
+                .font(
+                    detailIsCommand
+                        ? Slate.Typeface.instrument(Slate.Typeface.footnote)
+                        : .system(size: Slate.Typeface.footnote),
+                )
+                .foregroundStyle(Slate.Text.secondary)
+                .textSelection(.enabled)
+        }
+        .multilineTextAlignment(.center)
+        .padding(Slate.Metric.space4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// One ensure round: verb 18 through whichever pane carries a live metadata channel (resolved
+    /// per call, like the host-info/vitals fetchers — survives pane churn/reconnects). `nil` when no
+    /// pane is connected (→ `.offline`, and the loop keeps polling).
+    private static func ensureEndpoint(
+        projectRoot: String, store: WorkspaceStore,
+    ) async -> MetadataCodec.CodeServerEndpoint? {
+        guard let client = firstConnectedMetadataClient(store) else { return nil }
+        return await client.ensureCodeServer(projectRoot: projectRoot)
+    }
+
+    private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
+        for id in store.tree.activeSession?.allPaneIDs() ?? [] {
+            if let client = (store.handle(for: id) as? LivePaneSession)?.connection?.activeMetadataClient {
+                return client
+            }
+        }
+        return nil
+    }
+}
+#endif

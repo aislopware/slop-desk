@@ -51,6 +51,11 @@ final class WorkspaceKeyDispatcher {
     /// `store.sidebarCollapsed`, so the root view installs the real closure via ``setToggleSidebar(_:)`` on
     /// appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in `route` — never a dead chord.
     private var toggleSidebar: (() -> Void)?
+    /// The RIGHT code panel toggle (⌘⇧R — the project-scoped embedded VS Code). View-owned `@State`
+    /// (`WorkspaceChromeState.codeSidebarCollapsed`), installed late by the root view via
+    /// ``setToggleCodeSidebar(_:)`` like the left panel's. Until then `nil` ⇒ `.toggleCodeSidebar` is a
+    /// graceful no-op via `route` (there is no legacy store flag to fall back to) — never a dead chord.
+    private var toggleCodeSidebar: (() -> Void)?
     /// "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), installed late by the
     /// root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window is CHORD-LESS by default, so
     /// this fires only if a user binds a chord to `.pinWindow`; until installed `nil` ⇒ graceful no-op.
@@ -81,6 +86,15 @@ final class WorkspaceKeyDispatcher {
     /// passes through UNCHANGED so the frontmost window / sheet owns its keystrokes. `{ true }` (headless / test
     /// default) keeps at-rest behaviour byte-identical — a test with no window server reports workspace as key.
     private let isWorkspaceWindowKey: () -> Bool
+
+    /// A predicate consulted AFTER the chord normalizes — `true` while the right code panel's WKWebView
+    /// holds first responder. The embedded VS Code's chord vocabulary (⌘P/⌘⇧P/⌘F/⌘S/⌘W/⌘1–9 …) collides
+    /// with the workspace table wholesale, and this monitor PREEMPTS the responder chain — without the
+    /// yield every one of those chords would be resolved + swallowed before WebKit sees it. While `true`
+    /// every chord passes through UNCHANGED except `.toggleCodeSidebar` (⌘⇧R — closing the panel is how
+    /// the keyboard comes back without the mouse). Injectable so tests can hold a phantom webview focus;
+    /// the default reads the live pool.
+    var isCodeSidebarCapturingKeys: () -> Bool = { CodeSidebarWebViewPool.shared.holdsFirstResponder() }
 
     private var monitor: Any?
 
@@ -134,6 +148,10 @@ final class WorkspaceKeyDispatcher {
     /// this to `chrome.toggleSidebar` on appear). Without it ⌘⇧L falls back to `store.sidebarCollapsed` (which
     /// nothing reads on macOS); this closure makes ⌘⇧L actually collapse the native sidebar item.
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
+
+    /// Install the RIGHT code panel's toggle once `WorkspaceChromeState` exists (the root view wires
+    /// this to `chrome.toggleCodeSidebar` on appear) — ⌘⇧R collapses/reveals the native code-panel item.
+    func setToggleCodeSidebar(_ toggle: @escaping () -> Void) { toggleCodeSidebar = toggle }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
@@ -274,6 +292,21 @@ final class WorkspaceKeyDispatcher {
             ),
         ) else { return event }
 
+        // WEBVIEW YIELD: while the right code panel's WKWebView is first responder, the embedded VS Code
+        // owns the keyboard (see `isCodeSidebarCapturingKeys`) — pass every chord through UNCHANGED so it
+        // reaches WebKit (the menus are shortcut-less by design, so nothing else claims it on the way
+        // down; system ⌘Q stays alive via the app menu, which fires only when the page declines the key).
+        // The ONE exception is the panel's own escape hatch: ⌘⇧R still closes the panel — the way the
+        // keyboard comes back without reaching for the mouse. (⌃⇥ already ran above — an app-level
+        // gesture VS Code does not use; literal-byte text bindings target the TERMINAL, so they must not
+        // fire into an editor and sit below this yield.)
+        if isCodeSidebarCapturingKeys() {
+            if WorkspaceBindingRegistry.resolvedChordTable[chord] == .toggleCodeSidebar {
+                dispatch(.toggleCodeSidebar)
+                return nil
+            }
+            return event
+        }
         // A user `text:`/`csi:`/`esc:` literal-byte binding resolves BEFORE the action table — the chord
         // sends its already-resolved bytes (ESC/CSI lead bytes baked in by `KeybindGrammar`) to the focused
         // pane and is swallowed.
@@ -368,6 +401,7 @@ final class WorkspaceKeyDispatcher {
             toggleFind: toggleFind,
             togglePeekReply: togglePeekReply,
             toggleSidebar: toggleSidebar,
+            toggleCodeSidebar: toggleCodeSidebar,
             toggleGlobalSearch: toggleGlobalSearch,
             toggleJumpTo: toggleJumpTo,
             openQuickly: toggleOpenQuickly,

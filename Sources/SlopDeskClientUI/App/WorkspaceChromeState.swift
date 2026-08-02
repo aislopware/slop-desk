@@ -8,6 +8,7 @@
 // place and reading them in the SwiftUI body re-invalidates the representable.
 
 #if canImport(SwiftUI)
+import Defaults
 import Foundation
 import SlopDeskWorkspaceCore
 
@@ -16,6 +17,11 @@ import SlopDeskWorkspaceCore
 final class WorkspaceChromeState {
     /// Whether the left navigator (sidebar) split item is collapsed.
     var sidebarCollapsed = false
+    /// Whether the RIGHT code panel (project-scoped embedded VS Code) is collapsed. Seeded from the
+    /// persisted `Defaults[.codeSidebarCollapsed]` (unlike the session-scoped left panel — expanding the
+    /// code panel is a workstyle choice that survives relaunch); ``toggleCodeSidebar()`` writes it back.
+    /// The macOS `WorkspaceSplitRepresentable.updateNSViewController` animates the matching split item.
+    var codeSidebarCollapsed = Defaults[.codeSidebarCollapsed]
     /// Whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
     /// macOS `NSWindow` glue maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
@@ -50,5 +56,12 @@ final class WorkspaceChromeState {
     /// Flip the window-pin flag ("Pin Window"). The macOS scene's `.onChange(of: chrome.pinned)` actuates
     /// `NSWindow.level`; on iOS this is an inert flag flip (no floating-window concept).
     func togglePin() { pinned.toggle() }
+
+    /// Toggle the RIGHT code panel (⌘⇧R / View menu / palette) and persist the choice — the one manual
+    /// entry point (no auto-hide policy touches this panel, so no override bookkeeping like the left one).
+    func toggleCodeSidebar() {
+        codeSidebarCollapsed.toggle()
+        Defaults[.codeSidebarCollapsed] = codeSidebarCollapsed
+    }
 }
 #endif

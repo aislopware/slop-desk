@@ -187,6 +187,14 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
         ),
+        // "Toggle Code Panel" — the RIGHT sidebar (project-scoped embedded VS Code). Routed through
+        // the injected chrome closure like the Tabs panel, so the ⌘⇧R chord, the menu row, and this
+        // row's ✓ all flip/read the same live `chrome.codeSidebarCollapsed`.
+        PaletteItem(
+            id: "action.toggleCodeSidebar", icon: "sidebar.right", title: "Toggle Code Panel",
+            subtitle: nil, shortcut: glyph(.toggleCodeSidebar), filter: .actions, category: .view,
+            action: .toggleCodeSidebar,
+        ),
         // Read Only: toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's

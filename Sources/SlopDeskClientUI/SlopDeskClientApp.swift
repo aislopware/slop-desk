@@ -593,6 +593,8 @@ public struct SlopDeskClientApp: App {
             overlay: overlayCoordinator,
             chrome: chrome,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
+            // ⌘⇧R (Toggle Code Panel — the right sidebar's embedded VS Code) rides the same late-wiring.
+            installCodeSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleCodeSidebar(toggle) },
             // Hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
@@ -868,6 +870,9 @@ public struct SlopDeskClientApp: App {
                 // The View ▸ Peek & Reply menu row opens the SAME overlay the ⌘⌥J chord
                 // drives (the menu mirrors the chord; the NSEvent dispatcher owns the chord itself).
                 togglePeekReply: { [overlayCoordinator] in overlayCoordinator.togglePeekReply() },
+                // The View ▸ Toggle Code Panel row flips the SAME live `chrome.codeSidebarCollapsed`
+                // the ⌘⇧R chord + the palette row drive — directly off the app-owned chrome.
+                toggleCodeSidebar: { [chrome] in chrome.toggleCodeSidebar() },
                 toggleGlobalSearch: { [overlayCoordinator] in overlayCoordinator.toggleGlobalSearch() },
                 // The View ▸ Jump To… menu item opens the folded-in Jump-To (the
                 // Open-Quickly picker at the `.current` pill), the SAME overlay the ⌘J chord drives.

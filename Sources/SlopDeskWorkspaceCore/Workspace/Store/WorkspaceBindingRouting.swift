@@ -21,6 +21,10 @@ struct RouteToggles {
     var find: (() -> Void)?
     var peekReply: (() -> Void)?
     var sidebar: (() -> Void)?
+    /// Toggles the RIGHT code panel (⌘⇧R — the project-scoped embedded VS Code). A macOS chrome
+    /// concern passed in as a closure (like `sidebar`, but with NO legacy store flag to fall back to);
+    /// `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
+    var codeSidebar: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (⌘J). A VIEW overlay (like `globalSearch`), passed in as a
     /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. Jump-To
@@ -61,6 +65,7 @@ public extension WorkspaceBindingRegistry {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
+        toggleCodeSidebar: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
@@ -71,6 +76,7 @@ public extension WorkspaceBindingRegistry {
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
             sidebar: toggleSidebar,
+            codeSidebar: toggleCodeSidebar,
             globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
@@ -217,6 +223,10 @@ public extension WorkspaceBindingRegistry {
         // store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
+        // Toggle Code Panel (⌘⇧R): the RIGHT sidebar (project-scoped embedded VS Code). Pure chrome
+        // (`WorkspaceChromeState.codeSidebarCollapsed`) with NO legacy store flag, so the closure is the
+        // ONLY sink; `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
+        case .toggleCodeSidebar: toggles.codeSidebar?()
         // Pin Window: float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
@@ -405,6 +415,8 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
+        // The right code panel is chrome on both paths — same closure, same graceful no-op default.
+        case .toggleCodeSidebar: toggles.codeSidebar?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()

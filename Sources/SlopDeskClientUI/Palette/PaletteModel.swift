@@ -99,6 +99,11 @@ public enum PaletteAction: Sendable {
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
     /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
     case toggleSidebar
+    /// Toggle the RIGHT code panel (the project-scoped embedded VS Code) — routed by the overlay
+    /// coordinator to the injected ``OverlayCoordinator/toggleCodeSidebar`` closure (bound to the SAME
+    /// live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the macOS split read), so the row, the
+    /// chord, the menu, and the ✓ stay in lockstep.
+    case toggleCodeSidebar
     /// Toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

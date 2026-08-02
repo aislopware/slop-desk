@@ -6132,3 +6132,49 @@ the row-flash bug (`e551dc0b`) and the R23 no-motion-on-text rule both trace to 
 the ONE static `✳︎` mark ("⠙ build" / "⠹ build" / "✻ build" → `✳︎ build`, pinned identical), other
 leading symbols stay user content, a bare glyph still carries no title. The mark shows; nothing
 moves. The sidebar row's own `✳` agent marker skips itself when the title already leads with one.
+
+## The right sidebar returns as the CODE panel: project-scoped embedded VS Code (2026-08-02)
+
+> User-directed: "làm triệt để theo hướng code-server + WKWebView … mở lại cái right sidebar mà
+> ngày xưa mình bỏ đi … project-scoped — các pane trong cùng 1 project show chung 1 cái vscode mở
+> sẵn folder là project đó." RE-SCOPES the Host Windows rail retirement's "no right sidebar" state
+> (the full-desktop pivot removed the rail, not the slot).
+
+- ✅ **Embedding approach = code-server (Coder, MIT) in a WKWebView — decided by research + spike.**
+  The official `code serve-web` / VS Code Server EULA forbids embedding in third-party apps and the
+  marketplace ToU is restricted to official products; openvscode-server is frozen (22 versions
+  behind); monaco-vscode-api has no full-workbench-in-WKWebView precedent; window reparenting is
+  impossible on macOS. code-server ships the full workbench (Open VSX extensions), and the spike
+  proved the service worker + full workbench run in a plain third-party WKWebView at
+  `http://127.0.0.1` with no special entitlements.
+- ✅ **The host owns the code-server lifecycle: metadata verb 18 `ensureCodeServer` NEVER waits.**
+  `CodeServerManager` (one child per canonical project root) spawns `code-server --auth none
+  --bind-addr 0.0.0.0:0` and learns the ephemeral port from the announce line (the cmux port-0
+  pattern — no allocation race); the RPC replies with the CURRENT state (`starting`/`ready`/
+  `unavailable` + port) immediately because a cold Node boot is multi-second and the metadata
+  channel times out at 5s — readiness is CLIENT-side polling. `--idle-timeout-seconds 7200`
+  self-reaps; a dead child respawns on the next ensure; `HostServer.stop()` terminates all.
+  No auth token: the WireGuard mesh IS the security boundary (the no-app-layer-auth invariant).
+- ✅ **The panel is the third plain `NSSplitViewItem` — the Host Windows rail's anatomy, revived.**
+  Navigator | content | CODE. A PLAIN item, never `.inspector` (its collapse unmounts the hosted
+  view — the exact reason the rail entry pinned this), so a collapse just unparents while the
+  webview survives. ⌘⇧R (the chord the rail held, freed by its retirement, deliberately re-taken —
+  `E1KeymapParityTests` re-pinned) toggles it via `.toggleCodeSidebar` through the standard
+  closure chain (route → dispatcher/menu/palette → `WorkspaceChromeState.codeSidebarCollapsed`).
+  Default COLLAPSED; the flag persists (`Defaults[.codeSidebarCollapsed]`) — unlike the left
+  panel's session-scoped collapse, opening the code panel is a workstyle choice.
+- ✅ **Project-scoped = keyed by the host-pushed `projectKey`, one warm webview per project.** The
+  ACTIVE pane's `paneProjectKey` (wire type 34 — the SAME key the sidebar sections group by, and
+  the absolute host path `CodeServerManager` canonicalizes) picks the workbench; every pane of one
+  project shares the ONE instance opened at `?folder=<root>`. `CodeSidebarWebViewPool` keeps one
+  WKWebView per project for the app's lifetime (cmux keep-alive lesson): switching projects is a
+  warm swap, not a workbench reboot. `CodeSidebarModel` (pure, unit-pinned) owns the poll loop +
+  URL build; the collapse unmounts the column so the poll only runs while the panel is open — a
+  code-server is only ever ensured on first expand.
+- ✅ **Keyboard: the dispatcher YIELDS to the webview (the cmux collision lesson).** The NSEvent
+  monitor preempts the responder chain, and VS Code's chord vocabulary (⌘P/⌘⇧P/⌘F/⌘S/⌘W/⌘1–9)
+  collides with the workspace table wholesale — so while the code panel's webview holds first
+  responder every chord passes through UNCHANGED (the shortcut-less menus mean nothing else claims
+  it en route; system ⌘Q stays alive via the app menu). The ONE exception: ⌘⇧R stays app-owned —
+  closing the panel is how the keyboard comes back. Pinned by `DispatcherCodeSidebarYieldTests`;
+  literal-byte text bindings sit BELOW the yield (they target the terminal, never an editor).

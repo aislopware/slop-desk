@@ -294,6 +294,7 @@ struct OverlayHostView: View {
         { item in
             switch item.id {
             case "action.toggleSidebar": !chrome.sidebarCollapsed
+            case "action.toggleCodeSidebar": !chrome.codeSidebarCollapsed
             // Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
             // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.

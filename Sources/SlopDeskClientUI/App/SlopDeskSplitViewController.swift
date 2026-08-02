@@ -39,6 +39,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
+    /// The RIGHT code panel (project-scoped embedded VS Code) — retained like `sidebarItem` so
+    /// `applyCollapse` can animate it.
+    private var codeSidebarItem: NSSplitViewItem?
 
     /// The sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
@@ -47,6 +50,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
+
+    /// The code panel's floor — wide enough for a usable VS Code workbench (activity bar + explorer +
+    /// an editor column); anything narrower collapses the workbench into its mobile layout.
+    static let codeSidebarMinWidth: CGFloat = 380
 
     init(
         store: WorkspaceStore,
@@ -125,13 +132,35 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
+        // 3) Code panel — the RIGHT sidebar: the project-scoped embedded VS Code (code-server in a
+        //    pooled WKWebView, `CodeSidebarColumn`). A PLAIN trailing split item, deliberately NOT
+        //    `NSSplitViewItem(inspectorWithViewController:)` — the inspector style's collapse tears the
+        //    hosted view down, which would kill the webview; a plain item just unparents it while the
+        //    pooled WKWebView (and its web-content process) survives for a warm re-expand. Same holding
+        //    priority as the left sidebar so a window resize grows the CONTENT column.
+        let codeColumn = NSHostingController(
+            rootView: CodeSidebarColumn(store: store, connection: connection)
+                .overlayCoordinator(overlay),
+        )
+        let codeSidebarItem = NSSplitViewItem(viewController: codeColumn)
+        codeSidebarItem.minimumThickness = Self.codeSidebarMinWidth
+        codeSidebarItem.canCollapse = true
+        codeSidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
+        // Seed the collapse from the persisted chrome flag BEFORE the item is added — the panel is
+        // opt-in (default hidden), and letting the representable's first update collapse it would
+        // flash a fully-expanded column on every launch.
+        codeSidebarItem.isCollapsed = chrome.codeSidebarCollapsed
+
         navigator.safeAreaRegions = []
         content.safeAreaRegions = []
+        codeColumn.safeAreaRegions = []
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
+        addSplitViewItem(codeSidebarItem)
 
         self.sidebarItem = sidebarItem
+        self.codeSidebarItem = codeSidebarItem
 
         // Defer remote terminal grid-resize forwarding while a sidebar divider (or the window edge)
         // is being dragged: NSSplitView re-lays its subviews every step and posts this notification, so each
@@ -245,10 +274,15 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         }
     }
 
-    /// Apply the toolbar collapse flag to the sidebar item (idempotent — only animates
+    /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
     /// a real change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool) {
-        guard let sidebarItem, sidebarItem.isCollapsed != sidebarCollapsed else { return }
+    func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
+        applyItemCollapse(sidebarItem, collapsed: sidebarCollapsed)
+        applyItemCollapse(codeSidebarItem, collapsed: codeSidebarCollapsed)
+    }
+
+    private func applyItemCollapse(_ item: NSSplitViewItem?, collapsed: Bool) {
+        guard let item, item.isCollapsed != collapsed else { return }
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
         // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
@@ -258,7 +292,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // idempotency guard in `setResizeSuspended` prevents a double-flush).
         resizeForwardingSuspended = true
         store.setTerminalResizeSuspended(true)
-        sidebarItem.animator().isCollapsed = sidebarCollapsed
+        item.animator().isCollapsed = collapsed
     }
 }
 

@@ -68,6 +68,10 @@ public struct WorkspaceRootView: View {
     /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (default / iOS / tests) is a no-op. A
     /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
     private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
+    /// Installs the RIGHT code panel's toggle on the app-level keybinding dispatcher (same late-wiring
+    /// as `installSidebarToggle`): hands it `chrome.toggleCodeSidebar` so ⌘⇧R flips the LIVE
+    /// `chrome.codeSidebarCollapsed` the native split reads. `nil` (default / iOS / tests) is a no-op.
+    private let installCodeSidebarToggle: ((@escaping () -> Void) -> Void)?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring as
     /// `installSidebarToggle`): hands it `chrome.togglePin` so a user-bound chord for the chord-less
     /// `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (default / iOS / tests) is a no-op —
@@ -87,6 +91,7 @@ public struct WorkspaceRootView: View {
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
+        installCodeSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
         paneDrag: PaneDragCoordinator? = nil,
     ) {
@@ -95,6 +100,7 @@ public struct WorkspaceRootView: View {
         self.overlay = overlay
         self.chrome = chrome
         self.installSidebarToggle = installSidebarToggle
+        self.installCodeSidebarToggle = installCodeSidebarToggle
         self.installPinToggle = installPinToggle
         self.paneDrag = paneDrag
     }
@@ -214,10 +220,13 @@ public struct WorkspaceRootView: View {
     /// titlebar button flip ONE flag.
     private func wireChromeToggles() {
         installSidebarToggle? { [chrome] in chrome.toggleSidebar() }
+        // The RIGHT code panel's ⌘⇧R — same late-wiring onto the same live chrome.
+        installCodeSidebarToggle? { [chrome] in chrome.toggleCodeSidebar() }
         // Route the palette's chrome-toggle row through the SAME live `chrome` the chord + titlebar drive, so
         // "Toggle Tabs Panel" flips the flag the split + the ✓ read (not the dead `store.sidebarCollapsed`).
         // Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
+        overlay.toggleCodeSidebar = { [chrome] in chrome.toggleCodeSidebar() }
         // Pin Window: route the palette / any command surface AND a user-bound chord (chord-less by default)
         // to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }
@@ -450,8 +459,11 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
     }
 
     func updateNSViewController(_ controller: SlopDeskSplitViewController, context _: Context) {
-        // Reading the @Observable flag here ties this update to its changes; apply to the item.
-        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed)
+        // Reading the @Observable flags here ties this update to their changes; apply to the items.
+        controller.applyCollapse(
+            sidebarCollapsed: chrome.sidebarCollapsed,
+            codeSidebarCollapsed: chrome.codeSidebarCollapsed,
+        )
     }
 }
 #endif

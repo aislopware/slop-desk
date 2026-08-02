@@ -242,13 +242,15 @@ final class E1KeymapParityTests: XCTestCase {
         )
     }
 
-    /// ⌘⇧R was freed by the Host Windows rail's retirement (the full-desktop pivot) and deliberately
-    /// left UNBOUND; Rename — which once squatted on ⌘⇧R — stays chord-less. ⌥⌘N is the desktop
-    /// pane's chord. FAILS if either moves again without a deliberate decision.
+    /// ⌘⇧R — freed by the Host Windows rail's retirement, then DELIBERATELY re-bound to the right
+    /// code panel (Toggle Code Panel — the ⌘⇧L mirror; the panels flank the content column). Rename —
+    /// which once squatted on ⌘⇧R — stays chord-less. ⌥⌘N is the desktop pane's chord. FAILS if
+    /// either moves again without a deliberate decision.
     func testCmdShiftRIsFreeAndNewDesktopTabIsOptCmdN() {
-        XCTAssertNil(
+        XCTAssertEqual(
             WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])],
-            "⌘⇧R returned to the free pool with the rail's retirement",
+            .toggleCodeSidebar,
+            "⌘⇧R toggles the right code panel (the embedded VS Code — the ⌘⇧L mirror)",
         )
         XCTAssertEqual(
             WorkspaceBindingRegistry.chordTable[KeyChord(character: "n", [.command, .option])],

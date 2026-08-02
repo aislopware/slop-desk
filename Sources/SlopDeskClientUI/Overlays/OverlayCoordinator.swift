@@ -125,6 +125,10 @@ public final class OverlayCoordinator {
     /// button + the palette ✓ read — never the legacy `store.sidebarCollapsed` the native shell ignores. No-op
     /// by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
+    /// Toggles the RIGHT code panel (the project-scoped embedded VS Code). Bound by ``WorkspaceRootView``
+    /// to `chrome.toggleCodeSidebar()` — the SAME live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the
+    /// palette ✓ read. No-op by default (iOS / tests / previews), so the row is never a trap.
+    @ObservationIgnored public var toggleCodeSidebar: @MainActor () -> Void = {}
     /// Toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
@@ -486,6 +490,9 @@ public final class OverlayCoordinator {
             if !keepOpen { closePalette() }
         case .toggleSidebar:
             toggleSidebar()
+            if !keepOpen { closePalette() }
+        case .toggleCodeSidebar:
+            toggleCodeSidebar()
             if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()
