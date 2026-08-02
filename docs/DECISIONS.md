@@ -6288,3 +6288,25 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   everything else (⌘W = close editor tab, ⌘,, ⌘P…) stays with the editor the user deliberately
   focused. Pure `CodeSidebarFocusPolicy.isReservedAppChord` truth table, pinned — including the
   device-dependent-bits case (match the chord, not raw equality).
+
+### One shared code-server; the workbench auto-saves and answers to SlopDesk (2026-08-02)
+
+> User-directed: "làm triệt để cho tôi luôn đi" — ship the optimization chain the code-server
+> research recommended.
+
+- ✅ **RE-SCOPE: per-project code-server instances → ONE shared instance.** Empirically proven:
+  code-server serves any folder from a single process — the workbench resolves its folder from the
+  client URL's `?folder=` query (the HTML for two folders is byte-identical; the positional argv
+  folder is only a default, now dropped). Per-project children were a Node runtime + extension
+  host each for nothing, and they FOUGHT over the session socket (`code-server-ipc.sock` is per
+  user-data-dir; only the first child owns the registry) — which the CLI's open-in-a-running-
+  session routing (`code-server -r <file>`) depends on. Verb 18's wire format and validation are
+  UNCHANGED (a root the host cannot see still answers `.notFound`); every root now reads the same
+  endpoint. A stale child's log line can no longer poison a respawn (spawn-generation guard).
+- ✅ **Client mirrors it: ONE loopback relay, one stable origin** (`CodeSidebarProxyPorts.
+  sharedProxyKey`, FNV-derived port) fronting the shared instance; per-project webviews stay
+  pooled — same origin, differing `?folder=`, so each project keeps its own workbench state while
+  layout/storage live under one origin (standard code-server shape).
+- ✅ **Seed v4: `files.autoSave: "onFocusChange"`** — the terminal beside the editor is where
+  builds/tests run; leaving the editor IS the moment the file must be on disk. v3 moved into
+  `obsoleteSeeds`. **`--app-name SlopDesk`** replaces the `{{app}}` branding strings.

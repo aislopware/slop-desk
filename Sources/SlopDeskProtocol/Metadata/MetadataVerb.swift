@@ -125,17 +125,19 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// spent disconnected). The client simply keeps the previous reading — or nothing — until the
     /// next poll answers. An OLD host answers `.unsupportedVerb` and the footer stays one line.
     case hostVitals = 17
-    /// **Side-effecting.** Ensure a code-server (VS Code web workbench) instance is running on the
-    /// HOST for one project root — the right sidebar's embedded editor. Request payload: raw UTF-8
-    /// ABSOLUTE host project-root path (the pane's `projectKey`). The host lazily spawns one
-    /// code-server per project (`CodeServerManager`) and replies IMMEDIATELY — it never waits out
-    /// the multi-second cold start (the client registry's 5 s timeout must not race a boot):
+    /// **Side-effecting.** Ensure the HOST's code-server (VS Code web workbench) is running —
+    /// the right sidebar's embedded editor. Request payload: raw UTF-8 ABSOLUTE host project-root
+    /// path (the pane's `projectKey`) — VALIDATED (an endpoint is never reported for a path the
+    /// host cannot see), though one shared instance serves every project (the workbench resolves
+    /// its folder from the client URL's `?folder=` query). The host lazily spawns it
+    /// (`CodeServerManager`) and replies IMMEDIATELY — it never waits out the multi-second cold
+    /// start (the client registry's 5 s timeout must not race a boot):
     /// status `.ok` + ``MetadataCodec/CodeServerEndpoint`` (`[UInt8 state][UInt16 BE port]`,
     /// state `0` starting / `1` ready / `2` unavailable — no code-server binary on the host).
     /// The client polls this same verb until `ready`, then points its WKWebView at
     /// `http://<target-host>:<port>/?folder=<root>`. `.notFound` = the root is not a directory on
     /// the host; `.error` = a malformed (empty/relative/non-UTF-8) payload. Host-global like
-    /// 11/12 (one instance per project serves every pane/client of that project); no cwd
+    /// 11/12 (the one instance serves every pane and every client); no cwd
     /// confinement — the payload is a path the host itself published as `projectKey`, and only a
     /// state byte + port number cross back. NO auth token rides the URL: security = the WireGuard
     /// mesh, the same trust model as every other port hostd opens (docs/DECISIONS — no app-layer

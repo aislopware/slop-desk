@@ -356,7 +356,7 @@ public enum SettingsKey {
     /// (`shell.codeSidebarCollapsed`), default `true` — a fresh install hides it (opt-in chrome; the
     /// embedded editor is a companion surface, not the resting silhouette). PERSISTED, unlike the left
     /// panel's session-scoped collapse: expanding the code panel is a workstyle choice that should
-    /// survive relaunch, and re-expanding it re-ensures the per-project code-server lazily. Read once
+    /// survive relaunch, and re-expanding it re-ensures the host's code-server lazily. Read once
     /// into ``WorkspaceChromeState`` at init; written back on every manual toggle. `Key` suffix frees
     /// the bare ``codeSidebarCollapsed`` name for the typed accessor.
     public static let codeSidebarCollapsedKey = "shell.codeSidebarCollapsed"

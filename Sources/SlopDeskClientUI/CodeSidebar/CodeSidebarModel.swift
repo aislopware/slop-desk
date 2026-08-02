@@ -1,5 +1,5 @@
 // CodeSidebarModel — the right code panel's readiness model: polls the host's `ensureCodeServer`
-// metadata RPC (verb 18) for the ACTIVE project until the per-project code-server reports ready, then
+// metadata RPC (verb 18) for the ACTIVE project until the host's shared code-server reports ready, then
 // exposes the workbench URL the WKWebView loads. The RPC never waits (the host replies with the
 // CURRENT state and spawns as a side effect — see `CodeServerManager`), so readiness is client-side
 // polling by design: a cold code-server boots for multiple seconds while the metadata channel's 5s

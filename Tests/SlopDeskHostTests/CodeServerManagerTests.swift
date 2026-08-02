@@ -141,7 +141,10 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(spawner.spawnCount, 2)
     }
 
-    func testDistinctRootsGetDistinctInstances() throws {
+    func testDistinctRootsShareTheOneInstance() throws {
+        // code-server serves every folder from one process (the client names its folder in the
+        // `?folder=` query) — a second project must NOT spawn a second Node runtime, and both roots
+        // read the same endpoint.
         let other = root + "-b"
         try FileManager.default.createDirectory(atPath: other, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: other) }
@@ -150,20 +153,27 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(spawner: spawner)
         _ = manager.ensure(projectRoot: root)
         _ = manager.ensure(projectRoot: other)
-        XCTAssertEqual(spawner.spawnCount, 2)
+        XCTAssertEqual(spawner.spawnCount, 1)
 
-        spawner.announcePort(1111, instance: 0)
-        spawner.announcePort(2222, instance: 1)
+        spawner.announcePort(1111)
         XCTAssertEqual(manager.ensure(projectRoot: root)?.port, 1111)
-        XCTAssertEqual(manager.ensure(projectRoot: other)?.port, 2222)
+        XCTAssertEqual(manager.ensure(projectRoot: other)?.port, 1111)
     }
 
-    func testTrailingSlashJoinsTheSameInstance() {
+    func testStaleSpawnLogLineCannotPoisonTheRespawn() {
+        // The dead child's pipe can flush its old listening line AFTER the respawn — the fresh
+        // instance must learn ITS OWN port, never the stale one.
         let spawner = FakeSpawner()
         let manager = makeManager(spawner: spawner)
         _ = manager.ensure(projectRoot: root)
-        _ = manager.ensure(projectRoot: root + "/")
-        XCTAssertEqual(spawner.spawnCount, 1)
+        spawner.handles[0].exitSilently()
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(spawner.spawnCount, 2)
+
+        spawner.announcePort(1111, instance: 0)
+        XCTAssertEqual(manager.ensure(projectRoot: root)?.port, 0, "stale line ignored")
+        spawner.announcePort(2222, instance: 1)
+        XCTAssertEqual(manager.ensure(projectRoot: root)?.port, 2222)
     }
 
     func testMissingBinaryIsUnavailableAndSpawnsNothing() {
@@ -185,22 +195,17 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(spawner.spawnCount, 0)
     }
 
-    func testShutdownTerminatesEveryChild() throws {
-        let other = root + "-b"
-        try FileManager.default.createDirectory(atPath: other, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: other) }
-
+    func testShutdownTerminatesTheChild() {
         let spawner = FakeSpawner()
         let manager = makeManager(spawner: spawner)
         _ = manager.ensure(projectRoot: root)
-        _ = manager.ensure(projectRoot: other)
 
         manager.shutdown()
         XCTAssertTrue(spawner.handles.allSatisfy(\.terminated))
 
         // A post-shutdown ensure starts over (no zombie record).
         _ = manager.ensure(projectRoot: root)
-        XCTAssertEqual(spawner.spawnCount, 3)
+        XCTAssertEqual(spawner.spawnCount, 2)
     }
 
     // MARK: Settings seed
@@ -344,7 +349,7 @@ final class CodeServerManagerTests: XCTestCase {
     // MARK: Pure helpers
 
     func testLaunchArgumentsShape() {
-        let arguments = CodeServerManager.launchArguments(projectRoot: "/tmp/proj")
+        let arguments = CodeServerManager.launchArguments()
         XCTAssertEqual(arguments.first, "--auth")
         XCTAssertTrue(arguments.contains("--bind-addr"))
         XCTAssertTrue(arguments.contains("0.0.0.0:0"))
@@ -352,7 +357,9 @@ final class CodeServerManagerTests: XCTestCase {
         // The workbench brands itself with the embedding app's name, not "code-server".
         XCTAssertTrue(arguments.contains("--app-name"))
         XCTAssertTrue(arguments.contains("SlopDesk"))
-        XCTAssertEqual(arguments.last, "/tmp/proj")
+        // NO positional folder — one shared instance serves every project; each client names its
+        // folder in the workbench URL's `?folder=` query.
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("/") })
     }
 
     func testParseListeningPort() {

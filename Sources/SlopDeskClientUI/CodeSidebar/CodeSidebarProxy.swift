@@ -1,4 +1,4 @@
-// CodeSidebarProxy — a per-project loopback TCP relay in front of the host's code-server.
+// CodeSidebarProxy — the loopback TCP relay in front of the host's code-server.
 //
 // The workbench WKWebView loads `http://127.0.0.1:<local>` instead of `http://<mesh-ip>:<remote>`,
 // and this proxy pipes the bytes (HTTP + the workbench websockets are all plain TCP) to the host
@@ -9,9 +9,11 @@
 //      "insecure context" toast and the clipboard/`crypto.subtle` APIs work, with no TLS anywhere
 //      (a self-signed cert would need trust-override plumbing in the webview AND still change
 //      origin per respawn; security remains the WireGuard mesh, per invariant).
-//   2. STABLE ORIGIN — the local port is derived from the project root (FNV-1a), so the origin
-//      survives code-server respawns AND app relaunches; the workbench's per-origin localStorage
-//      (layout, view state) persists instead of resetting whenever the remote ephemeral port moves.
+//   2. STABLE ORIGIN — the local port is a fixed FNV-1a derivation, so the origin survives
+//      code-server respawns AND app relaunches; the workbench's per-origin storage (layout, view
+//      state — keyed per folder within it) persists instead of resetting whenever the remote
+//      ephemeral port moves. ONE relay for the whole app: the host runs one shared code-server,
+//      every project rides the same origin and names its folder in the `?folder=` query.
 //
 // Hang-safety: listeners/connections are real network objects — nothing here may be constructed in
 // unit tests. The pure port-derivation lives in `CodeSidebarProxyPorts` and is the only tested part.
@@ -20,19 +22,23 @@
 import Foundation
 import Network
 
-/// Pure derivation of the loopback ports a project's proxy tries to claim. Stable across launches —
+/// Pure derivation of the loopback ports the proxy tries to claim. Stable across launches —
 /// Swift's `Hasher` is process-seeded, so this is hand-rolled FNV-1a.
 enum CodeSidebarProxyPorts {
     /// IANA dynamic range start; candidates stay in `49152 ..< 65152`.
     static let rangeBase: UInt16 = 49152
     static let rangeSize: UInt64 = 16000
 
-    /// The `attempt`-th candidate port for a project root. Attempt 0 is THE stable port; later
-    /// attempts stride away from it (bind-collision fallback — another process, or another
-    /// project's hash) while staying in range.
-    static func candidate(for projectRoot: String, attempt: Int) -> UInt16 {
+    /// The one relay's identity — hashed, not hardcoded, so the derivation stays generic and the
+    /// stride fallback has somewhere sensible to walk from.
+    static let sharedProxyKey = "slopdesk-code-sidebar"
+
+    /// The `attempt`-th candidate port for `key`. Attempt 0 is THE stable port; later attempts
+    /// stride away from it (bind-collision fallback — another process on the slot) while staying
+    /// in range.
+    static func candidate(for key: String, attempt: Int) -> UInt16 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-        for byte in projectRoot.utf8 {
+        for byte in key.utf8 {
             hash = (hash ^ UInt64(byte)) &* 0x100_0000_01B3
         }
         let slot = (hash &+ UInt64(attempt) &* 131) % rangeSize
@@ -159,30 +165,30 @@ final class CodeSidebarLoopbackProxy: @unchecked Sendable {
     }
 }
 
-/// The app-lifetime pool, one proxy per project root (mirroring `CodeSidebarWebViewPool` — the
-/// webview it fronts is pooled with the same key and lifetime).
+/// The app-lifetime holder of the ONE relay — the host runs one shared code-server, so every
+/// project's webview rides the same loopback origin (differing only in `?folder=`).
 @MainActor
 final class CodeSidebarProxyPool {
     static let shared = CodeSidebarProxyPool()
-    private var proxies: [String: CodeSidebarLoopbackProxy] = [:]
+    private var proxy: CodeSidebarLoopbackProxy?
 
-    /// The loopback endpoint fronting `host:port` for this project — binding on first use, then
-    /// retargeting the existing listener (respawn/reconnect). `nil` when no candidate port binds;
-    /// the caller falls back to the direct remote address (ATS's arbitrary-loads exception keeps
-    /// that path alive, insecure-context toast and all).
-    func endpoint(
-        projectRoot: String, host: String, port: UInt16,
-    ) async -> (host: String, port: UInt16)? {
-        if let existing = proxies[projectRoot] {
+    /// The loopback endpoint fronting `host:port` — binding on first use, then retargeting the
+    /// existing listener (respawn/reconnect). `nil` when no candidate port binds; the caller falls
+    /// back to the direct remote address (ATS's arbitrary-loads exception keeps that path alive,
+    /// insecure-context toast and all).
+    func endpoint(host: String, port: UInt16) async -> (host: String, port: UInt16)? {
+        if let existing = proxy {
             existing.retarget(host: host, port: port)
             return ("127.0.0.1", existing.localPort)
         }
         for attempt in 0..<8 {
-            let candidate = CodeSidebarProxyPorts.candidate(for: projectRoot, attempt: attempt)
-            if let proxy = await CodeSidebarLoopbackProxy.listening(
+            let candidate = CodeSidebarProxyPorts.candidate(
+                for: CodeSidebarProxyPorts.sharedProxyKey, attempt: attempt,
+            )
+            if let bound = await CodeSidebarLoopbackProxy.listening(
                 onLocalPort: candidate, targetHost: host, targetPort: port,
             ) {
-                proxies[projectRoot] = proxy
+                proxy = bound
                 return ("127.0.0.1", candidate)
             }
         }

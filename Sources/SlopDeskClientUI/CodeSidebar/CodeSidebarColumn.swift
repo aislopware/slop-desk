@@ -19,7 +19,7 @@ import SwiftUI
 struct CodeSidebarColumn: View {
     let store: WorkspaceStore
     /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
-    /// (`target.host`), on the per-project port the ensure RPC reports.
+    /// (`target.host`), on the shared code-server port the ensure RPC reports.
     let connection: AppConnection
     /// The shared chrome state — the strip's collapse toggle flips `codeSidebarCollapsed`, the same
     /// flag ⌘⇧R and the titlebar reopen button drive (the host-rail split of duties: the EXPANDED
@@ -70,9 +70,8 @@ struct CodeSidebarColumn: View {
                             // respawns. On bind failure the remote address rides through — the ATS
                             // arbitrary-loads exception keeps that fallback loadable.
                             localize: { host, port in
-                                await CodeSidebarProxyPool.shared.endpoint(
-                                    projectRoot: root, host: host, port: port,
-                                ) ?? (host, port)
+                                await CodeSidebarProxyPool.shared.endpoint(host: host, port: port)
+                                    ?? (host, port)
                             },
                         )
                     }

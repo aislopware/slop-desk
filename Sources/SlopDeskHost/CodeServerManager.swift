@@ -12,12 +12,16 @@ protocol CodeServerProcessHandle: AnyObject, Sendable {
     func terminate()
 }
 
-/// Supervises the HOST's per-project code-server (VS Code web workbench) instances — the backend of
-/// the client's right-sidebar embedded editor (``MetadataVerb/ensureCodeServer``).
+/// Supervises the HOST's code-server (VS Code web workbench) — the backend of the client's
+/// right-sidebar embedded editor (``MetadataVerb/ensureCodeServer``).
 ///
-/// **One instance per project root, lazily.** The project identity is the same absolute path the
-/// host publishes as `projectKey` (git toplevel, else the pane cwd), so every pane — and every
-/// client — of one project shares one workbench, one extension host, one unsaved-buffer state.
+/// **ONE shared instance, lazily.** code-server serves every folder from a single process — the
+/// workbench resolves its folder from the client's `?folder=` query, so per-project children were
+/// pure overhead (a Node runtime + extension host each) AND fought over the session socket
+/// (`code-server-ipc.sock` is per user-data-dir; only the first child owns it, and the CLI's
+/// open-in-running-session routing needs exactly one owner). The requested root is still validated
+/// (never report an endpoint for a path the host cannot see → `.notFound` on the wire), but every
+/// root shares the one child; each project keeps its own workbench state keyed by folder.
 ///
 /// **`ensure` never waits.** It spawns (or observes) and returns the CURRENT state immediately: the
 /// caller sits on the metadata queue answering an RPC whose client-side timeout is 5 s, and a
@@ -63,7 +67,10 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var instances: [String: Instance] = [:]
+    private var instance: Instance?
+    /// Bumped per spawn; a stale child's log sink (a respawn raced its last line) must not write
+    /// its old port onto the fresh instance record.
+    private var spawnGeneration = 0
     /// Latched by the first spawn — the settings seed runs at most once per manager lifetime (the
     /// seeder itself is also a no-op when the file exists; this just skips the repeat file checks).
     private var settingsSeeded = false
@@ -88,19 +95,19 @@ final class CodeServerManager: @unchecked Sendable {
         self.probeInterval = probeInterval
     }
 
-    /// Ensures a code-server for `projectRoot` and reports where it stands RIGHT NOW (never waits).
-    /// `nil` when the root is not an absolute path to an existing host directory (→ `.notFound` on
-    /// the wire — never spawn a server on a path the host cannot see).
+    /// Ensures the shared code-server and reports where it stands RIGHT NOW (never waits). `nil`
+    /// when `projectRoot` is not an absolute path to an existing host directory (→ `.notFound` on
+    /// the wire — never hand out an endpoint for a path the host cannot see).
     func ensure(projectRoot: String) -> MetadataCodec.CodeServerEndpoint? {
-        guard let root = Self.canonicalRoot(projectRoot) else { return nil }
+        guard Self.canonicalRoot(projectRoot) != nil else { return nil }
         lock.lock()
         defer { lock.unlock() }
 
-        if let existing = instances[root] {
+        if let existing = instance {
             if existing.handle.isRunning {
-                return endpointLocked(for: existing, key: root)
+                return endpointLocked(for: existing)
             }
-            instances[root] = nil
+            instance = nil
         }
 
         guard let binary = locateBinary() else {
@@ -113,60 +120,57 @@ final class CodeServerManager: @unchecked Sendable {
             settingsSeeded = true
             seedSettings()
         }
-        let arguments = Self.launchArguments(projectRoot: root)
+        spawnGeneration += 1
+        let generation = spawnGeneration
         let onLine: @Sendable (String) -> Void = { [weak self] line in
             guard let port = Self.parseListeningPort(fromLogLine: line) else { return }
-            self?.recordPort(port, forRoot: root)
+            self?.recordPort(port, spawnedAs: generation)
         }
-        guard let handle = try? spawn(binary, arguments, onLine) else {
+        guard let handle = try? spawn(binary, Self.launchArguments(), onLine) else {
             return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
         }
-        instances[root] = Instance(handle: handle)
+        instance = Instance(handle: handle)
         return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
     }
 
-    /// Terminates every child (host shutdown). The children also self-reap on idle, but hostd going
-    /// down must not strand Node processes.
+    /// Terminates the child (host shutdown). It also self-reaps on idle, but hostd going down must
+    /// not strand a Node process.
     func shutdown() {
         lock.lock()
-        let stranded = instances
-        instances.removeAll()
+        let stranded = instance
+        instance = nil
         lock.unlock()
-        for (_, instance) in stranded {
-            instance.handle.terminate()
-        }
+        stranded?.handle.terminate()
     }
 
     // MARK: - Locked helpers
 
-    /// Computes the endpoint for a LIVE instance, probing readiness at most once per
+    /// Computes the endpoint for the LIVE instance, probing readiness at most once per
     /// ``probeInterval``. Caller holds `lock`.
-    private func endpointLocked(
-        for instance: Instance, key root: String,
-    ) -> MetadataCodec.CodeServerEndpoint {
-        guard let port = instance.port else {
+    private func endpointLocked(for live: Instance) -> MetadataCodec.CodeServerEndpoint {
+        guard let port = live.port else {
             return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
         }
-        if instance.ready {
+        if live.ready {
             return MetadataCodec.CodeServerEndpoint(state: .ready, port: port)
         }
-        var updated = instance
+        var updated = live
         let now = clock.now
-        let due = instance.lastProbe.map { now - $0 >= probeInterval } ?? true
+        let due = live.lastProbe.map { now - $0 >= probeInterval } ?? true
         if due {
             updated.lastProbe = now
             updated.ready = probe(port)
-            instances[root] = updated
+            instance = updated
         }
         return MetadataCodec.CodeServerEndpoint(state: updated.ready ? .ready : .starting, port: port)
     }
 
-    private func recordPort(_ port: UInt16, forRoot root: String) {
+    private func recordPort(_ port: UInt16, spawnedAs generation: Int) {
         lock.lock()
         defer { lock.unlock() }
-        guard var instance = instances[root], instance.port == nil else { return }
-        instance.port = port
-        instances[root] = instance
+        guard generation == spawnGeneration, var live = instance, live.port == nil else { return }
+        live.port = port
+        instance = live
     }
 
     // MARK: - Pure helpers (unit-tested directly)
@@ -186,10 +190,12 @@ final class CodeServerManager: @unchecked Sendable {
         return root
     }
 
-    /// The child's argv (after the binary path). Port `0` = the OS picks; the real port comes back
-    /// through ``parseListeningPort(fromLogLine:)``. `0.0.0.0` so mesh clients can reach it —
-    /// the same exposure as every hostd listener.
-    static func launchArguments(projectRoot: String) -> [String] {
+    /// The child's argv (after the binary path). No folder argument — a positional path is only a
+    /// DEFAULT; every client names its folder in the workbench URL's `?folder=` query, and one
+    /// process serves them all. Port `0` = the OS picks; the real port comes back through
+    /// ``parseListeningPort(fromLogLine:)``. `0.0.0.0` so mesh clients can reach it — the same
+    /// exposure as every hostd listener.
+    static func launchArguments() -> [String] {
         [
             "--auth", "none",
             "--bind-addr", "0.0.0.0:0",
@@ -201,7 +207,6 @@ final class CodeServerManager: @unchecked Sendable {
             "--disable-workspace-trust",
             "--disable-getting-started-override",
             "--idle-timeout-seconds", String(idleTimeoutSeconds),
-            projectRoot,
         ]
     }
 

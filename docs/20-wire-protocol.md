@@ -282,11 +282,14 @@ never offers or falls back to another version.
     stays one line. Served by the read-only responder (`MetadataResponseBuilder` →
     `HostMetadataProbe.hostVitals()` → the process-wide `HostVitalsSampler`).
   - **`ensureCodeServer` (18) is the embedded-VS Code verb** (the client's right sidebar): the host
-    lazily spawns ONE code-server (VS Code web workbench) per project root via `CodeServerManager`
-    and replies **immediately** with the current state — it never waits out the multi-second cold
+    lazily spawns its ONE shared code-server (VS Code web workbench) via `CodeServerManager` and
+    replies **immediately** with the current state — it never waits out the multi-second cold
     boot (the client registry's 5 s timeout must not starve). Request payload: raw UTF-8 **absolute
     host project-root path** (the same path the host itself published as `projectKey` — git
-    toplevel, else the pane cwd; trailing-`/` normalized so one project cannot spawn twins).
+    toplevel, else the pane cwd) — validated against the host filesystem, though every root shares
+    the single instance (the workbench resolves its folder from the client URL's `?folder=` query;
+    a positional folder argument is only a default, and per-project children fought over the
+    session socket the CLI's open-in-running-session routing depends on).
     Response: status `ok` + the **3-byte** `[UInt8 state][UInt16 BE port]` payload — state `0`
     starting (poll again), `1` ready (`port` is live; the client loads
     `http://<target-host>:<port>/?folder=<root>`), `2` unavailable (no code-server binary on the
@@ -295,9 +298,9 @@ never offers or falls back to another version.
     state byte reads *starting* client-side (keep polling — never a false error surface), and a
     trailing payload byte is tolerated so a future field can be appended. `notFound` = the root is
     not an existing host directory; `error` = a malformed (empty/relative/non-UTF-8) payload.
-    **Host-global** like 11/12 (one instance per project serves every pane and every client of that
-    project; the manager is process-wide, children reap themselves after 2 h idle and hostd stop
-    terminates them). **No auth token rides the URL**: the child runs `--auth none` on `0.0.0.0` —
+    **Host-global** like 11/12 (the one instance serves every project, every pane and every
+    client; the manager is process-wide, the child reaps itself after 2 h idle and hostd stop
+    terminates it). **No auth token rides the URL**: the child runs `--auth none` on `0.0.0.0` —
     security = the WireGuard mesh, the same trust model as every other port hostd opens
     (docs/DECISIONS — no app-layer auth). The host routes 18 to `HostCodeServerPerformer` BEFORE
     the read-only responder; an OLD host answers `unsupportedVerb` and the sidebar shows its

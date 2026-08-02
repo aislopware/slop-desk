@@ -131,8 +131,9 @@ private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegat
 }
 
 /// The per-project webview pool. `@MainActor` (WKWebView is main-thread only); keyed by the
-/// project's canonical root (the host-pushed `projectKey` — the same key the sidebar sections and the
-/// host's `CodeServerManager` instances use, so pool entry ↔ code-server instance is 1:1).
+/// project's canonical root (the host-pushed `projectKey` — the same key the sidebar sections use).
+/// The host's code-server is a single shared instance; each pool entry is one project's WORKBENCH
+/// on it (same origin, its own `?folder=` and editor state).
 @MainActor
 final class CodeSidebarWebViewPool {
     static let shared = CodeSidebarWebViewPool()
