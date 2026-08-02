@@ -11,6 +11,7 @@
 // exactly like the find / hint / navigator callbacks.
 
 import Foundation
+import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 
 /// The client-side actuator for the host path-action verbs. All members `@MainActor` (the
@@ -20,19 +21,32 @@ enum HostPathActions {
     /// Which host path action fired — used by the result callback to phrase the right failure message.
     enum Action {
         case open
+        case openCode
         case reveal
     }
 
     /// Perform `action` on the resolved ABSOLUTE host `path` through `client`, returning whether the HOST
     /// reported success. `false` when there is no live client (disconnected) OR the host replied `.notFound`
     /// (the path is gone) / `.error` (open failed) / dropped the reply (the client's 5 s timeout → `false`).
-    /// Never throws — the UI must not hang or crash on a hostile/missing reply.
+    /// Never throws — the UI must not hang or crash on a hostile/missing reply. (`openCode` routes through
+    /// ``performCodeOpen(target:client:)`` — it has a richer outcome.)
     static func perform(_ action: Action, path: String, client: MetadataClient?) async -> Bool {
         guard let client else { return false }
         switch action {
         case .open: return await client.openPath(path)
+        case .openCode: return await performCodeOpen(target: path, client: client) != nil
         case .reveal: return await client.revealPath(path)
         }
+    }
+
+    /// The embedded-editor open (verb 19): where the host routed it, or `nil` on failure (no client /
+    /// `.notFound` / `.error` / old host / timeout). ``MetadataCodec/CodeOpenDisposition/workbench``
+    /// means the file landed in the embedded workbench — the caller reveals the code panel.
+    static func performCodeOpen(
+        target: String, client: MetadataClient?,
+    ) async -> MetadataCodec.CodeOpenDisposition? {
+        guard let client else { return nil }
+        return await client.openInCodeServer(target)
     }
 
     /// Wire the pane model's host open/reveal path callbacks to the pane's metadata client. The synchronous
@@ -44,12 +58,22 @@ enum HostPathActions {
     static func wire(
         model: TerminalViewModel,
         client: @escaping @MainActor () -> MetadataClient?,
+        revealCodePanel: @escaping @MainActor () -> Void = {},
         onResult: @escaping @MainActor (_ action: Action, _ path: String, _ ok: Bool) -> Void = { _, _, _ in },
     ) {
         model.onRequestOpenHostPath = { path in
             Task { @MainActor in
                 let ok = await perform(.open, path: path, client: client())
                 onResult(.open, path, ok)
+            }
+        }
+        model.onRequestOpenCodeHostPath = { target in
+            Task { @MainActor in
+                let disposition = await performCodeOpen(target: target, client: client())
+                // Reveal the panel ONLY when the file actually went to the workbench — a directory
+                // / binary-less host opened host-side instead, and a failure raises the toast.
+                if disposition == .workbench { revealCodePanel() }
+                onResult(.openCode, target, disposition != nil)
             }
         }
         model.onRequestRevealHostPath = { path in
@@ -63,6 +87,7 @@ enum HostPathActions {
     /// Nil the host path callbacks so the durable terminal model stops referencing a torn-down leaf.
     static func clear(model: TerminalViewModel) {
         model.onRequestOpenHostPath = nil
+        model.onRequestOpenCodeHostPath = nil
         model.onRequestRevealHostPath = nil
     }
 }

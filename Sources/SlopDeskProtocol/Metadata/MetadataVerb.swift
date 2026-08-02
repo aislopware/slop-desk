@@ -143,6 +143,21 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// mesh, the same trust model as every other port hostd opens (docs/DECISIONS — no app-layer
     /// auth). An OLD host answers `.unsupportedVerb` and the sidebar shows its update hint.
     case ensureCodeServer = 18
+    /// **Side-effecting.** Open one host FILE in the embedded VS Code workbench (the ⌘click /
+    /// Hint-to-Open / Jump-To open action on a detected path — the file lives on the host, and the
+    /// EDITOR the user is looking at is the client's code panel, not the host's screen). Request
+    /// payload: raw UTF-8 host path, absolute or `~`-anchored (the host expands against ITS home,
+    /// like verb 9), optionally carrying the detector's `:line[:col]` suffix — code-server's CLI
+    /// understands it and jumps there. The host validates (missing → `.notFound`; malformed →
+    /// `.error`), then routes: a FILE with a code-server binary present → `code-server -r <target>`
+    /// retried asynchronously (the workbench session may still be booting after the client just
+    /// expanded the panel; the host replies IMMEDIATELY — accepted, not completed); a DIRECTORY, or
+    /// a host with no code-server binary → the verb-9 default-app open. Response payload: the
+    /// 1-byte ``MetadataCodec/CodeOpenDisposition`` — `0` routed to the workbench (the client
+    /// reveals its code panel), `1` opened host-side (the panel stays put). Host-global like 18; no
+    /// cwd confinement (only a status + one disposition byte cross back — same rationale as 9/10).
+    /// An OLD host answers `.unsupportedVerb`.
+    case openInCodeServer = 19
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

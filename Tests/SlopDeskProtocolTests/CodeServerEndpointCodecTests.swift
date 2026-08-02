@@ -45,3 +45,29 @@ final class CodeServerEndpointCodecTests: XCTestCase {
         XCTAssertEqual(decoded.state, .starting)
     }
 }
+
+/// The ``MetadataCodec/CodeOpenDisposition`` wire codec (`openInCodeServer` = 19): the 1-byte
+/// payload, truncation, trailer toleration, and the forward-tolerant unknown byte (→ `.workbench`,
+/// the benign reveal-the-panel fallback).
+final class CodeOpenDispositionCodecTests: XCTestCase {
+    func testRoundTripAndPinnedBytes() throws {
+        XCTAssertEqual(Array(MetadataCodec.encodeCodeOpenDisposition(.workbench)), [0])
+        XCTAssertEqual(Array(MetadataCodec.encodeCodeOpenDisposition(.hostDefault)), [1])
+        for disposition in MetadataCodec.CodeOpenDisposition.allCases {
+            XCTAssertEqual(
+                try MetadataCodec.decodeCodeOpenDisposition(
+                    MetadataCodec.encodeCodeOpenDisposition(disposition),
+                ),
+                disposition,
+            )
+        }
+    }
+
+    func testEmptyThrowsTrailerToleratedUnknownReadsWorkbench() throws {
+        XCTAssertThrowsError(try MetadataCodec.decodeCodeOpenDisposition(Data()))
+        XCTAssertEqual(try MetadataCodec.decodeCodeOpenDisposition(Data([1, 0xFF])), .hostDefault)
+        // An unknown future byte reveals the panel — worst case an expanded panel, never a
+        // silently invisible open.
+        XCTAssertEqual(try MetadataCodec.decodeCodeOpenDisposition(Data([9])), .workbench)
+    }
+}

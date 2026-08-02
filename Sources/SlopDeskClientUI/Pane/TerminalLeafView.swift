@@ -84,6 +84,11 @@ struct TerminalLeafView: View {
     /// scene root (tests/previews) ⇒ the failure is swallowed there, never a crash.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
 
+    /// The shared chrome model (injected by ``ContentColumn``), used ONLY to reveal the RIGHT code
+    /// panel when an open-in-code-panel action lands in the workbench. `nil` in previews/tests ⇒
+    /// the file still opens (host-side), the panel just isn't auto-revealed.
+    @Environment(WorkspaceChromeState.self) private var workspaceChrome: WorkspaceChromeState?
+
     var body: some View {
         VStack(spacing: 0) {
             terminalSurface
@@ -371,9 +376,11 @@ struct TerminalLeafView: View {
     private func wirePathActionCallbacks() {
         guard let model = live?.terminalModel else { return }
         let overlay = overlayCoordinator
+        let chrome = workspaceChrome
         HostPathActions.wire(
             model: model,
             client: { [weak live] in live?.connection?.activeMetadataClient },
+            revealCodePanel: { chrome?.revealCodeSidebar() },
             onResult: { action, path, ok in
                 guard !ok else { return }
                 overlay?.pushToast(Toast(
@@ -382,13 +389,22 @@ struct TerminalLeafView: View {
                     // The subject is the ACTION that failed, not a sentence about failing: the `FAILED`
                     // eyebrow already carries that, and lower-case keeps the instrument register the rest
                     // of the card is set in.
-                    title: action == .open ? "open on host" : "reveal on host",
+                    title: Self.pathActionFailureTitle(action),
                     body: path,
                     // No `paneKey`: this reports a FAILED host action the user just took in the pane they
                     // are looking at — there is nowhere else to go, so the card stays a plain notice.
                 ))
             },
         )
+    }
+
+    /// The failure-toast subject for a host path action (lower-case instrument register).
+    static func pathActionFailureTitle(_ action: HostPathActions.Action) -> String {
+        switch action {
+        case .open: "open on host"
+        case .openCode: "open in code panel"
+        case .reveal: "reveal on host"
+        }
     }
 
     /// Nil the host path callbacks so the durable terminal model stops referencing this torn-down leaf.
@@ -644,6 +660,8 @@ struct TerminalLeafView: View {
             model.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
             openURLString(urlString)
+        case let .openCodeHost(target):
+            model.onRequestOpenCodeHostPath?(target)
         case let .openHost(path):
             model.onRequestOpenHostPath?(path)
         case let .revealHost(path):

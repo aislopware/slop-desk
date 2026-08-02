@@ -231,6 +231,13 @@ public final class TerminalViewModel {
     /// open-on-host is a graceful no-op (copy / cd / URL still work). `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onRequestOpenHostPath: ((_ path: String) -> Void)?
 
+    /// The ⌘click / Hint-to-Open / Jump-To "Open" action on a detected PATH — routed to the
+    /// EMBEDDED VS Code workbench (``LinkAction/openCodeHost(_:)`` → the `openInCodeServer`
+    /// ``MetadataVerb``), because the editor the user is looking at is the client's code panel, not
+    /// the host's screen. `target` keeps the detector's `:line[:col]` suffix (code-server jumps to
+    /// it). `nil` ⇒ a graceful no-op. `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var onRequestOpenCodeHostPath: ((_ target: String) -> Void)?
+
     /// The ⌘⇧click / right-click "Reveal in Finder" action on a detected PATH —
     /// host-side `activateFileViewerSelecting`, so the renderer fires this with the resolved absolute path
     /// and the leaf wires it to the host reveal RPC (`revealPath` ``MetadataVerb``). `nil` until

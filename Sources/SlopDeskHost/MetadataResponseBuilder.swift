@@ -198,12 +198,13 @@ struct MetadataResponseBuilder {
             // pure reducer must NEVER perform a host side effect).
             return reply(requestID, .error, Data())
 
-        case .ensureCodeServer:
-            // ensureCodeServer is likewise NOT this READ-ONLY builder's job —
-            // `MuxChannelSession.serveMetadata` routes it to `HostCodeServerPerformer` BEFORE the
-            // builder (it spawns a code-server child), so it never reaches here in production.
-            // Reaching this case is a routing bug; answer `.error` defensively (this pure reducer
-            // must NEVER perform a host side effect).
+        case .ensureCodeServer,
+             .openInCodeServer:
+            // The embedded-editor verbs are likewise NOT this READ-ONLY builder's job —
+            // `MuxChannelSession.serveMetadata` routes them to `HostCodeServerPerformer` BEFORE the
+            // builder (they spawn / drive a code-server child), so they never reach here in
+            // production. Reaching this case is a routing bug; answer `.error` defensively (this
+            // pure reducer must NEVER perform a host side effect).
             return reply(requestID, .error, Data())
         }
     }

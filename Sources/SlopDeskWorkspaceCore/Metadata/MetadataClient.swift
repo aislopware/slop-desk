@@ -252,6 +252,18 @@ public final class MetadataClient {
         return try? MetadataCodec.decodeCodeServerEndpoint(payload)
     }
 
+    /// Opens one host FILE in the embedded VS Code workbench (``MetadataVerb/openInCodeServer``;
+    /// the ⌘click / Hint-to-Open / Jump-To open action on a detected path). `target` is the host
+    /// path, optionally carrying the detector's `:line[:col]` suffix. Returns where the host routed
+    /// the open (`workbench` ⇒ the caller reveals the code panel), or `nil` for `.notFound` /
+    /// `.error` / an old host's `.unsupportedVerb` / a dropped reply — the caller raises its
+    /// failure toast.
+    public func openInCodeServer(_ target: String) async -> MetadataCodec.CodeOpenDisposition? {
+        let (status, payload) = await request(.openInCodeServer, payload: Data(target.utf8))
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeCodeOpenDisposition(payload)
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

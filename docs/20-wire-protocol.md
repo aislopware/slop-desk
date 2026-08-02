@@ -190,14 +190,17 @@ never offers or falls back to another version.
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
     `14` hostInfo (a **pure read** returning the host machine's own hostname), the **clipboard-sync**
     verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), `17` hostVitals
-    (a **pure read** returning the host machine's CPU/memory/disk pulse), and `18` ensureCodeServer
-    (**side-effecting** — lazily spawns/reports the project's code-server instance). `payload` is the
+    (a **pure read** returning the host machine's CPU/memory/disk pulse), and the two
+    **embedded-VS Code** verbs `18` ensureCodeServer (**side-effecting** — lazily spawns/reports the
+    shared code-server instance) / `19` openInCodeServer (**side-effecting** — opens a host file in
+    the running workbench). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
-    path** for `openPath`/`revealPath`/`ensureCodeServer`, and the `MetadataCodec` clipboard encodings
+    path** for `openPath`/`revealPath`/`ensureCodeServer` (`openInCodeServer` additionally allows
+    `~`-anchored and a trailing `:line[:col]`), and the `MetadataCodec` clipboard encodings
     for `setClipboard`/`readClipboard` (below).
   - **`openPath` (9) / `revealPath` (10) are the ONLY side-effecting verbs** (E10 — the ⌘click /
     ⌘⇧click link actions; the file lives on the host Mac, not the client). The host opens the path in its
@@ -305,6 +308,27 @@ never offers or falls back to another version.
     (docs/DECISIONS — no app-layer auth). The host routes 18 to `HostCodeServerPerformer` BEFORE
     the read-only responder; an OLD host answers `unsupportedVerb` and the sidebar shows its
     host-update hint.
+  - **`openInCodeServer` (19) is the open-from-terminal verb** (⌘click / hint-mode / jump-to
+    "open" on a detected terminal path routes HERE instead of verb 9): the host opens the file in
+    the running embedded workbench via the code-server CLI (`code-server -r path[:line[:col]]`,
+    which lands in the most recently registered workbench session). Request payload: raw UTF-8
+    host path — absolute or `~`-anchored (expanded host-side like verb 9), optionally suffixed
+    `:line[:col]` (ASCII digits, at most two runs; the existence check strips the suffix, the CLI
+    keeps it). Response: status + a **1-byte** `CodeOpenDisposition` payload — `0` workbench (the
+    file went to the embedded editor; the client reveals the code panel) or `1` hostDefault (the
+    target opened via the verb-9 default-app fallback; the panel stays put). A **directory**, or a
+    host **without** the code-server binary, takes the fallback (`ok`/`notFound`/`error` per the
+    fallback's own verb-9 semantics + disposition `1`); a workbench-bound file answers `ok` + `0`
+    **immediately — accepted, not completed** (the CLI lands only after a workbench session has
+    registered, which typically happens in the same breath as the reveal this very reply triggers,
+    so the host retries the CLI async — 10 × 2 s — and the metadata queue never sits out a
+    workbench boot). `notFound` = the bare path does not exist on the host; `error` = a malformed
+    (empty/relative/non-UTF-8) payload. An unknown future disposition byte reads *workbench*
+    client-side (worst case a revealed panel, never a silently invisible open); a trailing payload
+    byte is tolerated. **Host-global** like 18 (same shared instance; no cwd confinement — no host
+    bytes cross the wire beyond the status + disposition, the verb-9 trust model). The host routes
+    19 to `HostCodeServerPerformer` BEFORE the read-only responder; an OLD host answers
+    `unsupportedVerb` and the client raises its path-action failure toast.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

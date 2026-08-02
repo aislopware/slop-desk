@@ -81,6 +81,8 @@ enum LinkActionActuator {
             model?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
             openURLString(urlString)
+        case let .openCodeHost(target):
+            model?.onRequestOpenCodeHostPath?(target)
         case let .openHost(path):
             model?.onRequestOpenHostPath?(path)
         case let .revealHost(path):

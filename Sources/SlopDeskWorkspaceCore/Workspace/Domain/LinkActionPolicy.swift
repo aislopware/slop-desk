@@ -40,6 +40,10 @@ public struct LinkActionConfig: Equatable, Sendable {
 /// - ``copyPathClient``: write the resolved path / URL to the CLIENT pasteboard (Copy Path / Copy URL).
 /// - ``changeDirectoryPTY``: inject `cd <path>` as **verbatim UTF-8** down the pane's PTY (Change
 ///   Directory Here) — never via `SendKeysParser` (memory: re-run/cd is verbatim UTF-8).
+/// - ``openCodeHost``: ask the HOST to open the path in the embedded VS Code workbench (verb 19,
+///   `code-server -r`) — the editor the user is actually looking at is the client's code panel, not
+///   the host's screen. The carried target KEEPS the detector's `:line[:col]` suffix (code-server's
+///   CLI jumps to it); the host falls back to a default-app open for a directory / a binary-less host.
 /// - ``openHost``: ask the HOST to open the path in its best handler (the file lives on the host Mac, so
 ///   `NSWorkspace.open` must run host-side — delivered by the metadata RPC verb).
 /// - ``revealHost``: ask the HOST to reveal the path in Finder (host-side `activateFileViewerSelecting`).
@@ -49,6 +53,7 @@ public struct LinkActionConfig: Equatable, Sendable {
 public enum LinkAction: Equatable, Sendable {
     case copyPathClient(String)
     case changeDirectoryPTY(String)
+    case openCodeHost(String)
     case openHost(String)
     case revealHost(String)
     case openURLClient(String)
@@ -60,7 +65,7 @@ public enum LinkAction: Equatable, Sendable {
 ///
 /// | Target | Click | ⌘click | ⌘⇧click |
 /// |---|---|---|---|
-/// | Path | nothing | open best handler (host) / copy / nothing | reveal-Finder (host) / open-default (host) |
+/// | Path | nothing | open in code panel (host workbench) / copy / nothing | reveal-Finder (host) / open-default (host) |
 /// | URL  | nothing | open URL (client) / copy / nothing | Copy URL (client) |
 ///
 /// Splitting it out as a pure enum keeps the click-actions table unit-testable headless (``LinkActionPolicyTests``,
@@ -105,7 +110,7 @@ public enum LinkActionPolicy {
     public static func action(for menuItem: TerminalContextMenu.LinkItem, link: DetectedLink) -> LinkAction {
         switch menuItem {
         case .open:
-            if isURL(link) { .openURLClient(link.raw) } else { .openHost(effectivePath(link)) }
+            if isURL(link) { .openURLClient(link.raw) } else { .openCodeHost(codeOpenTarget(link)) }
         case .copyPath:
             .copyPathClient(isURL(link) ? link.raw : effectivePath(link))
         case .revealInFinder:
@@ -120,7 +125,7 @@ public enum LinkActionPolicy {
     private static func commandClickAction(link: DetectedLink, behavior: LinkCmdClick) -> LinkAction {
         switch behavior {
         case .open:
-            if isURL(link) { .openURLClient(link.raw) } else { .openHost(effectivePath(link)) }
+            if isURL(link) { .openURLClient(link.raw) } else { .openCodeHost(codeOpenTarget(link)) }
         case .copy:
             .copyPathClient(isURL(link) ? link.raw : effectivePath(link))
         case .nothing:
@@ -150,6 +155,37 @@ public enum LinkActionPolicy {
     /// could derive one, else the raw matched text (the host expands `~`/cwd + validates). Never reads
     /// the disk.
     static func effectivePath(_ link: DetectedLink) -> String { link.resolvedAbsolute ?? link.raw }
+
+    /// The target string for an embedded-editor open (``LinkAction/openCodeHost(_:)``): the best path
+    /// PLUS the detector's `:line[:col]` suffix when the match carried one (`resolvedAbsolute` drops
+    /// it, `raw` keeps it — an unresolved link rides `raw` as-is, suffix already in place). Pure;
+    /// pinned by ``LinkActionPolicyTests``.
+    public static func codeOpenTarget(_ link: DetectedLink) -> String {
+        guard let resolved = link.resolvedAbsolute else { return link.raw }
+        return resolved + lineColSuffix(of: link.raw)
+    }
+
+    /// The trailing `:line[:col]` numeric suffix of `text` (leading colon included), or `""`. The
+    /// same shape ``TerminalLinkDetector``'s splitter accepts — at most two trailing colon-number
+    /// runs, digits only.
+    static func lineColSuffix(of text: String) -> String {
+        let chars = Array(text)
+        func runStart(endingAt end: Int) -> Int? {
+            var index = end
+            var sawDigit = false
+            while index > 0, chars[index - 1].isNumber, chars[index - 1].isASCII {
+                index -= 1
+                sawDigit = true
+            }
+            if sawDigit, index > 0, chars[index - 1] == ":" { return index - 1 }
+            return nil
+        }
+        guard let colStart = runStart(endingAt: chars.count) else { return "" }
+        let start = runStart(endingAt: colStart) ?? colStart
+        // A "suffix" that consumes the whole text has no path ahead of it — not a suffix.
+        guard start > 0 else { return "" }
+        return String(chars[start...])
+    }
 
     // MARK: - "Change Directory Here" actuation idiom (cd a FILE → its parent folder)
 

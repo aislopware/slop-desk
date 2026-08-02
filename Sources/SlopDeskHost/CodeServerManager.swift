@@ -51,6 +51,10 @@ final class CodeServerManager: @unchecked Sendable {
     typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
     /// Seeds the code-server user settings before the FIRST spawn (see ``seedUserSettings(at:)``).
     typealias SettingsSeeder = @Sendable () -> Void
+    /// Runs the code-server CLI once to completion and reports its exit status (`nil` = the exec
+    /// itself failed). Distinct from ``Spawner`` — the CLI is a short-lived command whose EXIT CODE
+    /// is the answer, not a supervised child.
+    typealias CLIRunner = @Sendable (_ binary: String, _ arguments: [String]) async -> Int32?
 
     /// Idle self-shutdown handed to the child (`--idle-timeout-seconds`): a workbench nobody has
     /// open for 2 h reaps itself instead of holding a Node runtime forever; the next sidebar expand
@@ -78,7 +82,9 @@ final class CodeServerManager: @unchecked Sendable {
     private let spawn: Spawner
     private let probe: ReadinessProbe
     private let seedSettings: SettingsSeeder
+    private let runCLI: CLIRunner
     private let probeInterval: Duration
+    private let openRetryDelay: Duration
     private let clock = ContinuousClock()
 
     init(
@@ -86,13 +92,17 @@ final class CodeServerManager: @unchecked Sendable {
         spawner: @escaping Spawner = CodeServerManager.defaultSpawner,
         readinessProbe: @escaping ReadinessProbe = CodeServerManager.defaultReadinessProbe,
         settingsSeeder: @escaping SettingsSeeder = CodeServerManager.defaultSettingsSeeder,
+        cliRunner: @escaping CLIRunner = CodeServerManager.defaultCLIRunner,
         probeInterval: Duration = .milliseconds(500),
+        openRetryDelay: Duration = .seconds(2),
     ) {
         locateBinary = binaryLocator
         spawn = spawner
         probe = readinessProbe
         seedSettings = settingsSeeder
+        runCLI = cliRunner
         self.probeInterval = probeInterval
+        self.openRetryDelay = openRetryDelay
     }
 
     /// Ensures the shared code-server and reports where it stands RIGHT NOW (never waits). `nil`
@@ -132,6 +142,38 @@ final class CodeServerManager: @unchecked Sendable {
         instance = Instance(handle: handle)
         return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
     }
+
+    /// Opens `target` (a host file path, optionally `:line[:col]`-suffixed) in the running
+    /// workbench: `code-server -r <target>` routed through the session socket to the most recently
+    /// registered open workbench (folder-prefix matches sort first). Ensures the SERVER first (the
+    /// panel may have been collapsed, its child never spawned), then retries the CLI asynchronously —
+    /// the workbench SESSION registers only once a client's webview has booted the page, and the
+    /// client typically expands the panel in the same breath as this call, so the first attempts can
+    /// legitimately race a multi-second boot. Returns the retry task (`nil` when there is no
+    /// code-server binary — the caller falls back to a default-app open); the caller does NOT await
+    /// it (accepted-not-completed, mirroring `ensure`'s never-wait contract).
+    @discardableResult
+    func openInWorkbench(target: String, projectRoot: String) -> Task<Bool, Never>? {
+        guard let binary = locateBinary() else { return nil }
+        _ = ensure(projectRoot: projectRoot)
+        let run = runCLI
+        let delay = openRetryDelay
+        return Task {
+            for attempt in 0..<Self.openAttempts {
+                if await run(binary, ["-r", target]) == 0 { return true }
+                guard attempt + 1 < Self.openAttempts else { break }
+                try? await Task.sleep(for: delay)
+            }
+            FileHandle.standardError.write(Data(
+                "slopdesk-hostd: code-server -r \(target) never landed (no workbench session?)\n".utf8,
+            ))
+            return false
+        }
+    }
+
+    /// CLI open retries: 10 × the 2 s ``openRetryDelay`` ≈ an 18 s window — covers a cold server
+    /// boot + the client's poll + the webview's workbench boot before the session socket exists.
+    static let openAttempts = 10
 
     /// Terminates the child (host shutdown). It also self-reaps on idle, but hostd going down must
     /// not strand a Node process.
@@ -365,6 +407,29 @@ final class CodeServerManager: @unchecked Sendable {
             if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
         }
         return nil
+    }
+
+    /// The production ``CLIRunner``: run to completion, answer the exit status. Output is discarded
+    /// (the exit code is the whole answer; code-server's "No opened code-server instances found"
+    /// complaint arrives as a non-zero exit).
+    static let defaultCLIRunner: CLIRunner = { binary, arguments in
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: binary)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { finished in
+                continuation.resume(returning: finished.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                // Never ran ⇒ the termination handler will never fire — resume here instead.
+                process.terminationHandler = nil
+                continuation.resume(returning: nil)
+            }
+        }
     }
 
     /// Foundation `Process` + a line-splitting pipe drain on a utility queue. stdout and stderr are

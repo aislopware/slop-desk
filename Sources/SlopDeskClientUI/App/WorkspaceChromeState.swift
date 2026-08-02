@@ -63,5 +63,14 @@ final class WorkspaceChromeState {
         codeSidebarCollapsed.toggle()
         Defaults[.codeSidebarCollapsed] = codeSidebarCollapsed
     }
+
+    /// Reveal (never collapse) the RIGHT code panel — the open-in-code-panel actuation: a file the
+    /// user just sent to the embedded workbench must be visible, and opening a file IS a workstyle
+    /// choice, so it persists like the manual toggle. Idempotent while expanded.
+    func revealCodeSidebar() {
+        guard codeSidebarCollapsed else { return }
+        codeSidebarCollapsed = false
+        Defaults[.codeSidebarCollapsed] = false
+    }
 }
 #endif

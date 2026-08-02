@@ -708,6 +708,33 @@ public enum MetadataCodec {
         return CodeServerEndpoint(stateByte: state, port: port)
     }
 
+    // MARK: - Code-open disposition  (openInCodeServer = 19)
+
+    /// Where the host routed a ``MetadataVerb/openInCodeServer`` request — the 1-byte response
+    /// payload. The client reveals its code panel ONLY for ``workbench``; a ``hostDefault`` open
+    /// (a directory, or a host without code-server) happened on the host's own screen.
+    public enum CodeOpenDisposition: UInt8, Sendable, Equatable, CaseIterable {
+        /// Dispatched to the embedded VS Code workbench (`code-server -r`).
+        case workbench = 0
+        /// Opened in the host's default app / Finder (the verb-9 behavior).
+        case hostDefault = 1
+    }
+
+    /// Encodes a ``MetadataVerb/openInCodeServer`` response payload: `[UInt8 disposition]`.
+    public static func encodeCodeOpenDisposition(_ disposition: CodeOpenDisposition) -> Data {
+        Data([disposition.rawValue])
+    }
+
+    /// Decodes a ``MetadataVerb/openInCodeServer`` response payload (validate-then-drop): an empty
+    /// body throws ``SlopDeskError/truncated``; a longer body is tolerated (trailer ignored); an
+    /// unknown future byte reads ``CodeOpenDisposition/workbench`` — revealing the panel is the
+    /// benign fallback (worst case an expanded panel, never a silently invisible open).
+    public static func decodeCodeOpenDisposition(_ data: Data) throws -> CodeOpenDisposition {
+        var reader = BigEndianReader(data)
+        let byte = try reader.readUInt8()
+        return CodeOpenDisposition(rawValue: byte) ?? .workbench
+    }
+
     // MARK: - Shared encode/decode helpers
 
     /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry

@@ -6310,3 +6310,24 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
 - ✅ **Seed v4: `files.autoSave: "onFocusChange"`** — the terminal beside the editor is where
   builds/tests run; leaving the editor IS the moment the file must be on disk. v3 moved into
   `obsoleteSeeds`. **`--app-name SlopDesk`** replaces the `{{app}}` branding strings.
+
+### ⌘click on a terminal path opens in the embedded workbench (2026-08-02)
+
+> Same directive — the third link of the chain: the code panel joins the terminal's link gestures.
+
+- ✅ **Verb 19 `openInCodeServer`**: the "open" link action on a detected terminal PATH
+  (⌘click, Hint Mode ⌘⇧J, Jump-To ↩, context-menu Open) now routes to the embedded workbench
+  instead of the host's default app — `code-server -r path[:line[:col]]` lands the file (with
+  cursor position) in the most recently registered workbench session. ⌘⇧click (reveal in
+  Finder) and drag-drop (verb 9) are unchanged; URLs still open client-side.
+- ✅ **No new detection layer.** The client already owned pure path detection
+  (`TerminalLinkDetector`) and gesture policy (`LinkActionPolicy`) — the integration is one new
+  `LinkAction` case (`openCodeHost`, carrying the `:line:col` suffix `resolvedAbsolute` drops)
+  plus one new verb. The original plan (ghostty ABI text-at-point) was obsolete on arrival.
+- ✅ **Accepted-not-completed reply + 1-byte disposition.** The workbench session registers only
+  after a client webview boots — which typically happens in the same breath as the panel reveal
+  this very reply triggers. So the host replies immediately (`ok` + disposition `workbench`) and
+  retries the CLI async (10 × 2 s); the metadata queue never sits out a workbench boot. A
+  directory, or a host without code-server, falls back to the verb-9 default-app open and says so
+  (disposition `hostDefault`) — the client reveals the code panel ONLY when the file actually
+  went to the workbench.

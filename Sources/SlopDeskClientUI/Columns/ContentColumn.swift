@@ -29,6 +29,10 @@ struct ContentColumn: View {
 
     var body: some View {
         content
+            // The chrome model rides the environment so DEEP descendants (a terminal leaf actuating
+            // open-in-code-panel) can reveal the code sidebar without threading the reference
+            // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
+            .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // MERIDIAN L5, scoped by the user reporting that a titlebar tone differing from the pane below it read as jarringly out of place:
             // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone

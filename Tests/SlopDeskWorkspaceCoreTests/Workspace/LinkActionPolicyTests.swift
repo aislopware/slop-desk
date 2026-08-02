@@ -75,14 +75,17 @@ final class LinkActionPolicyTests: XCTestCase {
 
     // MARK: - ⌘click — open
 
-    func testCommandClickOpen_PathRoutesToHost() {
+    func testCommandClickOpen_PathRoutesToTheEmbeddedWorkbench() {
+        // The editor the user is looking at is the client's CODE PANEL — a path open goes to the
+        // host's code-server (verb 19), never the host's own screen. The `:line:col` suffix rides
+        // along (code-server jumps to it); the bare-path kinds carry no suffix.
         let cfg = config(.open, .revealFinder)
-        assertGesture(.commandClick, absolute, cfg, .openHost("/usr/local/bin"))
-        assertGesture(.commandClick, relative, cfg, .openHost("/home/me/src/lib.rs"))
-        assertGesture(.commandClick, pathLineCol, cfg, .openHost("/home/me/src/lib.rs"))
-        assertGesture(.commandClick, fileURL, cfg, .openHost("/a/b.txt"))
+        assertGesture(.commandClick, absolute, cfg, .openCodeHost("/usr/local/bin"))
+        assertGesture(.commandClick, relative, cfg, .openCodeHost("/home/me/src/lib.rs"))
+        assertGesture(.commandClick, pathLineCol, cfg, .openCodeHost("/home/me/src/lib.rs:42:5"))
+        assertGesture(.commandClick, fileURL, cfg, .openCodeHost("/a/b.txt"))
         // Tilde: unresolved → the RAW `~`-path is handed to the host (which expands it).
-        assertGesture(.commandClick, tilde, cfg, .openHost("~/project/file.swift"))
+        assertGesture(.commandClick, tilde, cfg, .openCodeHost("~/project/file.swift"))
     }
 
     func testCommandClickOpen_URLRoutesToClient() {
@@ -138,8 +141,9 @@ final class LinkActionPolicyTests: XCTestCase {
 
     // MARK: - Right-click menu items → action
 
-    func testMenuOpen_PathHost_URLClient() {
-        assertMenu(.open, absolute, .openHost("/usr/local/bin"))
+    func testMenuOpen_PathToWorkbench_URLClient() {
+        assertMenu(.open, absolute, .openCodeHost("/usr/local/bin"))
+        assertMenu(.open, pathLineCol, .openCodeHost("/home/me/src/lib.rs:42:5"))
         assertMenu(.open, url, .openURLClient("https://example.com/x"))
     }
 
@@ -190,6 +194,30 @@ final class LinkActionPolicyTests: XCTestCase {
         XCTAssertEqual(LinkActionPolicy.effectivePath(fileURL), "/a/b.txt")
     }
 
+    // MARK: - codeOpenTarget: the resolved path KEEPS the raw's `:line[:col]` suffix
+
+    func testCodeOpenTargetReattachesTheLineColSuffix() {
+        // The detector's contract drops the suffix from `resolvedAbsolute` — the workbench open
+        // must carry it (code-server's CLI jumps there), reattached from `raw`.
+        XCTAssertEqual(LinkActionPolicy.codeOpenTarget(pathLineCol), "/home/me/src/lib.rs:42:5")
+        // A suffix-less path stays bare — and a tilde path rides raw (suffix already in place).
+        XCTAssertEqual(LinkActionPolicy.codeOpenTarget(absolute), "/usr/local/bin")
+        XCTAssertEqual(LinkActionPolicy.codeOpenTarget(tilde), "~/project/file.swift")
+        let tildeLineCol = link(.pathLineCol, raw: "~/x/y.swift:7", resolved: nil)
+        XCTAssertEqual(
+            LinkActionPolicy.codeOpenTarget(tildeLineCol), "~/x/y.swift:7",
+            "an unresolved raw already carries its suffix — it must not be doubled",
+        )
+    }
+
+    func testLineColSuffixParsing() {
+        XCTAssertEqual(LinkActionPolicy.lineColSuffix(of: "src/lib.rs:42:5"), ":42:5")
+        XCTAssertEqual(LinkActionPolicy.lineColSuffix(of: "src/lib.rs:42"), ":42")
+        XCTAssertEqual(LinkActionPolicy.lineColSuffix(of: "src/lib.rs"), "")
+        XCTAssertEqual(LinkActionPolicy.lineColSuffix(of: ""), "")
+        XCTAssertEqual(LinkActionPolicy.lineColSuffix(of: ":42"), "", "a bare suffix has no path ahead of it")
+    }
+
     func testConfigDefaultMatchesSlate() {
         XCTAssertEqual(LinkActionConfig.default.cmdClick, .open)
         XCTAssertEqual(LinkActionConfig.default.cmdShiftClick, .revealFinder)
@@ -205,10 +233,10 @@ final class LinkActionPolicyTests: XCTestCase {
         for cmd in LinkCmdClick.allCases {
             let cfg = config(cmd, .revealFinder)
             for path in pathKinds {
-                let expected = LinkAction.openHost(LinkActionPolicy.effectivePath(path))
+                let expected = LinkAction.openCodeHost(LinkActionPolicy.codeOpenTarget(path))
                 XCTAssertEqual(
                     LinkActionPolicy.explicitOpenAction(link: path), expected,
-                    "explicit open on \(path.kind) must open on the host under link-cmd-click=\(cmd)",
+                    "explicit open on \(path.kind) must open in the workbench under link-cmd-click=\(cmd)",
                 )
             }
             for u in [url, mailto] {

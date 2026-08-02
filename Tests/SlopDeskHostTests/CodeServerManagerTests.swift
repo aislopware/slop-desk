@@ -75,15 +75,18 @@ final class CodeServerManagerTests: XCTestCase {
         binary: String? = "/fake/code-server",
         probe: @escaping @Sendable (UInt16) -> Bool = { _ in true },
         settingsSeeder: @escaping @Sendable () -> Void = {},
+        cliRunner: @escaping CodeServerManager.CLIRunner = { _, _ in nil },
     ) -> CodeServerManager {
-        // The seeder is ALWAYS injected — the default seam writes the real user's
-        // `~/.local/share/code-server` settings, which no test may touch.
+        // The seeder and CLI runner are ALWAYS injected — the default seams write the real user's
+        // `~/.local/share/code-server` settings / exec a real binary, which no test may touch.
         CodeServerManager(
             binaryLocator: { binary },
             spawner: { bin, args, onLine in spawner.spawn(binary: bin, arguments: args, onLine: onLine) },
             readinessProbe: probe,
             settingsSeeder: settingsSeeder,
+            cliRunner: cliRunner,
             probeInterval: .zero,
+            openRetryDelay: .zero,
         )
     }
 
@@ -193,6 +196,65 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertNil(manager.ensure(projectRoot: ""))
         XCTAssertNil(manager.ensure(projectRoot: root + "/does-not-exist"))
         XCTAssertEqual(spawner.spawnCount, 0)
+    }
+
+    // MARK: Workbench file-open (verb 19's CLI arm)
+
+    /// A recording CLI runner: canned exit codes per attempt (the last one repeats), thread-safe.
+    private final class FakeCLI: @unchecked Sendable {
+        private let lock = NSLock()
+        private let exitCodes: [Int32?]
+        private(set) var calls: [[String]] = []
+
+        init(_ exitCodes: [Int32?]) {
+            self.exitCodes = exitCodes
+        }
+
+        func run(binary _: String, arguments: [String]) -> Int32? {
+            lock.lock()
+            defer { lock.unlock() }
+            calls.append(arguments)
+            return exitCodes[min(calls.count - 1, exitCodes.count - 1)]
+        }
+    }
+
+    func testOpenInWorkbenchRetriesUntilTheCLILands() async {
+        // The workbench session registers only once a client webview boots — the first `-r`
+        // attempts legitimately fail. Two failures then success ⇒ exactly three calls, and the
+        // SERVER was ensured first (the panel may never have spawned it).
+        let spawner = FakeSpawner()
+        let cli = FakeCLI([1, 1, 0])
+        let manager = makeManager(spawner: spawner, cliRunner: { cli.run(binary: $0, arguments: $1) })
+
+        let task = manager.openInWorkbench(target: root + "/main.py:12:3", projectRoot: root)
+        let landed = await task?.value
+
+        XCTAssertEqual(landed, true)
+        XCTAssertEqual(cli.calls.count, 3, "stops retrying the moment an attempt lands")
+        XCTAssertEqual(cli.calls.first, ["-r", root + "/main.py:12:3"], "the :line:col suffix rides through")
+        XCTAssertEqual(spawner.spawnCount, 1, "the open ensures the server first")
+    }
+
+    func testOpenInWorkbenchGivesUpAfterTheAttemptBudget() async {
+        let cli = FakeCLI([1])
+        let manager = makeManager(spawner: FakeSpawner(), cliRunner: { cli.run(binary: $0, arguments: $1) })
+
+        let landed = await manager.openInWorkbench(target: "/x/y.txt", projectRoot: root)?.value
+
+        XCTAssertEqual(landed, false)
+        XCTAssertEqual(cli.calls.count, CodeServerManager.openAttempts, "bounded — never an infinite retry loop")
+    }
+
+    func testOpenInWorkbenchWithoutBinaryIsNil() {
+        let cli = FakeCLI([0])
+        let manager = makeManager(
+            spawner: FakeSpawner(), binary: nil, cliRunner: { cli.run(binary: $0, arguments: $1) },
+        )
+        XCTAssertNil(
+            manager.openInWorkbench(target: "/x/y.txt", projectRoot: root),
+            "no code-server ⇒ nil — the performer falls back to the default-app open",
+        )
+        XCTAssertTrue(cli.calls.isEmpty)
     }
 
     func testShutdownTerminatesTheChild() {
@@ -387,22 +449,56 @@ final class CodeServerManagerTests: XCTestCase {
     }
 }
 
-/// ``HostCodeServerPerformer`` routing: verb 18 → the manager; every other verb → `nil`
-/// (fall through to the read-only builder); malformed payloads → `.error`; a vanished root →
-/// `.notFound`.
+/// ``HostCodeServerPerformer`` routing: verbs 18/19 → the manager; every other verb → `nil`
+/// (fall through to the read-only builder); malformed payloads → `.error`; a vanished path →
+/// `.notFound`. The verb-19 fallback opener is ALWAYS injected (the default touches `NSWorkspace` —
+/// hang-safety).
 final class HostCodeServerPerformerTests: XCTestCase {
-    private func makeManager(spawned: @escaping @Sendable () -> Void = {}) -> CodeServerManager {
-        // settingsSeeder injected as a no-op — the default seam writes the real user's settings.
+    private final class RunnerRecord: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var calls: [[String]] = []
+        var onRecord: (@Sendable () -> Void)?
+        func record(_ arguments: [String]) {
+            lock.lock()
+            calls.append(arguments)
+            let notify = onRecord
+            lock.unlock()
+            notify?()
+        }
+    }
+
+    private func makeManager(
+        binary: String? = "/fake/code-server",
+        spawned: @escaping @Sendable () -> Void = {},
+        cli: RunnerRecord = RunnerRecord(),
+    ) -> CodeServerManager {
+        // settingsSeeder / cliRunner injected as fakes — the default seams touch the real user's
+        // settings file / exec a real binary.
         CodeServerManager(
-            binaryLocator: { "/fake/code-server" },
+            binaryLocator: { binary },
             spawner: { _, _, _ in
                 spawned()
                 return NeverExitingHandle()
             },
             readinessProbe: { _ in false },
             settingsSeeder: {},
+            cliRunner: { _, arguments in
+                cli.record(arguments)
+                return 0
+            },
             probeInterval: .zero,
+            openRetryDelay: .zero,
         )
+    }
+
+    /// A fallback opener that records and answers `.ok` — never `NSWorkspace`.
+    private func recordingFallback(
+        into recorded: RunnerRecord,
+    ) -> HostCodeServerPerformer.FallbackOpener {
+        { path in
+            recorded.record([path])
+            return .ok
+        }
     }
 
     private final class NeverExitingHandle: CodeServerProcessHandle, @unchecked Sendable {
@@ -411,10 +507,12 @@ final class HostCodeServerPerformerTests: XCTestCase {
     }
 
     func testOtherVerbsFallThrough() {
-        for verb in MetadataVerb.allCases where verb != .ensureCodeServer {
+        let embedded: Set<MetadataVerb> = [.ensureCodeServer, .openInCodeServer]
+        for verb in MetadataVerb.allCases where !embedded.contains(verb) {
             XCTAssertNil(
                 HostCodeServerPerformer.response(
                     requestID: 1, verb: verb.rawValue, payload: Data(), manager: makeManager(),
+                    fallbackOpen: { _ in .ok },
                 ),
                 "verb \(verb) must fall through to the read-only builder",
             )
@@ -422,6 +520,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
         XCTAssertNil(
             HostCodeServerPerformer.response(
                 requestID: 1, verb: 250, payload: Data(), manager: makeManager(),
+                fallbackOpen: { _ in .ok },
             ),
             "an unknown future verb must fall through (the builder answers unsupportedVerb)",
         )
@@ -470,5 +569,132 @@ final class HostCodeServerPerformerTests: XCTestCase {
         XCTAssertEqual(status, MetadataStatus.ok.rawValue)
         let endpoint = try MetadataCodec.decodeCodeServerEndpoint(payload)
         XCTAssertEqual(endpoint.state, .starting)
+    }
+
+    // MARK: Verb 19 — openInCodeServer
+
+    private func openResponse(
+        payload: Data, manager: CodeServerManager, fallback: RunnerRecord = RunnerRecord(),
+        fallbackStatus: MetadataStatus = .ok,
+    ) -> (status: UInt8, payload: Data, fallbackCalls: [[String]])? {
+        let response = HostCodeServerPerformer.response(
+            requestID: 21, verb: MetadataVerb.openInCodeServer.rawValue, payload: payload,
+            manager: manager,
+            fallbackOpen: { path in
+                fallback.record([path])
+                return fallbackStatus
+            },
+        )
+        guard case let .metadataResponse(requestID, status, payload)? = response else { return nil }
+        XCTAssertEqual(requestID, 21)
+        return (status, payload, fallback.calls)
+    }
+
+    func testOpenMalformedPayloadsAreError() {
+        for bad in [Data(), Data("relative/path.txt".utf8), Data([0xFF, 0xFE])] {
+            guard let reply = openResponse(payload: bad, manager: makeManager()) else {
+                XCTFail("expected a metadataResponse")
+                continue
+            }
+            XCTAssertEqual(reply.status, MetadataStatus.error.rawValue)
+            XCTAssertTrue(reply.payload.isEmpty)
+            XCTAssertTrue(reply.fallbackCalls.isEmpty, "a malformed target never opens anything")
+        }
+    }
+
+    func testOpenMissingPathIsNotFoundEvenWithASuffix() {
+        // The exists check runs on the BARE path — the :12:3 suffix must not defeat it.
+        for target in ["/definitely/not/a/real/file.py", "/definitely/not/a/real/file.py:12:3"] {
+            guard let reply = openResponse(payload: Data(target.utf8), manager: makeManager()) else {
+                XCTFail("expected a metadataResponse")
+                continue
+            }
+            XCTAssertEqual(reply.status, MetadataStatus.notFound.rawValue)
+            XCTAssertTrue(reply.fallbackCalls.isEmpty)
+        }
+    }
+
+    func testOpenDirectoryFallsBackToTheDefaultApp() throws {
+        let root = NSTemporaryDirectory() + "open-dir-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+
+        let cli = RunnerRecord()
+        guard let reply = openResponse(
+            payload: Data(root.utf8), manager: makeManager(cli: cli), fallbackStatus: .notFound,
+        )
+        else {
+            XCTFail("expected a metadataResponse")
+            return
+        }
+        // swiftlint:disable:next legacy_objc_type
+        XCTAssertEqual(reply.fallbackCalls, [[(root as NSString).standardizingPath]])
+        XCTAssertEqual(
+            reply.status, MetadataStatus.notFound.rawValue,
+            "the fallback's own status is the reply status",
+        )
+        XCTAssertEqual(Array(reply.payload), [1], "hostDefault — the client must NOT reveal the panel")
+        XCTAssertTrue(cli.calls.isEmpty, "a directory never reaches the workbench CLI")
+    }
+
+    func testOpenFileWithoutBinaryFallsBackToTheDefaultApp() throws {
+        let root = NSTemporaryDirectory() + "open-nobin-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let file = root + "/main.py"
+        try Data().write(to: URL(fileURLWithPath: file))
+
+        guard let reply = openResponse(
+            payload: Data((file + ":12:3").utf8), manager: makeManager(binary: nil),
+        )
+        else {
+            XCTFail("expected a metadataResponse")
+            return
+        }
+        let canonicalFile = (file as NSString).standardizingPath // swiftlint:disable:this legacy_objc_type
+        XCTAssertEqual(
+            reply.fallbackCalls, [[canonicalFile]],
+            "the fallback gets the BARE path — Finder/default apps cannot parse :line:col",
+        )
+        XCTAssertEqual(reply.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(Array(reply.payload), [1])
+    }
+
+    func testOpenFileWithBinaryGoesToTheWorkbench() async throws {
+        let root = NSTemporaryDirectory() + "open-file-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let file = root + "/main.py"
+        try Data().write(to: URL(fileURLWithPath: file))
+
+        let cli = RunnerRecord()
+        let landed = expectation(description: "the async CLI arm ran")
+        cli.onRecord = { landed.fulfill() }
+        // swiftlint:disable:next legacy_objc_type
+        let canonicalFile = (file as NSString).standardizingPath
+        guard let reply = openResponse(payload: Data((file + ":12:3").utf8), manager: makeManager(cli: cli))
+        else {
+            XCTFail("expected a metadataResponse")
+            return
+        }
+        XCTAssertEqual(reply.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(Array(reply.payload), [0], "workbench — the client reveals the code panel")
+        XCTAssertTrue(reply.fallbackCalls.isEmpty, "the workbench path never touches the fallback")
+
+        await fulfillment(of: [landed], timeout: 5)
+        XCTAssertEqual(
+            cli.calls, [["-r", canonicalFile + ":12:3"]],
+            "the CLI target keeps the :line:col suffix the exists check stripped",
+        )
+    }
+
+    func testSplitLineColSuffix() {
+        let split = HostCodeServerPerformer.splitLineColSuffix
+        XCTAssertTrue(split("/a/b.py:12:3") == ("/a/b.py", ":12:3"))
+        XCTAssertTrue(split("/a/b.py:12") == ("/a/b.py", ":12"))
+        XCTAssertTrue(split("/a/b.py") == ("/a/b.py", ""))
+        XCTAssertTrue(split("/a/v1:2/f.txt") == ("/a/v1:2/f.txt", ""), "a mid-path colon is not a suffix")
+        XCTAssertTrue(split(":42") == ("", ":42"), "a bare suffix leaves an empty path → the absolute guard rejects it")
+        XCTAssertTrue(split("/a/b:1:2:3") == ("/a/b:1", ":2:3"), "at most two runs strip")
     }
 }

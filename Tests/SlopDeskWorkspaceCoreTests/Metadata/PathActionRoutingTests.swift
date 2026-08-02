@@ -49,6 +49,53 @@ final class PathActionRoutingTests: XCTestCase {
         )
     }
 
+    func testOpenInCodeServerEncodesVerb19AndSurfacesTheDisposition() async {
+        let responder = PathActionResponder()
+        let client = MetadataClient(send: responder.send)
+        responder.client = client
+        let target = "/Users/me/project/main.swift:42:5"
+        responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
+            status: MetadataStatus.ok.rawValue,
+            payload: MetadataCodec.encodeCodeOpenDisposition(.workbench),
+        )
+
+        let disposition = await client.openInCodeServer(target)
+
+        XCTAssertEqual(disposition, .workbench, "an .ok + workbench byte surfaces as .workbench")
+        XCTAssertEqual(
+            responder.captured.map(\.verb), [MetadataVerb.openInCodeServer.rawValue],
+            "openInCodeServer uses verb byte 19",
+        )
+        XCTAssertEqual(
+            responder.captured.first?.payload, Data(target.utf8),
+            "the target — :line:col suffix INCLUDED — is the raw-UTF-8 request payload",
+        )
+    }
+
+    func testOpenInCodeServerHostDefaultAndFailureStatuses() async {
+        let responder = PathActionResponder()
+        let client = MetadataClient(send: responder.send)
+        responder.client = client
+        responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
+            status: MetadataStatus.ok.rawValue,
+            payload: MetadataCodec.encodeCodeOpenDisposition(.hostDefault),
+        )
+        var disposition = await client.openInCodeServer("/some/dir")
+        XCTAssertEqual(disposition, .hostDefault, "a directory open reports hostDefault — no panel reveal")
+
+        responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
+            status: MetadataStatus.notFound.rawValue, payload: Data(),
+        )
+        disposition = await client.openInCodeServer("/gone")
+        XCTAssertNil(disposition, ".notFound surfaces as nil — the caller raises the failure toast")
+
+        responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
+            status: MetadataStatus.unsupportedVerb.rawValue, payload: Data(),
+        )
+        disposition = await client.openInCodeServer("/x")
+        XCTAssertNil(disposition, "an OLD host's unsupportedVerb is nil, never a fake success")
+    }
+
     func testNotFoundStatusSurfacesAsFalse() async {
         let responder = PathActionResponder()
         let client = MetadataClient(send: responder.send)
