@@ -196,30 +196,60 @@ final class CodeServerManager: @unchecked Sendable {
             "--disable-telemetry",
             "--disable-update-check",
             "--disable-workspace-trust",
+            "--disable-getting-started-override",
             "--idle-timeout-seconds", String(idleTimeoutSeconds),
             projectRoot,
         ]
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up matching the dark
-    /// client chrome instead of VS Code's stock light theme, and without the Welcome tab (the panel
-    /// is a working surface, not a first-run tour). Nothing else: every other preference is the
-    /// user's to make IN the workbench (code-server persists them to this same file).
+    /// client chrome, without the Welcome tab, and LEAN: the panel is a working surface beside a
+    /// terminal, so the AI/chat surfaces, the command-center strip, the layout/navigation title-bar
+    /// controls, the minimap, and the breadcrumbs all go. Every key here is USER-scope-overridable
+    /// in the workbench (user settings land in this same file and win on conflict-free keys the
+    /// user later edits — see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
         "workbench.colorTheme": "Default Dark Modern",
-        "workbench.startupEditor": "none"
+        "workbench.startupEditor": "none",
+        "chat.disableAIFeatures": true,
+        "chat.commandCenter.enabled": false,
+        "window.commandCenter": false,
+        "workbench.layoutControl.enabled": false,
+        "workbench.navigationControl.enabled": false,
+        "workbench.tips.enabled": false,
+        "extensions.ignoreRecommendations": true,
+        "editor.minimap.enabled": false,
+        "breadcrumbs.enabled": false
     }
     """
 
-    /// Writes ``seededUserSettings`` to `fileURL` ONLY when no file exists there — an operator's
-    /// own settings are never touched (`.withoutOverwriting` backstops the exists-check against a
-    /// concurrent writer). Returns whether it wrote; any failure is a silent no-op (a seed is a
-    /// nicety — the workbench works unthemed).
+    /// Every seed this manager EVER shipped before the current one. A settings file byte-identical
+    /// to a former seed is still PRISTINE — the user never touched it (the workbench rewrites the
+    /// file on any settings edit) — so it may be upgraded to the current seed. Anything else is the
+    /// user's and stays untouchable.
+    static let obsoleteSeeds: [String] = [
+        """
+        {
+            "workbench.colorTheme": "Default Dark Modern",
+            "workbench.startupEditor": "none"
+        }
+        """,
+    ]
+
+    /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
+    /// file is byte-identical to a FORMER seed (pristine, never user-edited ⇒ safe to upgrade). An
+    /// operator's own settings are never touched. Returns whether it wrote; any failure is a
+    /// silent no-op (a seed is a nicety — the workbench works unthemed).
     @discardableResult
     static func seedUserSettings(at fileURL: URL, fileManager: FileManager = .default) -> Bool {
-        guard !fileManager.fileExists(atPath: fileURL.path) else { return false }
         do {
+            if fileManager.fileExists(atPath: fileURL.path) {
+                let existing = try String(contentsOf: fileURL, encoding: .utf8)
+                guard obsoleteSeeds.contains(existing) else { return false }
+                try Data(seededUserSettings.utf8).write(to: fileURL)
+                return true
+            }
             try fileManager.createDirectory(
                 at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
             )

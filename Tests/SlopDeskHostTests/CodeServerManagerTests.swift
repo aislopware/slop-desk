@@ -239,7 +239,7 @@ final class CodeServerManagerTests: XCTestCase {
             try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
         )
 
-        // Present → NEVER overwritten, whatever it holds — these are the user's settings.
+        // Present with the user's OWN content → NEVER overwritten, whatever it holds.
         try Data("{\"workbench.colorTheme\": \"Mine\"}".utf8).write(to: fileURL)
         XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
         XCTAssertEqual(
@@ -247,13 +247,47 @@ final class CodeServerManagerTests: XCTestCase {
         )
     }
 
-    func testSeededSettingsAreValidJSONWithThemeAndStartup() throws {
+    func testSeedUpgradesAPristineFormerSeed() throws {
+        // A file byte-identical to a seed this manager once shipped was never user-edited (the
+        // workbench rewrites the file on any settings change) — it upgrades to the current seed.
+        let fileURL = URL(fileURLWithPath: root)
+            .appendingPathComponent("data/code-server/User/settings.json")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+        )
+        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.first)
+        try Data(former.utf8).write(to: fileURL)
+
+        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(
+            try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
+        )
+    }
+
+    func testCurrentSeedIsNotListedObsolete() {
+        // The upgrade rule keys on obsoleteSeeds — the CURRENT seed in that list would make every
+        // pristine host rewrite (and log a seed) on every manager lifetime.
+        XCTAssertFalse(CodeServerManager.obsoleteSeeds.contains(CodeServerManager.seededUserSettings))
+    }
+
+    func testSeededSettingsAreValidJSONWithThemeAndLeanChrome() throws {
         let object = try JSONSerialization.jsonObject(
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
-        let settings = try XCTUnwrap(object as? [String: String])
-        XCTAssertEqual(settings["workbench.colorTheme"], "Default Dark Modern")
-        XCTAssertEqual(settings["workbench.startupEditor"], "none")
+        let settings = try XCTUnwrap(object as? [String: Any])
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Default Dark Modern")
+        XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
+        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal.
+        XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
+        XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
+        XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
+        XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
+    }
+
+    func testEveryObsoleteSeedIsValidJSON() throws {
+        for seed in CodeServerManager.obsoleteSeeds {
+            _ = try JSONSerialization.jsonObject(with: Data(seed.utf8))
+        }
     }
 
     func testUserSettingsURLResolution() {

@@ -6226,3 +6226,29 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   trailing cluster (always-reserved zero-shift slot) while collapsed; the expanded toggle inside
   the column's own traffic-light strip row; the "CODE" header in the instrument voice BELOW the
   strip. The `</>` glyph replaces `sidebar.right` wherever the action shows a face.
+
+### The workbench goes secure-context + lean: loopback proxy, AI stripped (2026-08-02)
+
+> User-directed: kill the "insecure context" warning ("mình có thể setup local ssl được không?")
+> and slim the workbench ("bỏ mấy tính năng AI đi, giản lược bớt giao diện đi").
+
+- ✅ **Loopback proxy beats local SSL.** The insecure-context toast (and dead clipboard/
+  `crypto.subtle`) is browser SECURE-CONTEXT semantics, not transport security — and browsers
+  treat loopback as a-priori trustworthy. `CodeSidebarProxyPool` (client, macOS) binds one
+  `127.0.0.1` TCP relay per project and pipes bytes to the host over the mesh; the WKWebView
+  loads `http://127.0.0.1:<local>`. A self-signed `--cert` was REJECTED: it needs trust-override
+  plumbing in the webview, still rotates the origin with every respawned ephemeral port, and
+  reintroduces app-layer crypto theatre the WireGuard-mesh invariant exists to avoid.
+- ✅ **The local port is FNV-1a-derived from the project root** (`CodeSidebarProxyPorts`, pure,
+  pinned — Swift's `Hasher` is process-seeded and would break this): the workbench ORIGIN is
+  stable across code-server respawns AND app relaunches, so per-origin localStorage (layout,
+  view state, dismissals) finally persists. Bind collision strides to the next candidate; total
+  bind failure falls back to the direct remote URL (the ATS arbitrary-loads exception stays for
+  exactly this path). The relay is retargetable — a respawn moves the backend, not the origin.
+- ✅ **The seed grows a LEAN profile and an upgrade rule.** v2 seed adds `chat.disableAIFeatures`
+  (the whole AI/chat surface), command-center/layout-control/navigation-control off, tips off,
+  recommendation nags off, minimap + breadcrumbs off; `--disable-getting-started-override` joins
+  the argv. Because the seed is only-if-absent, `seedUserSettings` now also REWRITES a file that
+  is byte-identical to any seed in `obsoleteSeeds` — pristine by construction (the workbench
+  rewrites the file on any user edit), so this is seed evolution, not a migration; anything else
+  stays untouchable. Every lean key is user-scope — flipping it back in the workbench UI sticks.

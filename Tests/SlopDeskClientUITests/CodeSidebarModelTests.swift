@@ -116,6 +116,49 @@ final class CodeSidebarModelTests: XCTestCase {
         try XCTAssertEqual(model.phase, .ready(XCTUnwrap(URL(string: "http://h:7000/?folder=/p"))))
     }
 
+    func testPollLocalizesOnlyTheReadyRound() async throws {
+        let model = CodeSidebarModel()
+        let round = Counter()
+        let localized = Counter()
+        // starting → ready: localize must rewrite ONLY the ready endpoint (a starting endpoint has
+        // no meaningful port to front), and the URL must carry the LOCAL host + port.
+        await model.poll(
+            projectRoot: "/p",
+            host: { "mesh-host" },
+            ensure: { _ in
+                round.next() == 0
+                    ? MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+                    : MetadataCodec.CodeServerEndpoint(state: .ready, port: 6000)
+            },
+            localize: { host, port in
+                XCTAssertEqual(host, "mesh-host")
+                XCTAssertEqual(port, 6000)
+                _ = localized.next()
+                return ("127.0.0.1", 50001)
+            },
+            interval: .zero,
+        )
+        try XCTAssertEqual(
+            model.phase, .ready(XCTUnwrap(URL(string: "http://127.0.0.1:50001/?folder=/p"))),
+        )
+        XCTAssertEqual(localized.value, 1)
+    }
+
+    func testPollWithoutLocalizeKeepsTheRemoteEndpoint() async throws {
+        // The fallback identity: no localize hook (or a failed bind returning its input) means the
+        // remote address rides straight into the URL — the pre-proxy behavior, byte for byte.
+        let model = CodeSidebarModel()
+        await model.poll(
+            projectRoot: "/p",
+            host: { "mesh-host" },
+            ensure: { _ in .init(state: .ready, port: 6000) },
+            interval: .zero,
+        )
+        try XCTAssertEqual(
+            model.phase, .ready(XCTUnwrap(URL(string: "http://mesh-host:6000/?folder=/p"))),
+        )
+    }
+
     func testRequestReloadBumpsGeneration() {
         let model = CodeSidebarModel()
         XCTAssertEqual(model.generation, 0)

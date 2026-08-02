@@ -47,17 +47,31 @@ final class CodeSidebarModel {
     /// target can change mid-loop (a reconnect to a different host must not bake in the stale name).
     /// The not-yet-running phases re-poll fast (a boot is seconds); `unavailable`/`offline` back off —
     /// they only change on operator action (install / reconnect).
+    ///
+    /// `localize` rewrites a READY remote endpoint to the address the webview should actually load —
+    /// the loopback-proxy hook (`CodeSidebarProxyPool`): `http://127.0.0.1:<stable port>` is a SECURE
+    /// browser context (no code-server "insecure context" toast, working clipboard/crypto APIs) and a
+    /// STABLE origin across code-server respawns (workbench localStorage survives). It must return
+    /// the input unchanged on failure — never nil, never a trap.
     func poll(
         projectRoot: String,
         host: @MainActor () -> String?,
         ensure: (String) async -> MetadataCodec.CodeServerEndpoint?,
+        localize: ((_ host: String, _ port: UInt16) async -> (host: String, port: UInt16))? = nil,
         interval: Duration = .milliseconds(900),
     ) async {
         phase = .starting
         while !Task.isCancelled {
-            let endpoint = await ensure(projectRoot)
+            var endpoint = await ensure(projectRoot)
             guard !Task.isCancelled else { return }
-            phase = Self.phase(for: endpoint, host: host(), projectRoot: projectRoot)
+            var resolvedHost = host()
+            if let localize, let remote = endpoint, remote.state == .ready, let remoteHost = resolvedHost {
+                let local = await localize(remoteHost, remote.port)
+                guard !Task.isCancelled else { return }
+                resolvedHost = local.host
+                endpoint = .init(state: .ready, port: local.port)
+            }
+            phase = Self.phase(for: endpoint, host: resolvedHost, projectRoot: projectRoot)
             switch phase {
             case .ready: return
             case .starting: try? await Task.sleep(for: interval)

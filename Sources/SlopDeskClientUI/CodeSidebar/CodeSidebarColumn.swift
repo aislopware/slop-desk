@@ -65,6 +65,15 @@ struct CodeSidebarColumn: View {
                             projectRoot: root,
                             host: { [connection] in connection.target.host },
                             ensure: { [store] in await Self.ensureEndpoint(projectRoot: $0, store: store) },
+                            // Front the remote endpoint with the loopback relay: a secure browser
+                            // context (no insecure-context toast) on an origin that survives
+                            // respawns. On bind failure the remote address rides through — the ATS
+                            // arbitrary-loads exception keeps that fallback loadable.
+                            localize: { host, port in
+                                await CodeSidebarProxyPool.shared.endpoint(
+                                    projectRoot: root, host: host, port: port,
+                                ) ?? (host, port)
+                            },
                         )
                     }
             } else if awaitingProjectKey {
