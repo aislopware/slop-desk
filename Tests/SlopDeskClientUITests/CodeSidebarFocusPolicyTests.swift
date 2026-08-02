@@ -47,5 +47,36 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
             )
         }
     }
+
+    // MARK: Reserved app chords
+
+    func testAppManagementChordsAreReserved() {
+        // Quit / Hide / Hide Others / Minimize / window cycling belong to the APP even while the
+        // editor holds the keyboard — WKWebView's performKeyEquivalent would otherwise feed them to
+        // the page before the main menu ever sees them.
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "q"))
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "h"))
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command, .option], key: "h"))
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "m"))
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "`"))
+    }
+
+    func testDeviceDependentFlagBitsDoNotDefeatTheMatch() {
+        // Real events carry device-dependent bits (left/right key distinction, caps state) on top
+        // of `.command` — the policy must match on the chord, not raw-value equality.
+        let raw = NSEvent.ModifierFlags([.command, .init(rawValue: 0x108)])
+        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: raw, key: "q"))
+    }
+
+    func testEditorChordsStayWithTheWorkbench() {
+        // The user focused the editor on purpose: its own keymap keeps everything else.
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "w"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "p"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: ","))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command, .shift], key: "q"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.option], key: "q"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [], key: "q"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: nil))
+    }
 }
 #endif

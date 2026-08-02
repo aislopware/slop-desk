@@ -33,6 +33,28 @@ enum CodeSidebarFocusPolicy {
             false
         }
     }
+
+    /// App/window-management chords the embedded workbench may NEVER own. `WKWebView`'s
+    /// `performKeyEquivalent` claims ⌘-chords for the page BEFORE the main menu gets a look, so with
+    /// the editor focused ⌘Q simply vanished into VS Code's key handling instead of quitting. These
+    /// are refused at the responder seam (the event falls through to the menu bar); everything else —
+    /// ⌘W (close editor tab), ⌘, (VS Code settings), ⌘P/⌘F/… — stays with the workbench, which the
+    /// user focused ON PURPOSE (the click-to-focus rule above). Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`. The key arrives as `charactersIgnoringModifiers` lowercased.
+    static func isReservedAppChord(modifiers: NSEvent.ModifierFlags, key: String?) -> Bool {
+        guard let key else { return false }
+        let chord = modifiers.intersection([.command, .shift, .option, .control])
+        switch (chord, key) {
+        case ([.command], "q"), // Quit
+             ([.command], "h"), // Hide SlopDesk
+             ([.command, .option], "h"), // Hide Others
+             ([.command], "m"), // Minimize
+             ([.command], "`"): // Cycle app windows
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
@@ -53,6 +75,17 @@ final class CodeSidebarWKWebView: WKWebView {
     private func eventLandsInside(_ event: NSEvent) -> Bool {
         guard let window, event.window === window else { return false }
         return bounds.contains(convert(event.locationInWindow, from: nil))
+    }
+
+    /// Refuse the app-reserved chords (``CodeSidebarFocusPolicy/isReservedAppChord(modifiers:key:)``)
+    /// so they continue up to the main menu — WebKit's own implementation forwards ⌘-chords to the
+    /// page and returns `true`, which is how a focused editor swallowed ⌘Q whole.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if CodeSidebarFocusPolicy.isReservedAppChord(
+            modifiers: event.modifierFlags,
+            key: event.charactersIgnoringModifiers?.lowercased(),
+        ) { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }
 

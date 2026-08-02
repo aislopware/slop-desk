@@ -361,6 +361,13 @@ public enum SettingsKey {
     /// the bare ``codeSidebarCollapsed`` name for the typed accessor.
     public static let codeSidebarCollapsedKey = "shell.codeSidebarCollapsed"
 
+    /// The RIGHT code panel's last dragged width in points (`shell.codeSidebarWidth`), default `0` =
+    /// never dragged (the panel opens at its minimum). Written when a code-divider drag settles;
+    /// applied on launch (panel starting expanded) and on every expand — without it the panel forgot
+    /// its width across relaunch (the split item's thickness is session state AppKit never persists).
+    /// `Key` suffix frees the bare ``codeSidebarWidth`` name for the typed accessor.
+    public static let codeSidebarWidthKey = "shell.codeSidebarWidth"
+
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
     /// (`inherit` / `home` / an absolute path). Read at the new-window fire-site.
@@ -915,6 +922,9 @@ public extension Defaults.Keys {
     // The RIGHT code panel's collapse flag — persisted (a workstyle choice, see the key's doc);
     // default `true` (hidden on a fresh install).
     static let codeSidebarCollapsed = Key<Bool>(slopDesk: SettingsKey.codeSidebarCollapsedKey, default: true)
+    // The RIGHT code panel's last dragged width (points) — persisted like its collapse flag;
+    // `0` = never dragged (open at the minimum).
+    static let codeSidebarWidth = Key<Double>(slopDesk: SettingsKey.codeSidebarWidthKey, default: 0)
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
     static let workingDirectoryNewWindow = Key<String>(

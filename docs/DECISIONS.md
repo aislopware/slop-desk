@@ -6273,3 +6273,18 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   page must surface, never an eternal spinner. A reload re-veils through the same delegate
   events; a warm project swap mounts unveiled. `navigationDelegate` is WEAK — the pool retains
   the observer beside the webview.
+
+### The code panel remembers its width; the app keeps its own chords (2026-08-02)
+
+- ✅ **`shell.codeSidebarWidth` persists the panel's dragged width** (default `0` = never dragged →
+  open at the 380 minimum), written when a code-divider drag settles — the only gesture that
+  changes it — and applied through the SAME clamp as a live drag at launch (`viewDidAppear`,
+  panel starting expanded) and in the expand animation's COMPLETION (a `setPosition`
+  mid-animation loses to the collapse animation's final frame). The left sidebar deliberately
+  restores nothing (capped, session-scoped).
+- ✅ **WKWebView's `performKeyEquivalent` claims ⌘-chords for the page before the menu bar sees
+  them** — a focused workbench swallowed ⌘Q whole. `CodeSidebarWKWebView` now refuses the
+  app/window-management set (⌘Q, ⌘H, ⌥⌘H, ⌘M, ⌘`) so those fall through to the main menu;
+  everything else (⌘W = close editor tab, ⌘,, ⌘P…) stays with the editor the user deliberately
+  focused. Pure `CodeSidebarFocusPolicy.isReservedAppChord` truth table, pinned — including the
+  device-dependent-bits case (match the chord, not raw equality).

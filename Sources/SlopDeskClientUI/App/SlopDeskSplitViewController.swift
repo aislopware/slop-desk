@@ -8,6 +8,7 @@
 
 #if os(macOS)
 import AppKit
+import Defaults
 import ObjectiveC
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -231,6 +232,31 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         pinWindowAppearance()
+        // A panel expanded AT LAUNCH must come back at its persisted width — the split item's
+        // thickness is session state AppKit never saves. (An expand-toggle mid-session restores via
+        // `applyItemCollapse`'s completion instead.) Here the window frame is final.
+        restoreCodeSidebarWidth()
+    }
+
+    /// Re-apply the persisted code-panel width (`Defaults[.codeSidebarWidth]`, written when a
+    /// divider drag settles). No-op while collapsed, on a never-dragged install (`0`), or when the
+    /// panel already sits within a point of the target. The saved width runs through the SAME clamp
+    /// as a live drag, so a smaller screen degrades to the widest position both floors allow.
+    private func restoreCodeSidebarWidth() {
+        let saved = CGFloat(Defaults[.codeSidebarWidth])
+        guard saved > 0,
+              codeSidebarItem?.isCollapsed == false,
+              splitView.arrangedSubviews.count == 3,
+              let panel = splitView.arrangedSubviews.last
+        else { return }
+        guard abs(panel.frame.width - saved) > 1 else { return }
+        let target = Self.clampedCodeDividerPosition(
+            proposed: splitView.bounds.width - splitView.dividerThickness - saved,
+            contentMinX: splitView.arrangedSubviews[1].frame.minX,
+            splitWidth: splitView.bounds.width,
+            dividerThickness: splitView.dividerThickness,
+        )
+        splitView.setPosition(target, ofDividerAt: 1)
     }
 
     /// Pin the WINDOW's `NSAppearance` to the active theme. Factored out so both `viewDidAppear` (first
@@ -292,7 +318,19 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // idempotency guard in `setResizeSuspended` prevents a double-flush).
         resizeForwardingSuspended = true
         store.setTerminalResizeSuspended(true)
-        item.animator().isCollapsed = collapsed
+        // The code panel re-expands at its persisted width — applied in the animation's completion
+        // (a `setPosition` mid-animation is overridden by the collapse animation's final frame).
+        // The left sidebar restores nothing: its width is capped/session-scoped by design.
+        if item === codeSidebarItem, !collapsed {
+            NSAnimationContext.runAnimationGroup { _ in
+                item.animator().isCollapsed = collapsed
+            } completionHandler: { [weak self] in
+                // Fires on the main thread; the handler's type is just not annotated.
+                MainActor.assumeIsolated { self?.restoreCodeSidebarWidth() }
+            }
+        } else {
+            item.animator().isCollapsed = collapsed
+        }
     }
 }
 
@@ -349,6 +387,12 @@ private final class FlatDividerSplitView: NSSplitView {
             // Rebuild the hover cursors for the widths the drag settled on (a drag that ends
             // pinned at a limit must immediately hover as one-directional).
             window.invalidateCursorRects(for: self)
+            // Persist the settled panel width — the ONLY gesture that changes it (window resizes
+            // hold the panel at its width via the holding priorities), so save-on-release is the
+            // complete write set for the restore in `restoreCodeSidebarWidth`.
+            if let panel = arrangedSubviews.last {
+                Defaults[.codeSidebarWidth] = Double(panel.frame.width)
+            }
         }
         while true {
             guard let next = window.nextEvent(
