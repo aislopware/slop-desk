@@ -60,6 +60,7 @@ struct SlateTitlebar: View {
     }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
+    private var codeSidebarVisible: Bool { !chrome.codeSidebarCollapsed }
 
     /// Pointer-in-top-strip — the reveal gate for both reopen buttons (`HoverSensor` below).
     @State private var topHover = false
@@ -85,8 +86,11 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the connection cluster (collapsed-LEFT-sidebar fallback only; the sidebar footer
-            // is its resting home).
+            // Right: the CODE panel REOPEN (only while the panel is collapsed — the expanded toggle
+            // lives inside the panel's own strip, exactly the left sidebar's split of duties), with
+            // the connection cluster beside it (collapsed-LEFT-sidebar fallback only; the sidebar
+            // footer is its resting home). The reopen slot is ALWAYS reserved (hidden ⇒ transparent,
+            // not absent) so the cluster never shifts when the panel toggles — the zero-shift rule.
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -97,6 +101,17 @@ struct SlateTitlebar: View {
                         onConnect: onConnect,
                     )
                 }
+                // The CODE glyph (`</>`), not `sidebar.right` — this toggle opens the embedded
+                // editor and must read differently from the left `sidebar.left`. Same hover +
+                // settle choreography as the left reopen button.
+                PlateIconButton(symbol: .chevronLeftForwardslashChevronRight) { chrome.toggleCodeSidebar() }
+                    .opacity(!codeSidebarVisible && topHover ? 1 : 0)
+                    .allowsHitTesting(!codeSidebarVisible && topHover)
+                    .animation(
+                        codeSidebarVisible ? nil : Slate.Anim.standard.delay(0.15),
+                        value: codeSidebarVisible,
+                    )
+                    .animation(Slate.Anim.smallFade, value: topHover)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)

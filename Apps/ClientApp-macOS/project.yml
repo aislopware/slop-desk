@@ -62,6 +62,12 @@ targets:
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
+        # The CODE panel's WKWebView loads the host's code-server over plain HTTP on the WireGuard
+        # mesh (security = the mesh, no app-layer crypto by invariant). ATS only exempts literal
+        # localhost, so without this the workbench is silently blank on any real (non-loopback)
+        # host address.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
     entitlements:
       path: ClientApp-macOS.entitlements
       properties:

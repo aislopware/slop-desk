@@ -191,7 +191,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // the injected chrome closure like the Tabs panel, so the ⌘⇧R chord, the menu row, and this
         // row's ✓ all flip/read the same live `chrome.codeSidebarCollapsed`.
         PaletteItem(
-            id: "action.toggleCodeSidebar", icon: "sidebar.right", title: "Toggle Code Panel",
+            id: "action.toggleCodeSidebar", icon: "chevron.left.forwardslash.chevron.right", title: "Toggle Code Panel",
             subtitle: nil, shortcut: glyph(.toggleCodeSidebar), filter: .actions, category: .view,
             action: .toggleCodeSidebar,
         ),

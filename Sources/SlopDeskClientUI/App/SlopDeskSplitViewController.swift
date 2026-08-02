@@ -139,7 +139,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         //    pooled WKWebView (and its web-content process) survives for a warm re-expand. Same holding
         //    priority as the left sidebar so a window resize grows the CONTENT column.
         let codeColumn = NSHostingController(
-            rootView: CodeSidebarColumn(store: store, connection: connection)
+            rootView: CodeSidebarColumn(store: store, connection: connection, chrome: chrome)
                 .overlayCoordinator(overlay),
         )
         let codeSidebarItem = NSSplitViewItem(viewController: codeColumn)
@@ -308,6 +308,72 @@ private final class FlatDividerSplitView: NSSplitView {
         NSBezierPath(rect: rect).fill()
     }
 
+    /// The CODE-panel divider (content | code) is dragged by hand, not by AppKit's built-in
+    /// constraint tracking — the host-rail lesson, restored with the panel. AppKit's
+    /// `_doConstraintBasedDragDivider` pins the drag at a priority derived from the LEADING item's
+    /// holding priority, so a trailing item that holds HARDER than its leading neighbour (panel 260
+    /// > content 250 — deliberate, window-resize must feed the content) can never be grown by its
+    /// divider: the engine grows a hole at the split view's 749-priority trailing glue instead and
+    /// snaps everything back on release. The left divider is immune (its growing item is the
+    /// LEADING side). So for this divider we run the standard event-tracking loop ourselves and
+    /// place the divider each step via `setPosition(_:ofDividerAt:)`, which AppKit applies at a
+    /// priority the holds cannot veto.
+    override func mouseDown(with event: NSEvent) {
+        guard let divider = codeDividerIndex(under: event) else {
+            super.mouseDown(with: event)
+            return
+        }
+        trackCodeDividerDrag(with: event, dividerIndex: divider)
+    }
+
+    /// The code divider's index iff `event` grabs it: the LAST divider of a 3-column layout, hit
+    /// within the same ±few-pt slop AppKit's own hit-test claims for a `.thin` divider. A
+    /// COLLAPSED panel bows out (its divider is hidden; a click 4 pt from the window edge is a
+    /// content click, and drag-to-expand would desync the chrome collapse flag).
+    private func codeDividerIndex(under event: NSEvent) -> Int? {
+        guard arrangedSubviews.count == 3,
+              (delegate as? NSSplitViewController)?.splitViewItems.last?.isCollapsed == false
+        else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        guard dividerEffectiveRect(at: 1).insetBy(dx: -4, dy: 0).contains(point) else { return nil }
+        return 1
+    }
+
+    private func trackCodeDividerDrag(with event: NSEvent, dividerIndex: Int) {
+        guard let window else { return }
+        let grabX = convert(event.locationInWindow, from: nil).x
+        let startPosition = arrangedSubviews[dividerIndex].frame.maxX
+        dividerCursor(at: dividerIndex).push()
+        defer {
+            NSCursor.pop()
+            // Rebuild the hover cursors for the widths the drag settled on (a drag that ends
+            // pinned at a limit must immediately hover as one-directional).
+            window.invalidateCursorRects(for: self)
+        }
+        while true {
+            guard let next = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: .distantFuture, inMode: .eventTracking, dequeue: true,
+            ) else { continue }
+            if next.type == .leftMouseUp { return }
+            let x = convert(next.locationInWindow, from: nil).x
+            let target = clampCodeDividerPosition(startPosition + (x - grabX))
+            setPosition(target, ofDividerAt: dividerIndex)
+            window.layoutIfNeeded()
+            // Track the limit state live: pinned at min/max shows the one-way arrow mid-drag too.
+            dividerCursor(at: dividerIndex).set()
+        }
+    }
+
+    private func clampCodeDividerPosition(_ proposed: CGFloat) -> CGFloat {
+        SlopDeskSplitViewController.clampedCodeDividerPosition(
+            proposed: proposed,
+            contentMinX: arrangedSubviews[1].frame.minX,
+            splitWidth: bounds.width,
+            dividerThickness: dividerThickness,
+        )
+    }
+
     /// Divider `i`'s grab region: the gap between its neighbours, run through the delegate's
     /// `effectiveRect` refinement when offered (NSSplitViewController trims the titlebar strip off
     /// the top — a grab there belongs to window dragging, and the hover cursor must agree).
@@ -374,6 +440,20 @@ private final class FlatDividerSplitView: NSSplitView {
 }
 
 extension SlopDeskSplitViewController {
+    /// Clamp a proposed code-divider position to the band both floors allow: the content keeps at
+    /// least ``contentMinWidth`` and the panel at least ``codeSidebarMinWidth`` (no upper cap — the
+    /// workbench happily takes half the window). Drag-to-collapse is deliberately not offered — the
+    /// panel HIDES via its toggle (⌘⇧R / titlebar / palette), never by shoving the divider. In an
+    /// over-constrained window (both floors cannot hold) the PANEL's floor wins: the divider can
+    /// then only be pushed toward the panel's floor, never below it.
+    static func clampedCodeDividerPosition(
+        proposed: CGFloat, contentMinX: CGFloat, splitWidth: CGFloat, dividerThickness: CGFloat,
+    ) -> CGFloat {
+        let lowest = contentMinX + contentMinWidth
+        let highest = splitWidth - dividerThickness - codeSidebarMinWidth
+        return CGFloat.minimum(CGFloat.maximum(proposed, lowest), highest)
+    }
+
     /// Whether a divider can move each way, PURELY from its neighbours' width ranges — no
     /// drag-to-collapse affordance (this app collapses via toggles only, so a divider pinned at a
     /// limit really is immovable that way and the cursor must say so). Moving LEFT shrinks the

@@ -759,7 +759,7 @@ public enum WorkspaceBindingRegistry {
         WorkspaceBinding(
             id: "view.toggleCodeSidebar", action: .toggleCodeSidebar, title: "Toggle Code Panel",
             category: .view, chord: KeyChord(character: "r", [.command, .shift]),
-            symbol: "sidebar.right",
+            symbol: "chevron.left.forwardslash.chevron.right",
             keywords: "code panel vscode editor ide right sidebar hide show collapse code-server",
         ),
         // Pin Window ("View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
