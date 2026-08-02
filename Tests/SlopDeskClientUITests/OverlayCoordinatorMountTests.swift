@@ -149,8 +149,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     }
 
     /// The namespaced recents row is cosmetic only — its `action` is the catalog verb, so accepting it still
-    /// mutates the store. The zero-state now LEADS with WORKING DIRECTORY (Copy Path), so the MRU recents row
-    /// is no longer index 0; locate it and pin that running it performs the New-Tab action.
+    /// mutates the store. The zero-state now LEADS with PANES then WORKING DIRECTORY (Copy Path), so the MRU
+    /// recents row is no longer index 0; locate it and pin that running it performs the New-Tab action.
     func testNamespacedRecentRowStillRunsCatalogAction() throws {
         let (overlay, store) = makeCoordinator()
         store.recordRecentCommand(.newPane(.terminal))
@@ -304,21 +304,23 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.paletteVisible, "a jump closes the palette")
     }
 
-    /// "grouped by section": the verbs-only zero-state LEADS with the WORKING DIRECTORY section (which
-    /// owns the cwd badge in the view) carrying the client-side Copy Path row, and the catalog is grouped into
-    /// multiple categories. Also pins that the removed Details-panel / Git-window rows stay gone. Fails on the
-    /// old flat catalog.
-    func testZeroStateLeadsWithWorkingDirectoryAndGroupsByCategory() throws {
+    /// "grouped by section": the verbs-only zero-state LEADS with the PANES jump section (the palette
+    /// doubles as a pane switcher, so the open panes are visible without scrolling past the catalog),
+    /// then the WORKING DIRECTORY section (which owns the cwd badge in the view) carrying the client-side
+    /// Copy Path row, and the catalog is grouped into multiple categories. Also pins that the removed
+    /// Details-panel / Git-window rows stay gone. Fails on the old flat catalog.
+    func testZeroStateLeadsWithPanesThenWorkingDirectoryAndGroupsByCategory() throws {
         let (overlay, _) = makeCoordinator()
         overlay.openPalette()
 
-        let firstSeparator = try XCTUnwrap(
-            overlay.rankedResults.first(where: \.item.isSeparator),
-            "the zero-state opens with a section header",
+        let separators = overlay.rankedResults.filter(\.item.isSeparator).map(\.item.title)
+        XCTAssertEqual(
+            separators.first, "Panes",
+            "the palette LEADS with the PANES jump section (the palette doubles as a pane switcher)",
         )
         XCTAssertEqual(
-            firstSeparator.item.title, PaletteCategory.workingDirectory.label,
-            "the palette LEADS with the WORKING DIRECTORY section (it owns the cwd badge)",
+            separators.dropFirst().first, PaletteCategory.workingDirectory.label,
+            "the WORKING DIRECTORY section (it owns the cwd badge) follows the pane list",
         )
 
         // The Copy Path row sits in the Working Directory category with the doc.on.doc icon.

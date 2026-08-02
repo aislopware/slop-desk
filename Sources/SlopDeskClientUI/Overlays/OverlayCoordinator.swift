@@ -324,8 +324,8 @@ public final class OverlayCoordinator {
 
     // MARK: Palette results (view binds these)
 
-    /// The current ordered, sectioned result list. Empty query ⇒ the sectioned zero-state (WORKING
-    /// DIRECTORY, then Recents, then the catalog grouped by category) so the palette is never blank.
+    /// The current ordered, sectioned result list. Empty query ⇒ the sectioned zero-state (PANES, then
+    /// WORKING DIRECTORY, then Recents, then the catalog grouped by category) so the palette is never blank.
     public var paletteResults: [PaletteItem] {
         guard let mixer else { return [] }
         let q = paletteQuery.trimmingCharacters(in: .whitespaces)
@@ -349,13 +349,22 @@ public final class OverlayCoordinator {
         return mixer.ranked(query: q, activeFilter: paletteFilter)
     }
 
-    /// Zero-state (empty query, no filter): the sectioned verb list. WORKING DIRECTORY leads (its header OWNS
-    /// the cwd badge, per command-palette.png) with its Copy Path row; then the MRU Recents block; then the
-    /// rest of the catalog grouped by category. Empty categories are skipped (no empty header). Hand-built (not
-    /// `mixer.ranked("")`) so the slopdesk-only Recents block can interleave after Working Directory.
+    /// Zero-state (empty query, no filter): the sectioned verb list. PANES leads (the palette doubles as a
+    /// pane switcher, so the jump rows are visible without scrolling past the whole catalog); then WORKING
+    /// DIRECTORY (its header OWNS the cwd badge, per command-palette.png) with its Copy Path row; then the
+    /// MRU Recents block; then the rest of the catalog grouped by category. Empty categories are skipped (no
+    /// empty header). Hand-built (not `mixer.ranked("")`) so the slopdesk-only Recents block can interleave
+    /// after Working Directory. TYPED queries keep the mixer's verbs-before-panes order (see
+    /// ``rebuildMixer()``) — this lead is a zero-state affordance, not a ranking change.
     private func zeroStateResults() -> [PaletteItem] {
         var out: [PaletteItem] = []
-        // Working Directory first — its header carries the cwd badge; Copy Path (+ TODO: host rows) below.
+        // The open panes (snapshotted in `rebuildMixer`) lead — the palette doubles as a pane switcher,
+        // so the list is visible before a query narrows it.
+        if !paneJumpItems.isEmpty {
+            out.append(.separator("Panes", filter: .tabs))
+            out.append(contentsOf: paneJumpItems)
+        }
+        // Working Directory next — its header carries the cwd badge; Copy Path (+ TODO: host rows) below.
         let workingDir = ActionsPaletteSource.items(in: .workingDirectory)
         if !workingDir.isEmpty {
             out.append(.separator(PaletteCategory.workingDirectory.label, filter: .actions))
@@ -380,12 +389,6 @@ public final class OverlayCoordinator {
         if !movePaneToTabItems.isEmpty {
             out.append(.separator("Move Pane", filter: .actions))
             out.append(contentsOf: movePaneToTabItems)
-        }
-        // The open panes (snapshotted in `rebuildMixer`) — the palette doubles as a pane switcher, so the
-        // list is visible before a query narrows it.
-        if !paneJumpItems.isEmpty {
-            out.append(.separator("Panes", filter: .tabs))
-            out.append(contentsOf: paneJumpItems)
         }
         return out
     }
