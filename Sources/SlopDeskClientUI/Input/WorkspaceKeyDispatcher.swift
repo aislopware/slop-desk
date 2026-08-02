@@ -92,6 +92,15 @@ final class WorkspaceKeyDispatcher {
     /// The pending hold timer — armed on the ⌘-down transition, cancelled by release / focus loss / a
     /// capturing overlay.
     private var shortcutHintTask: Task<Void, Never>?
+    /// The LIVE modifier state (`NSEvent.modifierFlags`, the class property — hardware truth, not an
+    /// event's snapshot). The hint's stuck-on guards read it, because the ⌘ KEY-UP is not guaranteed
+    /// to reach this monitor: ⌘⇥ hands the release to the NEXT app, and menu tracking swallows it in
+    /// its own event loop. Injectable so tests can hold/lift a phantom ⌘.
+    var readLiveModifiers: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
+    /// Clears the hint when the APP deactivates (⌘⇥ away mid-hold) — the one exit where no further
+    /// event of ANY kind reaches a local monitor, so neither the release path nor the keystroke
+    /// self-heal below can run. Installed with the monitor.
+    private var appResignObserver: NSObjectProtocol?
 
     init(
         store: WorkspaceStore,
@@ -150,6 +159,12 @@ final class WorkspaceKeyDispatcher {
             guard let self else { return event }
             return handle(event)
         }
+        appResignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main,
+        ) { [weak self] _ in
+            // `queue: .main` delivers on the main queue; hop into the actor formally.
+            MainActor.assumeIsolated { self?.updateShortcutHint(commandHeld: false) }
+        }
     }
 
     /// Remove the monitor (app-lifetime, so rarely called — exposed for tests). No `deinit`-time removal: the
@@ -158,6 +173,8 @@ final class WorkspaceKeyDispatcher {
     func teardown() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let appResignObserver { NotificationCenter.default.removeObserver(appResignObserver) }
+        appResignObserver = nil
         shortcutHintTask?.cancel()
         shortcutHintTask = nil
     }
@@ -178,6 +195,7 @@ final class WorkspaceKeyDispatcher {
         // Already armed or already showing (a ⌘⇧/⌘⌥ transition mid-hold lands here) — nothing to do.
         guard shortcutHintTask == nil, !store.shortcutHintActive else { return }
         guard shortcutHintHoldDelay > .zero else {
+            // The synchronous test path — the arming event itself just asserted ⌘ is down.
             store.setShortcutHintActive(true)
             return
         }
@@ -185,6 +203,13 @@ final class WorkspaceKeyDispatcher {
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
             shortcutHintTask = nil
+            // RE-VALIDATE AT FIRE TIME (the park-and-revalidate idiom): the arming transition is
+            // 250 ms stale by now, and the ⌘ key-up that would have cancelled this timer can be
+            // swallowed past the monitor entirely (menu tracking, an app switch completing). Showing
+            // on the timer's word alone is how the rail ends up numbered with no key held.
+            guard readLiveModifiers().contains(.command), isWorkspaceWindowKey(),
+                  !isOverlayCapturingKeys()
+            else { return }
             store.setShortcutHintActive(true)
         }
     }
@@ -194,6 +219,13 @@ final class WorkspaceKeyDispatcher {
     /// is unit-testable via `@testable` (a synthetic NSEvent is not a window-server resource — the hang-safety
     /// rule is about SCStream/VT/Metal, not NSEvent).
     func handle(_ event: NSEvent) -> NSEvent? {
+        // STUCK-HINT SELF-HEAL: a showing hint whose ⌘ is no longer physically down means the key-up
+        // was swallowed past this monitor (menu tracking runs its own event loop; an app switch hands
+        // the release to the next app). The next event of ANY kind — this one — clears it, so a
+        // stranded hint outlives its hold by at most one keystroke/modifier tick.
+        if store.shortcutHintActive, !readLiveModifiers().contains(.command) {
+            updateShortcutHint(commandHeld: false)
+        }
         // KEY-WINDOW GATE: the monitor is application-wide, but a workspace chord is meaningful ONLY when the
         // workspace window holds focus. If a separate window is key (Settings, a sheet), pass EVERY key through
         // UNCHANGED so that window (and the keybindings recorder) receives its own keystrokes instead of this
