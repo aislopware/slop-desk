@@ -1716,6 +1716,8 @@ final class GhosttyLayerBackedView: NSView {
             if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
         case let .openHost(path):
             model?.onRequestOpenHostPath?(path)
+        case let .openCodeHost(target):
+            model?.onRequestOpenCodeHostPath?(target)
         case let .revealHost(path):
             model?.onRequestRevealHostPath?(path)
         }
