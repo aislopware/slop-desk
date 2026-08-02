@@ -165,6 +165,13 @@ final class CodeSidebarWebViewPool {
         let configuration = WKWebViewConfiguration()
         // No user-gesture gate on media — VS Code's own UI sounds/previews must not silently stall.
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        // The finishing coat (nerd-font @font-face + slopcat letterpress) rides every navigation —
+        // user scripts persist on the controller, so a reload/respawn re-dresses itself.
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.dressingScriptSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true,
+        ))
         let webView = CodeSidebarWKWebView(frame: .zero, configuration: configuration)
         // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
         // window into a misbehaving code-server page.
@@ -190,6 +197,17 @@ final class CodeSidebarWebViewPool {
     func reload(projectRoot: String) {
         webViews[projectRoot]?.reload()
     }
+
+    /// The dressing user-script source, built ONCE per process — the base64 nerd-font payload is
+    /// ~3 MB, shared by every pooled webview. A missing bundle resource degrades to the
+    /// letterpress-only sheet (`styleSheet(nerdFontBase64: nil)`), never a crash.
+    private static let dressingScriptSource: String = CodeSidebarPageDressing.userScript(
+        styleSheet: CodeSidebarPageDressing.styleSheet(
+            nerdFontBase64: NerdSymbolFont.bundledFontURL
+                .flatMap { try? Data(contentsOf: $0) }?
+                .base64EncodedString(),
+        ),
+    )
 
     /// Whether the key window's first responder sits inside ANY pooled webview — the
     /// `WorkspaceKeyDispatcher`'s webview-yield predicate (while true, the embedded VS Code owns the

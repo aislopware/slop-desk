@@ -345,15 +345,32 @@ final class CodeServerManagerTests: XCTestCase {
         let settings = try XCTUnwrap(object as? [String: Any])
         XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
-        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal, and the
-        // activity bar folded into the top of the sidebar (one column in a narrow panel).
+        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
-        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
+        // The chrome-less recipe: the activity bar must be "hidden" — "top"/"bottom" FORCES the
+        // workbench title bar visible (and rewrites customTitleBarVisibility back to "auto"); only
+        // with it hidden, the menu bar hidden, and the strips off does "never" stick.
+        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "hidden")
+        XCTAssertEqual(settings["window.customTitleBarVisibility"] as? String, "never")
+        XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
+        XCTAssertEqual(settings["workbench.statusBar.visible"] as? Bool, false)
         // The file tree hugs the window's right edge — the panel hangs off it.
         XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
+        // The editor face matches the terminal's defaults: ui-monospace → SF Mono, 13pt, with the
+        // bundled nerd face as the private-use fallback (the client injects the @font-face; the
+        // family NAME here must match `CodeSidebarPageDressing.nerdFontFamilyName`).
+        let fontFamily = try XCTUnwrap(settings["editor.fontFamily"] as? String)
+        XCTAssertTrue(fontFamily.hasPrefix("ui-monospace"))
+        XCTAssertTrue(fontFamily.contains("'Symbols Nerd Font'"))
+        XCTAssertEqual(settings["editor.fontSize"] as? Int, 13)
+        // Any surface that ever renders the title says the project, never "code-server".
+        XCTAssertEqual(
+            settings["window.title"] as? String,
+            "${dirty}${activeEditorShort}${separator}${rootName}",
+        )
         // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
     }

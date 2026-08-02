@@ -254,25 +254,39 @@ final class CodeServerManager: @unchecked Sendable {
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's OWN
     /// theme (`SlopDesk Monokai`, the seeded extension below — the Monokai Pro filter the whole
-    /// client chrome derives from, chrome accents neutralized), without the Welcome tab, and LEAN:
-    /// the panel is a working surface beside a terminal, so the AI/chat surfaces, the
-    /// command-center strip, the layout/navigation title-bar controls, the minimap, and the
-    /// breadcrumbs all go — the activity bar folds into the TOP of the primary sidebar (one
-    /// column, not two, in a 380pt-min panel), and the sidebar itself sits on the RIGHT (the panel
-    /// hangs off the window's right edge, so the file tree hugs that edge and the editor faces the
-    /// terminal). Auto-save on focus change: the terminal pane beside the editor is where
-    /// builds/tests run, and switching to it IS the moment the file must be on disk. Every key
-    /// here is USER-scope-overridable
-    /// in the workbench (user settings land in this same file and win on conflict-free keys the
-    /// user later edits — see the pristine-upgrade rule in ``seedUserSettings(at:)``).
+    /// client chrome derives from, chrome accents neutralized) and CHROME-LESS, the panel's top
+    /// edge being the EXPLORER header itself: title bar, activity bar, menu bar, and status bar
+    /// all hidden. Ordering matters to the workbench, not just taste — `activityBar.location`
+    /// "top"/"bottom" (the old v3–v5 fold) FORCES the title bar visible and even rewrites a
+    /// `customTitleBarVisibility: "never"` back to `"auto"`; only "hidden" (plus command
+    /// center / layout / navigation controls off and the menu bar hidden) lets "never" stick.
+    /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
+    /// deliberately passes through), matching the app's zero-chrome register. The sidebar sits on
+    /// the RIGHT (the panel hangs off the window's right edge, so the file tree hugs that edge
+    /// and the editor faces the terminal). The editor face matches the terminal's: `ui-monospace`
+    /// resolves to SF Mono in WebKit — the terminal's default family — at the terminal's default
+    /// 13pt, falling back to "Symbols Nerd Font" for the private-use glyphs SF Mono lacks (the
+    /// client injects that face as an @font-face data URI — `CodeSidebarPageDressing`; the name
+    /// here and the name there must agree). Status-bar duties are already covered app-side (the project git readout) or by
+    /// chords (⌘⇧M problems); `window.title` drops the `${appName}` suffix so any surface that
+    /// ever renders it says the project, not "code-server". Auto-save on focus change: the
+    /// terminal pane beside the editor is where builds/tests run, and switching to it IS the
+    /// moment the file must be on disk. Every key here is USER-scope-overridable in the workbench
+    /// (user settings land in this same file and win on conflict-free keys the user later edits —
+    /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
         "workbench.colorTheme": "SlopDesk Monokai",
         "workbench.startupEditor": "none",
-        "workbench.activityBar.location": "top",
+        "workbench.activityBar.location": "hidden",
         "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.customTitleBarVisibility": "never",
+        "window.menuBarVisibility": "hidden",
+        "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+        "window.density.editorTabHeight": "compact",
+        "workbench.statusBar.visible": false,
+        "workbench.editor.empty.hint": "hidden",
         "chat.disableAIFeatures": true,
         "chat.commandCenter.enabled": false,
         "window.commandCenter": false,
@@ -282,6 +296,10 @@ final class CodeServerManager: @unchecked Sendable {
         "extensions.ignoreRecommendations": true,
         "editor.minimap.enabled": false,
         "breadcrumbs.enabled": false,
+        "editor.fontFamily": "ui-monospace, Menlo, 'Symbols Nerd Font', monospace",
+        "editor.fontSize": 13,
+        "editor.overviewRulerBorder": false,
+        "editor.hideCursorInOverviewRuler": true,
         "files.autoSave": "onFocusChange"
     }
     """
@@ -339,6 +357,28 @@ final class CodeServerManager: @unchecked Sendable {
             "workbench.colorTheme": "Default Dark Modern",
             "workbench.startupEditor": "none",
             "workbench.activityBar.location": "top",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.customTitleBarVisibility": "never",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v5 — the SlopDesk Monokai theme + sidebar right; activity bar still folded into the
+        // sidebar top, which force-showed the workbench title bar.
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
             "workbench.secondarySideBar.defaultVisibility": "hidden",
             "window.customTitleBarVisibility": "never",
             "chat.disableAIFeatures": true,

@@ -6358,3 +6358,33 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
 - ✅ **Toggle icon = SF `sidebar.right`** (palette row too), replacing `</>` — otty's actual
   lesson is "use the system vocabulary", and the right panel is a generic tab surface (code
   today, more tabs later), never a code-specific mark.
+
+### The workbench goes fully chrome-less; fonts sync; the slopcat letterpress (2026-08-03)
+
+> User-directed: "làm triệt để" on the workbench-UI research — ship the max-lean variant, and
+> sync both the UI and monospace faces with the app, nerd-font fallback included.
+
+- ✅ **Seed v6 = the chrome-less recipe.** Dissecting the shipped workbench bundle found the
+  force-show rule: `activityBar.location` "top"/"bottom" (the v3–v5 fold) FORCES the title bar
+  visible and even rewrites `customTitleBarVisibility: "never"` back to `"auto"`. The recipe
+  that lets "never" stick: activity bar `"hidden"`, menu bar hidden, command-center /
+  layout / navigation controls off. Status bar hidden too (its duties live app-side: the git
+  readout; ⌘⇧M for problems). The panel's top edge is now the EXPLORER header itself; view
+  switching is keyboard-first (⌘⇧E/⌘⇧F/⌃⇧G — chords the webview already passes through).
+  Plus: compact tab height, empty-editor text hints off, overview-ruler border off,
+  `window.title` drops `${appName}` ("code-server" never renders). Three variants were built
+  and screenshotted; max-lean won. v5 joined `obsoleteSeeds` (verified byte-pristine after a
+  real 30s workbench boot — the "never"→"auto" rewrite only fires on runtime config changes).
+- ✅ **Fonts match the app on all three axes.** Workbench UI font already IS the app's (web
+  default `-apple-system` → SF — nothing seeded). Editor: `ui-monospace` → SF Mono in WebKit,
+  the terminal's default family, at the terminal's default 13pt. Nerd glyphs: the WebContent
+  process cannot see the app's `CTFontManager` process-scope registration, so the bundled
+  Symbols Nerd Font rides into the page as an @font-face data URI (~3 MB, built once per
+  process) via a `WKUserScript`, and the seeded `editor.fontFamily` lists
+  `'Symbols Nerd Font'` before `monospace` — agent marks and powerline glyphs render in the
+  editor exactly as in the terminal chrome.
+- ✅ **The empty-editor letterpress is the slopcat.** code-server's stock watermark is its own
+  logo; the same injected stylesheet overrides `.editor-group-watermark .letterpress` with
+  `docs/brand/logo-slopcat.svg` (ink made literal `#727072` — a data-URI SVG resolves
+  `currentColor` to black — at the stock `opacity=".3"` subtlety). All builders are pure
+  (`CodeSidebarPageDressing`, pinned headlessly); the WebKit wiring stays out of unit reach.

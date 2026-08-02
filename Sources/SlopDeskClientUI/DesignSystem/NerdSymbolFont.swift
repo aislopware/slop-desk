@@ -19,12 +19,19 @@ enum NerdSymbolFont {
     /// registration.
     static let postScriptName = "SymbolsNF"
 
+    /// The bundled TTF — registration below, and the code sidebar's @font-face injection (the
+    /// webview's WebContent process cannot see a `CTFontManager` process-scope registration, so it
+    /// gets the same bytes as a data URI).
+    static var bundledFontURL: URL? {
+        Bundle.module.url(
+            forResource: "SymbolsNerdFont-Regular", withExtension: "ttf", subdirectory: "Fonts",
+        )
+    }
+
     /// One-shot process registration of the bundled TTF. `true` once the face is available (or already
     /// was — e.g. the user installed it system-wide, which `CTFontManager` reports as already-registered).
     static let registered: Bool = {
-        guard let url = Bundle.module.url(
-            forResource: "SymbolsNerdFont-Regular", withExtension: "ttf", subdirectory: "Fonts",
-        ) else { return false }
+        guard let url = bundledFontURL else { return false }
         var error: Unmanaged<CFError>?
         if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) { return true }
         // Already registered (system-installed or a second bundle) still means the face resolves.
