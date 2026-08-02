@@ -31,6 +31,13 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
+    /// The row's ⌘-digit — non-`nil` only while ⌘ is held past the dispatcher's hold threshold AND
+    /// this pane is one of the first nine in the sidebar's drawn order
+    /// (``WorkspaceStore/shortcutNumber(for:)``). Takes the title's LEADING run: the number stands
+    /// where the `✳` agent mark otherwise does (the mark yields for the hold — both are leading
+    /// state, and stacking them would jitter the title), in the instrument mono so it reads as
+    /// chrome answering "what do I press", not as title text.
+    var shortcutHint: Int?
     /// The fused status kind for the row — the FULL resolver output, busy tiers included. Every
     /// lifecycle kind renders as the trailing ring mark's hue (attention kinds also bump the
     /// title's weight); only the privilege markers (`#`/`∞`) occupy the slot as TEXT
@@ -99,13 +106,25 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
+                // The ⌘-held digit hint — a fixed-width leading slot so the numbers read as ONE
+                // column down the rail. It REPLACES the ✳ mark's leading position rather than
+                // joining it: while the hint is up the question is "what do I press", and the ✳
+                // returns the instant ⌘ lifts. Decorative for AX (the chord is spoken by the menu
+                // and cheat sheet; the title keeps its own label).
+                if let shortcutHint {
+                    Text("\(shortcutHint)")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .semibold))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .frame(width: 14, alignment: .leading)
+                        .accessibilityHidden(true)
+                }
                 // `agentMarkedTitle` pins the ✳ to TEXT presentation (bare U+2733 renders as emoji
                 // on Apple platforms, which would break the ink-only title run) and keeps a title
                 // already led by the normalized mark (`normalizedProgramTitle`) single-marked.
                 // `nerdAware` so a private-use glyph riding a program title draws from the bundled
                 // symbols face.
                 Text.nerdAware(
-                    agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
+                    agentMarker && shortcutHint == nil ? RailRowsBuilder.agentMarkedTitle(title) : title,
                     size: Slate.Typeface.body,
                 )
                 // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:

@@ -1056,6 +1056,19 @@ public final class WorkspaceStore {
     /// transient overlay never outlives the gesture that made it.
     var paneSwitcherFocusBeforePreview: DeviceFocus?
 
+    /// `true` while the sidebar shows its ⌘-digit NUMBER hints — ⌘ held past the hold threshold.
+    /// `WorkspaceKeyDispatcher` owns the NSEvent monitor and the timing; this is only the observable
+    /// fact the rail rows read (each swaps its leading run for ``shortcutNumber(for:)``). Purely local
+    /// presentation state, like ``paneSwitcher``.
+    public private(set) var shortcutHintActive = false
+
+    /// Set by the key dispatcher on ⌘ transitions. Change-guarded so the `.flagsChanged` stream (one
+    /// event per modifier transition, hint or not) never invalidates the rail's observers for free.
+    public func setShortcutHintActive(_ active: Bool) {
+        guard shortcutHintActive != active else { return }
+        shortcutHintActive = active
+    }
+
     /// The TREE panes this device has navigated to, most-recent first, deduped and capped. The switcher's
     /// recency source (``WorkspaceStore/paneSwitcherMRU`` composes it with the host's tab ring).
     ///

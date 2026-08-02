@@ -1029,11 +1029,18 @@ private struct SidebarLiveRow: View {
         // running COMMAND mounts no mark at all — the trailing ring is the agent's column.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
+        // The ⌘-held digit hint — read LIVE here, never via the memoized row: closing a pane
+        // renumbers every pane after it in the drawn order without touching any surviving row's
+        // `leafIdentity`, so an init-param number could go stale inside the lazy container (the
+        // same class of bug as the frozen title). `nil` (the resting state, or a row past ⌘9)
+        // keeps the row's normal leading run.
+        let shortcutHint = store.shortcutHintActive ? store.shortcutNumber(for: row.id) : nil
         SlateTabRow(
             title: shownTitle,
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
+            shortcutHint: shortcutHint,
             // The FULL fused badge, busy tiers included — the row's own maps keep the busy kinds
             // out of the title ink, the slot text AND (since the mark became the agent's column)
             // the trailing ring.

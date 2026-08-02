@@ -23,11 +23,44 @@ public extension WorkspaceStore {
     /// split tree in pre-order DFS (``Tab/allPaneIDs()`` — the same walk the reconcile diff and the
     /// ⌘]/⌘[ cycle read).
     ///
-    /// This is the numbering ⌘1…⌘9 lands on and the tail every ⌃⇥ ring falls back to, which is why it
-    /// has to be an order the workspace already has rather than a new one: a pane's number then moves
-    /// only when a pane is opened, closed or moved, never because the user looked somewhere.
+    /// The tail every ⌃⇥ ring falls back to. NOT the ⌘1…⌘9 numbering — the digits count
+    /// ``displayOrderedPaneIDs()``, the project-grouped order the sidebar draws.
     func flatOrderedPaneIDs() -> [PaneID] {
         tree.activeSession?.tabs.flatMap { $0.allPaneIDs() } ?? []
+    }
+
+    /// The active session's panes in the order the sidebar DRAWS them: ``flatOrderedPaneIDs()``
+    /// re-bucketed through the SAME By-Project sectioning the rail renders
+    /// (``TabOrderingEngine/bucketedByProject(_:projectKey:)`` over each pane's OWN key — a
+    /// non-terminal / keyless pane in the "Other" bucket, matching `RailRowsBuilder`'s per-row key),
+    /// then flattened section by section.
+    ///
+    /// This is the numbering ⌘1…⌘9 lands on: the digit must name the row the EYE counts down the
+    /// sidebar, and the sidebar is project-grouped — the moment a new tab for an already-open project
+    /// appends past a different project's tab, creation order and drawn order disagree (the pane-level
+    /// twin of ``TabOrderingEngine/projectGroupedTabOrder(_:projectKey:)``, which exists for the same
+    /// reason at tab granularity). Section collapse and the search filter are view state and
+    /// deliberately do NOT move numbers — a number moves only when a pane opens, closes, moves, or
+    /// changes project.
+    func displayOrderedPaneIDs() -> [PaneID] {
+        guard let session = tree.activeSession else { return [] }
+        let keyed = session.tabs.flatMap { tab in
+            tab.allPaneIDs().map { id -> (id: PaneID, key: String?) in
+                let kind = session.specs[id]?.kind ?? .terminal
+                return (id, kind == .terminal ? paneProjectKey(id) : nil)
+            }
+        }
+        return TabOrderingEngine.bucketedByProject(keyed, projectKey: \.key)
+            .flatMap { $0.elements.map(\.id) }
+    }
+
+    /// The ⌘-digit that focuses pane `id`, or `nil` when it has none (only the first NINE panes of
+    /// ``displayOrderedPaneIDs()`` get one — there is no ⌘10). The rail's ⌘-held number hint reads
+    /// this, so the digit a row shows and the pane ``selectPaneNumber(_:)`` lands on can never
+    /// disagree.
+    func shortcutNumber(for id: PaneID) -> Int? {
+        guard let index = displayOrderedPaneIDs().firstIndex(of: id), index < 9 else { return nil }
+        return index + 1
     }
 
     /// This store's reading of ``TabOrderingEngine/paneProjectKey(_:projectKey:cwd:)`` — pane `id`'s
@@ -79,16 +112,19 @@ public extension WorkspaceStore {
         selectTab(next)
     }
 
-    /// Focuses the `number`-th PANE (1-based) of the active session in ``flatOrderedPaneIDs()`` order —
-    /// the ⌘1…⌘9 command entry. A number past the pane count is a no-op (it clamps to nothing rather
-    /// than the last pane: a missing number simply does nothing, the native ⌘-digit idiom).
+    /// Focuses the `number`-th PANE (1-based) of the active session in ``displayOrderedPaneIDs()``
+    /// order — the ⌘1…⌘9 command entry. A number past the pane count is a no-op (it clamps to nothing
+    /// rather than the last pane: a missing number simply does nothing, the native ⌘-digit idiom).
     ///
     /// The digit names a PANE rather than a tab because the pane is this workspace's unit of work — it
     /// is what the sidebar lists, what ⌃⇥ walks and what a notification points at. Numbering tabs while
-    /// every other surface counts panes made ⌘3 mean one thing in the chord and another on screen.
+    /// every other surface counts panes made ⌘3 mean one thing in the chord and another on screen. And
+    /// it counts the DRAWN order, not creation order, because the digit is an act of pointing at the
+    /// rail: counting `session.tabs` while the rail groups by project made ⌘3 land on a row nowhere
+    /// near the third one on screen.
     /// Landing goes through ``revealPaneTree(_:)``, so a pane in a background tab brings its tab with it.
     func selectPaneNumber(_ number: Int) {
-        let panes = flatOrderedPaneIDs()
+        let panes = displayOrderedPaneIDs()
         let index = number - 1
         guard panes.indices.contains(index) else { return }
         revealPaneTree(panes[index])

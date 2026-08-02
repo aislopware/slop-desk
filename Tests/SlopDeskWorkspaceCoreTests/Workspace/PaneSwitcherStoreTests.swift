@@ -281,27 +281,55 @@ final class PaneSwitcherStoreTests: XCTestCase {
         XCTAssertEqual(activeTab(store), c, "the commit's own focus change did not cancel it")
     }
 
-    // MARK: - ⌘1…⌘9 (the same unit, counted in the session's flat order)
+    // MARK: - ⌘1…⌘9 (the same unit, counted in the sidebar's DRAWN order)
 
-    /// The digit names a PANE, in `flatOrderedPaneIDs()` order — tabs in creation order, panes within a
-    /// tab in DFS. A split tab therefore shifts the numbers of everything after it, which is exactly
-    /// what makes the number mean "the Nth pane" rather than "the Nth tab".
+    /// The digit names a PANE, in `displayOrderedPaneIDs()` order. With no project keys every pane
+    /// shares the "Other" bucket, so the drawn order IS the flat creation order here — and a split
+    /// tab shifts the numbers of everything after it, which is exactly what makes the number mean
+    /// "the Nth pane" rather than "the Nth tab".
     func testDigitSelectsTheNthPaneAcrossTabs() {
         let store = makeStore()
         let (a, b, _) = seedDivergentFixture(store)
         store.selectTab(0)
         store.splitActivePane(axis: .horizontal, kind: .terminal) // A now holds two panes
 
-        let flat = store.flatOrderedPaneIDs()
-        XCTAssertEqual(flat.count, 4, "two panes in A, one each in B and C")
+        let drawn = store.displayOrderedPaneIDs()
+        XCTAssertEqual(drawn, store.flatOrderedPaneIDs(), "keyless panes: one bucket, creation order")
+        XCTAssertEqual(drawn.count, 4, "two panes in A, one each in B and C")
 
         store.selectPaneNumber(3) // the FIRST pane of tab B, not tab C
-        XCTAssertEqual(activePane(store), flat[2])
+        XCTAssertEqual(activePane(store), drawn[2])
         XCTAssertEqual(activeTab(store), b, "the digit brought the owning tab with it")
 
         store.selectPaneNumber(2) // A's second pane
-        XCTAssertEqual(activePane(store), flat[1])
+        XCTAssertEqual(activePane(store), drawn[1])
         XCTAssertEqual(activeTab(store), a)
+    }
+
+    /// THE ORDER THE DIGIT COUNTS: the sidebar's project-grouped DRAWN order, not `session.tabs`
+    /// creation order. C returning to A's project draws beside A — so ⌘2 must land on C, even though
+    /// creation order says B. A creation-order `selectPaneNumber` fails this with ⌘2 → B: the digit
+    /// pointing at a row nowhere near the second one on screen, which is the reported bug.
+    func testDigitFollowsTheProjectGroupedDrawnOrder() throws {
+        let store = makeStore()
+        let (a, b, c) = seedDivergentFixture(store)
+        try store.setProjectKey("/work/alpha", for: pane(of: a, in: store))
+        try store.setProjectKey("/work/beta", for: pane(of: b, in: store))
+        try store.setProjectKey("/work/alpha", for: pane(of: c, in: store)) // C rejoins alpha
+
+        let drawn = store.displayOrderedPaneIDs()
+        XCTAssertEqual(
+            drawn, try [pane(of: a, in: store), pane(of: c, in: store), pane(of: b, in: store)],
+            "the drawn order groups C beside A; creation order (A, B, C) would prove nothing",
+        )
+        XCTAssertEqual(
+            drawn.map { store.shortcutNumber(for: $0) }, [1, 2, 3],
+            "the ⌘-held hint digits count that same drawn order",
+        )
+
+        store.selectPaneNumber(2)
+        XCTAssertEqual(activePane(store), try pane(of: c, in: store), "⌘2 = the SECOND ROW on screen")
+        XCTAssertEqual(activeTab(store), c, "and it brought C's tab, not creation-order B")
     }
 
     /// A digit past the pane count does nothing — it must not clamp to the last pane, the native

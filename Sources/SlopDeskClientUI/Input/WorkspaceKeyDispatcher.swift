@@ -84,6 +84,15 @@ final class WorkspaceKeyDispatcher {
 
     private var monitor: Any?
 
+    /// How long ⌘ must be held before the sidebar swaps in its ⌘-digit number hints. A HOLD threshold,
+    /// not debounce polish: every ⌘-chord (⌘C, ⌘W, …) starts with the same `.flagsChanged` transition,
+    /// and hint-on-⌘-down would flash the whole rail on each of them. Internal so tests can zero it
+    /// (`.zero` flips the flag synchronously — no timer to await).
+    var shortcutHintHoldDelay: Duration = .milliseconds(250)
+    /// The pending hold timer — armed on the ⌘-down transition, cancelled by release / focus loss / a
+    /// capturing overlay.
+    private var shortcutHintTask: Task<Void, Never>?
+
     init(
         store: WorkspaceStore,
         togglePalette: (() -> Void)? = nil,
@@ -149,6 +158,35 @@ final class WorkspaceKeyDispatcher {
     func teardown() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        shortcutHintTask?.cancel()
+        shortcutHintTask = nil
+    }
+
+    /// The ⌘-held NUMBER-HINT gesture: the sidebar swaps each row's leading run for its ⌘-digit
+    /// (``WorkspaceStore/shortcutNumber(for:)``) while ⌘ has been held past ``shortcutHintHoldDelay``.
+    /// Driven from `.flagsChanged` transitions — ⌘ going down arms the hold timer; ANY exit (release,
+    /// key-window loss, a keyboard-capturing overlay, whose own ⌘1–9 mean picker rows, not sidebar
+    /// panes) cancels the timer and clears the hint. The store holds the observable flag; this owns
+    /// WHEN it flips.
+    private func updateShortcutHint(commandHeld: Bool) {
+        guard commandHeld, !isOverlayCapturingKeys() else {
+            shortcutHintTask?.cancel()
+            shortcutHintTask = nil
+            store.setShortcutHintActive(false)
+            return
+        }
+        // Already armed or already showing (a ⌘⇧/⌘⌥ transition mid-hold lands here) — nothing to do.
+        guard shortcutHintTask == nil, !store.shortcutHintActive else { return }
+        guard shortcutHintHoldDelay > .zero else {
+            store.setShortcutHintActive(true)
+            return
+        }
+        shortcutHintTask = Task { [weak self, delay = shortcutHintHoldDelay] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            shortcutHintTask = nil
+            store.setShortcutHintActive(true)
+        }
     }
 
     /// Map one `NSEvent` keystroke to swallow (`nil`) or pass-through (the event), routing any resolved action
@@ -166,6 +204,9 @@ final class WorkspaceKeyDispatcher {
         // user can no longer act on.
         if !isWorkspaceWindowKey() {
             store.cancelPaneSwitcher()
+            // The ⌘ key-up that would clear the hint will land on the OTHER window's monitor pass —
+            // this same early return — so the clear must ride it (and every later pass) too.
+            updateShortcutHint(commandHeld: false)
             return event
         }
         // MODIFIER TRANSITIONS: releasing ⌃ COMMITS an armed ⌃⇥ switcher — that key-up IS the selection.
@@ -174,6 +215,7 @@ final class WorkspaceKeyDispatcher {
         // never swallowed — the terminal tracks modifier state too.
         if event.type == .flagsChanged {
             if !event.modifierFlags.contains(.control) { store.commitPaneSwitcherOnModifierRelease() }
+            updateShortcutHint(commandHeld: event.modifierFlags.contains(.command))
             return event
         }
         // MODAL YIELD: while a keyboard-capturing overlay (the Open-Quickly picker) is presented, this monitor

@@ -917,6 +917,38 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
+    /// THE ⌘-DIGIT TWIN of the invariant above: `WorkspaceStore.displayOrderedPaneIDs()` — the order
+    /// ⌘1…⌘9 counts and the ⌘-held number hints display — must equal the pane order the rendered rail
+    /// actually draws (its sections flattened). Two hand-rolled readings of "the drawn order" would be
+    /// free to drift, and the drift would show up as a hint digit that focuses a different row than the
+    /// one it was printed on. Built on the same ⌘T-back-into-alpha shape whose drawn order ≠ creation
+    /// order, so a creation-order `displayOrderedPaneIDs` fails loudly.
+    func testDisplayOrderedPaneIDsMatchesTheRenderedRailOrder() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let seeded = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/Users/me/alpha", for: seeded[0].id)
+        store.setLastKnownCwd("/Users/me/beta", for: seeded[1].id)
+        store.setLastKnownCwd("/Users/me/alpha", for: seeded[2].id)
+
+        let drawn = RailRowsBuilder
+            .sectionedByProject(
+                RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+            )
+            .flatMap { $0.rows.map(\.id) }
+
+        XCTAssertEqual(store.displayOrderedPaneIDs(), drawn, "⌘-digits count the drawn rail order")
+        XCTAssertNotEqual(
+            drawn, store.flatOrderedPaneIDs(),
+            "and that order is NOT creation order here — otherwise this fixture proves nothing",
+        )
+        XCTAssertEqual(
+            drawn.map { store.shortcutNumber(for: $0) }, [1, 2, 3],
+            "each drawn row's hint digit is its 1-based drawn position",
+        )
+    }
+
     // MARK: - Per-pane By-Project sectioning (the split-tab "group name flickers with focus" bug)
 
     /// A SPLIT tab whose two panes are in DIFFERENT projects must land its panes in their RESPECTIVE project

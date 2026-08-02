@@ -23,8 +23,10 @@ struct RailRow: Identifiable, Equatable {
     /// single-line row (the common at-root pane).
     let subtitle: String?
     let status: ClaudeStatus
-    /// The 1-based tab shortcut number — the ⌘1…⌘9 target = tab index+1. Split-tab panes share
-    /// the same `#N` (it is a TAB number, not a pane number), per the per-pane→per-tab mapping.
+    /// The 1-based CREATION-order tab number — split-tab panes share the same `#N` (it is a TAB
+    /// number, not a pane number). NOT the ⌘1…⌘9 coordinate: the digits count PANES in the drawn
+    /// order (``WorkspaceStore/displayOrderedPaneIDs()``), which diverges from creation order the
+    /// moment sections regroup tabs.
     let tabNumber: Int
     /// The single fused status badge for the row (``TabBadgeResolver``), or `nil` when all-clear.
     let badge: TabBadgeKind?
