@@ -6252,3 +6252,24 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   is byte-identical to any seed in `obsoleteSeeds` — pristine by construction (the workbench
   rewrites the file on any user edit), so this is seed evolution, not a migration; anything else
   stays untouchable. Every lean key is user-scope — flipping it back in the workbench UI sticks.
+
+### The workbench's two side strips merge; the boot loses its white flash (2026-08-02)
+
+> User-directed: "làm gọn luôn... cái sidebar thứ nhất, để 2 cái sidebar gộp vào nhau" + fix the
+> "đen xì → trắng cái → show ra" boot sequence.
+
+- ✅ **Seed v3: `workbench.activityBar.location: "top"`** folds the activity strip into the top of
+  the primary sidebar — one column, not two, in a 380pt-min panel. Known cost, accepted: any
+  non-default activity-bar location FORCES the workbench title bar visible (it inherits the
+  Account/Manage buttons; upstream offers no off switch — vscode#197163), and a CSS-hide would
+  leave a dead band because the part grid is JS-positioned. `workbench.secondarySideBar.
+  defaultVisibility: "hidden"` joins it — the relocation had flipped the CHAT aux bar visible by
+  default. v2 moved into `obsoleteSeeds` (the pristine-upgrade path reaches deployed hosts).
+- ✅ **The white flash was WebKit's base canvas, killed twice over.** `drawsBackground = false`
+  (the long-standing KVC key; no public macOS API) makes the canvas transparent so the dark
+  column shows through, and a per-project VEIL (`CodeSidebarWebLoadState`, pooled with its
+  webview) keeps the column's dark waiting surface OVER the webview from main-frame load-start
+  until the navigation settles, then fades (`smallFade`). Failures also settle — WebKit's error
+  page must surface, never an eternal spinner. A reload re-veils through the same delegate
+  events; a warm project swap mounts unveiled. `navigationDelegate` is WEAK — the pool retains
+  the observer beside the webview.

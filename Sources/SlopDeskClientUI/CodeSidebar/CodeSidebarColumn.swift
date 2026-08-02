@@ -152,7 +152,7 @@ struct CodeSidebarColumn: View {
     private func content(projectRoot: String) -> some View {
         switch model.phase {
         case let .ready(url):
-            CodeSidebarWebView(projectRoot: projectRoot, url: url)
+            webContent(projectRoot: projectRoot, url: url)
         case .starting:
             waiting("Starting code-server…")
         case .unavailable:
@@ -169,6 +169,24 @@ struct CodeSidebarColumn: View {
                 detail: "The editor opens once a pane is connected.",
             )
         }
+    }
+
+    /// The mounted webview under its first-paint VEIL: the dark waiting surface stays on top from
+    /// load-start until the main-frame navigation settles, then fades — without it the boot reads
+    /// as black → WebKit's white canvas → workbench. The veil state is per-project and pooled with
+    /// the webview, so a warm project swap mounts unveiled (no spurious spinner).
+    @ViewBuilder
+    private func webContent(projectRoot: String, url: URL) -> some View {
+        let veiled = CodeSidebarWebViewPool.shared.loadState(for: projectRoot).veiled
+        CodeSidebarWebView(projectRoot: projectRoot, url: url)
+            .overlay {
+                if veiled {
+                    waiting("Opening workbench…")
+                        .background(Slate.Surface.ground)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.smallFade, value: veiled)
     }
 
     /// The centered spinner surface — the code-server boot and the pre-push projectKey wait share

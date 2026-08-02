@@ -205,13 +205,18 @@ final class CodeServerManager: @unchecked Sendable {
     /// The user settings seeded on a pristine host — the workbench must come up matching the dark
     /// client chrome, without the Welcome tab, and LEAN: the panel is a working surface beside a
     /// terminal, so the AI/chat surfaces, the command-center strip, the layout/navigation title-bar
-    /// controls, the minimap, and the breadcrumbs all go. Every key here is USER-scope-overridable
+    /// controls, the minimap, and the breadcrumbs all go — and the activity bar folds into the TOP
+    /// of the primary sidebar (one column, not two, in a 380pt-min panel). Every key here is
+    /// USER-scope-overridable
     /// in the workbench (user settings land in this same file and win on conflict-free keys the
     /// user later edits — see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
         "workbench.colorTheme": "Default Dark Modern",
         "workbench.startupEditor": "none",
+        "workbench.activityBar.location": "top",
+        "workbench.secondarySideBar.defaultVisibility": "hidden",
+        "window.customTitleBarVisibility": "never",
         "chat.disableAIFeatures": true,
         "chat.commandCenter.enabled": false,
         "window.commandCenter": false,
@@ -229,10 +234,27 @@ final class CodeServerManager: @unchecked Sendable {
     /// file on any settings edit) — so it may be upgraded to the current seed. Anything else is the
     /// user's and stays untouchable.
     static let obsoleteSeeds: [String] = [
+        // v1 — theme + no welcome tab.
         """
         {
             "workbench.colorTheme": "Default Dark Modern",
             "workbench.startupEditor": "none"
+        }
+        """,
+        // v2 — the lean pass (AI off, title-bar strips off), activity bar still its own column.
+        """
+        {
+            "workbench.colorTheme": "Default Dark Modern",
+            "workbench.startupEditor": "none",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false
         }
         """,
     ]

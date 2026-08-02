@@ -247,21 +247,22 @@ final class CodeServerManagerTests: XCTestCase {
         )
     }
 
-    func testSeedUpgradesAPristineFormerSeed() throws {
-        // A file byte-identical to a seed this manager once shipped was never user-edited (the
-        // workbench rewrites the file on any settings change) — it upgrades to the current seed.
+    func testSeedUpgradesEveryPristineFormerSeed() throws {
+        // A file byte-identical to ANY seed this manager once shipped was never user-edited (the
+        // workbench rewrites the file on any settings change) — each upgrades to the current seed.
         let fileURL = URL(fileURLWithPath: root)
             .appendingPathComponent("data/code-server/User/settings.json")
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
         )
-        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.first)
-        try Data(former.utf8).write(to: fileURL)
-
-        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(
-            try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
-        )
+        XCTAssertFalse(CodeServerManager.obsoleteSeeds.isEmpty)
+        for former in CodeServerManager.obsoleteSeeds {
+            try Data(former.utf8).write(to: fileURL)
+            XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
+            XCTAssertEqual(
+                try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
+            )
+        }
     }
 
     func testCurrentSeedIsNotListedObsolete() {
@@ -277,11 +278,13 @@ final class CodeServerManagerTests: XCTestCase {
         let settings = try XCTUnwrap(object as? [String: Any])
         XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Default Dark Modern")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
-        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal.
+        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal, and the
+        // activity bar folded into the top of the sidebar (one column in a narrow panel).
         XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
+        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
     }
 
     func testEveryObsoleteSeedIsValidJSON() throws {

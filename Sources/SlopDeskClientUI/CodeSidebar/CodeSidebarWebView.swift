@@ -56,6 +56,47 @@ final class CodeSidebarWKWebView: WKWebView {
     }
 }
 
+/// Per-project veil state for the workbench's main-frame navigation. The webview stays COVERED by
+/// the column's dark waiting surface from load-start until the navigation settles — WebKit paints
+/// its default white between the provisional commit and the page's own (dark) first paint, and in a
+/// multi-second code-server cold boot that reads as black → white flash → workbench. `@Observable`
+/// so the column's overlay fades out exactly on settle; a reload re-veils through the same events.
+@MainActor
+@Observable
+final class CodeSidebarWebLoadState {
+    private(set) var veiled = true
+    func navigationStarted() { veiled = true }
+    func navigationSettled() { veiled = false }
+}
+
+/// The retained `WKNavigationDelegate` driving a ``CodeSidebarWebLoadState`` (`navigationDelegate`
+/// is weak — the pool holds this alongside the webview). Failures also settle: a dead endpoint must
+/// surface WebKit's error page, never an eternal spinner veil.
+@MainActor
+private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegate {
+    let state: CodeSidebarWebLoadState
+
+    init(state: CodeSidebarWebLoadState) {
+        self.state = state
+    }
+
+    func webView(_: WKWebView, didStartProvisionalNavigation _: WKNavigation?) {
+        state.navigationStarted()
+    }
+
+    func webView(_: WKWebView, didFinish _: WKNavigation?) {
+        state.navigationSettled()
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation?, withError _: Error) {
+        state.navigationSettled()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation?, withError _: Error) {
+        state.navigationSettled()
+    }
+}
+
 /// The per-project webview pool. `@MainActor` (WKWebView is main-thread only); keyed by the
 /// project's canonical root (the host-pushed `projectKey` — the same key the sidebar sections and the
 /// host's `CodeServerManager` instances use, so pool entry ↔ code-server instance is 1:1).
@@ -64,6 +105,18 @@ final class CodeSidebarWebViewPool {
     static let shared = CodeSidebarWebViewPool()
 
     private var webViews: [String: WKWebView] = [:]
+    private var loadStates: [String: CodeSidebarWebLoadState] = [:]
+    private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
+
+    /// The project's veil state — the column reads `veiled` to hold its dark waiting surface over
+    /// the webview until the workbench paints. Created on demand so the read can precede the
+    /// webview's own creation in the same body evaluation.
+    func loadState(for projectRoot: String) -> CodeSidebarWebLoadState {
+        if let existing = loadStates[projectRoot] { return existing }
+        let state = CodeSidebarWebLoadState()
+        loadStates[projectRoot] = state
+        return state
+    }
 
     /// The (created-on-first-use) webview for `projectRoot`, pointed at `url`. An existing entry is
     /// re-loaded ONLY when the endpoint moved (`CodeSidebarModel.endpointMoved` — a respawned
@@ -85,6 +138,14 @@ final class CodeSidebarWebViewPool {
         // Paint the theme backdrop behind the page so the first load / a bounce never flashes white
         // against the dark chrome (the cmux `underPageBackgroundColor` trick).
         webView.underPageBackgroundColor = NSColor(slateBackdropHex: Slate.theme.terminalBackgroundHex)
+        // WebKit's own base canvas is WHITE until the page's first paint — with a multi-second
+        // workbench boot that is a visible flash between the dark chrome and the dark editor. There
+        // is no public macOS API for it; the long-standing KVC key makes the canvas transparent so
+        // the dark column shows through instead.
+        webView.setValue(false, forKey: "drawsBackground")
+        let observer = CodeSidebarNavigationObserver(state: loadState(for: projectRoot))
+        navigationObservers[projectRoot] = observer
+        webView.navigationDelegate = observer
         webView.load(URLRequest(url: url))
         webViews[projectRoot] = webView
         return webView
