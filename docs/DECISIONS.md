@@ -6207,3 +6207,22 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   "home" must be resolved `$HOME`-first like the Node child's `os.homedir()` — `NSHomeDirectory`/
   `homeDirectoryForCurrentUser` go through directory services and ignore a `HOME` override, so a
   gate-sandboxed hostd seeded the REAL user's file while its children read the sandbox's.
+
+### The panel regressed the rail's chrome on its first real deploy — restored, content unchanged (2026-08-02)
+
+- ✅ **ATS: the workbench must load over plain HTTP to a NON-loopback host.** ATS exempts only
+  literal localhost, so the 127.0.0.1 gate run masked a silently blank webview on every real
+  address. `NSAllowsArbitraryLoads` is declared in `project.yml`'s `info:` block — **Info.plist is
+  a PRODUCT: xcodegen regenerates it from `project.yml` on every generate** (check-macos and the
+  deploy script both run xcodegen), so a direct plist edit evaporates. Security remains the
+  WireGuard mesh (the no-app-layer-crypto invariant).
+- ✅ **The code divider is hand-dragged — the host-rail machinery, restored.** AppKit's constraint
+  drag cannot grow a trailing item that holds harder than its leading neighbour (panel 260 >
+  content 250, deliberate), so the rail's tracked `setPosition` loop returns in
+  `FlatDividerSplitView.mouseDown`, clamped between the content floor and the panel floor
+  (`CodeDividerClampTests`; the panel floor wins over-constrained; no drag-collapse — hiding
+  belongs to the toggles).
+- ✅ **The rail's split of toggle duties returns**: a hover-revealed reopen plate in the titlebar's
+  trailing cluster (always-reserved zero-shift slot) while collapsed; the expanded toggle inside
+  the column's own traffic-light strip row; the "CODE" header in the instrument voice BELOW the
+  strip. The `</>` glyph replaces `sidebar.right` wherever the action shows a face.
