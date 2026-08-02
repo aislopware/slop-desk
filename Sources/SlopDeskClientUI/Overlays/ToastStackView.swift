@@ -13,11 +13,15 @@
 //     hues of engraving stacked in a corner read as an instrument panel, not as an app speaking. The words
 //     the eyebrow carried didn't die, they became the HEADLINE — a sentence-case event phrase ("Claude
 //     needs input", "make check failed") resolved from source + flavour by ``headline(for:)``.
-//   * The LEADING MARK is a bare status glyph on a disc WASHED with its own hue — the card's only colour.
-//     Leading with a status mark is the native idiom (HIG banners, Linear, Sonner), but the SOLID
-//     `*.circle.fill` symbols were photographed first and read as flat stickers laid on the glass; the
-//     translucent wash lets the surface keep working through the disc. One glyph family, one size, one
-//     weight — NOT the mixed-family outline quartet an earlier round cut. A routine notice's mark is
+//   * The LEADING MARK speaks the system's enclosed-status idiom: the `*.circle.fill` two-layer form in
+//     one hue — glyph at full strength on its own disc at the hierarchical layer opacity — with the
+//     SF Symbols 7 gradient for dimension, drawn as its two symbol layers so the glyph is CENTRED on the
+//     disc (the fused `info.circle.fill` sets its "i" visibly off-centre at this size). Leading with a
+//     status mark is the native idiom (HIG banners, Linear, Sonner); the earlier hand-tinted flat wash
+//     disc — and before it the solid monochrome `*.circle.fill` — were both photographed and read as
+//     stickers laid ON the glass, because a hand-built fill does not participate in the material's
+//     vibrancy the way a symbol does (HIG: symbols, not images, on glass). One glyph family, one size,
+//     one weight — NOT the mixed-family outline quartet an earlier round cut. A routine notice's mark is
 //     NEUTRAL — cyan on every OSC notice was chrome pretending to be signal. The surface itself is never
 //     tinted by flavour and there is no coloured rail.
 //   * The CARD IS A DOOR. Tapping it jumps to the pane it names (``Toast/paneKey`` → the mount site's
@@ -290,24 +294,36 @@ struct ToastCardView: View {
     /// The disc a mark sits on — sized off the grid, a shade taller than the headline's cap height.
     private var discSize: CGFloat { Slate.Metric.space4 + Slate.Metric.space1 }
 
-    /// How much of the mark's hue the disc takes: a WASH, not a fill. The first cut used the solid
-    /// `*.circle.fill` symbols and read as flat stickers laid ON the glass; a translucent tint lets the
-    /// glass keep working through the disc, which is what makes the mark look like part of the surface.
-    private static let discWash = 0.16
+    /// The disc layer's share of the mark's hue — matched to what HIERARCHICAL rendering gives the
+    /// enclosure layer of the system's own `*.circle.fill` status symbols (0.30, measured off a rendered
+    /// `info.circle.fill`), so the composed mark below is indistinguishable from the native idiom. Not a
+    /// taste knob: drift it and the mark stops matching the system's status marks.
+    private static let discLayerOpacity = 0.30
 
-    /// The card's one point of colour — a bare status glyph on a disc WASHED with its own hue.
-    /// Photographed against a bare glyph (untethered — the `!` especially read as a stray speck) and
-    /// against the family's neutral keycap plate (which muted the status hue to a whisper); the soft
-    /// self-tinted disc carries the signal and still reads as glass.
+    /// The card's one point of colour: the system's enclosed-status idiom — a `*.circle.fill` in
+    /// hierarchical rendering with the SF Symbols 7 gradient — drawn as its two layers, a `circle.fill`
+    /// disc under the bare glyph, instead of the fused symbol. Composed for CENTRING: the fused
+    /// `info.circle.fill` sets its serif "i" measurably off the disc's centre (~1.2% of the diameter),
+    /// which a 20pt mark makes visible; stacked, each glyph centres on its own bounding box. The flat
+    /// hand-tinted wash disc this replaces was photographed and read as a sticker ON the glass — a
+    /// symbol-drawn disc participates in vibrancy, and the gradient gives it the dimension the fused
+    /// symbol had (HIG: symbols, not images, on glass).
     private var leadingMark: some View {
-        Image(systemSymbol: markSymbol)
-            .font(.system(size: Slate.Typeface.small, weight: .bold))
-            .foregroundStyle(markTint)
-            .frame(width: discSize, height: discSize)
-            .background(markTint.opacity(Self.discWash), in: .circle)
-            // A disc has no baseline of its own — hang its CENTER just above the headline's baseline
-            // so it optically centres on the cap height instead of floating high.
-            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + Slate.Metric.space1 }
+        ZStack {
+            Image(systemSymbol: .circleFill)
+                .font(.system(size: discSize))
+                .foregroundStyle(markTint.opacity(Self.discLayerOpacity))
+            // `footnote`/medium puts the glyph at ~0.55 of the disc — the proportion the fused symbol
+            // draws its inner layer at (measured 0.58) — where the old bold `small` glyph floated lost.
+            Image(systemSymbol: markSymbol)
+                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                .foregroundStyle(markTint)
+        }
+        .symbolColorRenderingMode(.gradient)
+        .frame(width: discSize, height: discSize)
+        // A disc has no baseline of its own — hang its CENTER just above the headline's baseline
+        // so it optically centres on the cap height instead of floating high.
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + Slate.Metric.space1 }
     }
 
     /// One family of BARE glyphs, one weight — never the mixed-family quartet the old design cut. The
