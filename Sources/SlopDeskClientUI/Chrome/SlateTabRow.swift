@@ -33,10 +33,12 @@ struct SlateTabRow: View {
     var agentMarker: Bool = false
     /// The row's ⌘-digit — non-`nil` only while ⌘ is held past the dispatcher's hold threshold AND
     /// this pane is one of the first nine in the sidebar's drawn order
-    /// (``WorkspaceStore/shortcutNumber(for:)``). Takes the title's LEADING run: the number stands
-    /// where the `✳` agent mark otherwise does (the mark yields for the hold — both are leading
-    /// state, and stacking them would jitter the title), in the instrument mono so it reads as
-    /// chrome answering "what do I press", not as title text.
+    /// (``WorkspaceStore/shortcutNumber(for:)``). Takes the TRAILING indicator cluster: while the
+    /// hold is up the question is "what do I press", so the digit stands in for the slot's whole
+    /// resting content (badge / receipt / process label / status mark / lock / sync) rather than
+    /// crowding a new column beside the title. The indicators return the instant ⌘ lifts — the hold
+    /// is sub-second chrome, not a state the user leaves the rail in. The title (and its `✳` agent
+    /// mark) never moves.
     var shortcutHint: Int?
     /// The fused status kind for the row — the FULL resolver output, busy tiers included. Every
     /// lifecycle kind renders as the trailing ring mark's hue (attention kinds also bump the
@@ -106,25 +108,13 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
-                // The ⌘-held digit hint — a fixed-width leading slot so the numbers read as ONE
-                // column down the rail. It REPLACES the ✳ mark's leading position rather than
-                // joining it: while the hint is up the question is "what do I press", and the ✳
-                // returns the instant ⌘ lifts. Decorative for AX (the chord is spoken by the menu
-                // and cheat sheet; the title keeps its own label).
-                if let shortcutHint {
-                    Text("\(shortcutHint)")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .semibold))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .frame(width: 14, alignment: .leading)
-                        .accessibilityHidden(true)
-                }
                 // `agentMarkedTitle` pins the ✳ to TEXT presentation (bare U+2733 renders as emoji
                 // on Apple platforms, which would break the ink-only title run) and keeps a title
                 // already led by the normalized mark (`normalizedProgramTitle`) single-marked.
                 // `nerdAware` so a private-use glyph riding a program title draws from the bundled
                 // symbols face.
                 Text.nerdAware(
-                    agentMarker && shortcutHint == nil ? RailRowsBuilder.agentMarkedTitle(title) : title,
+                    agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
                     size: Slate.Typeface.body,
                 )
                 // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
@@ -192,70 +182,93 @@ struct SlateTabRow: View {
     /// `×` under hover (an opacity swap in a fixed reserve — the fade never reflows the title).
     private var trailing: some View {
         HStack(spacing: 6) {
-            if readOnly {
-                Image(systemSymbol: .lockFill)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
+            // The ⌘-held digit hint — while ⌘ is held the digit REPLACES the whole indicator
+            // cluster (lock / sync / badge / receipt / process label / status mark AND the hover
+            // close swap): one number per row, right-aligned down the slot's fixed column, so the
+            // rail reads as a keypad for the sub-second the hold lasts. The same slot reserve keeps
+            // the swap reflow-free; everything returns on ⌘-up. Decorative for AX (the chord is
+            // spoken by the menu and cheat sheet; the title keeps its own label + value).
+            if let shortcutHint {
+                Text("\(shortcutHint)")
+                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .semibold))
                     .foregroundStyle(Slate.Text.secondary)
-                    .accessibilityLabel("Read only")
-                    .help("Read only")
+                    .accessibilityHidden(true)
+                    .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
+                    .frame(height: Self.slotHeight)
+            } else {
+                if readOnly {
+                    Image(systemSymbol: .lockFill)
+                        .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .accessibilityLabel("Read only")
+                        .help("Read only")
+                }
+                if syncInput {
+                    // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input
+                    // is a fan-out mode, and its rail indicator must be as unmissable as the pane
+                    // pill.
+                    Image(systemSymbol: .rectangle3Group)
+                        .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Status.syncInput)
+                        .accessibilityLabel("Sync input")
+                        .help("Sync input — keystrokes mirror to every pane in this tab")
+                }
+                restingSlot
             }
-            if syncInput {
-                // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
-                // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
-                Image(systemSymbol: .rectangle3Group)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Status.syncInput)
-                    .accessibilityLabel("Sync input")
-                    .help("Sync input — keystrokes mirror to every pane in this tab")
-            }
-            ZStack(alignment: .trailing) {
-                let mark = StatusPresentation.statusDot(
-                    working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
-                    agentFinish: agentFinish,
-                )
-                HStack(spacing: 6) {
-                    Group {
-                        // Only a PRIVILEGE marker occupies the slot as text — lifecycle states
-                        // render as the ring mark, so their rows keep the shell label here.
-                        if let badge, StatusPresentation.tabBadge(badge) != nil {
-                            TabBadgeView(kind: badge)
-                        } else if let commandReceipt {
-                            // The command's OUTCOME, in the same instrument mono the resting label
-                            // uses — the register steps up, the voice does not change: bold on the
-                            // primary ink for a clean exit, bold on red for a failure (the git
-                            // line's own two answers).
-                            Text(commandReceipt.name)
-                                .font(Slate.Typeface.instrument(
-                                    Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
-                                ))
-                                .foregroundStyle(StatusPresentation.outcomeInk(commandReceipt.outcome))
-                                .lineLimit(1)
-                                .fixedSize()
-                        } else if let processLabel {
-                            // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
-                            // in the instrument mono at the caption size on the tertiary ink — one
-                            // register with the git line, counts and telemetry.
-                            Text(processLabel)
-                                .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                                .foregroundStyle(Slate.Text.tertiary)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
-                    }
-                    // The status mark — RIGHTMOST, so state reads down one fixed column no matter
-                    // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
-                    if let mark {
-                        StatusDotView(style: mark)
+        }
+    }
+
+    /// The trailing SLOT at rest (no ⌘ hold): badge-or-shell-label plus the status mark, swapping to
+    /// the close `×` under hover — an opacity swap in the fixed reserve so the fade never reflows
+    /// the title.
+    private var restingSlot: some View {
+        ZStack(alignment: .trailing) {
+            let mark = StatusPresentation.statusDot(
+                working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
+                agentFinish: agentFinish,
+            )
+            HStack(spacing: 6) {
+                Group {
+                    // Only a PRIVILEGE marker occupies the slot as text — lifecycle states
+                    // render as the ring mark, so their rows keep the shell label here.
+                    if let badge, StatusPresentation.tabBadge(badge) != nil {
+                        TabBadgeView(kind: badge)
+                    } else if let commandReceipt {
+                        // The command's OUTCOME, in the same instrument mono the resting label
+                        // uses — the register steps up, the voice does not change: bold on the
+                        // primary ink for a clean exit, bold on red for a failure (the git
+                        // line's own two answers).
+                        Text(commandReceipt.name)
+                            .font(Slate.Typeface.instrument(
+                                Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
+                            ))
+                            .foregroundStyle(StatusPresentation.outcomeInk(commandReceipt.outcome))
+                            .lineLimit(1)
+                            .fixedSize()
+                    } else if let processLabel {
+                        // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
+                        // in the instrument mono at the caption size on the tertiary ink — one
+                        // register with the git line, counts and telemetry.
+                        Text(processLabel)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.tertiary)
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
-                .opacity(hovering ? 0 : 1)
-                closeButton
-                    .opacity(hovering ? 1 : 0)
-                    .allowsHitTesting(hovering)
+                // The status mark — RIGHTMOST, so state reads down one fixed column no matter
+                // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
+                if let mark {
+                    StatusDotView(style: mark)
+                }
             }
-            .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
-            .frame(height: Self.slotHeight)
+            .opacity(hovering ? 0 : 1)
+            closeButton
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
         }
+        .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
+        .frame(height: Self.slotHeight)
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
