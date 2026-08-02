@@ -909,11 +909,6 @@ public struct SlopDeskClientApp: App {
         #endif
     }
 
-    /// The FIRST connected pane's metadata façade in the active session, or `nil` when no pane
-    /// carries a live channel. The Agents settings card (install/uninstall/status) is host-global but
-    /// `MetadataClient` is one-per-pane, so it routes through whichever pane is connected; a `nil` here lets
-    /// the card show "Connect a session to manage hooks" instead of a dead button. Resolved at CALL time so a
-    /// reconnect transparently re-points the seam.
     #if os(macOS)
     /// The OS-banner actuator `wireAgentAttention` takes — ``CommandCompletionNotifier`` is a
     /// macOS-only type, so the alias keeps the helper's ONE signature compiling on iOS too.
@@ -987,8 +982,7 @@ public struct SlopDeskClientApp: App {
                 settings: SettingsKey.notificationSettings,
             )
             #else
-            _ = notifier // Never? — no banner surface on iOS; `body` feeds only the macOS banner.
-            _ = body
+            _ = body // feeds only the macOS banner; discarded for the warning-zero iOS build
             #endif
         }
     }
@@ -1023,6 +1017,11 @@ public struct SlopDeskClientApp: App {
         }
     }
 
+    /// The FIRST connected pane's metadata façade in the active session, or `nil` when no pane
+    /// carries a live channel. The Agents settings card (install/uninstall/status) is host-global but
+    /// `MetadataClient` is one-per-pane, so it routes through whichever pane is connected; a `nil` here
+    /// lands the card on `.disconnected` instead of a dead button. Resolved at CALL time so a
+    /// reconnect transparently re-points the seam.
     @MainActor
     private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
         for id in store.tree.activeSession?.allPaneIDs() ?? [] {

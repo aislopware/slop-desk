@@ -39,6 +39,10 @@ public extension WorkspaceStore {
         guard paneAgentStatus[id] != status else { return }
         let previous = paneAgentStatus[id] ?? .none
         let lastNotified = lastNotifiedStatus[id] ?? .none
+        // ANY genuine status change supersedes a parked notification (herdr: pending is replaced on
+        // every state change) — either a schedule below re-parks for the NEW edge, or the pane moved
+        // on and the stale ring must never sound.
+        pendingAgentAttention.removeValue(forKey: id)
         if status == .none { paneAgentStatus.removeValue(forKey: id) } else { paneAgentStatus[id] = status }
         applyAttentionEdge(for: id, lastNotified: lastNotified, status: status)
         // The HOOK-LESS completion edge (herdr `Working|Blocked → Idle`): a screen-detected agent
@@ -47,7 +51,7 @@ public extension WorkspaceStore {
         // Distinct from `applyAttentionEdge` on purpose: this edge needs the REAL previous status
         // (`.done → .idle` decay must stay silent), not the last-notified coalescing state.
         if AttentionEdge.isCompletion(prev: previous, current: status) {
-            fireAgentAttention(for: id, status: status)
+            scheduleAgentAttention(for: id, status: status)
         }
         // The NEEDS-ATTENTION `since` fallback: a genuine status transition (past the idempotency guard)
         // stamps the pane — a BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is
@@ -386,16 +390,54 @@ public extension WorkspaceStore {
     internal func applyAttentionEdge(for id: PaneID, lastNotified: ClaudeStatus, status: ClaudeStatus) {
         if AttentionEdge.shouldNotify(prev: lastNotified, current: status) {
             lastNotifiedStatus[id] = status
-            fireAgentAttention(for: id, status: status)
+            scheduleAgentAttention(for: id, status: status)
         } else if status == .idle || status == .working || status == .none {
             // Left the attention bucket → re-arm so the NEXT entry notifies again.
             lastNotifiedStatus.removeValue(forKey: id)
         }
     }
 
-    /// Fires the attention sink for a needsPermission/done edge on `id`, resolving the display name (the
-    /// spec title) and the cheap host label as the optional detail line. Called from the coalesced edge in
-    /// `setAgentStatus`; a no-op when the sink is unwired (tests / iOS).
+    /// The park window between a notify-worthy edge and its delivery (herdr's `ui.toast.delay_seconds`,
+    /// default 1): long enough to swallow a flap that resolves itself (an agent that pauses a beat and
+    /// resumes, a permission prompt auto-approved by a rule), short enough that a genuine ring still
+    /// feels immediate. Fixed, not a setting — herdr ships the same default and this repo does not grow
+    /// tuning flags for behavior that has no valid OFF.
+    internal static let agentAttentionDeliveryDelay: TimeInterval = 1.0
+
+    /// PARKS a notify-worthy edge for ``agentAttentionDeliveryDelay`` instead of ringing on the spot
+    /// (herdr's `pending_agent_notifications`): the one-shot re-validates at the deadline via
+    /// ``deliverPendingAgentAttention(for:expected:generation:)``, so an edge the pane has already left
+    /// never reaches the user. Re-parking (a flap re-entering within the window) REPLACES the entry and
+    /// pushes the deadline back; the superseded one-shot dies on the generation guard. Focus suppression
+    /// is NOT evaluated here — the sink's closure reads focus when it actually runs (herdr evaluates
+    /// suppression at delivery too), so a pane the user switches onto mid-window rings correctly for
+    /// its situation at the deadline, not the stale one.
+    internal func scheduleAgentAttention(for id: PaneID, status: ClaudeStatus) {
+        agentAttentionGeneration &+= 1
+        let generation = agentAttentionGeneration
+        pendingAgentAttention[id] = (status: status, generation: generation)
+        agentAttentionScheduler(Self.agentAttentionDeliveryDelay) { [weak self] in
+            self?.deliverPendingAgentAttention(for: id, expected: status, generation: generation)
+        }
+    }
+
+    /// The deadline half of ``scheduleAgentAttention(for:status:)``: delivers the parked notification
+    /// IFF (a) this one-shot's park is still the pane's pending entry (the generation guard — a re-park
+    /// or supersession orphans older one-shots) and (b) the pane STILL holds the status that earned the
+    /// ring (herdr's re-validation — `setAgentStatus` clears pending on every genuine change, so this
+    /// second guard is belt-and-braces against any write path that bypasses the chokepoint). A pruned
+    /// pane (closed within the window) has no pending entry left, so it exits on the first guard.
+    internal func deliverPendingAgentAttention(for id: PaneID, expected: ClaudeStatus, generation: UInt64) {
+        guard let pending = pendingAgentAttention[id], pending.generation == generation else { return }
+        pendingAgentAttention.removeValue(forKey: id)
+        guard agentStatus(for: id) == expected else { return }
+        fireAgentAttention(for: id, status: expected)
+    }
+
+    /// Fires the attention sink for a notify-worthy edge on `id`, resolving the display name (the
+    /// spec title) and the cheap host label as the optional detail line. Reached only through
+    /// ``deliverPendingAgentAttention(for:expected:generation:)`` (the parked delivery); a no-op when
+    /// the sink is unwired (tests / iOS).
     internal func fireAgentAttention(for id: PaneID, status: ClaudeStatus) {
         guard let onAgentAttention else { return }
         let name = tree.spec(for: id)?.title ?? "Pane"

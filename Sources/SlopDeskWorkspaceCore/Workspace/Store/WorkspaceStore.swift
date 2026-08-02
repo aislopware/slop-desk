@@ -3281,6 +3281,24 @@ public final class WorkspaceStore {
     /// state fires. PRUNED with `paneAgentStatus` so a recycled / closed pane id can't leak or mis-flap.
     var lastNotifiedStatus: [PaneID: ClaudeStatus] = [:]
 
+    /// The PARKED attention notification per pane (herdr's `pending_agent_notifications`): a notify-worthy
+    /// edge waits ``agentAttentionDeliveryDelay`` and is delivered only if the pane STILL holds the status
+    /// that earned it — a flap that resolves inside the window never reaches the user. Every genuine status
+    /// change REPLACES the pane's pending entry; `generation` guards against a stale one-shot delivering an
+    /// entry that was superseded and re-parked with the same status. PRUNED with `lastNotifiedStatus`.
+    /// `@ObservationIgnored`: delivery timing, not view state.
+    @ObservationIgnored
+    var pendingAgentAttention: [PaneID: (status: ClaudeStatus, generation: UInt64)] = [:]
+
+    /// Monotonic ticket for ``pendingAgentAttention`` entries — bumped per park.
+    @ObservationIgnored
+    var agentAttentionGeneration: UInt64 = 0
+
+    /// The injectable one-shot behind the parked attention delivery (its own property, like
+    /// ``doneSettleScheduler``, so a test capturing it never swallows another boundary's arm).
+    @ObservationIgnored
+    public var agentAttentionScheduler = WorkspaceStore.mainRunLoopFlashDecay
+
     /// The THIN attention-notification sink (the same seam shape as ``onLongCommandNotify`` /
     /// ``onPaneNotification``): the app shell sets it to call `explicitNotifier.notifyExplicit(...)` on a
     /// needsPermission/done EDGE. Kept off the store so `UNUserNotificationCenter` never enters the store
@@ -3860,6 +3878,9 @@ public final class WorkspaceStore {
         }
         if !lastNotifiedStatus.isEmpty {
             lastNotifiedStatus = lastNotifiedStatus.filter { leafSet.contains($0.key) }
+        }
+        if !pendingAgentAttention.isEmpty {
+            pendingAgentAttention = pendingAgentAttention.filter { leafSet.contains($0.key) }
         }
         // Completion badge (✓/✗):
         if !panePendingCompletion.isEmpty {

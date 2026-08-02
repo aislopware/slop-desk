@@ -31,6 +31,29 @@ final class AttentionTests: XCTestCase {
         return store
     }
 
+    /// The captured park queue behind ``installAttentionPump(on:)`` — a reference box so the
+    /// scheduler closure and the returned pump share it after the fixture method returns.
+    private final class ParkedAttention {
+        var fires: [@MainActor () -> Void] = []
+    }
+
+    /// Replaces the store's REAL-TIME attention park (``WorkspaceStore/agentAttentionScheduler``, a
+    /// 1 s main-run-loop one-shot in production) with a capturing queue. The returned `pump` delivers
+    /// every parked one-shot in park order — the deterministic stand-in for "the window elapsed with
+    /// no further status change". Asserting BEFORE pumping observes the park itself (nothing rings on
+    /// the edge); every park is pinned to the herdr window length.
+    private func installAttentionPump(on store: WorkspaceStore) -> @MainActor () -> Void {
+        let parked = ParkedAttention()
+        store.agentAttentionScheduler = { delay, fire in
+            XCTAssertEqual(
+                delay, WorkspaceStore.agentAttentionDeliveryDelay,
+                "every attention park waits the herdr delivery window",
+            )
+            parked.fires.append(fire)
+        }
+        return { while !parked.fires.isEmpty { parked.fires.removeFirst()() } }
+    }
+
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {
         // The production `route(...)` mints a terminal directly for the new-pane verbs (pinned by
         // `NewTerminalPaneTests`); this suite needs kind-controlled panes, so translate those verbs to a direct
@@ -210,38 +233,89 @@ final class AttentionTests: XCTestCase {
 
     // MARK: - Store edge-notify (coalesced)
 
-    /// A real entry into needsPermission fires the sink ONCE; a flap (working→needsPermission again)
-    /// without leaving the bucket does not re-fire until the state actually leaves and re-enters.
+    /// A real entry into needsPermission fires the sink ONCE (after its park window elapses); a flap
+    /// (working→needsPermission again) without leaving the bucket does not re-fire until the state
+    /// actually leaves and re-enters.
     func testStoreEdgeNotifyIsCoalesced() throws {
         let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
         let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
         var fired: [(needsInput: Bool, name: String)] = []
         store.onAgentAttention = { _, name, needsInput, _ in fired.append((needsInput, name)) }
 
         store.setAgentStatus(.working, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 0, "working does not notify")
 
         store.setAgentStatus(.needsPermission, for: pane)
-        XCTAssertEqual(fired.count, 1, "entering needsPermission notifies once")
+        XCTAssertEqual(fired.count, 0, "the edge PARKS — nothing rings before the window elapses")
+        pump()
+        XCTAssertEqual(fired.count, 1, "entering needsPermission notifies once the window elapses")
         XCTAssertTrue(fired.last?.needsInput == true)
 
         // Flap: leave to working, come back to needsPermission → notifies again (genuine re-entry).
         store.setAgentStatus(.working, for: pane)
         store.setAgentStatus(.needsPermission, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 2, "a genuine leave-and-re-enter re-fires")
+    }
+
+    /// The herdr anti-flap: an edge that RESOLVES ITSELF inside the park window never reaches the
+    /// user — a permission prompt auto-approved a beat later rings nothing; only the re-entry that
+    /// then sits through its own window does. Fails on the pre-park wiring: the first blocked edge
+    /// rang immediately.
+    func testParkedEdgeSupersededWithinWindowNeverRings() throws {
+        let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        var fired = 0
+        store.onAgentAttention = { _, _, _, _ in fired += 1 }
+
+        // Blocked, then resumed BEFORE the window elapsed: the park is superseded, its orphaned
+        // one-shot dies on the generation guard when it eventually fires.
+        store.setAgentStatus(.working, for: pane)
+        store.setAgentStatus(.needsPermission, for: pane)
+        store.setAgentStatus(.working, for: pane)
+        pump()
+        XCTAssertEqual(fired, 0, "a flap that resolves inside the window is swallowed")
+
+        // Blocked again and left alone through the window → this one rings.
+        store.setAgentStatus(.needsPermission, for: pane)
+        pump()
+        XCTAssertEqual(fired, 1, "the edge that survives its window delivers")
+    }
+
+    /// A pane CLOSED inside the park window takes its parked ring with it (the reconcile prune drops
+    /// the pending entry, so the orphaned one-shot finds nothing to deliver).
+    func testParkedEdgeDiesWithClosedPane() throws {
+        let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
+        let first = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let second = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != first })
+        var fired = 0
+        store.onAgentAttention = { _, _, _, _ in fired += 1 }
+
+        store.setAgentStatus(.needsPermission, for: second)
+        store.closePaneTree(second)
+        pump()
+        XCTAssertEqual(fired, 0, "a closed pane's parked notification never delivers")
     }
 
     /// done → working → done re-fires on the second done (it left the bucket between), but a redundant
     /// re-assert of the SAME status is deduped upstream and never reaches the edge.
     func testStoreDoneEdgeFiresAndDedupes() throws {
         let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
         let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
         var count = 0
         store.onAgentAttention = { _, _, _, _ in count += 1 }
 
         store.setAgentStatus(.done, for: pane)
+        pump()
         XCTAssertEqual(count, 1)
         store.setAgentStatus(.done, for: pane) // idempotent no-op (paneAgentStatus unchanged)
+        pump()
         XCTAssertEqual(count, 1, "re-asserting the same status does not re-notify")
     }
 
@@ -251,16 +325,19 @@ final class AttentionTests: XCTestCase {
     /// `AttentionEdge` layer alone does not exercise the stored memory).
     func testStoreEscalatesDoneToNeedsPermission() throws {
         let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
         let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
         var fired: [(needsInput: Bool, name: String)] = []
         store.onAgentAttention = { _, name, needsInput, _ in fired.append((needsInput, name)) }
 
         store.setAgentStatus(.done, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 1, "entering done notifies once")
         XCTAssertEqual(fired.last?.needsInput, false, "done is not a needs-input edge")
 
         // Escalate straight from done → needsPermission WITHOUT leaving the attention bucket between.
         store.setAgentStatus(.needsPermission, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 2, "done → needsPermission re-fires (a genuine escalation edge)")
         XCTAssertEqual(fired.last?.needsInput, true, "the escalation edge carries needsInput == true")
     }
@@ -271,6 +348,7 @@ final class AttentionTests: XCTestCase {
     /// already notified on entry, and its decay is not a second finish.
     func testStoreHookLessCompletionFiresAndDecayStaysSilent() throws {
         let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
         let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
         var fired: [(needsInput: Bool, name: String)] = []
         store.onAgentAttention = { _, name, needsInput, _ in fired.append((needsInput, name)) }
@@ -278,37 +356,45 @@ final class AttentionTests: XCTestCase {
         // Screen-only agent finish: working → idle (never .done).
         store.setAgentStatus(.working, for: pane)
         store.setAgentStatus(.idle, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 1, "working → idle is a hook-less completion — it notifies")
         XCTAssertEqual(fired.last?.needsInput, false, "a completion is not a needs-input edge")
 
         // Blocked resolved off-screen: needsPermission → idle also completes (herdr Blocked → Idle).
         store.setAgentStatus(.needsPermission, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 2, "entering needsPermission notifies (Request)")
         store.setAgentStatus(.idle, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 3, "needsPermission → idle is a completion — it notifies")
         XCTAssertEqual(fired.last?.needsInput, false)
 
         // The hook path: working → done fires ONCE on done; the later done → idle decay is silent.
         store.setAgentStatus(.working, for: pane)
         store.setAgentStatus(.done, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 4, "entering done notifies")
         store.setAgentStatus(.idle, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 4, "done → idle is the decay, never a second finish")
 
         // Presence appearing (none → idle) is not a finish.
         store.setAgentStatus(.none, for: pane)
         store.setAgentStatus(.idle, for: pane)
+        pump()
         XCTAssertEqual(fired.count, 4, "none → idle (presence floor) stays silent")
     }
 
     /// The host label is captured and surfaced as the notification detail.
     func testStoreEdgeCarriesLabelDetail() throws {
         let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
         let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
         var detail: String?
         store.onAgentAttention = { _, _, _, d in detail = d }
         store.setAgentLabel("Allow edit to main.swift?", for: pane)
         store.setAgentStatus(.needsPermission, for: pane)
+        pump()
         XCTAssertEqual(detail, "Allow edit to main.swift?")
     }
 
