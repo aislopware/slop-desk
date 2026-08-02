@@ -13,6 +13,7 @@
 import SFSafeSymbols
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct CodeSidebarColumn: View {
@@ -23,11 +24,26 @@ struct CodeSidebarColumn: View {
 
     @State private var model = CodeSidebarModel()
 
-    /// The active pane's project root (host-pushed `projectKey`, else its cwd until the first push
-    /// lands — `WorkspaceStore.paneProjectKey`). `nil` ⇒ no pane focused / a pane with no project.
+    private var activePane: PaneID? {
+        store.tree.activeSession?.activeTab?.activePane
+    }
+
+    /// The active pane's project root — the HOST-pushed `projectKey` (wire type 34) ONLY, never the
+    /// cwd fallback the sidebar sections tolerate (`paneProjectKey`). Ensuring on the transient
+    /// pre-push cwd spawns a code-server for a root the project does not have (observed: the shell's
+    /// start directory vs the git toplevel — two Node processes for one project, one stranded).
+    /// `nil` ⇒ no pane focused, or the push hasn't landed yet (see `awaitingProjectKey`).
     private var activeProjectRoot: String? {
-        guard let pane = store.tree.activeSession?.activeTab?.activePane else { return nil }
-        return store.paneProjectKey(pane)
+        guard let pane = activePane else { return nil }
+        return store.hostPushedProjectKey(pane)
+    }
+
+    /// Whether the focused pane already has a SECTION identity (the cwd fallback) but no host-pushed
+    /// key yet — the first push is in flight, so render a brief waiting surface instead of the
+    /// no-project placeholder. The mirror write re-renders this view the moment the key lands.
+    private var awaitingProjectKey: Bool {
+        guard let pane = activePane, activeProjectRoot == nil else { return false }
+        return store.paneProjectKey(pane) != nil
     }
 
     var body: some View {
@@ -44,6 +60,8 @@ struct CodeSidebarColumn: View {
                             ensure: { [store] in await Self.ensureEndpoint(projectRoot: $0, store: store) },
                         )
                     }
+            } else if awaitingProjectKey {
+                waiting("Resolving project…")
             } else {
                 placeholder(
                     symbol: .folder,
@@ -96,14 +114,7 @@ struct CodeSidebarColumn: View {
         case let .ready(url):
             CodeSidebarWebView(projectRoot: projectRoot, url: url)
         case .starting:
-            VStack(spacing: Slate.Metric.space2) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Starting code-server…")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            waiting("Starting code-server…")
         case .unavailable:
             placeholder(
                 symbol: .shippingbox,
@@ -118,6 +129,19 @@ struct CodeSidebarColumn: View {
                 detail: "The editor opens once a pane is connected.",
             )
         }
+    }
+
+    /// The centered spinner surface — the code-server boot and the pre-push projectKey wait share
+    /// it (both are short-lived, both resolve on their own).
+    private func waiting(_ label: String) -> some View {
+        VStack(spacing: Slate.Metric.space2) {
+            ProgressView()
+                .controlSize(.small)
+            Text(label)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// A centered empty-state: dim glyph, one-line title, secondary detail (optionally set in the

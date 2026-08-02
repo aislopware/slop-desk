@@ -45,6 +45,8 @@ final class CodeServerManager: @unchecked Sendable {
     ) throws -> any CodeServerProcessHandle
     /// Whether a TCP connect to `127.0.0.1:port` succeeds (bounded, never hangs).
     typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
+    /// Seeds the code-server user settings before the FIRST spawn (see ``seedUserSettings(at:)``).
+    typealias SettingsSeeder = @Sendable () -> Void
 
     /// Idle self-shutdown handed to the child (`--idle-timeout-seconds`): a workbench nobody has
     /// open for 2 h reaps itself instead of holding a Node runtime forever; the next sidebar expand
@@ -62,9 +64,13 @@ final class CodeServerManager: @unchecked Sendable {
 
     private let lock = NSLock()
     private var instances: [String: Instance] = [:]
+    /// Latched by the first spawn — the settings seed runs at most once per manager lifetime (the
+    /// seeder itself is also a no-op when the file exists; this just skips the repeat file checks).
+    private var settingsSeeded = false
     private let locateBinary: BinaryLocator
     private let spawn: Spawner
     private let probe: ReadinessProbe
+    private let seedSettings: SettingsSeeder
     private let probeInterval: Duration
     private let clock = ContinuousClock()
 
@@ -72,11 +78,13 @@ final class CodeServerManager: @unchecked Sendable {
         binaryLocator: @escaping BinaryLocator = CodeServerManager.defaultBinaryLocator,
         spawner: @escaping Spawner = CodeServerManager.defaultSpawner,
         readinessProbe: @escaping ReadinessProbe = CodeServerManager.defaultReadinessProbe,
+        settingsSeeder: @escaping SettingsSeeder = CodeServerManager.defaultSettingsSeeder,
         probeInterval: Duration = .milliseconds(500),
     ) {
         locateBinary = binaryLocator
         spawn = spawner
         probe = readinessProbe
+        seedSettings = settingsSeeder
         self.probeInterval = probeInterval
     }
 
@@ -97,6 +105,13 @@ final class CodeServerManager: @unchecked Sendable {
 
         guard let binary = locateBinary() else {
             return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
+        }
+        // Seed the workbench defaults before the FIRST child ever boots — after it has read an
+        // absent settings file once, a seed would need a reload to take. One `stat` + at most one
+        // tiny write under the lock, once per manager lifetime.
+        if !settingsSeeded {
+            settingsSeeded = true
+            seedSettings()
         }
         let arguments = Self.launchArguments(projectRoot: root)
         let onLine: @Sendable (String) -> Void = { [weak self] line in
@@ -186,6 +201,56 @@ final class CodeServerManager: @unchecked Sendable {
         ]
     }
 
+    /// The user settings seeded on a pristine host — the workbench must come up matching the dark
+    /// client chrome instead of VS Code's stock light theme, and without the Welcome tab (the panel
+    /// is a working surface, not a first-run tour). Nothing else: every other preference is the
+    /// user's to make IN the workbench (code-server persists them to this same file).
+    static let seededUserSettings = """
+    {
+        "workbench.colorTheme": "Default Dark Modern",
+        "workbench.startupEditor": "none"
+    }
+    """
+
+    /// Writes ``seededUserSettings`` to `fileURL` ONLY when no file exists there — an operator's
+    /// own settings are never touched (`.withoutOverwriting` backstops the exists-check against a
+    /// concurrent writer). Returns whether it wrote; any failure is a silent no-op (a seed is a
+    /// nicety — the workbench works unthemed).
+    @discardableResult
+    static func seedUserSettings(at fileURL: URL, fileManager: FileManager = .default) -> Bool {
+        guard !fileManager.fileExists(atPath: fileURL.path) else { return false }
+        do {
+            try fileManager.createDirectory(
+                at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+            )
+            try Data(seededUserSettings.utf8).write(to: fileURL, options: [.withoutOverwriting])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Where THIS process's code-server children read user settings: `--user-data-dir` is not
+    /// passed, so code-server resolves `$XDG_DATA_HOME/code-server` (absolute values only), else
+    /// `~/.local/share/code-server`, then `User/settings.json` inside it. "Home" must be what
+    /// Node's `os.homedir()` answers IN THE CHILD — `$HOME` first — never `NSHomeDirectory()`/
+    /// `homeDirectoryForCurrentUser` (both resolve through directory services, blind to a `HOME`
+    /// override: a gate-sandboxed hostd seeded the REAL user's file while its children read the
+    /// sandbox's).
+    static func userSettingsURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> URL {
+        let dataHome: URL =
+            if let xdg = environment["XDG_DATA_HOME"], xdg.hasPrefix("/") {
+                URL(fileURLWithPath: xdg)
+            } else if let home = environment["HOME"], home.hasPrefix("/") {
+                URL(fileURLWithPath: home).appendingPathComponent(".local/share")
+            } else {
+                FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share")
+            }
+        return dataHome.appendingPathComponent("code-server/User/settings.json")
+    }
+
     /// Extracts the bound port from code-server's own announcement, e.g.
     /// `[…] info  HTTP server listening on http://0.0.0.0:62636/`. `nil` for every other line.
     static func parseListeningPort(fromLogLine line: String) -> UInt16? {
@@ -198,6 +263,11 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     // MARK: - Production seams
+
+    /// The production ``SettingsSeeder``: ``seedUserSettings(at:)`` on the resolved settings path.
+    static let defaultSettingsSeeder: SettingsSeeder = {
+        seedUserSettings(at: userSettingsURL())
+    }
 
     /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`
     /// misses when hostd is launched outside a login shell.

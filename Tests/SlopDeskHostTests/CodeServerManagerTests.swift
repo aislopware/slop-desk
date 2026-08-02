@@ -74,11 +74,15 @@ final class CodeServerManagerTests: XCTestCase {
         spawner: FakeSpawner,
         binary: String? = "/fake/code-server",
         probe: @escaping @Sendable (UInt16) -> Bool = { _ in true },
+        settingsSeeder: @escaping @Sendable () -> Void = {},
     ) -> CodeServerManager {
+        // The seeder is ALWAYS injected — the default seam writes the real user's
+        // `~/.local/share/code-server` settings, which no test may touch.
         CodeServerManager(
             binaryLocator: { binary },
             spawner: { bin, args, onLine in spawner.spawn(binary: bin, arguments: args, onLine: onLine) },
             readinessProbe: probe,
+            settingsSeeder: settingsSeeder,
             probeInterval: .zero,
         )
     }
@@ -199,6 +203,105 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(spawner.spawnCount, 3)
     }
 
+    // MARK: Settings seed
+
+    func testSettingsSeederRunsOnceBeforeTheFirstSpawnOnly() throws {
+        let other = root + "-b"
+        try FileManager.default.createDirectory(atPath: other, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: other) }
+
+        let seeds = Counter()
+        let spawner = FakeSpawner()
+        let manager = makeManager(spawner: spawner, settingsSeeder: { seeds.increment() })
+
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(seeds.value, 1, "seeded before the first child boots")
+        _ = manager.ensure(projectRoot: root)
+        _ = manager.ensure(projectRoot: other)
+        XCTAssertEqual(seeds.value, 1, "once per manager lifetime — not per ensure, not per root")
+    }
+
+    func testMissingBinaryNeverSeeds() {
+        // No child will ever read the settings — a binary-less host must stay untouched.
+        let seeds = Counter()
+        let manager = makeManager(spawner: FakeSpawner(), binary: nil, settingsSeeder: { seeds.increment() })
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(seeds.value, 0)
+    }
+
+    func testSeedUserSettingsWritesOnlyWhenAbsent() throws {
+        let fileURL = URL(fileURLWithPath: root)
+            .appendingPathComponent("data/code-server/User/settings.json")
+
+        // Absent (intermediate directories included) → written with the canned defaults.
+        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(
+            try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
+        )
+
+        // Present → NEVER overwritten, whatever it holds — these are the user's settings.
+        try Data("{\"workbench.colorTheme\": \"Mine\"}".utf8).write(to: fileURL)
+        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(
+            try String(contentsOf: fileURL, encoding: .utf8), "{\"workbench.colorTheme\": \"Mine\"}",
+        )
+    }
+
+    func testSeededSettingsAreValidJSONWithThemeAndStartup() throws {
+        let object = try JSONSerialization.jsonObject(
+            with: Data(CodeServerManager.seededUserSettings.utf8),
+        )
+        let settings = try XCTUnwrap(object as? [String: String])
+        XCTAssertEqual(settings["workbench.colorTheme"], "Default Dark Modern")
+        XCTAssertEqual(settings["workbench.startupEditor"], "none")
+    }
+
+    func testUserSettingsURLResolution() {
+        // `$HOME` — what Node's `os.homedir()` answers in the child — is the base, NOT directory
+        // services (a gate-sandboxed hostd overrides HOME; the seed must follow it).
+        XCTAssertEqual(
+            CodeServerManager.userSettingsURL(environment: ["HOME": "/Users/x"]).path,
+            "/Users/x/.local/share/code-server/User/settings.json",
+        )
+        // An ABSOLUTE XDG_DATA_HOME wins (code-server's own resolution order)…
+        XCTAssertEqual(
+            CodeServerManager.userSettingsURL(
+                environment: ["XDG_DATA_HOME": "/xdg", "HOME": "/Users/x"],
+            ).path,
+            "/xdg/code-server/User/settings.json",
+        )
+        // …but relative XDG/HOME values are ignored, per the XDG spec (fall through to the next).
+        XCTAssertEqual(
+            CodeServerManager.userSettingsURL(
+                environment: ["XDG_DATA_HOME": "rel", "HOME": "/Users/x"],
+            ).path,
+            "/Users/x/.local/share/code-server/User/settings.json",
+        )
+        // No usable env at all → directory services' home (the interactive-launch default).
+        XCTAssertEqual(
+            CodeServerManager.userSettingsURL(environment: [:]).path,
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".local/share/code-server/User/settings.json").path,
+        )
+    }
+
+    /// Thread-safe call counter for the `@Sendable` seeder seam.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return count
+        }
+
+        func increment() {
+            lock.lock()
+            defer { lock.unlock() }
+            count += 1
+        }
+    }
+
     // MARK: Pure helpers
 
     func testLaunchArgumentsShape() {
@@ -240,6 +343,7 @@ final class CodeServerManagerTests: XCTestCase {
 /// `.notFound`.
 final class HostCodeServerPerformerTests: XCTestCase {
     private func makeManager(spawned: @escaping @Sendable () -> Void = {}) -> CodeServerManager {
+        // settingsSeeder injected as a no-op — the default seam writes the real user's settings.
         CodeServerManager(
             binaryLocator: { "/fake/code-server" },
             spawner: { _, _, _ in
@@ -247,6 +351,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 return NeverExitingHandle()
             },
             readinessProbe: { _ in false },
+            settingsSeeder: {},
             probeInterval: .zero,
         )
     }

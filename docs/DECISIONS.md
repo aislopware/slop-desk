@@ -6178,3 +6178,32 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   it en route; system ⌘Q stays alive via the app menu). The ONE exception: ⌘⇧R stays app-owned —
   closing the panel is how the keyboard comes back. Pinned by `DispatcherCodeSidebarYieldTests`;
   literal-byte text bindings sit BELOW the yield (they target the terminal, never an editor).
+
+### The leftovers closed the same day: no fallback ensure, no focus steal, no light workbench (2026-08-02)
+
+- ✅ **The ensure gate is the HOST-pushed key ONLY — the cwd fallback may section, never spawn.**
+  The first pixel run showed TWO code-server children for one project: the panel had ensured on
+  `paneProjectKey`'s cwd-fallback leg before the type-34 push landed, spawning a workbench for the
+  shell's start directory that nothing would ever use again. `CodeSidebarColumn` now reads
+  `WorkspaceStore.hostPushedProjectKey(_:)` (the pushed-only accessor, made public and pinned by
+  `ProjectKeyStoreTests`): a client-side GUESS must never cost the host a Node process. Until the
+  push lands the column shows a brief "Resolving project…" spinner (`paneProjectKey` non-nil
+  proves a key is coming); a pane with no identity at all still gets the no-project placeholder.
+- ✅ **VS Code cannot STEAL the keyboard — it can only be handed it by a click.** The workbench
+  focuses its own editor on load/file-open/layout change, and WebKit forwards each page `focus()`
+  as a first-responder claim — an autofocus mid-keystroke would silently re-route the terminal's
+  keyboard into the editor (the cmux focus-steal lesson, now ported). `CodeSidebarWKWebView`
+  (the pooled class) refuses `becomeFirstResponder` unless the CURRENT event is a mouse-down
+  whose location falls inside the webview; the decision is `CodeSidebarFocusPolicy` (pure,
+  truth-table-pinned — programmatic claims arrive with no current event and are refused, as is
+  any claim riding an unrelated key/scroll/hover event).
+- ✅ **First-run workbench defaults are SEEDED host-side, never overwritten.** A pristine host
+  rendered VS Code's stock light theme against the dark chrome. `CodeServerManager` now writes
+  `{"workbench.colorTheme": "Default Dark Modern", "workbench.startupEditor": "none"}` to the
+  code-server user settings (`$XDG_DATA_HOME`/`$HOME/.local/share` + `code-server/User/
+  settings.json`) ONLY when the file is absent — an operator's own settings are untouchable
+  (`.withoutOverwriting` backstops the exists-check) — once per manager lifetime, before the
+  first child boots (after that a seed would need a reload to take). Trap pinned in the tests:
+  "home" must be resolved `$HOME`-first like the Node child's `os.homedir()` — `NSHomeDirectory`/
+  `homeDirectoryForCurrentUser` go through directory services and ignore a `HOME` override, so a
+  gate-sandboxed hostd seeded the REAL user's file while its children read the sandbox's.

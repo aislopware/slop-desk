@@ -78,6 +78,26 @@ final class ProjectKeyStoreTests: XCTestCase {
         )
     }
 
+    /// The code panel's ensure gate (``WorkspaceStore/hostPushedProjectKey(_:)``): `nil` while the
+    /// pane rides its cwd fallback — a client-side guess must never spawn a host code-server — and
+    /// the pushed key verbatim once type 34 lands.
+    func testHostPushedProjectKeyIsNilUntilThePushLands() throws {
+        let (store, _) = makeStore()
+        let pane = try activePane(store, tab: 0)
+
+        XCTAssertNil(
+            store.hostPushedProjectKey(pane),
+            "the cwd fallback must not leak out of the pushed-only accessor",
+        )
+        XCTAssertEqual(
+            store.paneProjectKey(pane), "/Users/me/alpha",
+            "…while the sectioning read still tolerates it (the waiting-surface distinction)",
+        )
+
+        store.setProjectKey("/repo/root", for: pane)
+        XCTAssertEqual(store.hostPushedProjectKey(pane), "/repo/root")
+    }
+
     /// The lastKnownCwd fallback stands until the first push lands — By-Project groups by cwd immediately,
     /// the host key is never a hard dependency.
     func testPaneProjectKeyFallsBackToCwdUntilFirstPush() throws {

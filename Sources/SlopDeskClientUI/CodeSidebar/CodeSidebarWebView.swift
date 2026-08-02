@@ -15,6 +15,47 @@ import AppKit
 import SwiftUI
 import WebKit
 
+/// When a `becomeFirstResponder` on the embedded workbench may be HONORED. VS Code aggressively
+/// focuses its own editor — on load, on file open, on layout changes — and WebKit forwards each
+/// page-level `focus()` as a first-responder claim. Unguarded, an autofocus mid-keystroke silently
+/// re-routes the keyboard from the terminal to the editor (the cmux focus-steal lesson). The rule:
+/// only a direct user MOUSE-DOWN inside the webview hands VS Code the keyboard; everything else
+/// (JS autofocus arrives with no current event, or riding whatever unrelated event is current) is
+/// refused. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+enum CodeSidebarFocusPolicy {
+    static func shouldAcceptFocus(eventType: NSEvent.EventType?, clickWasInsideWebView: Bool) -> Bool {
+        switch eventType {
+        case .leftMouseDown,
+             .otherMouseDown,
+             .rightMouseDown:
+            clickWasInsideWebView
+        default:
+            false
+        }
+    }
+}
+
+/// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
+/// embedded VS Code can never STEAL the keyboard — it can only be handed it by a click.
+final class CodeSidebarWKWebView: WKWebView {
+    override func becomeFirstResponder() -> Bool {
+        // `NSApp` is nil in a headless test process — optional access, never the implicit unwrap.
+        guard let app = NSApp as NSApplication?,
+              CodeSidebarFocusPolicy.shouldAcceptFocus(
+                  eventType: app.currentEvent?.type,
+                  clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
+              )
+        else { return false }
+        return super.becomeFirstResponder()
+    }
+
+    /// Whether `event`'s location falls inside THIS webview — same window, point within bounds.
+    private func eventLandsInside(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window else { return false }
+        return bounds.contains(convert(event.locationInWindow, from: nil))
+    }
+}
+
 /// The per-project webview pool. `@MainActor` (WKWebView is main-thread only); keyed by the
 /// project's canonical root (the host-pushed `projectKey` — the same key the sidebar sections and the
 /// host's `CodeServerManager` instances use, so pool entry ↔ code-server instance is 1:1).
@@ -37,7 +78,7 @@ final class CodeSidebarWebViewPool {
         let configuration = WKWebViewConfiguration()
         // No user-gesture gate on media — VS Code's own UI sounds/previews must not silently stall.
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = CodeSidebarWKWebView(frame: .zero, configuration: configuration)
         // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
         // window into a misbehaving code-server page.
         webView.isInspectable = true
