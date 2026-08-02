@@ -285,6 +285,8 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
         XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
+        // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
+        XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
     }
 
     func testEveryObsoleteSeedIsValidJSON() throws {
@@ -347,6 +349,9 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--bind-addr"))
         XCTAssertTrue(arguments.contains("0.0.0.0:0"))
         XCTAssertTrue(arguments.contains("--disable-workspace-trust"))
+        // The workbench brands itself with the embedding app's name, not "code-server".
+        XCTAssertTrue(arguments.contains("--app-name"))
+        XCTAssertTrue(arguments.contains("SlopDesk"))
         XCTAssertEqual(arguments.last, "/tmp/proj")
     }
 

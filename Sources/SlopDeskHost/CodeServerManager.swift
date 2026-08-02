@@ -193,6 +193,9 @@ final class CodeServerManager: @unchecked Sendable {
         [
             "--auth", "none",
             "--bind-addr", "0.0.0.0:0",
+            // The workbench titles itself "{{app}}" in a handful of strings (title bar, PWA name);
+            // this is the embedded editor of SlopDesk, not a standalone code-server deployment.
+            "--app-name", "SlopDesk",
             "--disable-telemetry",
             "--disable-update-check",
             "--disable-workspace-trust",
@@ -206,7 +209,9 @@ final class CodeServerManager: @unchecked Sendable {
     /// client chrome, without the Welcome tab, and LEAN: the panel is a working surface beside a
     /// terminal, so the AI/chat surfaces, the command-center strip, the layout/navigation title-bar
     /// controls, the minimap, and the breadcrumbs all go — and the activity bar folds into the TOP
-    /// of the primary sidebar (one column, not two, in a 380pt-min panel). Every key here is
+    /// of the primary sidebar (one column, not two, in a 380pt-min panel). Auto-save on focus
+    /// change: the terminal pane beside the editor is where builds/tests run, and switching to it
+    /// IS the moment the file must be on disk. Every key here is
     /// USER-scope-overridable
     /// in the workbench (user settings land in this same file and win on conflict-free keys the
     /// user later edits — see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -225,7 +230,8 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.tips.enabled": false,
         "extensions.ignoreRecommendations": true,
         "editor.minimap.enabled": false,
-        "breadcrumbs.enabled": false
+        "breadcrumbs.enabled": false,
+        "files.autoSave": "onFocusChange"
     }
     """
 
@@ -246,6 +252,25 @@ final class CodeServerManager: @unchecked Sendable {
         {
             "workbench.colorTheme": "Default Dark Modern",
             "workbench.startupEditor": "none",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false
+        }
+        """,
+        // v3 — activity bar folded into the sidebar top, auxiliary sidebar pinned hidden.
+        """
+        {
+            "workbench.colorTheme": "Default Dark Modern",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "top",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.customTitleBarVisibility": "never",
             "chat.disableAIFeatures": true,
             "chat.commandCenter.enabled": false,
             "window.commandCenter": false,
