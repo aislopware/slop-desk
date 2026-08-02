@@ -343,7 +343,7 @@ final class CodeServerManagerTests: XCTestCase {
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
         let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Default Dark Modern")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
         // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal, and the
         // activity bar folded into the top of the sidebar (one column in a narrow panel).
@@ -352,8 +352,82 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
         XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
+        // The file tree hugs the window's right edge — the panel hangs off it.
+        XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
         // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
+    }
+
+    // MARK: Theme extension seed
+
+    func testThemeExtensionManifestAndThemeAreValidAndAgreeOnTheLabel() throws {
+        let manifest = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(CodeServerManager.themeExtensionManifest.utf8),
+            ) as? [String: Any],
+        )
+        let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
+        let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
+        XCTAssertEqual(themes.count, 1)
+        // The settings seed selects the theme BY LABEL — a drift here is a silent stock-theme boot.
+        XCTAssertEqual(themes.first?["label"] as? String, "SlopDesk Monokai")
+        let seeded = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(CodeServerManager.seededUserSettings.utf8),
+            ) as? [String: Any],
+        )
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes.first?["label"] as? String)
+        // The folder name pins the manifest identity (publisher.name-version).
+        let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
+            + "-\(manifest["version"] as? String ?? "")"
+        XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
+        // The theme path in the manifest matches the file the seeder writes.
+        XCTAssertEqual(themes.first?["path"] as? String, "./themes/slopdesk-monokai-color-theme.json")
+    }
+
+    func testThemeResourceIsValidDarkThemeWithNeutralizedChrome() throws {
+        let data = try XCTUnwrap(
+            CodeServerManager.themeExtensionThemeData(), "the bundled theme resource must resolve",
+        )
+        let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(theme["name"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(theme["type"] as? String, "dark")
+        let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
+        // Monokai Pro surfaces = the app's own Slate seeds (SlateDesign monokaiProClassic).
+        XCTAssertEqual(colors["editor.background"] as? String, "#2d2a2e")
+        XCTAssertEqual(colors["sideBar.background"] as? String, "#221f22")
+        // The SlopDesk fit: the CHROME accent is neutral (brightness, not hue) — the stock theme's
+        // yellow active-tab/list accents must not survive; links take the filter cyan.
+        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#fcfcfa")
+        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#fcfcfa")
+        XCTAssertEqual(colors["textLink.foreground"] as? String, "#78dce8")
+        // Semantic yellows stay Monokai (git-modified — the app's own git ramp uses yellow there).
+        XCTAssertEqual(colors["gitDecoration.modifiedResourceForeground"] as? String, "#ffd866")
+        XCTAssertFalse(
+            try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
+            "syntax rules ride along — the Monokai identity",
+        )
+    }
+
+    func testSeedThemeExtensionWritesOnceThenRepairsDrift() throws {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        let themeFile = dir
+            .appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
+            .appendingPathComponent("themes/slopdesk-monokai-color-theme.json")
+        XCTAssertEqual(try Data(contentsOf: themeFile), Data("{}".utf8))
+
+        // Byte-identical ⇒ idempotent no-op.
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+
+        // OUR file drifted (a newer seed, a truncated write) ⇒ repaired — unlike the user's
+        // settings file, the namespaced extension folder is ours to keep current.
+        try Data("stale".utf8).write(to: themeFile)
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertEqual(try Data(contentsOf: themeFile), Data("{}".utf8))
+
+        // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: nil))
     }
 
     func testEveryObsoleteSeedIsValidJSON() throws {

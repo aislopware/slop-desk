@@ -252,21 +252,25 @@ final class CodeServerManager: @unchecked Sendable {
         ]
     }
 
-    /// The user settings seeded on a pristine host — the workbench must come up matching the dark
-    /// client chrome, without the Welcome tab, and LEAN: the panel is a working surface beside a
-    /// terminal, so the AI/chat surfaces, the command-center strip, the layout/navigation title-bar
-    /// controls, the minimap, and the breadcrumbs all go — and the activity bar folds into the TOP
-    /// of the primary sidebar (one column, not two, in a 380pt-min panel). Auto-save on focus
-    /// change: the terminal pane beside the editor is where builds/tests run, and switching to it
-    /// IS the moment the file must be on disk. Every key here is
-    /// USER-scope-overridable
+    /// The user settings seeded on a pristine host — the workbench must come up in the app's OWN
+    /// theme (`SlopDesk Monokai`, the seeded extension below — the Monokai Pro filter the whole
+    /// client chrome derives from, chrome accents neutralized), without the Welcome tab, and LEAN:
+    /// the panel is a working surface beside a terminal, so the AI/chat surfaces, the
+    /// command-center strip, the layout/navigation title-bar controls, the minimap, and the
+    /// breadcrumbs all go — the activity bar folds into the TOP of the primary sidebar (one
+    /// column, not two, in a 380pt-min panel), and the sidebar itself sits on the RIGHT (the panel
+    /// hangs off the window's right edge, so the file tree hugs that edge and the editor faces the
+    /// terminal). Auto-save on focus change: the terminal pane beside the editor is where
+    /// builds/tests run, and switching to it IS the moment the file must be on disk. Every key
+    /// here is USER-scope-overridable
     /// in the workbench (user settings land in this same file and win on conflict-free keys the
     /// user later edits — see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
-        "workbench.colorTheme": "Default Dark Modern",
+        "workbench.colorTheme": "SlopDesk Monokai",
         "workbench.startupEditor": "none",
         "workbench.activityBar.location": "top",
+        "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.customTitleBarVisibility": "never",
         "chat.disableAIFeatures": true,
@@ -329,6 +333,26 @@ final class CodeServerManager: @unchecked Sendable {
             "breadcrumbs.enabled": false
         }
         """,
+        // v4 — auto-save on focus change; still the stock dark theme, sidebar still left.
+        """
+        {
+            "workbench.colorTheme": "Default Dark Modern",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "top",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.customTitleBarVisibility": "never",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -364,6 +388,15 @@ final class CodeServerManager: @unchecked Sendable {
     static func userSettingsURL(
         environment: [String: String] = ProcessInfo.processInfo.environment,
     ) -> URL {
+        dataDirURL(environment: environment).appendingPathComponent("User/settings.json")
+    }
+
+    /// The code-server data dir the child resolves (same `$XDG_DATA_HOME` → `$HOME` walk as
+    /// ``userSettingsURL(environment:)``) — settings live under `User/`, seeded extensions under
+    /// `extensions/`.
+    static func dataDirURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> URL {
         let dataHome: URL =
             if let xdg = environment["XDG_DATA_HOME"], xdg.hasPrefix("/") {
                 URL(fileURLWithPath: xdg)
@@ -372,7 +405,81 @@ final class CodeServerManager: @unchecked Sendable {
             } else {
                 FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share")
             }
-        return dataHome.appendingPathComponent("code-server/User/settings.json")
+        return dataHome.appendingPathComponent("code-server")
+    }
+
+    // MARK: - Theme extension seed
+
+    /// The seeded theme extension's folder name — `publisher.name-version`, the layout code-server's
+    /// extension scanner reads without any registry entry. A version bump here re-seeds changed
+    /// theme bytes on the next hostd start (the writer overwrites on content drift).
+    static let themeExtensionDirectoryName = "slopdesk.slopdesk-monokai-1.0.0"
+
+    /// The theme extension's manifest. The theme itself (`SlopDesk Monokai`) is the Monokai Pro
+    /// filter the whole client chrome derives from (`SlateDesign`'s seeds), with the CHROME accent
+    /// yellows neutralized to the app's accent-neutral register (selection/active state = brightness,
+    /// not hue; links take the filter cyan). Derived from Monokai Pro by Monokai (monokai.pro) —
+    /// personal-use derivation seeded into the user's own code-server, never redistributed.
+    static let themeExtensionManifest = """
+    {
+        "name": "slopdesk-monokai",
+        "displayName": "SlopDesk Monokai",
+        "description": "SlopDesk's workbench theme, derived from Monokai Pro by Monokai (monokai.pro).",
+        "publisher": "slopdesk",
+        "version": "1.0.0",
+        "engines": { "vscode": "^1.0.0" },
+        "categories": ["Themes"],
+        "contributes": {
+            "themes": [
+                {
+                    "label": "SlopDesk Monokai",
+                    "uiTheme": "vs-dark",
+                    "path": "./themes/slopdesk-monokai-color-theme.json"
+                }
+            ]
+        }
+    }
+    """
+
+    /// The theme JSON carried as a target resource (596 colour keys — too large for a literal).
+    /// `nil` only if the bundle is broken (then the seed is a no-op and the workbench falls back
+    /// to its stock dark theme — a nicety, never a failure).
+    static func themeExtensionThemeData() -> Data? {
+        guard let url = Bundle.module.url(
+            forResource: "Resources/slopdesk-monokai-color-theme", withExtension: "json",
+        ) ?? Bundle.module.url(forResource: "slopdesk-monokai-color-theme", withExtension: "json")
+        else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    /// Writes the theme extension under `extensionsDir` (creating directories), overwriting OUR
+    /// files when their bytes drifted from the current seed — the folder is namespaced
+    /// `slopdesk.*`, so unlike the settings file it is ours to keep current, never the user's.
+    /// Returns whether anything was written; failures are silent no-ops (see the settings seeder).
+    @discardableResult
+    static func seedThemeExtension(
+        into extensionsDir: URL, themeData: Data? = themeExtensionThemeData(),
+        fileManager: FileManager = .default,
+    ) -> Bool {
+        guard let themeData else { return false }
+        let root = extensionsDir.appendingPathComponent(themeExtensionDirectoryName)
+        let files: [(URL, Data)] = [
+            (root.appendingPathComponent("package.json"), Data(themeExtensionManifest.utf8)),
+            (root.appendingPathComponent("themes/slopdesk-monokai-color-theme.json"), themeData),
+        ]
+        var wrote = false
+        for (url, data) in files where (try? Data(contentsOf: url)) != data {
+            do {
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                )
+                try data.write(to: url)
+                wrote = true
+            } catch {
+                return wrote
+            }
+        }
+        return wrote
     }
 
     /// Extracts the bound port from code-server's own announcement, e.g.
@@ -388,9 +495,11 @@ final class CodeServerManager: @unchecked Sendable {
 
     // MARK: - Production seams
 
-    /// The production ``SettingsSeeder``: ``seedUserSettings(at:)`` on the resolved settings path.
+    /// The production ``SettingsSeeder``: ``seedUserSettings(at:)`` on the resolved settings path,
+    /// plus the ``seedThemeExtension(into:themeData:fileManager:)`` the seeded theme name refers to.
     static let defaultSettingsSeeder: SettingsSeeder = {
         seedUserSettings(at: userSettingsURL())
+        seedThemeExtension(into: dataDirURL().appendingPathComponent("extensions"))
     }
 
     /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`

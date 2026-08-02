@@ -72,5 +72,13 @@ final class WorkspaceChromeState {
         codeSidebarCollapsed = false
         Defaults[.codeSidebarCollapsed] = false
     }
+
+    /// Monotone reload-request counter for the code panel — the titlebar's reload plate bumps it,
+    /// and `CodeSidebarColumn` (which owns the webview pool handle + poll model this chrome model
+    /// must not know about) observes the change and actuates. Pure view state, never persisted.
+    private(set) var codeSidebarReloadRequests = 0
+
+    /// Ask the code panel to reload its embedded workbench (titlebar plate; no-op with no panel).
+    func requestCodeSidebarReload() { codeSidebarReloadRequests += 1 }
 }
 #endif

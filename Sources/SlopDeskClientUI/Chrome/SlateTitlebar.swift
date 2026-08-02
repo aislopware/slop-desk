@@ -3,11 +3,10 @@
 //   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed (expanded toggle
 //     lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the Host Windows rail REOPEN (`macwindow.on.rectangle` — the rail lists the host's
-//     WINDOWS, so its toggle wears the window glyph, deliberately distinct from the left `sidebar.left`),
-//     only while the rail is collapsed, plus the connection cluster ONLY while
-//     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
-// Both reopen buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
+//   • right — the RIGHT-panel toggle (`sidebar.right`, bidirectional — the chrome-less panel has no
+//     strip of its own) plus a reload plate while the panel is expanded, and the connection cluster
+//     ONLY while the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
+// The plate buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
 // faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
 // strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
 // STATUS, not controls. The reopen button flips the shared `WorkspaceChromeState` flag that the split
@@ -86,11 +85,13 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the CODE panel REOPEN (only while the panel is collapsed — the expanded toggle
-            // lives inside the panel's own strip, exactly the left sidebar's split of duties), with
-            // the connection cluster beside it (collapsed-LEFT-sidebar fallback only; the sidebar
-            // footer is its resting home). The reopen slot is ALWAYS reserved (hidden ⇒ transparent,
-            // not absent) so the cluster never shifts when the panel toggles — the zero-shift rule.
+            // Right: the RIGHT-panel toggle — `sidebar.right`, the platform's right-panel glyph
+            // (the panel is a generic tab surface, code today, more tabs later — never a
+            // code-specific mark), now BIDIRECTIONAL: the panel itself is chrome-less (the
+            // workbench runs flush to the window top), so its collapse control lives here in both
+            // states. A reload plate sits beside it while the panel is expanded (webview recovery).
+            // Both slots are ALWAYS reserved (hidden ⇒ transparent, not absent) so the connection
+            // cluster never shifts when the panel toggles — the zero-shift rule.
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -101,17 +102,16 @@ struct SlateTitlebar: View {
                         onConnect: onConnect,
                     )
                 }
-                // The CODE glyph (`</>`), not `sidebar.right` — this toggle opens the embedded
-                // editor and must read differently from the left `sidebar.left`. Same hover +
-                // settle choreography as the left reopen button.
-                PlateIconButton(symbol: .chevronLeftForwardslashChevronRight) { chrome.toggleCodeSidebar() }
-                    .opacity(!codeSidebarVisible && topHover ? 1 : 0)
-                    .allowsHitTesting(!codeSidebarVisible && topHover)
-                    .animation(
-                        codeSidebarVisible ? nil : Slate.Anim.standard.delay(0.15),
-                        value: codeSidebarVisible,
-                    )
+                PlateIconButton(symbol: .arrowClockwise) { chrome.requestCodeSidebarReload() }
+                    .opacity(codeSidebarVisible && topHover ? 1 : 0)
+                    .allowsHitTesting(codeSidebarVisible && topHover)
                     .animation(Slate.Anim.smallFade, value: topHover)
+                    .help("Reload the embedded editor")
+                PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
+                    .opacity(topHover ? 1 : 0)
+                    .allowsHitTesting(topHover)
+                    .animation(Slate.Anim.smallFade, value: topHover)
+                    .help("Toggle the right panel")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)

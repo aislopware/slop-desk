@@ -6331,3 +6331,30 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   directory, or a host without code-server, falls back to the verb-9 default-app open and says so
   (disposition `hostDefault`) — the client reveals the code panel ONLY when the file actually
   went to the workbench.
+
+### The workbench dresses like the app: SlopDesk Monokai, sidebar right, flush top (2026-08-02)
+
+> User-directed: dissect the Monokai Pro vsix into a SlopDesk-fit theme; workbench sidebar to the
+> right; the code panel flush to the window top; a generic right-panel toggle icon.
+
+- ✅ **"SlopDesk Monokai" = Monokai Pro with the CHROME yellows neutralized.** Dissecting the
+  vsix showed its surfaces already equal the app's Slate seeds (both derive from monokai.pro) —
+  the one real mismatch is the `#ffd866` UI interaction accent (active tab border/foreground,
+  list selection, menus, badges…). Those ~17 keys move to the app's accent-neutral register
+  (brightness, not hue: fg `#fcfcfa` / secondary / elevated; links take the filter cyan
+  `#78dce8`). SEMANTIC yellows stay — `gitDecoration.modified`, find-match, syntax tokens,
+  terminal ANSI — they match the app's own git ramp. Full theme JSON ships as an SPM resource
+  (`SlopDeskHost/Resources`, too large for a source literal).
+- ✅ **Seeded as a folder-dropped extension** (`extensions/slopdesk.slopdesk-monokai-1.0.0/`,
+  package.json + theme) — empirically verified code-server recognizes it with no registry entry
+  or vsix packaging. Unlike the user's settings file, the folder is OURS (namespaced) — the
+  seeder repairs byte drift unconditionally. Seed v5 selects it (`workbench.colorTheme`) and
+  moves the workbench sidebar right (`workbench.sideBar.location`); v4 joined `obsoleteSeeds`.
+- ✅ **The code column is chrome-less.** Its strip/header died; the workbench runs flush to the
+  window top (the titlebar overlay only spans the CONTENT column, so nothing collides). The
+  panel's toggle + reload moved to the titlebar's trailing plates — toggle now bidirectional,
+  reload speaks through a `WorkspaceChromeState` counter (the titlebar must not reach the
+  column's private model). Both slots always reserved (zero-shift rule).
+- ✅ **Toggle icon = SF `sidebar.right`** (palette row too), replacing `</>` — otty's actual
+  lesson is "use the system vocabulary", and the right panel is a generic tab surface (code
+  today, more tabs later), never a code-specific mark.

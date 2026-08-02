@@ -21,14 +21,12 @@ struct CodeSidebarColumn: View {
     /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
     /// (`target.host`), on the shared code-server port the ensure RPC reports.
     let connection: AppConnection
-    /// The shared chrome state — the strip's collapse toggle flips `codeSidebarCollapsed`, the same
-    /// flag ⌘⇧R and the titlebar reopen button drive (the host-rail split of duties: the EXPANDED
-    /// toggle lives in this column's strip, the collapsed reopen in the titlebar).
+    /// The shared chrome state — observed for the titlebar's reload requests (the panel's toggle
+    /// AND reload both live in the titlebar's trailing plates; this column is chrome-less so the
+    /// workbench runs flush to the window top).
     let chrome: WorkspaceChromeState
 
     @State private var model = CodeSidebarModel()
-    /// Pointer-in-top-strip — the hover-reveal gate for the strip's collapse toggle.
-    @State private var stripHover = false
 
     private var activePane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
@@ -53,9 +51,10 @@ struct CodeSidebarColumn: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            strip
-            header
+        // No strip, no header, no top padding — the workbench IS the column, flush to the window
+        // top (the workbench's own title bar row is the panel's top edge; the app-side controls —
+        // toggle + reload — live in the titlebar's trailing plates over the CONTENT column).
+        Group {
             if let root = activeProjectRoot {
                 content(projectRoot: root)
                     // Restart the poll on a project switch or a manual reload — SwiftUI cancels the
@@ -86,63 +85,13 @@ struct CodeSidebarColumn: View {
             }
         }
         .background(Slate.Surface.ground)
-    }
-
-    /// Traffic-light-row strip: ONLY the panel-collapse toggle, top-LEADING (the mirror of the left
-    /// rail's top-trailing toggle — each toggle hugs its column's inner edge; the host-rail anatomy,
-    /// restored). Same settled-state choreography: hide instantly on collapse, fade back after the
-    /// slide settles — plus the hover-reveal gate (the otty behavior): at rest the strip is empty.
-    /// The glyph is the CODE one (`</>`), matching the titlebar reopen button — deliberately
-    /// distinct from the left `sidebar.left`.
-    private var strip: some View {
-        ZStack(alignment: .topLeading) {
-            Color.clear
-            PlateIconButton(symbol: .chevronLeftForwardslashChevronRight) { chrome.toggleCodeSidebar() }
-                .opacity(!chrome.codeSidebarCollapsed && stripHover ? 1 : 0)
-                .allowsHitTesting(!chrome.codeSidebarCollapsed && stripHover)
-                .animation(
-                    chrome.codeSidebarCollapsed ? nil : Slate.Anim.standard.delay(0.25),
-                    value: chrome.codeSidebarCollapsed,
-                )
-                .animation(Slate.Anim.smallFade, value: stripHover)
-                .padding(.top, 3)
-                .padding(.leading, 8)
+        // The titlebar's reload plate speaks through the chrome counter — this column owns the
+        // pool handle + poll model the titlebar must not reach into.
+        .onChange(of: chrome.codeSidebarReloadRequests) {
+            guard let root = activeProjectRoot else { return }
+            CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+            model.requestReload()
         }
-        .frame(height: Slate.Metric.titlebarHeight)
-        .background(HoverSensor { stripHover = $0 })
-    }
-
-    /// The panel label — instrument voice, same register as the left rail's "TABS" (the host-rail
-    /// header anatomy): "CODE" leading, the active project's folder name trailing beside the reload
-    /// button.
-    private var header: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Text("CODE")
-                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .semibold))
-                .tracking(Slate.Typeface.instrumentTracking)
-                .foregroundStyle(Slate.State.header)
-            Spacer(minLength: 0)
-            if let root = activeProjectRoot {
-                Text(URL(fileURLWithPath: root).lastPathComponent)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .help(root)
-                Button {
-                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                    model.requestReload()
-                } label: {
-                    Image(systemSymbol: .arrowClockwise)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                        .foregroundStyle(Slate.State.header)
-                }
-                .buttonStyle(.plain)
-                .help("Reload the embedded editor")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 6)
     }
 
     /// The phase surface for the active project. The webview mounts ONLY in `.ready` — the pooled
