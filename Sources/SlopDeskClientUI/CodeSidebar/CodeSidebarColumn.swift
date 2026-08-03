@@ -86,9 +86,9 @@ struct CodeSidebarColumn: View {
             // ground band ends in an abrupt tone change against the workbench's own tab strip,
             // two mismatched grays stacked with no rule between them.
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            // The surfaces swap INSTANTLY — the strip's width morph is the whole switch gesture
-            // (user-directed 2026-08-03: the earlier crossfade was retired with every other
-            // opacity fade on this path; a hard cut under a morphing strip is the snappy read).
+            // A bare switch: the surfaces carry no animation of their own — whatever motion the
+            // swap has rides the `selectSurface` transaction, exactly like the pre-removal
+            // inspector's content switch under its `withAnimation` tab write.
             switch surfaceTab {
             case .code:
                 surface
@@ -123,32 +123,38 @@ struct CodeSidebarColumn: View {
     /// rides only the Code surface (Desktop has nothing to reload); the far trailing corner is
     /// the panel's HIDE toggle (user-directed 2026-08-03 — moved here from the terminal's
     /// titlebar, which now carries only the collapsed-state reopen).
+    /// A tab click animates through ONE `withAnimation(standard)` transaction around the state
+    /// write — the pre-removal inspector's choreography (`InspectorColumn.tabButton`, resurrected
+    /// user-directed 2026-08-03). The transaction carries the plate relayout, the reload plate's
+    /// arrival, and the surface swap together; there are NO per-view `.animation` modifiers on
+    /// this path (two redesigns that added them were both rejected).
+    private func selectSurface(_ tab: SurfaceTab) {
+        withAnimation(Slate.Anim.standard) { surfaceTab = tab }
+    }
+
     private var strip: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 2) {
             PanelTabPlate(
                 // The folder register (user-directed 2026-08-03), not a lone document — the tab
                 // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
                 // family (SF6 renamed it wholesale; the new constants outrun the package floor).
                 symbol: .folder, label: "Files",
                 selected: surfaceTab == .code,
-            ) { surfaceTab = .code }
+            ) { selectSurface(.code) }
                 .help("Files — the project's embedded editor")
             PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {
-                surfaceTab = .desktop
+                selectSurface(.desktop)
             }
             .help("Desktop — the host's window surface")
             Spacer(minLength: 0)
-            // The reload plate rides the SAME width morph as the tab labels (no fade, no pop —
-            // user-directed 2026-08-03): always mounted, clipped to zero width while Desktop is
-            // up. A zero-width contentShape takes no clicks.
-            PlateIconButton(symbol: .arrowClockwise) {
-                guard let root = activeProjectRoot else { return }
-                CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                model.requestReload()
+            if surfaceTab == .code {
+                PlateIconButton(symbol: .arrowClockwise) {
+                    guard let root = activeProjectRoot else { return }
+                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                    model.requestReload()
+                }
+                .help("Reload the workbench")
             }
-            .help("Reload the workbench")
-            .frame(width: surfaceTab == .code ? nil : 0, alignment: .leading)
-            .clipped()
             PlateIconButton(symbol: .sidebarRight) {
                 chrome.toggleCodeSidebar()
             }
@@ -156,7 +162,6 @@ struct CodeSidebarColumn: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.titlebarHeight)
-        .animation(Slate.Anim.standard, value: surfaceTab)
     }
 
     /// The workbench surface below the strip — phase-switched per the active project.

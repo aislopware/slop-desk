@@ -31,52 +31,41 @@ struct PlateIconButton: View {
     }
 }
 
-/// One right-panel TAB plate — the otty strip vocabulary: icon-only at rest, icon + label while
-/// SELECTED (its surface is the one the open panel shows). Selection is a filled plate
-/// (`Slate.State.selected` — brightness, not hue, per the accent-neutral register). Lives in the
-/// panel's own top strip (`CodeSidebarColumn`); a second tab makes click = select-and-reveal.
+/// One right-panel TAB plate — the pre-removal inspector's Details-bar tab, resurrected VERBATIM
+/// (`InspectorColumn.tabButton`, deleted in `6de70aa`, dug back up user-directed 2026-08-03 after
+/// two animation redesigns of the interim plate were both rejected — round 1's opacity fades read
+/// as cheap, round 2's pure width morph read as stuttery; the user named THIS form as the good
+/// one). Its shape: active = icon + label pill on the HOVER tint, inactive = icon only, NO hover
+/// state of its own, and NO `.animation` modifiers — the ONE animation is the caller's
+/// `withAnimation(Slate.Anim.standard)` transaction around the selection write, which carries the
+/// plate relayout and the surface swap in a single coherent beat. Do not re-add per-view
+/// animations here.
 struct PanelTabPlate: View {
     let symbol: SFSymbol
     let label: String
     let selected: Bool
     var action: () -> Void = {}
 
-    @State private var hovering = false
-
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 0) {
+            HStack(spacing: 4) {
                 Image(systemSymbol: symbol)
-                    .font(.system(size: Slate.Metric.iconSize))
-                // The label never enters or leaves the hierarchy and NEVER fades — selection
-                // morphs the plate's width and the clip reveals the label as the plate grows
-                // (user-directed 2026-08-03: opacity fades on the switch were retired; the
-                // width morph IS the gesture). `fixedSize` draws the glyphs at full width
-                // throughout, so mid-flight there is a clean reveal, not a "…" truncation.
-                Text(label)
                     .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .fixedSize()
-                    .frame(width: selected ? nil : 0, alignment: .leading)
-                    .clipped()
-                    .padding(.leading, selected ? 4 : 0)
+                if selected {
+                    Text(label)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                }
             }
-            .foregroundStyle(selected || hovering ? Slate.Text.primary : Slate.Text.icon)
-            .padding(.horizontal, selected ? Slate.Metric.space2 : 0)
-            .frame(minWidth: Slate.Metric.plate)
+            .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
+            .padding(.horizontal, selected ? 8 : 6)
             .frame(height: Slate.Metric.plate)
             .background(
-                selected ? Slate.State.selected : (hovering ? Slate.State.hover : .clear),
+                selected ? Slate.State.hover : .clear,
                 in: .rect(cornerRadius: Slate.Metric.radiusControl),
             )
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
-        // Selection is a RELAYOUT (the plate morphs around the revealed label), not a hover
-        // twinkle: it rides the tab-select token (`standard`, 0.20s symmetric ease). The hover
-        // token here (0.12s ease-out) made the width change read as a pop.
-        .animation(Slate.Anim.standard, value: selected)
     }
 }
 
