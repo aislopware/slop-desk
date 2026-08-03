@@ -6512,11 +6512,24 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
 ## The panel strip becomes a real tab row, and markdown reads rendered (2026-08-03)
 
 - ✅ **The strip speaks otty's tab vocabulary, with a second surface announced.** User-directed:
-  "tab kiểu như otty — mở thì expand symbol + text, collapsed thì chỉ icon". `PanelTabPlate`
-  already encodes that grammar (selected = icon + label on the filled plate; unselected = bare
-  icon); the strip now leads with the selected "Code" plate AND the icon-only **Desktop**
-  placeholder (`macwindow`) beside it — the window-OS surface the 07-22 pivot promised, a no-op
-  click until that panel exists. Actions (reload, collapse) stay trailing.
+  the selected tab expands to symbol + text, an unselected tab collapses to its icon —
+  `PanelTabPlate` already encodes that grammar; the strip now leads with the selected "Code"
+  plate AND the icon-only **Desktop** placeholder beside it — the window-OS surface the 07-22
+  pivot promised, a no-op click until that panel exists. Actions (reload, collapse) stay
+  trailing. Two same-day follow-ups: the row is CENTERED in the strip band (the titlebar-row
+  top-anchor read off-balance), and Desktop's glyph is `display` (the app's existing GUI-surface
+  vocabulary; `macwindow` rendered as a blob at strip size).
+- ✅ **Seed v11: no git-decoration letter badges on editor tabs.** The sub-baseline "A"/"M" the
+  workbench appends to tab labels read as a stray misaligned character (it is the git
+  Added/Modified letter, stock workbench behavior, not a theme artifact).
+  `workbench.editor.decorations.badges: false` scopes to TABS only — the explorer keeps its
+  badges, and the git colour on filenames stays everywhere.
+- ✅ **The dark divider tint steps up 0.07 → 0.10.** At 0.07 the fg-tinted seam sat barely above
+  the ground tone — more shadow than line. One step brighter keeps it a quiet hairline that
+  still reads as light. Light filters stay at 0.08 (their line is black; raising it would darken,
+  not brighten). Every seam moves together — the token is the single source.
+- ⚠️ **Never quote the user's prompt phrases (Vietnamese or otherwise) in code comments or docs.**
+  User-directed 2026-08-03: describe the direction in the file's own language instead.
 - ✅ **Seed v10: markdown opens as the RENDERED preview.** `workbench.editorAssociations` maps
   `*.md` to the built-in `vscode.markdown.preview.editor` — in this panel markdown is READ
   (README, docs, agent output), not authored; "Open Source" is one click when needed. v9 moved

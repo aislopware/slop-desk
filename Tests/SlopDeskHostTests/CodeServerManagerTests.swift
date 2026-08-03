@@ -521,6 +521,9 @@ final class CodeServerManagerTests: XCTestCase {
         // read, not authored. The value is the built-in markdown extension's custom-editor id.
         let associations = try XCTUnwrap(settings["workbench.editorAssociations"] as? [String: Any])
         XCTAssertEqual(associations["*.md"] as? String, "vscode.markdown.preview.editor")
+        // v11: no git-decoration letter badge on editor TABS — the sub-baseline "A"/"M" reads as
+        // a stray character beside the label. The explorer keeps its own badges.
+        XCTAssertEqual(settings["workbench.editor.decorations.badges"] as? Bool, false)
     }
 
     // MARK: Theme extension seed

@@ -85,19 +85,19 @@ struct CodeSidebarColumn: View {
         }
     }
 
-    /// The panel's OWN top strip (user-directed: "tab phải ở trên top của right sidebar" — the tabs
-    /// belong to the panel, over the panel, never over the terminal). Tab plates lead, actions
-    /// trail (the otty strip layout); top-anchored at the same row as the titlebar plates so the
-    /// two chrome rows read as ONE line across the divider. Tab vocabulary is otty's: the SELECTED
-    /// surface expands to icon + label, every other tab collapses to its icon (user-directed,
-    /// 2026-08-03). "Desktop" is the announced second surface — a placeholder plate today (the
-    /// window-OS panel it will select does not exist yet), so its click is a no-op.
+    /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,
+    /// never over the terminal). Tab plates lead, actions trail (the otty strip layout); the row
+    /// is CENTERED in the strip band (user-directed 2026-08-03, overriding the earlier
+    /// titlebar-row top-anchor). Tab vocabulary is otty's: the SELECTED surface expands to
+    /// icon + label, every other tab collapses to its icon. "Desktop" is the announced second
+    /// surface — a placeholder plate today (the window-OS panel it will select does not exist
+    /// yet), so its click is a no-op; its glyph is `display`, the app's existing GUI-surface
+    /// vocabulary (`macwindow` read as a blob at strip size — user-rejected).
     private var strip: some View {
-        let rowTop: CGFloat = 3
-        return HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: Slate.Metric.space1) {
             PanelTabPlate(symbol: .chevronLeftForwardslashChevronRight, label: "Code", selected: true)
                 .help("Code — the project's embedded editor")
-            PanelTabPlate(symbol: .macwindow, label: "Desktop", selected: false)
+            PanelTabPlate(symbol: .display, label: "Desktop", selected: false)
                 .help("Desktop — coming soon")
             Spacer(minLength: 0)
             PlateIconButton(symbol: .arrowClockwise) {
@@ -110,8 +110,7 @@ struct CodeSidebarColumn: View {
                 .help("Hide the right panel")
         }
         .padding(.horizontal, Slate.Metric.space2)
-        .padding(.top, rowTop)
-        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+        .frame(height: Slate.Metric.titlebarHeight)
     }
 
     /// The workbench surface below the strip — phase-switched per the active project.

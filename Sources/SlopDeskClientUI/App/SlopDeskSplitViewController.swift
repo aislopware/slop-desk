@@ -274,8 +274,8 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
         // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both are set
         // to `flatDividerTone()` — the chrome ground carrying the Slate `divider` hairline tint (a faint
-        // FOREGROUND wash, user-directed: "1 line màu fg nhẹ, kiểu tint trắng nhẹ"), so the seam reads as a
-        // deliberate native hairline instead of a bare luminance step.
+        // FOREGROUND wash, user-directed), so the seam reads as a deliberate native hairline instead of a
+        // bare luminance step.
         //
         // CRITICAL — repaint on a RUNTIME theme switch: `drawDivider` draws OPAQUE ground pixels that AppKit
         // CACHES in the layer; a plain `needsDisplay` does NOT re-invoke it for the divider rect, so after a
@@ -521,15 +521,15 @@ extension SlopDeskSplitViewController {
     }
 }
 
-/// The flat divider tone: the Slate `divider` hairline tint (foreground at ~7%) composited over the sidebar
-/// `ground`, as ONE opaque sRGB colour.
+/// The flat divider tone: the Slate `divider` hairline tint (foreground at its hairline opacity) composited
+/// over the sidebar `ground`, as ONE opaque sRGB colour.
 ///
 /// REVERSES the earlier bare-ground rule (which drew NO hairline, leaving only the ground→face luminance
-/// step) — user-directed 2026-08-03: "Divider xấu, tôi nghĩ có 1 line màu fg nhẹ, kiểu tint trắng nhẹ thì
-/// đẹp và native hơn". The earlier worry — a hairline that reads heavy against one of its two differently-lit
+/// step) — user-directed 2026-08-03: a faint foreground-tinted line reads more native than the bare step.
+/// The earlier worry — a hairline that reads heavy against one of its two differently-lit
 /// neighbours — is answered by using the theme's own `divider` token at its hairline OPACITY over `ground`
 /// (not a raw white/black line): the tint tracks the theme's foreground, so it lifts the seam by the same
-/// ~7% wash on dark and light alike, exactly the register the pane-grid dividers already use.
+/// faint wash on dark and light alike, exactly the register the pane-grid dividers already use.
 ///
 /// Resolved via `Color.resolve(in:)` (NOT `NSColor(_: SwiftUI.Color)`, which resolves through the effective
 /// appearance and read black on the light themes) — both tokens are concrete `Color(.sRGB, …)`, so resolve is

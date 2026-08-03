@@ -312,6 +312,7 @@ final class CodeServerManager: @unchecked Sendable {
         "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
         "workbench.statusBar.visible": false,
         "workbench.editor.empty.hint": "hidden",
+        "workbench.editor.decorations.badges": false,
         "window.commandCenter": false,
         "workbench.layoutControl.enabled": false,
         "workbench.navigationControl.enabled": false,
@@ -511,8 +512,8 @@ final class CodeServerManager: @unchecked Sendable {
         }
         """,
         // v8 — JetBrains Mono + lineHeight 1.32 + per-client light/dark, but still the COMPACT tab
-        // density: 22px tabs that the Slate plate recut (height − 8) squeezed to 14px — "tab
-        // nhìn height ngắn rất xấu". v9 drops the density line (default 35px → 27px plates).
+        // density: 22px tabs that the Slate plate recut (height − 8) squeezed to squat 14px
+        // plates. v9 drops the density line (default 35px → 27px plates).
         """
         {
             "workbench.colorTheme": "SlopDesk Monokai",
@@ -552,6 +553,41 @@ final class CodeServerManager: @unchecked Sendable {
             "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
             "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
             "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v10 — markdown preview-first, but editor tabs still wore the git-decoration letter
+        // badge — the sub-baseline Added/Modified letter that reads as a stray character beside
+        // the label; v11 turns tab badges off (the explorer keeps its own).
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
             "workbench.activityBar.location": "hidden",
             "workbench.sideBar.location": "right",
             "workbench.secondarySideBar.defaultVisibility": "hidden",

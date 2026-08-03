@@ -157,7 +157,10 @@ struct SlateTheme: Equatable {
             textSecondary: Color(slateHex: s.secondary),
             textTertiary: Color(slateHex: s.tertiary),
             icon: Color(slateHex: s.secondary),
-            divider: line.opacity(s.isLight ? 0.08 : 0.07),
+            // Dark filters carry the fg tint one step brighter than the other structure lines —
+            // at 0.07 the seam sat barely above the ground tone, more shadow than line
+            // (user-flagged, 2026-08-03). 0.10 keeps it a quiet hairline that still reads LIGHT.
+            divider: line.opacity(s.isLight ? 0.08 : 0.10),
             cardBorder: line.opacity(s.isLight ? 0.08 : 0.07),
             border: line.opacity(s.isLight ? 0.05 : 0.06),
             borderActive: line.opacity(0.15),
