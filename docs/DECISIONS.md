@@ -6595,3 +6595,26 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   a terminal, it does not debug it. `editor.lineNumbersMinChars` 5→3, `editor.glyphMargin` off
   (breakpoints have no meaning here), `editor.folding` off (the arrows column; folding by
   command still works for the rare need). v12 joins `obsoleteSeeds` (13 entries).
+
+## The panel owns its hide toggle, the strip animates as one gesture (2026-08-03)
+
+- ✅ **The right-panel hide toggle moved INTO the panel's strip trailing corner.**
+  User-directed. The titlebar over the terminal keeps only the collapsed-state REOPEN
+  (hover-revealed, fade-in delayed past the split slide) — the exact split the left sidebar
+  already had: hide lives inside the surface it hides, reopen lives in the chrome that
+  remains. Both sides now read identically.
+- ❌ **Otty's toggle glyphs (`inset.filled.leftthird.square` / `.rightthird.square`) — tried
+  and rejected.** Extracted from the otty binary (its `PanelToggleButton` pair, 13pt regular,
+  palette two-tone), shipped to pixels, user-rejected on sight as not fitting the app. The
+  `sidebar.left` / `sidebar.right` pair stays. Do not re-propose.
+- ✅ **The tab switch animates as one gesture.** User-reported jank: the selected plate's label
+  popped (hover token, 0.12s ease-out, on a RELAYOUT), the label truncated to "…" mid-growth,
+  the reload plate popped in/out, and the surface below hard-cut. Now: `PanelTabPlate` label is
+  `.fixedSize()` (draws full-width for the whole expansion) with an opacity transition, plate
+  relayout rides the tab-select token (`standard`, 0.20s symmetric); the reload plate fades on
+  the same token; the surfaces crossfade in a ZStack (both mounted for the 0.20s — warm-pool
+  cheap, the poll task still cancels on unmount). Filmstrip-verified both directions at 30fps.
+- ✅ **"Code" → "Files" (`document` glyph).** User-directed. Raw-name `SFSymbol(rawValue:)`
+  spelling: the SF6 constant needs a macOS 15 floor the package (14) does not have, and the
+  legacy `.doc` constant deprecation-warns at the app target — the raw init is the only
+  warning-free spelling on both gates.

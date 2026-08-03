@@ -51,6 +51,11 @@ struct PanelTabPlate: View {
                 if selected {
                     Text(label)
                         .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                        // Draw at full intrinsic width for the whole expansion — without this the
+                        // label lays out inside the still-growing plate and flashes a truncated
+                        // "…" mid-flight, the jarring half of the switch.
+                        .fixedSize()
+                        .transition(.opacity)
                 }
             }
             .foregroundStyle(selected || hovering ? Slate.Text.primary : Slate.Text.icon)
@@ -66,7 +71,10 @@ struct PanelTabPlate: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
-        .animation(Slate.Anim.smallFade, value: selected)
+        // Selection is a RELAYOUT (the plate grows around the arriving label), not a hover
+        // twinkle: it rides the tab-select token (`standard`, 0.20s symmetric ease). The hover
+        // token here (0.12s ease-out) made the width change read as a pop.
+        .animation(Slate.Anim.standard, value: selected)
     }
 }
 
