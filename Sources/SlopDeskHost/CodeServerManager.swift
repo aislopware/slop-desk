@@ -253,8 +253,12 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's OWN
-    /// theme (`SlopDesk Monokai`, the seeded extension below — the Monokai Pro filter the whole
-    /// client chrome derives from, chrome accents neutralized) and CHROME-LESS, the panel's top
+    /// theme (`SlopDesk Monokai` / `SlopDesk Monokai Light`, the seeded extension below — the two
+    /// Monokai Pro filters the client chrome runs on, chrome accents neutralized;
+    /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
+    /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
+    /// light client gets a light editor while a dark client on the same host stays dark, from the
+    /// one shared settings file) and CHROME-LESS, the panel's top
     /// edge being the EXPLORER header itself: title bar, activity bar, menu bar, and status bar
     /// all hidden. The title bar dies through `activityBar.location: "hidden"` + the menu bar
     /// hidden + the command-center/layout/navigation strips off — on web that combination alone
@@ -266,11 +270,15 @@ final class CodeServerManager: @unchecked Sendable {
     /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
     /// deliberately passes through), matching the app's zero-chrome register. The sidebar sits on
     /// the RIGHT (the panel hangs off the window's right edge, so the file tree hugs that edge
-    /// and the editor faces the terminal). The editor face matches the terminal's: `ui-monospace`
-    /// resolves to SF Mono in WebKit — the terminal's default family — at the terminal's default
-    /// 13pt, falling back to "Symbols Nerd Font" for the private-use glyphs SF Mono lacks (the
-    /// client injects that face as an @font-face data URI — `CodeSidebarPageDressing`; the name
-    /// here and the name there must agree). Status-bar duties are already covered app-side (the project git readout) or by
+    /// and the editor faces the terminal). The editor face IS the terminal's: JetBrains Mono —
+    /// the face libghostty embeds and renders when the preference's "SF Mono" does not resolve
+    /// (neither dev machine installs it; CoreText verified) — at the terminal's default 13pt,
+    /// with `editor.lineHeight: 1.32` = JetBrains Mono's own vertical metric
+    /// ((1020 ascent + 300 descent) / 1000 upm), the exact ratio ghostty rounds into its cell
+    /// height, so editor lines and terminal rows share a rhythm. The client injects the face as
+    /// @font-face data URIs (`CodeSidebarPageDressing` — the family names here and there must
+    /// agree), with "Symbols Nerd Font" behind it for private-use glyphs.
+    /// Status-bar duties are already covered app-side (the project git readout) or by
     /// chords (⌘⇧M problems); `window.title` drops the `${appName}` suffix so any surface that
     /// ever renders it says the project, not "code-server". Auto-save on focus change: the
     /// terminal pane beside the editor is where builds/tests run, and switching to it IS the
@@ -280,6 +288,9 @@ final class CodeServerManager: @unchecked Sendable {
     static let seededUserSettings = """
     {
         "workbench.colorTheme": "SlopDesk Monokai",
+        "window.autoDetectColorScheme": true,
+        "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+        "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
         "workbench.startupEditor": "none",
         "workbench.activityBar.location": "hidden",
         "workbench.sideBar.location": "right",
@@ -296,8 +307,9 @@ final class CodeServerManager: @unchecked Sendable {
         "extensions.ignoreRecommendations": true,
         "editor.minimap.enabled": false,
         "breadcrumbs.enabled": false,
-        "editor.fontFamily": "ui-monospace, Menlo, 'Symbols Nerd Font', monospace",
+        "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
         "editor.fontSize": 13,
+        "editor.lineHeight": 1.32,
         "editor.overviewRulerBorder": false,
         "editor.hideCursorInOverviewRuler": true,
         "files.autoSave": "onFocusChange"
@@ -457,6 +469,35 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v7 — registered-keys-only, but the editor face was still `ui-monospace` (SF Mono in
+        // WebKit) while the terminal actually renders libghostty's embedded JetBrains Mono —
+        // "SF Mono" resolves on NEITHER machine, so the two monos never matched.
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "window.density.editorTabHeight": "compact",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "ui-monospace, Menlo, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -526,16 +567,22 @@ final class CodeServerManager: @unchecked Sendable {
     static let themeExtensionDirectoryName =
         "\(themeExtensionPublisher).\(themeExtensionName)-\(themeExtensionVersion)"
 
-    /// The theme extension's manifest. The theme itself (`SlopDesk Monokai`) is the Monokai Pro
-    /// filter the whole client chrome derives from (`SlateDesign`'s seeds), with the CHROME accent
-    /// yellows neutralized to the app's accent-neutral register (selection/active state = brightness,
-    /// not hue; links take the filter cyan). Derived from Monokai Pro by Monokai (monokai.pro) —
-    /// personal-use derivation seeded into the user's own code-server, never redistributed.
+    /// The theme extension's manifest. The themes (`SlopDesk Monokai` + `SlopDesk Monokai
+    /// Light`) are the two Monokai Pro filters the client chrome itself runs on (`SlateDesign`'s
+    /// classic + classic-light seeds), with the CHROME interaction accent neutralized to the
+    /// app's accent-neutral register (selection/active state = brightness, not hue; links take
+    /// the filter cyan) — the dark filter's accent is yellow `#ffd866`, the light filter's is
+    /// pink `#e14775`, the SAME 17 keys move in both. The workbench picks between them via the
+    /// seeded `window.autoDetectColorScheme` — the webview's `prefers-color-scheme` follows the
+    /// window's pinned `NSAppearance`, which the client pins to the active Slate theme — so the
+    /// editor flips light/dark WITH the app, per client, no shared-settings conflict. Derived
+    /// from Monokai Pro by Monokai (monokai.pro) — personal-use derivation seeded into the
+    /// user's own code-server, never redistributed.
     static let themeExtensionManifest = """
     {
         "name": "slopdesk-monokai",
         "displayName": "SlopDesk Monokai",
-        "description": "SlopDesk's workbench theme, derived from Monokai Pro by Monokai (monokai.pro).",
+        "description": "SlopDesk's workbench themes, derived from Monokai Pro by Monokai (monokai.pro).",
         "publisher": "slopdesk",
         "version": "1.0.0",
         "engines": { "vscode": "^1.0.0" },
@@ -546,19 +593,24 @@ final class CodeServerManager: @unchecked Sendable {
                     "label": "SlopDesk Monokai",
                     "uiTheme": "vs-dark",
                     "path": "./themes/slopdesk-monokai-color-theme.json"
+                },
+                {
+                    "label": "SlopDesk Monokai Light",
+                    "uiTheme": "vs",
+                    "path": "./themes/slopdesk-monokai-light-color-theme.json"
                 }
             ]
         }
     }
     """
 
-    /// The theme JSON carried as a target resource (596 colour keys — too large for a literal).
-    /// `nil` only if the bundle is broken (then the seed is a no-op and the workbench falls back
-    /// to its stock dark theme — a nicety, never a failure).
-    static func themeExtensionThemeData() -> Data? {
+    /// A theme JSON carried as a target resource (~600 colour keys each — too large for source
+    /// literals). `nil` only if the bundle is broken (then the seed is a no-op and the workbench
+    /// falls back to its stock theme — a nicety, never a failure).
+    static func themeExtensionThemeData(resource: String = "slopdesk-monokai-color-theme") -> Data? {
         guard let url = Bundle.module.url(
-            forResource: "Resources/slopdesk-monokai-color-theme", withExtension: "json",
-        ) ?? Bundle.module.url(forResource: "slopdesk-monokai-color-theme", withExtension: "json")
+            forResource: "Resources/\(resource)", withExtension: "json",
+        ) ?? Bundle.module.url(forResource: resource, withExtension: "json")
         else { return nil }
         return try? Data(contentsOf: url)
     }
@@ -570,13 +622,15 @@ final class CodeServerManager: @unchecked Sendable {
     @discardableResult
     static func seedThemeExtension(
         into extensionsDir: URL, themeData: Data? = themeExtensionThemeData(),
+        lightThemeData: Data? = themeExtensionThemeData(resource: "slopdesk-monokai-light-color-theme"),
         fileManager: FileManager = .default,
     ) -> Bool {
-        guard let themeData else { return false }
+        guard let themeData, let lightThemeData else { return false }
         let root = extensionsDir.appendingPathComponent(themeExtensionDirectoryName)
         let files: [(URL, Data)] = [
             (root.appendingPathComponent("package.json"), Data(themeExtensionManifest.utf8)),
             (root.appendingPathComponent("themes/slopdesk-monokai-color-theme.json"), themeData),
+            (root.appendingPathComponent("themes/slopdesk-monokai-light-color-theme.json"), lightThemeData),
         ]
         var wrote = false
         for (url, data) in files where (try? Data(contentsOf: url)) != data {

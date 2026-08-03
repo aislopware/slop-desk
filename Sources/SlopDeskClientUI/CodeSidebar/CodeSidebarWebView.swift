@@ -165,13 +165,27 @@ final class CodeSidebarWebViewPool {
         let configuration = WKWebViewConfiguration()
         // No user-gesture gate on media — VS Code's own UI sounds/previews must not silently stall.
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        // The finishing coat (nerd-font @font-face + slopcat letterpress) rides every navigation —
-        // user scripts persist on the controller, so a reload/respawn re-dresses itself.
+        // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
+        // letterpress) rides every navigation — user scripts persist on the controller, so a
+        // reload/respawn re-dresses itself.
         configuration.userContentController.addUserScript(WKUserScript(
             source: Self.dressingScriptSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true,
         ))
+        // The clipboard BRIDGE: WebKit's async clipboard API drops the workbench's copy (the
+        // transient user activation is spent by the time VS Code's async path calls `writeText`),
+        // so ⌘C in the editor never reached NSPasteboard. The wrap posts the text to the native
+        // handler, which writes the pasteboard directly — document START (before the workbench
+        // captures the API) and ALL frames (extension webviews copy too).
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.clipboardBridgeScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+        ))
+        configuration.userContentController.add(
+            Self.clipboardBridge, name: CodeSidebarPageDressing.clipboardHandlerName,
+        )
         let webView = CodeSidebarWKWebView(frame: .zero, configuration: configuration)
         // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
         // window into a misbehaving code-server page.
@@ -198,16 +212,24 @@ final class CodeSidebarWebViewPool {
         webViews[projectRoot]?.reload()
     }
 
-    /// The dressing user-script source, built ONCE per process — the base64 nerd-font payload is
-    /// ~3 MB, shared by every pooled webview. A missing bundle resource degrades to the
-    /// letterpress-only sheet (`styleSheet(nerdFontBase64: nil)`), never a crash.
+    /// The dressing user-script source, built ONCE per process — the base64 font payloads total
+    /// ~4 MB (nerd symbols + the two JetBrains Mono variable faces), shared by every pooled
+    /// webview. Any missing bundle resource degrades to the remaining sheet parts, never a crash.
     private static let dressingScriptSource: String = CodeSidebarPageDressing.userScript(
         styleSheet: CodeSidebarPageDressing.styleSheet(
-            nerdFontBase64: NerdSymbolFont.bundledFontURL
-                .flatMap { try? Data(contentsOf: $0) }?
-                .base64EncodedString(),
+            nerdFontBase64: base64Resource(NerdSymbolFont.bundledFontURL),
+            monoUprightBase64: base64Resource(JetBrainsMonoFont.bundledUprightURL),
+            monoItalicBase64: base64Resource(JetBrainsMonoFont.bundledItalicURL),
         ),
     )
+
+    private static func base64Resource(_ url: URL?) -> String? {
+        url.flatMap { try? Data(contentsOf: $0) }?.base64EncodedString()
+    }
+
+    /// The clipboard bridge's native side — retained by every pool configuration's user-content
+    /// controller; writes each posted copy straight to the general pasteboard.
+    private static let clipboardBridge = CodeSidebarClipboardBridge()
 
     /// Whether the key window's first responder sits inside ANY pooled webview — the
     /// `WorkspaceKeyDispatcher`'s webview-yield predicate (while true, the embedded VS Code owns the
@@ -220,6 +242,22 @@ final class CodeSidebarWebViewPool {
               let responder = app.keyWindow?.firstResponder as? NSView
         else { return false }
         return webViews.values.contains { responder === $0 || responder.isDescendant(of: $0) }
+    }
+}
+
+/// The native side of the clipboard bridge (`CodeSidebarPageDressing.clipboardBridgeScript()`):
+/// every copy the embedded workbench performs posts its plain text here, and the handler writes
+/// NSPasteboard directly — the WebKit async-clipboard permission dance can no longer drop it.
+private final class CodeSidebarClipboardBridge: NSObject, WKScriptMessageHandler {
+    func userContentController(
+        _: WKUserContentController, didReceive message: WKScriptMessage,
+    ) {
+        guard message.name == CodeSidebarPageDressing.clipboardHandlerName,
+              let text = message.body as? String
+        else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 }
 

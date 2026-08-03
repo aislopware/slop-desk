@@ -362,13 +362,19 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertNil(settings["chat.commandCenter.enabled"])
         // The file tree hugs the window's right edge — the panel hangs off it.
         XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
-        // The editor face matches the terminal's defaults: ui-monospace → SF Mono, 13pt, with the
-        // bundled nerd face as the private-use fallback (the client injects the @font-face; the
-        // family NAME here must match `CodeSidebarPageDressing.nerdFontFamilyName`).
+        // The editor face IS the terminal's: JetBrains Mono (what libghostty actually renders —
+        // its embedded default; "SF Mono" resolves on neither machine) at the terminal's 13pt,
+        // with the bundled nerd face behind it for private-use glyphs. The client injects both
+        // @font-faces; the family NAMES here must match `CodeSidebarPageDressing`'s
+        // `monoFontFamilyName` / `nerdFontFamilyName`.
         let fontFamily = try XCTUnwrap(settings["editor.fontFamily"] as? String)
-        XCTAssertTrue(fontFamily.hasPrefix("ui-monospace"))
+        XCTAssertTrue(fontFamily.hasPrefix("'JetBrains Mono'"))
+        XCTAssertTrue(fontFamily.contains("ui-monospace"))
         XCTAssertTrue(fontFamily.contains("'Symbols Nerd Font'"))
         XCTAssertEqual(settings["editor.fontSize"] as? Int, 13)
+        // Line rhythm parity: 1.32 is JetBrains Mono's own vertical metric ((1020 + 300) / 1000)
+        // — the exact ratio ghostty rounds into its cell height.
+        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.32)
         // Any surface that ever renders the title says the project, never "code-server".
         XCTAssertEqual(
             settings["window.title"] as? String,
@@ -388,21 +394,36 @@ final class CodeServerManagerTests: XCTestCase {
         )
         let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
         let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
-        XCTAssertEqual(themes.count, 1)
-        // The settings seed selects the theme BY LABEL — a drift here is a silent stock-theme boot.
-        XCTAssertEqual(themes.first?["label"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(themes.count, 2)
+        // The settings seed selects the themes BY LABEL — a drift here is a silent stock-theme
+        // boot. Dark is the base `workbench.colorTheme` AND the preferred-dark; light is the
+        // preferred-light the seeded `window.autoDetectColorScheme` flips to on a light client.
+        XCTAssertEqual(themes[0]["label"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(themes[0]["uiTheme"] as? String, "vs-dark")
+        XCTAssertEqual(themes[1]["label"] as? String, "SlopDesk Monokai Light")
+        XCTAssertEqual(themes[1]["uiTheme"] as? String, "vs")
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.seededUserSettings.utf8),
             ) as? [String: Any],
         )
-        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes.first?["label"] as? String)
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes[0]["label"] as? String)
+        XCTAssertEqual(seeded["window.autoDetectColorScheme"] as? Bool, true)
+        XCTAssertEqual(
+            seeded["workbench.preferredDarkColorTheme"] as? String, themes[0]["label"] as? String,
+        )
+        XCTAssertEqual(
+            seeded["workbench.preferredLightColorTheme"] as? String, themes[1]["label"] as? String,
+        )
         // The folder name pins the manifest identity (publisher.name-version).
         let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
             + "-\(manifest["version"] as? String ?? "")"
         XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
-        // The theme path in the manifest matches the file the seeder writes.
-        XCTAssertEqual(themes.first?["path"] as? String, "./themes/slopdesk-monokai-color-theme.json")
+        // The theme paths in the manifest match the files the seeder writes.
+        XCTAssertEqual(themes[0]["path"] as? String, "./themes/slopdesk-monokai-color-theme.json")
+        XCTAssertEqual(
+            themes[1]["path"] as? String, "./themes/slopdesk-monokai-light-color-theme.json",
+        )
     }
 
     func testThemeResourceIsValidDarkThemeWithNeutralizedChrome() throws {
@@ -421,8 +442,46 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(colors["tab.activeForeground"] as? String, "#fcfcfa")
         XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#fcfcfa")
         XCTAssertEqual(colors["textLink.foreground"] as? String, "#78dce8")
+        // The Slate PLATE model: stock Monokai Pro flattens strip/active/inactive to one surface
+        // and leans on the (neutralized, then CSS-hidden) underline — the active tab instead takes
+        // the app's own active-tab card tone (`elevated`, ≡ foreground @9% over the strip = Slate
+        // `selected`), hover the Slate hover tint; inactive stays flush with the strip.
+        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#403e41")
+        XCTAssertEqual(colors["tab.hoverBackground"] as? String, "#fcfcfa0d")
+        XCTAssertEqual(colors["tab.inactiveBackground"] as? String, "#2d2a2e")
         // Semantic yellows stay Monokai (git-modified — the app's own git ramp uses yellow there).
         XCTAssertEqual(colors["gitDecoration.modifiedResourceForeground"] as? String, "#ffd866")
+        XCTAssertFalse(
+            try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
+            "syntax rules ride along — the Monokai identity",
+        )
+    }
+
+    func testLightThemeResourceIsValidLightThemeWithNeutralizedChrome() throws {
+        let data = try XCTUnwrap(
+            CodeServerManager.themeExtensionThemeData(resource: "slopdesk-monokai-light-color-theme"),
+            "the bundled light theme resource must resolve",
+        )
+        let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(theme["name"] as? String, "SlopDesk Monokai Light")
+        XCTAssertEqual(theme["type"] as? String, "light")
+        let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
+        // Monokai Pro Light surfaces = the app's own light Slate seed (monokaiProClassicLight).
+        XCTAssertEqual(colors["editor.background"] as? String, "#faf4f2")
+        XCTAssertEqual(colors["editor.foreground"] as? String, "#29242a")
+        // The SlopDesk fit, mirrored: the light filter's chrome accent is PINK (#e14775) — the
+        // same 17 keys the dark transform moved go accent-neutral here; links take the light cyan.
+        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#29242a")
+        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#918c8e")
+        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#29242a")
+        XCTAssertEqual(colors["textLink.foreground"] as? String, "#1c8ca8")
+        // The Slate plate model, mirrored (light `elevated` = white; hover = Slate's light tint).
+        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#ffffff")
+        XCTAssertEqual(colors["tab.hoverBackground"] as? String, "#0000000b")
+        XCTAssertEqual(colors["tab.inactiveBackground"] as? String, "#faf4f2")
+        // Semantic pinks stay Monokai — only the CHROME keys moved (deleted-file decoration
+        // keeps the filter's pink, exactly as the dark theme keeps its semantic yellows).
+        XCTAssertEqual(colors["gitDecoration.deletedResourceForeground"] as? String, "#e14775")
         XCTAssertFalse(
             try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
             "syntax rules ride along — the Monokai identity",

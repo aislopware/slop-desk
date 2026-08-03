@@ -6420,3 +6420,47 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   the titlebar keeps only the mirrored REOPEN plate while the panel is collapsed — the exact
   mirror of the left sidebar. The `codeSidebarReloadRequests` chrome relay died with the
   move: the strip calls the pool + poll model directly, in the one file that owns them.
+
+### The panel becomes a native citizen: clipboard bridge, the terminal's own face, plate tabs, per-client light/dark (2026-08-03)
+
+> User-reported, second round of living on the panel: copy inside the workbench never reached the
+> system clipboard; the editor still rendered `ui-monospace` (not the terminal's JetBrains Mono);
+> size/line-height out of rhythm with the terminal; tabs "vuông vức" — square, not the app's soft
+> plate vocabulary. Plus: a light-themed client showed a dark workbench.
+
+- ✅ **Copy is bridged natively, not permissioned.** The failure is WebKit's async clipboard API:
+  `navigator.clipboard.writeText` demands a transient user activation that VS Code's async copy
+  path has usually already spent, so the promise rejects silently and ⌘C dies inside the webview
+  (the key event itself arrives fine — the dispatcher yield was innocent). Private WebKit
+  permission prefs via KVC were rejected (crash-prone, version-locked). Instead a document-start
+  user script (all frames) wraps `writeText`/`write` to ALSO post the plain text to a
+  `WKScriptMessageHandler` that writes `NSPasteboard.general` directly; the original call stays
+  best-effort with its rejection swallowed (a surfaced rejection would toast a false copy error).
+  Copy is now deterministic on every client; paste already worked.
+- ✅ **The editor face is the face the terminal ACTUALLY renders — the embedded JetBrains Mono.**
+  The preference says "SF Mono" but CoreText resolves it on neither machine; libghostty falls back
+  to its EMBEDDED JetBrainsMono Nerd Font. So "match the terminal" ≡ JetBrains Mono: the two
+  upstream variable TTFs (upright + italic, OFL) ride in `SlopDeskClientUI` resources and inject
+  as @font-face data URIs (the WebContent process cannot see `CTFontManager` registrations —
+  same seam as the nerd font), and the seed's `editor.fontFamily` leads with `'JetBrains Mono'`.
+- ✅ **Line rhythm is derived, not eyeballed: `editor.lineHeight: 1.32`.** JBM metrics (upm 1000,
+  hhea 1020/−300/0) → ghostty `Metrics.zig` rounds cell height to exactly 1.32 × size. Seeding
+  1.32 at the shared size 13 makes editor lines and terminal cells the same height to the pixel.
+- ✅ **Tabs are Slate plates — geometry from the CSS coat, fill from the theme.** VS Code 1.112's
+  own cornerRadius tokens already sit on Slate's ladder; the surfaces that never adopted them
+  (tabs, list rows, scrollbar sliders, inputs, menus/hovers) get a geometry-ONLY injected recut
+  (radius 6/8, capsule sliders, tabs inset 4px as floating plates — colours stay the theme's,
+  test-pinned). Two traps: the label's stock `line-height` equals the FULL tab-height var, so the
+  shrunk plate must recut it too (else glyphs overflow and the underline strikes through them —
+  caught by pixel proof); and the underline containers are hidden outright — a Slate plate
+  carries selection by fill. Which exposed that stock Monokai Pro flattens strip/active/inactive
+  tabs to ONE colour and leans entirely on that underline: the themes now differentiate —
+  active = the app's own active-tab card tone (`elevated` #403e41 dark ≡ Slate `selected` over
+  the strip; white light), hover = the Slate hover tint, inactive flush with the strip.
+- ✅ **The workbench follows EACH client's appearance from one shared settings file.** A second
+  derived theme "SlopDesk Monokai Light" (Monokai Pro Light + the same 17-key chrome
+  neutralization, pink accent → light neutrals, semantic pinks kept) ships beside the dark one,
+  and seed v8 sets `window.autoDetectColorScheme` + preferredDark/Light themes. The client pins
+  window `NSAppearance` to the active Slate theme, the webview's `prefers-color-scheme` follows
+  it, and the workbench flips per client — a dark client and a light client on the SAME host
+  each see their own register (pixel-proofed both directions in the gate fixture).

@@ -82,6 +82,25 @@ enum NerdSymbolFont {
     }
 }
 
+/// The bundled JetBrains Mono VARIABLE faces (upright + italic, weights 100–800 in one file each) —
+/// the terminal's true face: libghostty embeds JetBrains Mono and renders it whenever the preferred
+/// "SF Mono" does not resolve (it is absent on a stock system — verified via CoreText on both dev
+/// machines). The code sidebar injects these bytes as @font-face data URIs so the embedded editor
+/// shares the terminal's mono exactly (`CodeSidebarPageDressing`); the chrome itself keeps
+/// `Slate.Typeface` (which independently prefers JetBrains Mono when installed). Vendored from the
+/// same upstream release ghostty pins (OFL-1.1 — license beside the TTFs).
+enum JetBrainsMonoFont {
+    /// The upright variable TTF (`JetBrainsMono[wght]`).
+    static var bundledUprightURL: URL? {
+        Bundle.module.url(forResource: "JetBrainsMono-VF", withExtension: "ttf", subdirectory: "Fonts")
+    }
+
+    /// The italic variable TTF (`JetBrainsMono-Italic[wght]`).
+    static var bundledItalicURL: URL? {
+        Bundle.module.url(forResource: "JetBrainsMono-Italic-VF", withExtension: "ttf", subdirectory: "Fonts")
+    }
+}
+
 extension Text {
     /// A `Text` over `string` whose private-use runs (nerd-font glyphs) render in the bundled Symbols
     /// Nerd Font at `size`, while ordinary runs carry NO font of their own — the caller's outer

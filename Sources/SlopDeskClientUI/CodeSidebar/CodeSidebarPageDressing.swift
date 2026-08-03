@@ -1,27 +1,48 @@
 // CodeSidebarPageDressing — the client-side finishing coat injected into the embedded workbench
-// (a WKUserScript that appends ONE <style> tag). Two jobs the host-side settings seed cannot do:
+// (a WKUserScript that appends ONE <style> tag, plus the clipboard bridge script). The jobs the
+// host-side settings seed cannot do:
 //
-//   • The bundled Symbols Nerd Font as a CSS face. The seeded `editor.fontFamily` falls back to
-//     "Symbols Nerd Font" for the private-use glyphs SF Mono lacks (agent marks, powerline
-//     segments) — but the webview's WebContent process cannot see fonts the app registers with
-//     `CTFontManager` (registration is process-scoped), so the face rides in as an @font-face
-//     data URI built from the same TTF the terminal chrome bundles.
+//   • The terminal's own mono as CSS faces. The seeded `editor.fontFamily` leads with
+//     "JetBrains Mono" — the face libghostty embeds and actually renders (the preference's
+//     "SF Mono" resolves on neither machine) — but the webview's WebContent process cannot see
+//     fonts the app registers with `CTFontManager` (registration is process-scoped), so the
+//     bundled variable TTFs (upright + italic) ride in as @font-face data URIs, with the Symbols
+//     Nerd Font behind them for the private-use glyphs (agent marks, powerline segments).
+//   • The SLATE SOFTENING. The workbench's own corner-radius tokens (small 4 / medium 6 /
+//     large 8) already sit exactly on Slate's ladder (`radiusSmall`/`radiusControl`/`radiusCard`)
+//     — but the surfaces the user actually lives on never adopted them: editor TABS are square
+//     full-bleed rectangles, list selections and scrollbar sliders are hard rectangles. The sheet
+//     re-cuts exactly those in the app's geometry (tabs = floating rounded plates, the
+//     `PanelTabPlate` vocabulary), touching GEOMETRY only — every colour stays the theme's.
 //   • The empty-editor letterpress. code-server's stock watermark is ITS logo; the panel is
 //     SlopDesk's surface, so the slopcat (docs/brand/logo-slopcat.svg, recoloured to the theme's
 //     tertiary ink at the stock watermark's subtlety) replaces it via a background-image override.
+//   • The clipboard BRIDGE (a separate, document-start script). WebKit's async clipboard API
+//     silently drops the workbench's copy: `navigator.clipboard.writeText` needs a transient user
+//     activation that VS Code's async copy path has often already spent, so ⌘C in the editor
+//     never reached NSPasteboard. The bridge wraps `writeText`/`write` to ALSO post the plain
+//     text to the native handler (`clipboardHandlerName` — the pool writes NSPasteboard), keeping
+//     the original call as best effort. Copy works deterministically; paste already worked.
 //
-// Everything here is a PURE string builder (unit-pinned headlessly); the pool wires the product
+// Everything here is a PURE string builder (unit-pinned headlessly); the pool wires the products
 // into `WKUserContentController` — the only WebKit-touching seam, unreachable from unit tests.
 
 import Foundation
 
 enum CodeSidebarPageDressing {
-    /// The CSS family the @font-face declares — the name the seeded `editor.fontFamily`
-    /// (`CodeServerManager.seededUserSettings`, host side) references in its fallback stack.
+    /// The CSS family the nerd-font @font-face declares — the name the seeded `editor.fontFamily`
+    /// (`CodeServerManager.seededUserSettings`, host side) lists as the private-use fallback.
     static let nerdFontFamilyName = "Symbols Nerd Font"
+
+    /// The CSS family the JetBrains Mono @font-faces declare — the seeded `editor.fontFamily`'s
+    /// PRIMARY. Must match the host-side seed string.
+    static let monoFontFamilyName = "JetBrains Mono"
 
     /// The DOM id of the injected style tag — the script's own re-injection guard keys on it.
     static let styleElementID = "slopdesk-dressing"
+
+    /// The `WKScriptMessageHandler` name the clipboard bridge posts copied text to.
+    static let clipboardHandlerName = "slopdeskClipboard"
 
     /// The slopcat mark (docs/brand/logo-slopcat.svg) with the brand file's `currentColor`
     /// resolved to the theme's tertiary ink and the stock letterpress's `opacity=".3"` baked onto
@@ -43,29 +64,121 @@ enum CodeSidebarPageDressing {
     </svg>
     """
 
-    /// The injected sheet. `nerdFontBase64` nil (bundle lookup failed) still dresses the
-    /// letterpress — the two jobs are independent.
-    static func styleSheet(nerdFontBase64: String?) -> String {
-        var sheet = ""
-        if let nerdFontBase64 {
-            sheet += """
-            @font-face {
-                font-family: "\(nerdFontFamilyName)";
-                src: url("data:font/ttf;base64,\(nerdFontBase64)") format("truetype");
-                font-display: block;
-            }
+    /// The Slate softening rules — geometry only (radius, insets), colours untouched. Values are
+    /// the Slate ladder verbatim: tab/control 6 (`radiusTab`/`radiusControl`), card 8
+    /// (`radiusCard`), small 4 (`radiusSmall`); the 4px tab inset rides the 4pt grid (`space1`).
+    ///
+    ///   • TABS become floating rounded plates: inset 4px off the strip's top/bottom/left, height
+    ///     recut from the group's own `--editor-group-tab-height` var (compact density seeded), the
+    ///     per-tab 1px dividers dropped (the strip background now separates them). The active tab's
+    ///     background fill reads as a plate — exactly the app's `PanelTabPlate` at rest/selected.
+    ///     The label's stock `line-height` equals the FULL tab-height var, so the shrunk plate must
+    ///     recut it too or the glyphs overflow the plate; and the active-tab underline containers
+    ///     (`.tab-border-top/bottom-container`, absolute at the plate's edges) go entirely — a
+    ///     Slate plate carries selection by its background fill, never an underline.
+    ///   • Lists/trees (explorer rows, palette rows): the selection/hover fill rounds to 6.
+    ///   • Scrollbar sliders round to 5 (half their 10px width — a capsule, not a bar).
+    ///   • Inputs step from the stock 4 up to the control rung 6; menus/hovers/find ride the card
+    ///     rung 8 (the widgets the workbench ALREADY tokenized — quick input, suggest — sit on
+    ///     their own vars and are left alone).
+    static let slateSofteningCSS = """
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
+        margin: 4px 0 4px 4px;
+        height: calc(var(--editor-group-tab-height) - 8px);
+        border-radius: 6px;
+        border-right: none !important;
+        border-left: none !important;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:last-child {
+        margin-right: 4px;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .tab-label {
+        line-height: calc(var(--editor-group-tab-height) - 8px);
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
+        display: none !important;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-fade-hide:after {
+        border-radius: 6px;
+    }
+    .monaco-workbench .monaco-list-row {
+        border-radius: 6px;
+    }
+    .monaco-workbench .monaco-scrollable-element > .scrollbar > .slider {
+        border-radius: 5px;
+    }
+    .monaco-workbench .monaco-inputbox {
+        border-radius: 6px;
+    }
+    .monaco-workbench .monaco-select-box {
+        border-radius: 6px !important;
+    }
+    .monaco-workbench .monaco-button {
+        border-radius: 6px;
+    }
+    .monaco-editor .find-widget {
+        border-radius: 8px;
+    }
+    .monaco-hover {
+        border-radius: 8px;
+    }
+    .context-view .monaco-menu {
+        border-radius: 8px;
+    }
+    .monaco-workbench > .notifications-toasts .notification-toast-container > .notification-toast {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    """
 
-            """
+    /// The injected sheet. Any nil font payload (bundle lookup failed) still ships the remaining
+    /// faces, the softening and the letterpress — the jobs are independent.
+    static func styleSheet(
+        nerdFontBase64: String?,
+        monoUprightBase64: String? = nil,
+        monoItalicBase64: String? = nil,
+    ) -> String {
+        var sheet = ""
+        if let monoUprightBase64 {
+            sheet += fontFace(
+                family: monoFontFamilyName, base64: monoUprightBase64,
+                descriptors: "font-style: normal;\n    font-weight: 100 800;",
+            )
         }
+        if let monoItalicBase64 {
+            sheet += fontFace(
+                family: monoFontFamilyName, base64: monoItalicBase64,
+                descriptors: "font-style: italic;\n    font-weight: 100 800;",
+            )
+        }
+        if let nerdFontBase64 {
+            sheet += fontFace(family: nerdFontFamilyName, base64: nerdFontBase64, descriptors: nil)
+        }
+        sheet += slateSofteningCSS
         let svgBase64 = Data(slopcatLetterpressSVG.utf8).base64EncodedString()
         // Matches the stock rule's specificity class-for-class (`.monaco-workbench.vs-dark …`)
         // via !important — the override must win for every theme class the workbench applies.
         sheet += """
+
         .monaco-workbench .editor-group-watermark .letterpress {
             background-image: url("data:image/svg+xml;base64,\(svgBase64)") !important;
         }
         """
         return sheet
+    }
+
+    /// One @font-face block. `descriptors` carries the style/weight lines for the variable faces
+    /// (nil for the single-face nerd font).
+    private static func fontFace(family: String, base64: String, descriptors: String?) -> String {
+        """
+        @font-face {
+            font-family: "\(family)";
+            src: url("data:font/ttf;base64,\(base64)") format("truetype");
+            \(descriptors.map { "\($0)\n    " } ?? "")font-display: block;
+        }
+
+        """
     }
 
     /// The `WKUserScript` source: append the sheet once per document (`atDocumentEnd`, so `head`
@@ -78,6 +191,46 @@ enum CodeSidebarPageDressing {
             style.id = "\(styleElementID)";
             style.textContent = \(javaScriptStringLiteral(styleSheet));
             (document.head || document.documentElement).appendChild(style);
+        })();
+        """
+    }
+
+    /// The clipboard-bridge `WKUserScript` source (document START, so the wrap is in place before
+    /// the workbench captures the API). Wraps `navigator.clipboard.writeText` / `.write` to ALSO
+    /// post the plain text to the native `clipboardHandlerName` handler; the original call still
+    /// runs as best effort with its rejection swallowed (the native write already succeeded — a
+    /// surfaced rejection would make VS Code toast a copy error that is not true here).
+    static func clipboardBridgeScript() -> String {
+        """
+        (function () {
+            if (window.__slopdeskClipboardBridged) { return; }
+            window.__slopdeskClipboardBridged = true;
+            function post(text) {
+                try { window.webkit.messageHandlers.\(clipboardHandlerName).postMessage(String(text)); } catch (e) {}
+            }
+            var clipboard = navigator.clipboard;
+            if (!clipboard) { return; }
+            var writeText = clipboard.writeText && clipboard.writeText.bind(clipboard);
+            clipboard.writeText = function (text) {
+                post(text);
+                if (writeText) { return writeText(text).catch(function () {}); }
+                return Promise.resolve();
+            };
+            var write = clipboard.write && clipboard.write.bind(clipboard);
+            clipboard.write = function (items) {
+                try {
+                    Array.prototype.forEach.call(items || [], function (item) {
+                        if (item && item.types && item.types.indexOf("text/plain") >= 0) {
+                            item.getType("text/plain")
+                                .then(function (blob) { return blob.text(); })
+                                .then(post)
+                                .catch(function () {});
+                        }
+                    });
+                } catch (e) {}
+                if (write) { return write(items).catch(function () {}); }
+                return Promise.resolve();
+            };
         })();
         """
     }
