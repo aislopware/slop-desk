@@ -3,9 +3,10 @@
 //   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed (expanded toggle
 //     lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the RIGHT-panel toggle (`sidebar.right`, bidirectional — the chrome-less panel has no
-//     strip of its own) plus a reload plate while the panel is expanded, and the connection cluster
-//     ONLY while the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
+//   • right — the RIGHT-panel REOPEN (`sidebar.right`), only while that panel is collapsed (the
+//     expanded panel's tabs/reload/collapse live in its OWN top strip — `CodeSidebarColumn`); and
+//     the connection cluster ONLY while the LEFT sidebar is collapsed (resting home is the
+//     sidebar FOOTER).
 // The plate buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
 // faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
 // strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
@@ -85,13 +86,12 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the RIGHT-panel toggle — `sidebar.right`, the platform's right-panel glyph
-            // (the panel is a generic tab surface, code today, more tabs later — never a
-            // code-specific mark), now BIDIRECTIONAL: the panel itself is chrome-less (the
-            // workbench runs flush to the window top), so its collapse control lives here in both
-            // states. A reload plate sits beside it while the panel is expanded (webview recovery).
-            // Both slots are ALWAYS reserved (hidden ⇒ transparent, not absent) so the connection
-            // cluster never shifts when the panel toggles — the zero-shift rule.
+            // Right: the RIGHT-panel REOPEN (`sidebar.right`) — only while the panel is collapsed
+            // and the top strip is hovered, the exact mirror of the left sidebar's reopen. While
+            // expanded, the panel's own top strip (`CodeSidebarColumn`) owns its tabs, reload and
+            // collapse — the strip lives ON the panel it controls, not over the terminal. The slot
+            // is ALWAYS reserved (hidden ⇒ transparent, not absent) so the connection cluster
+            // never shifts — the zero-shift rule.
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -102,16 +102,11 @@ struct SlateTitlebar: View {
                         onConnect: onConnect,
                     )
                 }
-                PlateIconButton(symbol: .arrowClockwise) { chrome.requestCodeSidebarReload() }
-                    .opacity(codeSidebarVisible && topHover ? 1 : 0)
-                    .allowsHitTesting(codeSidebarVisible && topHover)
-                    .animation(Slate.Anim.smallFade, value: topHover)
-                    .help("Reload the embedded editor")
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
-                    .opacity(topHover ? 1 : 0)
-                    .allowsHitTesting(topHover)
+                    .opacity(!codeSidebarVisible && topHover ? 1 : 0)
+                    .allowsHitTesting(!codeSidebarVisible && topHover)
                     .animation(Slate.Anim.smallFade, value: topHover)
-                    .help("Toggle the right panel")
+                    .help("Show the right panel")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)

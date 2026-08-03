@@ -8,6 +8,11 @@
 // navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
 // webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the
 // `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
+//
+// The panel carries its OWN top strip (the otty right-panel pattern): the tab plate ("Code",
+// selected — the strip is where future panel surfaces would tab between), a reload plate, and the
+// `sidebar.right` collapse — the workbench sits BELOW the strip. The titlebar keeps only the
+// mirrored REOPEN plate while the panel is collapsed.
 
 #if os(macOS)
 import SFSafeSymbols
@@ -21,9 +26,8 @@ struct CodeSidebarColumn: View {
     /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
     /// (`target.host`), on the shared code-server port the ensure RPC reports.
     let connection: AppConnection
-    /// The shared chrome state — observed for the titlebar's reload requests (the panel's toggle
-    /// AND reload both live in the titlebar's trailing plates; this column is chrome-less so the
-    /// workbench runs flush to the window top).
+    /// The shared chrome state — the strip's collapse plate flips `codeSidebarCollapsed`, the same
+    /// flag the titlebar's reopen plate flips back while the panel is hidden.
     let chrome: WorkspaceChromeState
 
     @State private var model = CodeSidebarModel()
@@ -51,9 +55,39 @@ struct CodeSidebarColumn: View {
     }
 
     var body: some View {
-        // No strip, no header, no top padding — the workbench IS the column, flush to the window
-        // top (the workbench's own title bar row is the panel's top edge; the app-side controls —
-        // toggle + reload — live in the titlebar's trailing plates over the CONTENT column).
+        VStack(spacing: 0) {
+            strip
+            surface
+        }
+        .background(Slate.Surface.ground)
+    }
+
+    /// The panel's OWN top strip (user-directed: "tab phải ở trên top của right sidebar" — the tabs
+    /// belong to the panel, over the panel, never over the terminal). Trailing-aligned like the otty
+    /// strip; top-anchored at the same row as the titlebar plates so the two chrome rows read as ONE
+    /// line across the divider.
+    private var strip: some View {
+        let rowTop: CGFloat = 3
+        return HStack(spacing: Slate.Metric.space2) {
+            PanelTabPlate(symbol: .chevronLeftForwardslashChevronRight, label: "Code", selected: true)
+                .help("Code — the project's embedded editor")
+            Spacer(minLength: 0)
+            PlateIconButton(symbol: .arrowClockwise) {
+                guard let root = activeProjectRoot else { return }
+                CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                model.requestReload()
+            }
+            .help("Reload the workbench")
+            PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
+                .help("Hide the right panel")
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.top, rowTop)
+        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+    }
+
+    /// The workbench surface below the strip — phase-switched per the active project.
+    private var surface: some View {
         Group {
             if let root = activeProjectRoot {
                 content(projectRoot: root)
@@ -83,14 +117,6 @@ struct CodeSidebarColumn: View {
                     detail: "Focus a terminal pane to open its project here.",
                 )
             }
-        }
-        .background(Slate.Surface.ground)
-        // The titlebar's reload plate speaks through the chrome counter — this column owns the
-        // pool handle + poll model the titlebar must not reach into.
-        .onChange(of: chrome.codeSidebarReloadRequests) {
-            guard let root = activeProjectRoot else { return }
-            CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-            model.requestReload()
         }
     }
 

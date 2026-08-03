@@ -31,6 +31,45 @@ struct PlateIconButton: View {
     }
 }
 
+/// One right-panel TAB plate — the otty strip vocabulary: icon-only at rest, icon + label while
+/// SELECTED (its surface is the one the open panel shows). Selection is a filled plate
+/// (`Slate.State.selected` — brightness, not hue, per the accent-neutral register). Lives in the
+/// panel's own top strip (`CodeSidebarColumn`); a second tab makes click = select-and-reveal.
+struct PanelTabPlate: View {
+    let symbol: SFSymbol
+    let label: String
+    let selected: Bool
+    var action: () -> Void = {}
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemSymbol: symbol)
+                    .font(.system(size: Slate.Metric.iconSize))
+                if selected {
+                    Text(label)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                }
+            }
+            .foregroundStyle(selected || hovering ? Slate.Text.primary : Slate.Text.icon)
+            .padding(.horizontal, selected ? Slate.Metric.space2 : 0)
+            .frame(minWidth: Slate.Metric.plate)
+            .frame(height: Slate.Metric.plate)
+            .background(
+                selected ? Slate.State.selected : (hovering ? Slate.State.hover : .clear),
+                in: .rect(cornerRadius: Slate.Metric.radiusControl),
+            )
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
+        .animation(Slate.Anim.smallFade, value: selected)
+    }
+}
+
 #if os(macOS)
 import AppKit
 

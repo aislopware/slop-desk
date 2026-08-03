@@ -256,10 +256,13 @@ final class CodeServerManager: @unchecked Sendable {
     /// theme (`SlopDesk Monokai`, the seeded extension below — the Monokai Pro filter the whole
     /// client chrome derives from, chrome accents neutralized) and CHROME-LESS, the panel's top
     /// edge being the EXPLORER header itself: title bar, activity bar, menu bar, and status bar
-    /// all hidden. Ordering matters to the workbench, not just taste — `activityBar.location`
-    /// "top"/"bottom" (the old v3–v5 fold) FORCES the title bar visible and even rewrites a
-    /// `customTitleBarVisibility: "never"` back to `"auto"`; only "hidden" (plus command
-    /// center / layout / navigation controls off and the menu bar hidden) lets "never" stick.
+    /// all hidden. The title bar dies through `activityBar.location: "hidden"` + the menu bar
+    /// hidden + the command-center/layout/navigation strips off — on web that combination alone
+    /// hides it ("top"/"bottom" force-shows it; `window.customTitleBarVisibility` is desktop-only
+    /// and UNREGISTERED here, so seeding it only bought an unknown-setting warning — v7 dropped
+    /// it, pixel-verified equal). Every key seeded must be REGISTERED in the shipped web
+    /// workbench's configuration schema (the settings editor flags unknown keys as warnings in a
+    /// file we authored — the chat.* pair died with v6 for the same reason).
     /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
     /// deliberately passes through), matching the app's zero-chrome register. The sidebar sits on
     /// the RIGHT (the panel hangs off the window's right edge, so the file tree hugs that edge
@@ -281,14 +284,11 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.activityBar.location": "hidden",
         "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
-        "window.customTitleBarVisibility": "never",
         "window.menuBarVisibility": "hidden",
         "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
         "window.density.editorTabHeight": "compact",
         "workbench.statusBar.visible": false,
         "workbench.editor.empty.hint": "hidden",
-        "chat.disableAIFeatures": true,
-        "chat.commandCenter.enabled": false,
         "window.commandCenter": false,
         "workbench.layoutControl.enabled": false,
         "workbench.navigationControl.enabled": false,
@@ -393,6 +393,70 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v6 — the first chrome-less seed. Carried three keys the web workbench does not
+        // REGISTER (chat.* — Code-OSS ships no chat; customTitleBarVisibility — desktop-only):
+        // the settings editor flagged them as unknown in a file we authored.
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.customTitleBarVisibility": "never",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "window.density.editorTabHeight": "compact",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "ui-monospace, Menlo, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v6 as the WORKBENCH mutated it in the wild: with the theme extension invisible (the
+        // empty-registry bug below), resolving the unknown theme dropped exactly the
+        // `workbench.colorTheme` line — deterministic, observed byte-for-byte, so it is still
+        // OUR file, not the user's.
+        """
+        {
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.customTitleBarVisibility": "never",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "window.density.editorTabHeight": "compact",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "chat.disableAIFeatures": true,
+            "chat.commandCenter.enabled": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "ui-monospace, Menlo, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -450,10 +514,17 @@ final class CodeServerManager: @unchecked Sendable {
 
     // MARK: - Theme extension seed
 
-    /// The seeded theme extension's folder name — `publisher.name-version`, the layout code-server's
-    /// extension scanner reads without any registry entry. A version bump here re-seeds changed
-    /// theme bytes on the next hostd start (the writer overwrites on content drift).
-    static let themeExtensionDirectoryName = "slopdesk.slopdesk-monokai-1.0.0"
+    /// The seeded theme extension's identity — mirrored in ``themeExtensionManifest`` (pinned by
+    /// the manifest-agreement test) and composed into the folder name + registry entry below.
+    static let themeExtensionPublisher = "slopdesk"
+    static let themeExtensionName = "slopdesk-monokai"
+    static let themeExtensionVersion = "1.0.0"
+
+    /// The seeded theme extension's folder name — `publisher.name-version`. A version bump here
+    /// re-seeds changed theme bytes on the next hostd start (the writer overwrites on content
+    /// drift) and re-registers the new folder.
+    static let themeExtensionDirectoryName =
+        "\(themeExtensionPublisher).\(themeExtensionName)-\(themeExtensionVersion)"
 
     /// The theme extension's manifest. The theme itself (`SlopDesk Monokai`) is the Monokai Pro
     /// filter the whole client chrome derives from (`SlateDesign`'s seeds), with the CHROME accent
@@ -519,7 +590,60 @@ final class CodeServerManager: @unchecked Sendable {
                 return wrote
             }
         }
+        if registerThemeExtension(in: extensionsDir) { wrote = true }
         return wrote
+    }
+
+    /// Registers the seeded theme folder in the profile registry (`extensions.json`) beside it.
+    /// The registry — not the directory scan — is the workbench's source of truth once the file
+    /// exists: code-server writes an EMPTY `[]` on first boot, and from then on a folder-dropped
+    /// extension is invisible (observed: the theme fell back to stock dark). Entry shape per the
+    /// server's own validator: `identifier`/`version`/`location {path, scheme}`/
+    /// `relativeLocation`. Foreign entries are preserved; ours is replaced only when it drifted.
+    /// A missing registry file is created — the boot that follows keeps our entry. Unparseable
+    /// registry = someone else's problem state; leave it (the workbench self-heals its own file).
+    static func registerThemeExtension(
+        in extensionsDir: URL, fileManager _: FileManager = .default,
+    ) -> Bool {
+        let registryURL = extensionsDir.appendingPathComponent("extensions.json")
+        var entries: [[String: Any]] = []
+        if let bytes = try? Data(contentsOf: registryURL) {
+            guard let parsed = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+            else { return false }
+            entries = parsed
+        }
+        let id = "\(themeExtensionPublisher).\(themeExtensionName)"
+        let ours: [String: Any] = [
+            "identifier": ["id": id],
+            "version": themeExtensionVersion,
+            "location": [
+                "$mid": 1,
+                "path": extensionsDir.appendingPathComponent(themeExtensionDirectoryName).path,
+                "scheme": "file",
+            ],
+            "relativeLocation": themeExtensionDirectoryName,
+            "metadata": ["installedTimestamp": 0, "pinned": true, "source": "resource"],
+        ]
+        let existing = entries.firstIndex {
+            (($0["identifier"] as? [String: Any])?["id"] as? String) == id
+        }
+        if let existing {
+            // Drift check via canonical (sorted-keys) JSON — value-typed, no NSDictionary bridge.
+            let canonical = { (dict: [String: Any]) in
+                try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+            }
+            if canonical(entries[existing]) == canonical(ours) { return false }
+            entries[existing] = ours
+        } else {
+            entries.append(ours)
+        }
+        guard let encoded = try? JSONSerialization.data(withJSONObject: entries) else { return false }
+        do {
+            try encoded.write(to: registryURL)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Extracts the bound port from code-server's own announcement, e.g.

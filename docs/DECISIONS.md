@@ -6388,3 +6388,35 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   `docs/brand/logo-slopcat.svg` (ink made literal `#727072` — a data-URI SVG resolves
   `currentColor` to black — at the stock `opacity=".3"` subtlety). All builders are pure
   (`CodeSidebarPageDressing`, pinned headlessly); the WebKit wiring stays out of unit reach.
+
+### The theme registry bug; seed v7 = registered keys only; the panel grows its own tab strip (2026-08-03)
+
+> User-reported after living on the panel: unknown-setting warnings in the settings editor, the
+> editor font not matching the terminal, the theme not applying, and no tab strip on the panel.
+> All four traced to two root causes plus one design correction.
+
+- ✅ **`extensions.json` is the source of truth — folder-dropping is not installing.** The
+  batch-8 "no registry entry needed" finding held only while `extensions.json` did not exist;
+  code-server writes an empty `[]` on first boot, and from then on the registry — not the
+  directory scan — decides what is installed. On the real host the seeded theme folder was
+  therefore INVISIBLE (`--list-extensions` empty, workbench silently fell back to stock dark —
+  which is also why the font read "wrong": stock dark + pre-upgrade seed). Fix:
+  `registerThemeExtension` writes our entry (identifier/version/location/relativeLocation, the
+  shape the server's own validator wants) into the registry — foreign entries preserved,
+  a drifted ours replaced, a missing file created. The workbench also deterministically strips
+  `workbench.colorTheme` from a settings file naming a theme it cannot resolve; that mutated
+  form joined `obsoleteSeeds` (byte-verified) so already-touched hosts still auto-upgrade.
+- ✅ **Seed v7: every seeded key must be REGISTERED in the shipped workbench.** Code-OSS web
+  ships no chat, and `window.customTitleBarVisibility` is desktop-only — the settings editor
+  flags all three as unknown (the user's first complaint). A pixel-proofed variant run showed
+  the title bar stays hidden without `customTitleBarVisibility`; `chat.*` dropped with it.
+  Tests pin the three keys as never-return.
+- ✅ **The tab strip lives on the panel, not over the terminal.** First cut put the panel's
+  tab/reload/collapse in the titlebar's trailing plates (over the CONTENT column); user
+  correction: "tab phải ở trên top của right sidebar" — the otty pattern puts the strip on
+  the surface it controls, pushing the workbench down below it. `CodeSidebarColumn` now owns
+  a top strip (`PanelTabPlate` "Code" selected + reload + `sidebar.right` collapse,
+  top-anchored on the titlebar's traffic-light row so the two chrome rows read as one line);
+  the titlebar keeps only the mirrored REOPEN plate while the panel is collapsed — the exact
+  mirror of the left sidebar. The `codeSidebarReloadRequests` chrome relay died with the
+  move: the strip calls the pool + poll model directly, in the one file that owns them.

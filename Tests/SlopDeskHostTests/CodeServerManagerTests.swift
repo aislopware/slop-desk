@@ -345,18 +345,21 @@ final class CodeServerManagerTests: XCTestCase {
         let settings = try XCTUnwrap(object as? [String: Any])
         XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
-        // The lean pass: AI/chat fully off, title-bar strips gone, editor chrome minimal.
-        XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
+        // The lean pass: title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
-        // The chrome-less recipe: the activity bar must be "hidden" — "top"/"bottom" FORCES the
-        // workbench title bar visible (and rewrites customTitleBarVisibility back to "auto"); only
-        // with it hidden, the menu bar hidden, and the strips off does "never" stick.
+        // The chrome-less recipe: activity bar "hidden" + menu bar hidden + the strips off — that
+        // combination alone hides the web title bar ("top"/"bottom" force-shows it).
         XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "hidden")
-        XCTAssertEqual(settings["window.customTitleBarVisibility"] as? String, "never")
         XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
         XCTAssertEqual(settings["workbench.statusBar.visible"] as? Bool, false)
+        // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
+        // flags unknown keys as warnings in a file we authored. These three were v6's offenders
+        // (desktop-only / Code-OSS-absent): they must never come back.
+        XCTAssertNil(settings["window.customTitleBarVisibility"])
+        XCTAssertNil(settings["chat.disableAIFeatures"])
+        XCTAssertNil(settings["chat.commandCenter.enabled"])
         // The file tree hugs the window's right edge — the panel hangs off it.
         XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
         // The editor face matches the terminal's defaults: ui-monospace → SF Mono, 13pt, with the
@@ -445,6 +448,82 @@ final class CodeServerManagerTests: XCTestCase {
 
         // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
         XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: nil))
+    }
+
+    func testSeedThemeExtensionRegistersInTheProfileRegistry() throws {
+        // The registry (`extensions.json`) — not the directory scan — is the workbench's source of
+        // truth once the file exists: code-server writes an empty `[]` on first boot, and a
+        // folder-dropped extension is then INVISIBLE (observed: the seeded theme fell back to the
+        // stock dark). The seeder therefore registers what it drops.
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let registry = dir.appendingPathComponent("extensions.json")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: registry)
+
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        let entries = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
+        )
+        XCTAssertEqual(entries.count, 1)
+        let entry = try XCTUnwrap(entries.first)
+        XCTAssertEqual(
+            (entry["identifier"] as? [String: Any])?["id"] as? String, "slopdesk.slopdesk-monokai",
+        )
+        XCTAssertEqual(entry["version"] as? String, CodeServerManager.themeExtensionVersion)
+        XCTAssertEqual(
+            entry["relativeLocation"] as? String, CodeServerManager.themeExtensionDirectoryName,
+        )
+        // The location must be URI-shaped (path + scheme) or the server scanner drops the entry.
+        let location = try XCTUnwrap(entry["location"] as? [String: Any])
+        XCTAssertEqual(location["scheme"] as? String, "file")
+        XCTAssertEqual(
+            location["path"] as? String,
+            dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName).path,
+        )
+
+        // Registered and byte-current ⇒ the whole seed is an idempotent no-op.
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+
+        // Foreign entries survive; a drifted OURS is replaced, not duplicated.
+        let foreign: [[String: Any]] = [
+            [
+                "identifier": ["id": "someone.else"],
+                "version": "9",
+                "location": ["path": "/x", "scheme": "file"],
+                "relativeLocation": "someone.else-9",
+            ],
+            [
+                "identifier": ["id": "slopdesk.slopdesk-monokai"],
+                "version": "0.0.1",
+                "location": ["path": "/stale", "scheme": "file"],
+                "relativeLocation": "stale",
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: foreign).write(to: registry)
+        // The folder is already current, but the registry repair IS a write.
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        let repaired = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
+        )
+        XCTAssertEqual(repaired.count, 2)
+        XCTAssertEqual(
+            (repaired[0]["identifier"] as? [String: Any])?["id"] as? String, "someone.else",
+        )
+        XCTAssertEqual(repaired[1]["version"] as? String, CodeServerManager.themeExtensionVersion)
+
+        // An unparseable registry is someone else's problem state — left alone.
+        try Data("not json".utf8).write(to: registry)
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertEqual(try Data(contentsOf: registry), Data("not json".utf8))
+
+        // A MISSING registry file is created carrying our entry (fresh install: the seed runs
+        // before code-server's first boot; that boot keeps existing entries).
+        try FileManager.default.removeItem(at: registry)
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        let fresh = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
+        )
+        XCTAssertEqual(fresh.count, 1)
     }
 
     func testEveryObsoleteSeedIsValidJSON() throws {
