@@ -416,6 +416,13 @@ final class CodeServerManagerTests: XCTestCase {
         // Every non-font key rides through untouched.
         XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
+        // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
+        // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
+        // it "1.58" / "14" on the BYTES, not just the parsed value.
+        let text = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"editor.lineHeight\" : 1.58"), text)
+        XCTAssertTrue(text.contains("\"editor.fontSize\" : 14"), text)
+        XCTAssertFalse(text.contains("1.5800000"))
     }
 
     func testSyncEditorFontIsChurnFreeWhenAlreadyInSync() throws {

@@ -631,8 +631,8 @@ final class CodeServerManager: @unchecked Sendable {
               var settings = (try? JSONSerialization.jsonObject(with: existing)) as? [String: Any]
         else { return false }
         settings["editor.fontFamily"] = editorFontFamilyStack(for: spec.family)
-        settings["editor.fontSize"] = spec.size
-        settings["editor.lineHeight"] = spec.lineHeight
+        settings["editor.fontSize"] = decimalNumber(spec.size)
+        settings["editor.lineHeight"] = decimalNumber(spec.lineHeight)
         let options: JSONSerialization.WritingOptions = [
             .sortedKeys, .prettyPrinted, .withoutEscapingSlashes,
         ]
@@ -640,6 +640,15 @@ final class CodeServerManager: @unchecked Sendable {
               !isAlreadyInSync(existing: existing, updated: updated)
         else { return false }
         return (try? updated.write(to: fileURL)) != nil
+    }
+
+    /// A number that SERIALIZES the way a human wrote it. `JSONSerialization` prints a raw `Double`
+    /// with round-trip noise (`1.58` → `1.5800000000000001`) — in a settings file the user opens
+    /// (and screenshotted). Swift's `String(Double)` is the shortest round-trip form; parsing that
+    /// into a `Decimal` (bridged to `NSDecimalNumber` inside the JSON object) makes the file read
+    /// `1.58` / `14`. POSIX locale pins the `.` separator.
+    private static func decimalNumber(_ value: Double) -> Decimal {
+        Decimal(string: String(value), locale: Locale(identifier: "en_US_POSIX")) ?? Decimal(value)
     }
 
     /// Format-blind "nothing to do" check: both sides canonicalized WITH the font keys included.
