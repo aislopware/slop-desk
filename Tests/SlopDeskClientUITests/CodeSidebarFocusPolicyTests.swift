@@ -150,6 +150,28 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: "B"))
     }
 
+    // MARK: Orphan-repair owner tracking
+
+    func testOnlyAForeignViewQualifiesAsTheKeyboardOwner() {
+        // The terminal (any view outside the pool) is worth remembering as the repair target.
+        XCTAssertTrue(CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
+            responderIsView: true, responderIsWindow: false, responderInsidePooledWebView: false,
+        ))
+        // The window as its own first responder IS the orphaned state — never a repair target.
+        XCTAssertFalse(CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
+            responderIsView: false, responderIsWindow: true, responderInsidePooledWebView: false,
+        ))
+        // A pooled webview (or its WebKit internals) must never be remembered: the repair would
+        // hand the keyboard to the thief the policy just refused.
+        XCTAssertFalse(CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
+            responderIsView: true, responderIsWindow: false, responderInsidePooledWebView: true,
+        ))
+        // A non-view responder (field editor delegate chains, nil) has no window to return to.
+        XCTAssertFalse(CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
+            responderIsView: false, responderIsWindow: false, responderInsidePooledWebView: false,
+        ))
+    }
+
     func testUnclaimedOrUnwiredTabsNeverRestore() {
         // No recorded claim, or the app never wired the active-tab provider (headless tests): the
         // restore must stay off rather than fire on a nil == nil coincidence.

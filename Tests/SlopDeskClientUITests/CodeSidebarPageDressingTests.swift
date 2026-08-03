@@ -115,6 +115,23 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         XCTAssertTrue(script.contains(".catch(function () {})"))
     }
 
+    // MARK: Focus truth
+
+    func testFocusTruthScriptReplaysTheMissedBlurOnlyWhileTheEngineSaysUnfocused() {
+        let script = CodeSidebarPageDressing.focusTruthScript()
+        // The engine's own verdict gates every replay — a genuinely focused page is left alone.
+        XCTAssertTrue(script.contains("if (document.hasFocus()) { return; }"))
+        // Synthetic blur EVENTS on both the active element and the window (the two places the
+        // workbench tracks focus).
+        XCTAssertTrue(script.contains("el.dispatchEvent(new FocusEvent(\"blur\"))"))
+        XCTAssertTrue(script.contains("window.dispatchEvent(new FocusEvent(\"blur\"))"))
+        // NEVER `.blur()` — that would clear `document.activeElement`, and WebKit's re-fired
+        // `focus` on the preserved element is what brings the caret back on a real hand-off.
+        XCTAssertFalse(script.contains(".blur()"))
+        // Re-injection guard.
+        XCTAssertTrue(script.contains("__slopdeskFocusTruth"))
+    }
+
     // MARK: User script
 
     func testUserScriptGuardsOnStyleElementID() {

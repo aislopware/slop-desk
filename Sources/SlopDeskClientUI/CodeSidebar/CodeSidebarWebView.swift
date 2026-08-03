@@ -118,6 +118,17 @@ enum CodeSidebarFocusPolicy {
     static func shouldRestoreOnRemount<Tab: Equatable>(claimedTab: Tab?, activeTab: Tab?) -> Bool {
         claimedTab != nil && claimedTab == activeTab
     }
+
+    /// Whether `responder` is worth remembering as the keyboard's rightful owner — the repair
+    /// target for a refused page focus pull (see ``CodeSidebarWKWebView/becomeFirstResponder()``).
+    /// Only a real VIEW that is neither the window's stand-in (`firstResponder == window` IS the
+    /// orphaned state) nor part of any pooled webview qualifies: remembering a webview would make
+    /// the repair hand the keyboard to the thief. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    static func isTrackableKeyboardOwner(
+        responderIsView: Bool, responderIsWindow: Bool, responderInsidePooledWebView: Bool,
+    ) -> Bool {
+        responderIsView && !responderIsWindow && !responderInsidePooledWebView
+    }
 }
 
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
@@ -140,6 +151,20 @@ final class CodeSidebarWKWebView: WKWebView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { nil }
 
+    /// The same policy for every AppKit path that ASKS before moving the keyboard — the key-view
+    /// loop, initial-first-responder assignment, window restoration. `NSWindow.makeFirstResponder`
+    /// itself never consults this (it resigns the current responder first and asks
+    /// `becomeFirstResponder` second — measured, not assumed; see the orphan repair there), so
+    /// this cannot be the only gate, but the asking paths should get the honest answer too.
+    override var acceptsFirstResponder: Bool {
+        guard let app = NSApp as NSApplication? else { return false }
+        return programmaticRestoreArmed
+            || CodeSidebarFocusPolicy.shouldAcceptFocus(
+                eventType: app.currentEvent?.type,
+                clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
+            )
+    }
+
     override func becomeFirstResponder() -> Bool {
         // `NSApp` is nil in a headless test process — optional access, never the implicit unwrap.
         guard let app = NSApp as NSApplication? else { return false }
@@ -148,7 +173,25 @@ final class CodeSidebarWKWebView: WKWebView {
                 eventType: app.currentEvent?.type,
                 clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
             )
-        else { return false }
+        else {
+            // The refusal arrives MID-`makeFirstResponder`: the page pulled native focus
+            // (`WebPageProxy::MakeFirstResponder` — the workbench does it while booting), and
+            // AppKit had the current responder RESIGN before asking here, so returning false
+            // strands first responder on the window — every key dead until the next click
+            // (user-reported 2026-08-04: opening the app with the panel expanded showed cursors
+            // blinking in both the terminal and the editor, with the keyboard in neither). Hand
+            // the keyboard straight back to the responder it was lifted from; one hop later so
+            // the surrounding `makeFirstResponder` finishes first. The `firstResponder == window`
+            // guard keeps the repair out of every legitimate move (a real taker means no orphan).
+            DispatchQueue.main.async { [weak self] in
+                guard let window = self?.window, window.firstResponder === window,
+                      let owner = CodeSidebarWebViewPool.shared.lastKeyboardOwner,
+                      owner.window === window
+                else { return }
+                window.makeFirstResponder(owner)
+            }
+            return false
+        }
         let became = super.becomeFirstResponder()
         if became {
             CodeSidebarKeyboardState.shared.set(true)
@@ -291,6 +334,12 @@ final class CodeSidebarWebViewPool {
     /// Armed when a webview loses the keyboard to a warm-swap UNMOUNT (never to a gesture) — the
     /// remount of this project's webview in the claimed tab hands the keyboard back.
     private var pendingRestore: (projectRoot: String, claimedTab: TabID)?
+    /// The last first responder that was a real view OUTSIDE every pooled webview — the repair
+    /// target when a refused page focus pull strands the keyboard on the window (see
+    /// ``CodeSidebarWKWebView/becomeFirstResponder()``). Tracked from `NSWindow.didUpdate`
+    /// (AppKit offers no first-responder-change notification); weak, and re-validated against
+    /// the live window at repair time, so a torn-down view can never be revived by the repair.
+    private(set) weak var lastKeyboardOwner: NSView?
 
     init() {
         // The responder overrides keep `CodeSidebarKeyboardState` honest WITHIN one window, but a
@@ -312,6 +361,31 @@ final class CodeSidebarWebViewPool {
                 }
             })
         }
+        // The rightful-owner tracker behind the orphan repair. `didUpdate` fires on every window
+        // update pass — the guards are cheap and the write is a weak-pointer store.
+        keyWindowObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didUpdateNotification, object: nil, queue: .main,
+        ) { note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                Self.shared.noteWindowUpdate(window)
+            }
+        })
+    }
+
+    /// Remember the current first responder as the keyboard's rightful owner when
+    /// ``CodeSidebarFocusPolicy/isTrackableKeyboardOwner(responderIsView:responderIsWindow:responderInsidePooledWebView:)``
+    /// says it qualifies (a real view, not the window's orphan stand-in, not a pooled webview).
+    private func noteWindowUpdate(_ window: NSWindow?) {
+        guard let window, window.isKeyWindow else { return }
+        let responder = window.firstResponder
+        let view = responder as? NSView
+        guard CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
+            responderIsView: view != nil,
+            responderIsWindow: responder === window,
+            responderInsidePooledWebView: view.map(isInsidePooledWebView) ?? false,
+        ), let view else { return }
+        lastKeyboardOwner = view
     }
 
     /// The project's veil state — the column reads `veiled` to hold its dark waiting surface over
@@ -352,6 +426,15 @@ final class CodeSidebarWebViewPool {
         // precede the workbench's read), MAIN frame only (the meta lives on the top document).
         configuration.userContentController.addUserScript(WKUserScript(
             source: CodeSidebarPageDressing.recommendationTipsScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
+        // The focus-truth corrector: replay the blur a never-focused page misses, so only the
+        // real keyboard owner renders a caret (see `focusTruthScript`). Document START (the
+        // timers must span the workbench's whole boot), MAIN frame (the workbench top frame
+        // owns the editor).
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.focusTruthScript(),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true,
         ))
@@ -469,7 +552,13 @@ final class CodeSidebarWebViewPool {
         guard let app = NSApp as NSApplication?,
               let responder = app.keyWindow?.firstResponder as? NSView
         else { return false }
-        return webViews.values.contains { responder === $0 || responder.isDescendant(of: $0) }
+        return isInsidePooledWebView(responder)
+    }
+
+    /// Whether `view` is (inside) any pooled webview — WebKit's actual first responder is an
+    /// internal content subview, hence the descendant walk rather than an identity check.
+    private func isInsidePooledWebView(_ view: NSView) -> Bool {
+        webViews.values.contains { view === $0 || view.isDescendant(of: $0) }
     }
 }
 

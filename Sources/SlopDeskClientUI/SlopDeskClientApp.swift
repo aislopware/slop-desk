@@ -568,6 +568,8 @@ public struct SlopDeskClientApp: App {
             },
         )
         _keyDispatcher = State(initialValue: keyDispatcher)
+        // Diagnostics tap for the keyboard-focus saga — inert unless SLOPDESK_FOCUS_DEBUG=1.
+        FocusDebugProbe.installIfRequested()
         // The code panel's warm-swap focus restore needs the workspace's ACTIVE TAB (the pool
         // cannot see the store) — same late-wiring idiom as the dispatcher's closures above.
         CodeSidebarWebViewPool.activeTabID = { [store] in store.tree.activeSession?.activeTab?.id }

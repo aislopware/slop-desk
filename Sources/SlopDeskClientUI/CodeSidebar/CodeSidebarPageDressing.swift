@@ -254,6 +254,32 @@ enum CodeSidebarPageDressing {
         """
     }
 
+    /// The focus-truth corrector `WKUserScript` source (document START, main frame). The
+    /// workbench autofocuses its restored editor during boot and carries on believing the window
+    /// is focused — but the native side refuses that focus (the webview takes the keyboard only
+    /// from a click), and a page that was NEVER natively focused never receives a blur to learn
+    /// otherwise: the restored editor's caret blinks alongside the focused terminal's cursor.
+    /// Re-check `document.hasFocus()` (the engine's truth — it never went true) across the boot
+    /// window and dispatch the missing blur. Synthetic EVENTS only — never `blur()` itself, which
+    /// would clear `document.activeElement` and break the real focus hand-off (WebKit re-fires
+    /// `focus` on the preserved element when the view actually takes the keyboard, and that is
+    /// what puts the caret back).
+    static func focusTruthScript() -> String {
+        """
+        (function () {
+            if (window.__slopdeskFocusTruth) { return; }
+            window.__slopdeskFocusTruth = true;
+            function sync() {
+                if (document.hasFocus()) { return; }
+                var el = document.activeElement;
+                if (el && el !== document.body) { el.dispatchEvent(new FocusEvent("blur")); }
+                window.dispatchEvent(new FocusEvent("blur"));
+            }
+            [1500, 4000, 9000, 20000].forEach(function (ms) { setTimeout(sync, ms); });
+        })();
+        """
+    }
+
     /// The clipboard-bridge `WKUserScript` source (document START, so the wrap is in place before
     /// the workbench captures the API). Wraps `navigator.clipboard.writeText` / `.write` to ALSO
     /// post the plain text to the native `clipboardHandlerName` handler; the original call still
