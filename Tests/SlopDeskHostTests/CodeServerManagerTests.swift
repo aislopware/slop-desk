@@ -32,6 +32,16 @@ private final class FakeBridge: CodeBridgeRouting, @unchecked Sendable {
         return attached
     }
 
+    /// The installed terminal runner, so a test can assert the manager forwarded it (the bridge is
+    /// where it lives — the socket only looks it up when a `run` line arrives).
+    private(set) var runner: (@Sendable (CodeBridgeRunRequest) -> CodeBridgeRunOutcome)?
+
+    func setTerminalRunner(_ runner: (@Sendable (CodeBridgeRunRequest) -> CodeBridgeRunOutcome)?) {
+        lock.lock()
+        self.runner = runner
+        lock.unlock()
+    }
+
     func stop() {
         lock.lock()
         stopCount += 1
@@ -453,11 +463,73 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(manifest["publisher"] as? String, CodeServerManager.bridgeExtensionPublisher)
         XCTAssertEqual(manifest["version"] as? String, CodeServerManager.bridgeExtensionVersion)
         XCTAssertEqual(
-            CodeServerManager.bridgeExtensionDirectoryName, "slopdesk.slopdesk-bridge-1.0.0",
+            CodeServerManager.bridgeExtensionDirectoryName, "slopdesk.slopdesk-bridge-1.1.0",
         )
         XCTAssertEqual(
             manifest["extensionKind"] as? [String], ["workspace"],
             "the socket and the files live on the HOST — the web worker host has neither",
+        )
+    }
+
+    /// The manifest's commands and the extension's `registerCommand` calls have to name the same
+    /// ids: a menu item pointing at an unregistered command is an error dialog, and a registered
+    /// command with no menu item is unreachable.
+    func testBridgeManifestAndSourceAgreeOnTheCommandIDs() throws {
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(CodeServerManager.bridgeExtensionManifest.utf8),
+        ) as? [String: Any])
+        let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
+        let commands = try XCTUnwrap(contributes["commands"] as? [[String: Any]])
+        let ids = commands.compactMap { $0["command"] as? String }
+        XCTAssertEqual(
+            ids, ["slopdesk.runSelectionInTerminal", "slopdesk.changeTerminalDirectory"],
+        )
+
+        let menus = try XCTUnwrap(contributes["menus"] as? [String: [[String: Any]]])
+        for (menu, items) in menus {
+            for item in items {
+                let command = try XCTUnwrap(item["command"] as? String)
+                XCTAssertTrue(ids.contains(command), "\(menu) points at an undeclared \(command)")
+            }
+        }
+
+        let sourceData = try XCTUnwrap(CodeServerManager.bridgeExtensionSource())
+        let source = try XCTUnwrap(String(data: sourceData, encoding: .utf8))
+        for id in ids {
+            XCTAssertTrue(
+                source.contains("registerCommand(\"\(id)\""), "\(id) is contributed but never registered",
+            )
+        }
+    }
+
+    /// The version bump that carries the new contributions also has to retire the folder the old
+    /// one wrote — the registry stops pointing at it, but our own dead code should not sit in the
+    /// user's profile forever.
+    func testBridgeSeedSweepsTheRetiredVersionsFolder() throws {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let legacy = try XCTUnwrap(CodeServerManager.legacyBridgeExtensionDirectoryNames.first)
+        let stale = dir.appendingPathComponent(legacy).appendingPathComponent("extension.js")
+        try FileManager.default.createDirectory(
+            at: stale.deletingLastPathComponent(), withIntermediateDirectories: true,
+        )
+        try Data("// v1".utf8).write(to: stale)
+
+        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: { Data("// v2".utf8) }))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.deletingLastPathComponent().path))
+    }
+
+    /// The runner reaches the BRIDGE (where a `run` line looks it up), not a copy on the manager.
+    func testTerminalRunnerIsForwardedToTheBridge() throws {
+        let bridge = FakeBridge()
+        let manager = CodeServerManager(bridge: bridge)
+
+        manager.installTerminalRunner { _ in .landed(in: "zsh — alpha") }
+
+        let runner = try XCTUnwrap(bridge.runner)
+        XCTAssertEqual(
+            runner(CodeBridgeRunRequest(root: "/work", directory: nil, text: "ls")),
+            .landed(in: "zsh — alpha"),
         )
     }
 

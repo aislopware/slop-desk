@@ -511,6 +511,10 @@ public final class HostServer: @unchecked Sendable {
         }
         await installWorkspaceDocument()
         startWorkspaceReconciler()
+        // The embedded editor's way back into a terminal. Installed here rather than lazily: the
+        // bridge socket binds on the first `ensureCodeServer`, which arrives on a client's poll
+        // with no further hook into this server.
+        installCodeBridgeTerminalRunner()
         let muxStream = transport.muxConnections
         muxAcceptTask = Task { [weak self] in
             for await muxConnection in muxStream {
@@ -1891,6 +1895,62 @@ public final class HostServer: @unchecked Sendable {
                 rows: Int(size?.rows ?? 0),
                 cols: Int(size?.cols ?? 0),
             )
+        }
+    }
+
+    /// The panes the embedded editor's bridge may type into: the ATTACHED mux sessions only.
+    ///
+    /// Deliberately narrower than ``listPanesForControl()``. A detached pane's shell is live but
+    /// nobody is looking at it, and a standalone control pane was spawned by an orchestrator that
+    /// owns its input — typing a user's command into either would put it somewhere the user cannot
+    /// see it happen. The editor's commands are a hand gesture towards a terminal on screen, so the
+    /// candidate set is exactly the terminals on screen.
+    func codeBridgePanes() -> [CodeBridgePane] {
+        lock.lock()
+        let sessions = Self.distinct(muxSessions.values) // deduped: one entry per pane, not per client
+        lock.unlock()
+        return sessions.filter { !$0.isChildExited() }.map { session in
+            CodeBridgePane(
+                paneId: session.sessionID.uuidString,
+                title: session.currentTitle,
+                cwd: session.cwdForControl,
+                hasAgent: AgentControlState.presence(from: session.agentStatusForControl),
+                foreground: PTYForegroundProbe.foregroundName(masterFD: session.pty.masterFD),
+            )
+        }
+    }
+
+    /// Types `bytes` into the pane the router chose, answering with its title (what the editor
+    /// tells the user) or `nil` if the pane went away between the snapshot and the write — a race
+    /// that reads as a refusal rather than a silent drop.
+    func writeCodeBridgeKeystrokes(_ bytes: Data, toPane paneId: String) -> String? {
+        guard let session = lookupPaneForControl(paneId: paneId) else { return nil }
+        session.writeRawForControl(bytes)
+        return session.currentTitle
+    }
+
+    /// The runner the code bridge actuates — the whole of "run this in my terminal", assembled
+    /// from the pure router and the two accessors above. Installed on the process-wide
+    /// ``CodeServerManager`` at ``start()``; `[weak self]` because that manager outlives any one
+    /// server (a test builds several).
+    func installCodeBridgeTerminalRunner() {
+        HostCodeServerPerformer.sharedManager.installTerminalRunner { [weak self] request in
+            guard let self else {
+                return .refused(CodeBridgeTerminalRouter.message(for: .noPaneInProject))
+            }
+            let panes = codeBridgePanes()
+            switch CodeBridgeTerminalRouter.choose(
+                among: panes, root: request.root, near: request.directory,
+            ) {
+            case let .success(pane):
+                let bytes = CodeBridgeTerminalRouter.keystrokes(for: request.text)
+                guard let title = writeCodeBridgeKeystrokes(bytes, toPane: pane.paneId) else {
+                    return .refused(CodeBridgeTerminalRouter.message(for: .noPaneInProject))
+                }
+                return .landed(in: title)
+            case let .failure(refusal):
+                return .refused(CodeBridgeTerminalRouter.message(for: refusal))
+            }
         }
     }
 

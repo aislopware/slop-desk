@@ -242,6 +242,17 @@ final class CodeServerManager: @unchecked Sendable {
     /// boot + the client's poll + the webview's workbench boot before the session socket exists.
     static let openAttempts = 10
 
+    /// Installs what the editor's "run this in my terminal" menu items actuate. Wired by
+    /// ``HostServer`` (the only object that owns terminal sessions) and held for the host's
+    /// lifetime; until it is installed, and on a host with no sessions at all, the bridge refuses
+    /// those requests with a sentence the editor shows. Safe to call before the bridge binds — the
+    /// runner is stored on the bridge object, not on the socket.
+    func installTerminalRunner(
+        _ runner: @escaping @Sendable (CodeBridgeRunRequest) -> CodeBridgeRunOutcome,
+    ) {
+        bridge.setTerminalRunner(runner)
+    }
+
     /// Terminates the child (host shutdown). It also self-reaps on idle, but hostd going down must
     /// not strand a Node process.
     func shutdown() {
@@ -1173,26 +1184,77 @@ final class CodeServerManager: @unchecked Sendable {
     /// `Resources/bridge/extension.js` for what it does and ``CodeBridgeServer`` for the host end.
     static let bridgeExtensionPublisher = "slopdesk"
     static let bridgeExtensionName = "slopdesk-bridge"
-    static let bridgeExtensionVersion = "1.0.0"
+    /// Bumped whenever the manifest's CONTRIBUTIONS change, not merely its code: the seeder
+    /// rewrites drifted bytes in place, but the workbench caches a scanned extension's
+    /// `contributes` against its version, so new menu items on an unchanged version can go
+    /// unnoticed until the profile is rebuilt. 1.1.0 = the terminal commands.
+    static let bridgeExtensionVersion = "1.1.0"
 
     static let bridgeExtensionDirectoryName =
         "\(bridgeExtensionPublisher).\(bridgeExtensionName)-\(bridgeExtensionVersion)"
+
+    /// Folders left behind by earlier versions. Unregistered the moment `extensions.json` points
+    /// at the new one (the registry is the workbench's source of truth, not the folder listing),
+    /// but swept anyway so a long-lived profile does not accumulate dead copies of our own code.
+    static let legacyBridgeExtensionDirectoryNames = [
+        "\(bridgeExtensionPublisher).\(bridgeExtensionName)-1.0.0",
+    ]
 
     /// The bridge extension's manifest. `extensionKind: ["workspace"]` pins it to the REMOTE
     /// extension host — the one running on this machine, next to the socket and the files; the web
     /// worker host has neither. `onStartupFinished` keeps it off the workbench's critical path:
     /// the first open command cannot arrive before a window exists to receive it anyway.
+    ///
+    /// The two contributed commands are the editor's way BACK to the app: they type into a real
+    /// SlopDesk pane rather than the workbench's own integrated terminal (see
+    /// ``CodeBridgeTerminalRouter``). They sit in the editor context menu (`navigation` group, so
+    /// they lead) and the explorer's, and are `enablement`-free on purpose — the host answers a
+    /// request it cannot serve with a sentence, which is more use than a greyed-out item.
     static let bridgeExtensionManifest = """
     {
         "name": "\(bridgeExtensionName)",
         "displayName": "SlopDesk Bridge",
-        "description": "Opens files sent by the SlopDesk host, in the window that owns them.",
+        "description": "Opens files sent by the SlopDesk host, and runs commands in its terminal panes.",
         "publisher": "\(bridgeExtensionPublisher)",
         "version": "\(bridgeExtensionVersion)",
         "engines": { "vscode": "^1.0.0" },
         "extensionKind": ["workspace"],
         "activationEvents": ["onStartupFinished"],
-        "main": "./extension.js"
+        "main": "./extension.js",
+        "contributes": {
+            "commands": [
+                {
+                    "command": "slopdesk.runSelectionInTerminal",
+                    "title": "Run Selection in SlopDesk Terminal",
+                    "category": "SlopDesk"
+                },
+                {
+                    "command": "slopdesk.changeTerminalDirectory",
+                    "title": "Change SlopDesk Terminal Directory Here",
+                    "category": "SlopDesk"
+                }
+            ],
+            "menus": {
+                "editor/context": [
+                    {
+                        "command": "slopdesk.runSelectionInTerminal",
+                        "when": "editorHasSelection",
+                        "group": "navigation@1"
+                    },
+                    {
+                        "command": "slopdesk.changeTerminalDirectory",
+                        "when": "editorIsOpen",
+                        "group": "navigation@2"
+                    }
+                ],
+                "explorer/context": [
+                    {
+                        "command": "slopdesk.changeTerminalDirectory",
+                        "group": "navigation@9"
+                    }
+                ]
+            }
+        }
     }
     """
 
@@ -1233,6 +1295,12 @@ final class CodeServerManager: @unchecked Sendable {
                 wrote = true
             } catch {
                 return wrote
+            }
+        }
+        for legacy in legacyBridgeExtensionDirectoryNames {
+            let url = extensionsDir.appendingPathComponent(legacy)
+            if fileManager.fileExists(atPath: url.path), (try? fileManager.removeItem(at: url)) != nil {
+                wrote = true
             }
         }
         let registered = registerExtension(

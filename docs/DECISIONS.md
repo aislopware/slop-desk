@@ -6776,3 +6776,45 @@ Terminal Focus" in the menu and the palette, which is what it has always done; t
 unchanged, so no keybinding a user saved moves. ⌘` also came OUT of the webview's reserved-app-
 chord list: the NSEvent monitor runs ahead of the whole responder chain, so that case could no
 longer run and would have read as a live rule that was not one.
+
+## The editor can type into a real pane — the HOST picks which one (2026-08-03)
+
+The same argument that spent ⌃` on the terminal pane leaves an obvious hole: an editor whose
+only way to run the line under the caret is a terminal we just talked the user out of. So the
+bridge extension contributes two commands — "Run Selection in SlopDesk Terminal" (editor
+context menu) and "Change SlopDesk Terminal Directory Here" (explorer and editor context
+menus) — and they type into a genuine SlopDesk pane: agent-detected, fanned out to the other
+clients, in the replay buffer, in the scrollback journal.
+
+WHICH pane is decided by the host, not the extension, because focus is a client-side fact the
+extension host cannot see and the client that has focus may not even be the one whose editor
+issued the command. `CodeBridgeTerminalRouter` is a pure function over the pane set with three
+filters, each of which refuses rather than guesses:
+
+* the pane's cwd must be CONTAINED by the workbench root — a command about this project never
+  lands in another project's shell;
+* no agent may be detected there — typing at Claude Code's prompt does not run a command, it
+  sends the agent a message, which is a far worse outcome than doing nothing;
+* the foreground process must be a shell — a pane sitting in vim, less or a build is not at a
+  prompt, and a stray `npm test\r` there is keystrokes into someone's editor.
+
+Ranking among the survivors is deterministic (most path components shared with the file's
+directory, then the deeper cwd, then the lower pane id) so the same gesture keeps landing in
+the same pane. Candidates are attached mux sessions only: a detached or agent-spawned control
+session is not a terminal the user is looking at. When nothing survives, the extension shows a
+warning naming the reason — every project pane busy, or no pane in this project at all.
+
+The `cd` command sends a DIRECTORY, never a command line; the host builds and quotes the `cd`
+itself, so shell quoting has one tested home rather than a copy in JavaScript. Requests are
+correlated by id and answered either way: the status bar names the pane on success, a warning
+the user must dismiss explains a refusal, and a connection that drops takes its pending
+requests with it rather than leaving a command that silently never ran.
+
+Verified out of band, in two halves, since neither real sockets nor a real workbench belong in
+the unit suite. The socket half ran a probe against the shipping `CodeBridgeServer`: two
+windows' hellos, run and cd round trips, the refusal path, malformed/relative/oversized lines
+dropped without desyncing the connection, a closed peer not taking the host down. The extension
+half drove a real code-server 4.112 under chrome-headless-shell over CDP: both commands appear
+in the palette, the selection branch sent exactly the selected characters, the no-selection
+branch sent the caret's whole line, the cd carried the resolved directory, and both result arms
+(status bar, warning notification) rendered.
