@@ -173,6 +173,16 @@ final class CodeSidebarWebViewPool {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true,
         ))
+        // The recommendation-tips GRAFT: code-server's boot configuration never carries the
+        // recommendation catalogue (its server forwards only the gallery), leaving the Extensions
+        // view's RECOMMENDED section empty. The script rewrites the configuration meta tag with
+        // the bundled catalogue before the workbench boots — document START (the rewrite must
+        // precede the workbench's read), MAIN frame only (the meta lives on the top document).
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.recommendationTipsScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
         // The clipboard BRIDGE: WebKit's async clipboard API drops the workbench's copy (the
         // transient user activation is spent by the time VS Code's async path calls `writeText`),
         // so ⌘C in the editor never reached NSPasteboard. The wrap posts the text to the native

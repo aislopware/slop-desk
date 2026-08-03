@@ -17,6 +17,13 @@
 //   • The empty-editor letterpress. code-server's stock watermark is ITS logo; the panel is
 //     SlopDesk's surface, so the slopcat (docs/brand/logo-slopcat.svg, recoloured to the theme's
 //     tertiary ink at the stock watermark's subtlety) replaces it via a background-image override.
+//   • The RECOMMENDATION-TIPS graft (a separate, document-start script). code-server's web
+//     client server hand-builds the `productConfiguration` embedded in the workbench HTML and
+//     forwards only the extensions gallery — never any recommendation-tips key — so the
+//     Extensions view's RECOMMENDED section is permanently empty. The graft rewrites the boot
+//     configuration meta tag (filling ONLY keys the server did not send, so a future code-server
+//     that ships its own tips wins) with `CodeSidebarRecommendationTips.json` before the
+//     workbench script reads it.
 //   • The clipboard BRIDGE (a separate, document-start script). WebKit's async clipboard API
 //     silently drops the workbench's copy: `navigator.clipboard.writeText` needs a transient user
 //     activation that VS Code's async copy path has often already spent, so ⌘C in the editor
@@ -43,6 +50,10 @@ enum CodeSidebarPageDressing {
 
     /// The `WKScriptMessageHandler` name the clipboard bridge posts copied text to.
     static let clipboardHandlerName = "slopdeskClipboard"
+
+    /// The DOM id of the meta tag code-server embeds the workbench boot configuration in — the
+    /// element the recommendation-tips graft rewrites.
+    static let workbenchConfigurationMetaID = "vscode-workbench-web-configuration"
 
     /// The slopcat mark (docs/brand/logo-slopcat.svg) with the brand file's `currentColor`
     /// resolved to the theme's tertiary ink and the stock letterpress's `opacity=".3"` baked onto
@@ -200,6 +211,45 @@ enum CodeSidebarPageDressing {
             style.id = "\(styleElementID)";
             style.textContent = \(javaScriptStringLiteral(styleSheet));
             (document.head || document.documentElement).appendChild(style);
+        })();
+        """
+    }
+
+    /// The recommendation-tips `WKUserScript` source (document START, main frame only). Grafts
+    /// ``CodeSidebarRecommendationTips/json`` into the `data-settings` boot configuration on the
+    /// ``workbenchConfigurationMetaID`` meta tag, filling ONLY the keys the server did not send.
+    ///
+    /// TIMING: at document start the document is still empty, so the graft arms a
+    /// `MutationObserver` and rewrites the attribute the moment the meta node is parsed in. The
+    /// observer's microtask runs before the workbench's external boot script can execute (the
+    /// parser must fetch it first), so the workbench only ever reads the grafted configuration.
+    /// A malformed attribute leaves the page untouched — recommendations degrade to the stock
+    /// empty section, never a broken workbench.
+    static func recommendationTipsScript(tipsJSON: String = CodeSidebarRecommendationTips.json) -> String {
+        """
+        (function () {
+            if (window.__slopdeskRecommendationTips) { return; }
+            window.__slopdeskRecommendationTips = true;
+            var tips = JSON.parse(\(javaScriptStringLiteral(tipsJSON)));
+            function graft() {
+                var meta = document.getElementById("\(workbenchConfigurationMetaID)");
+                if (!meta) { return false; }
+                try {
+                    var settings = JSON.parse(meta.getAttribute("data-settings"));
+                    var product = settings.productConfiguration || (settings.productConfiguration = {});
+                    var changed = false;
+                    for (var key in tips) {
+                        if (!(key in product)) { product[key] = tips[key]; changed = true; }
+                    }
+                    if (changed) { meta.setAttribute("data-settings", JSON.stringify(settings)); }
+                } catch (e) {}
+                return true;
+            }
+            if (graft()) { return; }
+            var observer = new MutationObserver(function () {
+                if (graft()) { observer.disconnect(); }
+            });
+            observer.observe(document.documentElement || document, { childList: true, subtree: true });
         })();
         """
     }

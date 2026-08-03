@@ -142,4 +142,58 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         )
         XCTAssertEqual(CodeSidebarPageDressing.javaScriptStringLiteral(""), "\"\"")
     }
+
+    // MARK: Recommendation tips
+
+    func testRecommendationTipsCatalogueParsesWithExactlyTheConsumedKeys() throws {
+        let object = try JSONSerialization.jsonObject(
+            with: Data(CodeSidebarRecommendationTips.json.utf8),
+        )
+        let catalogue = try XCTUnwrap(object as? [String: Any])
+        // The four keys this workbench consumes — nothing gated off or desktop-only rides along
+        // (`webExtensionTips` needs no-remote-server, `exeBasedExtensionTips` scans local
+        // executables; see the catalogue's header).
+        XCTAssertEqual(
+            catalogue.keys.sorted(),
+            [
+                "configBasedExtensionTips",
+                "extensionRecommendations",
+                "keymapExtensionTips",
+                "languageExtensionTips",
+            ],
+        )
+        // The ungated RECOMMENDED filler must be a real list.
+        let languageTips = try XCTUnwrap(catalogue["languageExtensionTips"] as? [String])
+        XCTAssertGreaterThan(languageTips.count, 5)
+        XCTAssertTrue(languageTips.contains("ms-python.python"))
+        XCTAssertFalse((catalogue["extensionRecommendations"] as? [String: Any] ?? [:]).isEmpty)
+        XCTAssertFalse((catalogue["configBasedExtensionTips"] as? [String: Any] ?? [:]).isEmpty)
+    }
+
+    func testRecommendationTipsCatalogueNeverRaisesInstallPrompts() {
+        // `important: true` makes the workbench toast an install prompt on file open; the panel
+        // recommends passively (section + badge). The canonical 2-space formatting makes the
+        // textual pin exact.
+        XCTAssertFalse(CodeSidebarRecommendationTips.json.contains("\"important\": true"))
+    }
+
+    func testRecommendationTipsScriptGraftsOnlyMissingKeysIntoTheBootMeta() {
+        let script = CodeSidebarPageDressing.recommendationTipsScript(tipsJSON: "{\"k\": 1}")
+        XCTAssertTrue(script.contains("getElementById(\"vscode-workbench-web-configuration\")"))
+        XCTAssertTrue(script.contains("JSON.parse(\"{\\\"k\\\": 1}\")"))
+        // Fill-only-missing: a future code-server that ships its own tips must win.
+        XCTAssertTrue(script.contains("if (!(key in product))"))
+        // Document-start timing: the meta does not exist yet — the observer does the rewrite.
+        XCTAssertTrue(script.contains("new MutationObserver"))
+        XCTAssertTrue(script.contains("observer.disconnect()"))
+        XCTAssertTrue(script.contains("__slopdeskRecommendationTips"))
+        XCTAssertTrue(script.contains("meta.setAttribute(\"data-settings\", JSON.stringify(settings))"))
+    }
+
+    func testRecommendationTipsScriptShipsTheBundledCatalogueByDefault() {
+        XCTAssertTrue(
+            CodeSidebarPageDressing.recommendationTipsScript()
+                .contains("languageExtensionTips"),
+        )
+    }
 }
