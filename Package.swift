@@ -109,7 +109,7 @@ let package = Package(
                 // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
                 "SlopDeskWorkspaceModel",
             ],
-            // The SlopDesk Monokai workbench theme `CodeServerManager` seeds into the code-server
+            // The Monokai Pro workbench themes `CodeServerManager` seeds into the code-server
             // extensions directory (too large for a source literal).
             resources: [.copy("Resources")],
         ),

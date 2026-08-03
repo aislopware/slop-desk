@@ -6639,3 +6639,24 @@ consumes it from a browser), so the webview workbench reaches it directly. The T
 every code-server/VSCodium user makes on their personal setup. Proven end-to-end in the GUI
 fixture: search finds Pylance, Trust-Publisher + Install lands `ms-python.vscode-pylance` in
 the profile's extensions dir, and the language server starts analyzing.
+
+## The workbench theme goes back to stock Monokai Pro (2026-08-03)
+
+Reverses the 2026-08-02 "SlopDesk Monokai" derivation (17 chrome-accent keys neutralized,
+Slate plate tab fills, checkbox alignment): the seeded themes are now the STOCK Monokai Pro
+pair from the vsix (2.0.13) under their real names — `Monokai Pro` / `Monokai Pro Light` —
+with the filter's own accents (dark yellow `#ffd866`, light pink `#e14775`) intact on tabs,
+lists and links (user-directed: the stock theme is right as-is). Exactly two departures
+survive, both deliberate: the seven structural seam borders (`sideBar`/`panel`/`activityBar`/
+`statusBar`(+`noFolder`)/`titleBar`/`editorGroup` `.border`) trade stock's near-black
+`#19181a` for the app's Slate `divider` token in alpha form (dark `#fcfcfa1a` = foreground
+@ 0.10, light `#00000014` = black @ 0.08), so the workbench's internal seams match the split
+dividers around the panel; and the vsix's five empty-string colour values (rejected per-key
+by the workbench) are dropped. The vsix's icon themes are deliberately NOT taken — the color
+themes only; file icons stay the workbench's stock set. Seed v14 renames the three
+`workbench.*ColorTheme` keys and also brings the STATUS BAR back (same user direction:
+`workbench.statusBar.visible: false`, hidden since v6, is simply dropped — the workbench
+keeps its stock footing, its seam riding the retinted `statusBar.border`); v13 joins
+`obsoleteSeeds` so pristine hosts upgrade in place. The extension id/folder
+(`slopdesk.slopdesk-monokai-1.0.0`) is unchanged — the drift-repair seeder rewrites the
+theme bytes on the next hostd start.

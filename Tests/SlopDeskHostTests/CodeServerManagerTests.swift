@@ -414,7 +414,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
         XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
         // Every non-font key rides through untouched.
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
         // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
         // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
@@ -474,7 +474,7 @@ final class CodeServerManagerTests: XCTestCase {
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
         let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
         // The lean pass: title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
@@ -486,7 +486,9 @@ final class CodeServerManagerTests: XCTestCase {
         // (`CodeSidebarWebView.clippedTitleBarHeight`).
         XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
         XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
-        XCTAssertEqual(settings["workbench.statusBar.visible"] as? Bool, false)
+        // v14: the status bar RETURNS (user-directed 2026-08-03) — no visibility key at all, the
+        // workbench keeps its stock footing (branch, problems, cursor) under the retinted seam.
+        XCTAssertNil(settings["workbench.statusBar.visible"])
         // v13: the gutter slims — the panel reads code, it does not debug it (user-directed):
         // three-char line numbers, no breakpoint glyph margin, no folding-arrow column.
         XCTAssertEqual(settings["editor.lineNumbersMinChars"] as? Int, 3)
@@ -547,9 +549,9 @@ final class CodeServerManagerTests: XCTestCase {
         // The settings seed selects the themes BY LABEL — a drift here is a silent stock-theme
         // boot. Dark is the base `workbench.colorTheme` AND the preferred-dark; light is the
         // preferred-light the seeded `window.autoDetectColorScheme` flips to on a light client.
-        XCTAssertEqual(themes[0]["label"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(themes[0]["label"] as? String, "Monokai Pro")
         XCTAssertEqual(themes[0]["uiTheme"] as? String, "vs-dark")
-        XCTAssertEqual(themes[1]["label"] as? String, "SlopDesk Monokai Light")
+        XCTAssertEqual(themes[1]["label"] as? String, "Monokai Pro Light")
         XCTAssertEqual(themes[1]["uiTheme"] as? String, "vs")
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
@@ -575,36 +577,39 @@ final class CodeServerManagerTests: XCTestCase {
         )
     }
 
-    func testThemeResourceIsValidDarkThemeWithNeutralizedChrome() throws {
+    /// The seven structural part borders — the workbench's own seams. These are the ONLY colour
+    /// departure from the stock vsix: they carry the app's Slate `divider` tint so the
+    /// workbench's seams match the split dividers around the panel (user-directed 2026-08-03).
+    private static let seamBorderKeys = [
+        "activityBar.border", "editorGroup.border", "panel.border", "sideBar.border",
+        "statusBar.border", "statusBar.noFolderBorder", "titleBar.border",
+    ]
+
+    func testThemeResourceIsStockMonokaiProWithSlateSeamBorders() throws {
         let data = try XCTUnwrap(
             CodeServerManager.themeExtensionThemeData(), "the bundled theme resource must resolve",
         )
         let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(theme["name"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(theme["name"] as? String, "Monokai Pro")
         XCTAssertEqual(theme["type"] as? String, "dark")
         let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
-        // Monokai Pro surfaces = the app's own Slate seeds (SlateDesign monokaiProClassic).
+        // Stock Monokai Pro surfaces (they double as the app's own Slate seeds).
         XCTAssertEqual(colors["editor.background"] as? String, "#2d2a2e")
         XCTAssertEqual(colors["sideBar.background"] as? String, "#221f22")
-        // The SlopDesk fit: the CHROME accent is neutral (brightness, not hue) — the stock theme's
-        // yellow active-tab/list accents must not survive; links take the filter cyan.
-        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#fcfcfa")
-        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#fcfcfa")
-        XCTAssertEqual(colors["textLink.foreground"] as? String, "#78dce8")
-        // The Slate PLATE model: stock Monokai Pro flattens strip/active/inactive to one surface
-        // and leans on the (neutralized, then CSS-hidden) underline — the active tab instead takes
-        // the app's own active-tab card tone (`elevated`, ≡ foreground @9% over the strip = Slate
-        // `selected`), hover the Slate hover tint; inactive stays flush with the strip.
-        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#403e41")
-        XCTAssertEqual(colors["tab.hoverBackground"] as? String, "#fcfcfa0d")
-        XCTAssertEqual(colors["tab.inactiveBackground"] as? String, "#2d2a2e")
-        // Semantic yellows stay Monokai (git-modified — the app's own git ramp uses yellow there).
+        // STOCK survives (user-directed 2026-08-03, reverting the earlier 17-key chrome-accent
+        // neutralization): the filter's yellow accent stays on tabs, lists and links.
+        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#ffd866")
+        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#ffd866")
+        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#ffd866")
+        XCTAssertEqual(colors["textLink.foreground"] as? String, "#ffd866")
+        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#2d2a2e")
         XCTAssertEqual(colors["gitDecoration.modifiedResourceForeground"] as? String, "#ffd866")
-        // The settings editor's checkbox mark follows the plain checkbox — the ONE chrome key the
-        // neutralization pass originally missed (it sat accent-yellow beside a neutral twin).
-        XCTAssertEqual(
-            colors["settings.checkboxForeground"] as? String, colors["checkbox.foreground"] as? String,
-        )
+        // The one colour departure: every structural seam border rides the Slate divider token —
+        // the dark filter's foreground `#fcfcfa` at the token's 0.10, in alpha form so it
+        // composites over whichever surface it separates (stock painted these near-black).
+        for key in Self.seamBorderKeys {
+            XCTAssertEqual(colors[key] as? String, "#fcfcfa1a", key)
+        }
         try assertEveryColorValueIsValidHex(colors)
         XCTAssertFalse(
             try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
@@ -625,35 +630,29 @@ final class CodeServerManagerTests: XCTestCase {
         }
     }
 
-    func testLightThemeResourceIsValidLightThemeWithNeutralizedChrome() throws {
+    func testLightThemeResourceIsStockMonokaiProLightWithSlateSeamBorders() throws {
         let data = try XCTUnwrap(
             CodeServerManager.themeExtensionThemeData(resource: "slopdesk-monokai-light-color-theme"),
             "the bundled light theme resource must resolve",
         )
         let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(theme["name"] as? String, "SlopDesk Monokai Light")
+        XCTAssertEqual(theme["name"] as? String, "Monokai Pro Light")
         XCTAssertEqual(theme["type"] as? String, "light")
         let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
-        // Monokai Pro Light surfaces = the app's own light Slate seed (monokaiProClassicLight).
+        // Stock Monokai Pro Light surfaces (they double as the app's own light Slate seed).
         XCTAssertEqual(colors["editor.background"] as? String, "#faf4f2")
         XCTAssertEqual(colors["editor.foreground"] as? String, "#29242a")
-        // The SlopDesk fit, mirrored: the light filter's chrome accent is PINK (#e14775) — the
-        // same 17 keys the dark transform moved go accent-neutral here; links take the light cyan.
-        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#29242a")
-        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#918c8e")
-        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#29242a")
-        XCTAssertEqual(colors["textLink.foreground"] as? String, "#1c8ca8")
-        // The Slate plate model, mirrored (light `elevated` = white; hover = Slate's light tint).
-        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#ffffff")
-        XCTAssertEqual(colors["tab.hoverBackground"] as? String, "#0000000b")
-        XCTAssertEqual(colors["tab.inactiveBackground"] as? String, "#faf4f2")
-        // Semantic pinks stay Monokai — only the CHROME keys moved (deleted-file decoration
-        // keeps the filter's pink, exactly as the dark theme keeps its semantic yellows).
+        // STOCK survives, mirrored: the light filter's pink accent stays on tabs, lists and links.
+        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#e14775")
+        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#e14775")
+        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#e14775")
+        XCTAssertEqual(colors["textLink.foreground"] as? String, "#e14775")
+        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#faf4f2")
         XCTAssertEqual(colors["gitDecoration.deletedResourceForeground"] as? String, "#e14775")
-        // Mirrored settings-checkbox neutralization + no invalid values (see the dark test).
-        XCTAssertEqual(
-            colors["settings.checkboxForeground"] as? String, colors["checkbox.foreground"] as? String,
-        )
+        // The mirrored seam-border departure: the light divider token is black at 0.08.
+        for key in Self.seamBorderKeys {
+            XCTAssertEqual(colors[key] as? String, "#00000014", key)
+        }
         try assertEveryColorValueIsValidHex(colors)
         XCTAssertFalse(
             try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,

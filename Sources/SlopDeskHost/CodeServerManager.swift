@@ -258,13 +258,13 @@ final class CodeServerManager: @unchecked Sendable {
         ]
     }
 
-    /// The user settings seeded on a pristine host — the workbench must come up in the app's OWN
-    /// theme (`SlopDesk Monokai` / `SlopDesk Monokai Light`, the seeded extension below — the two
-    /// Monokai Pro filters the client chrome runs on, chrome accents neutralized;
+    /// The user settings seeded on a pristine host — the workbench must come up in the app's
+    /// theme (`Monokai Pro` / `Monokai Pro Light`, the seeded extension below — the two stock
+    /// Monokai Pro filters the client chrome runs on, only the seam borders retinted;
     /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
     /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
     /// light client gets a light editor while a dark client on the same host stays dark, from the
-    /// one shared settings file) and LEAN: menu bar and status bar hidden, the ACTIVITY-BAR icons
+    /// one shared settings file) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.112, the v6-era observation): it
@@ -292,8 +292,9 @@ final class CodeServerManager: @unchecked Sendable {
     /// height, so editor lines and terminal rows share a rhythm. The client injects the face as
     /// @font-face data URIs (`CodeSidebarPageDressing` — the family names here and there must
     /// agree), with "Symbols Nerd Font" behind it for private-use glyphs.
-    /// Status-bar duties are already covered app-side (the project git readout) or by
-    /// chords (⌘⇧M problems); `window.title` drops the `${appName}` suffix so any surface that
+    /// The status bar STAYS (v14, user-directed 2026-08-03 — v6..v13 hid it): it is the
+    /// workbench's own footing (branch, problems, cursor position) and its seam border rides
+    /// the retinted `statusBar.border`. `window.title` drops the `${appName}` suffix so any surface that
     /// ever renders it says the project, not "code-server". Auto-save on focus change: the
     /// terminal pane beside the editor is where builds/tests run, and switching to it IS the
     /// moment the file must be on disk. Markdown opens straight into the RENDERED preview
@@ -305,10 +306,10 @@ final class CodeServerManager: @unchecked Sendable {
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
-        "workbench.colorTheme": "SlopDesk Monokai",
+        "workbench.colorTheme": "Monokai Pro",
         "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
-        "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+        "workbench.preferredDarkColorTheme": "Monokai Pro",
+        "workbench.preferredLightColorTheme": "Monokai Pro Light",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
             "*.md": "vscode.markdown.preview.editor"
@@ -318,7 +319,6 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.menuBarVisibility": "hidden",
         "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
-        "workbench.statusBar.visible": false,
         "workbench.editor.empty.hint": "hidden",
         "workbench.editor.decorations.badges": false,
         "window.commandCenter": false,
@@ -693,6 +693,45 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v13 — the gutter slimmed, but the themes were still the "SlopDesk Monokai" derivations
+        // (17 chrome-accent keys neutralized, plate tab fills). v14 ships the stock Monokai Pro
+        // pair under their own names, seam borders retinted only (user-directed 2026-08-03).
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -862,22 +901,30 @@ final class CodeServerManager: @unchecked Sendable {
     static let themeExtensionDirectoryName =
         "\(themeExtensionPublisher).\(themeExtensionName)-\(themeExtensionVersion)"
 
-    /// The theme extension's manifest. The themes (`SlopDesk Monokai` + `SlopDesk Monokai
-    /// Light`) are the two Monokai Pro filters the client chrome itself runs on (`SlateDesign`'s
-    /// classic + classic-light seeds), with the CHROME interaction accent neutralized to the
-    /// app's accent-neutral register (selection/active state = brightness, not hue; links take
-    /// the filter cyan) — the dark filter's accent is yellow `#ffd866`, the light filter's is
-    /// pink `#e14775`, the SAME 17 keys move in both. The workbench picks between them via the
-    /// seeded `window.autoDetectColorScheme` — the webview's `prefers-color-scheme` follows the
-    /// window's pinned `NSAppearance`, which the client pins to the active Slate theme — so the
-    /// editor flips light/dark WITH the app, per client, no shared-settings conflict. Derived
-    /// from Monokai Pro by Monokai (monokai.pro) — personal-use derivation seeded into the
-    /// user's own code-server, never redistributed.
+    /// The theme extension's manifest. The themes (`Monokai Pro` + `Monokai Pro Light`) are the
+    /// STOCK Monokai Pro pair (vsix 2.0.13, monokai.pro) — the two filters the client chrome
+    /// itself seeds from (`SlateDesign`'s classic + classic-light). Exactly two departures from
+    /// stock, both invisible-or-intentional (user-directed 2026-08-03; the earlier 17-key
+    /// chrome-accent neutralization is REVERTED — the stock accents are the point):
+    ///   • the seven structural seam borders (`sideBar`/`panel`/`activityBar`/`statusBar`(+
+    ///     `noFolder`)/`titleBar`/`editorGroup` `.border` — near-black `#19181a` in the dark
+    ///     filter) carry the app's Slate `divider` tint instead, in the token's own alpha form
+    ///     (dark = foreground @ 0.10 `#fcfcfa1a`, light = black @ 0.08 `#00000014`), so the
+    ///     workbench's seams match the split dividers around it;
+    ///   • the vsix's five EMPTY-string colour values (`diffEditor.move.border` etc., rejected
+    ///     per-key by the workbench) are dropped.
+    /// Only the color themes ship — the vsix's icon themes are deliberately left behind (the
+    /// panel keeps the workbench's stock file icons). The workbench picks between the pair via
+    /// the seeded `window.autoDetectColorScheme` — the webview's `prefers-color-scheme` follows
+    /// the window's pinned `NSAppearance`, which the client pins to the active Slate theme — so
+    /// the editor flips light/dark WITH the app, per client, no shared-settings conflict.
+    /// Monokai Pro by Monokai (monokai.pro) — personal-use seed into the user's own code-server,
+    /// never redistributed.
     static let themeExtensionManifest = """
     {
         "name": "slopdesk-monokai",
-        "displayName": "SlopDesk Monokai",
-        "description": "SlopDesk's workbench themes, derived from Monokai Pro by Monokai (monokai.pro).",
+        "displayName": "Monokai Pro (SlopDesk)",
+        "description": "Stock Monokai Pro by Monokai (monokai.pro); workbench seam borders carry the app's divider tint.",
         "publisher": "slopdesk",
         "version": "1.0.0",
         "engines": { "vscode": "^1.0.0" },
@@ -885,12 +932,12 @@ final class CodeServerManager: @unchecked Sendable {
         "contributes": {
             "themes": [
                 {
-                    "label": "SlopDesk Monokai",
+                    "label": "Monokai Pro",
                     "uiTheme": "vs-dark",
                     "path": "./themes/slopdesk-monokai-color-theme.json"
                 },
                 {
-                    "label": "SlopDesk Monokai Light",
+                    "label": "Monokai Pro Light",
                     "uiTheme": "vs",
                     "path": "./themes/slopdesk-monokai-light-color-theme.json"
                 }
