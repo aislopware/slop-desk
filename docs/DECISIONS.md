@@ -6607,13 +6607,16 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   and rejected.** Extracted from the otty binary (its `PanelToggleButton` pair, 13pt regular,
   palette two-tone), shipped to pixels, user-rejected on sight as not fitting the app. The
   `sidebar.left` / `sidebar.right` pair stays. Do not re-propose.
-- ✅ **The tab switch animates as one gesture.** User-reported jank: the selected plate's label
-  popped (hover token, 0.12s ease-out, on a RELAYOUT), the label truncated to "…" mid-growth,
-  the reload plate popped in/out, and the surface below hard-cut. Now: `PanelTabPlate` label is
-  `.fixedSize()` (draws full-width for the whole expansion) with an opacity transition, plate
-  relayout rides the tab-select token (`standard`, 0.20s symmetric); the reload plate fades on
-  the same token; the surfaces crossfade in a ZStack (both mounted for the 0.20s — warm-pool
-  cheap, the poll task still cancels on unmount). Filmstrip-verified both directions at 30fps.
+- ✅ **The tab switch is a pure WIDTH MORPH — no opacity anywhere.** Two rounds the same day.
+  Round 1 fixed the jank (label "…"-truncating mid-growth on the hover token) with fixedSize +
+  opacity transitions + a surface crossfade; the user then retired every fade on the path as
+  reading cheap — only the morph stays. Final shape: the `PanelTabPlate` label never enters or
+  leaves the hierarchy — it is `.fixedSize()` behind `.frame(width: selected ? nil : 0)` +
+  `.clipped()`, so the growing plate REVEALS the glyphs and the shrinking plate swallows them;
+  the reload plate rides the same width-clip (always mounted, zero-width under Desktop — a
+  zero-width contentShape takes no clicks); the surfaces below swap INSTANTLY (crossfade
+  retired). Relayout rides the tab-select token (`standard`, 0.20s symmetric — the hover token
+  read as a pop). Filmstrip-verified both directions at 30fps.
 - ✅ **"Code" → "Files" (`folder` glyph).** User-directed, settled in two steps the same day:
   first a lone `document`, then the folder register from a reference image — the tab opens the
   whole project tree, not one file. Trap recorded on the way: the `doc` family is renamed

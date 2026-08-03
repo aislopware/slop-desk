@@ -45,18 +45,20 @@ struct PanelTabPlate: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 0) {
                 Image(systemSymbol: symbol)
                     .font(.system(size: Slate.Metric.iconSize))
-                if selected {
-                    Text(label)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                        // Draw at full intrinsic width for the whole expansion — without this the
-                        // label lays out inside the still-growing plate and flashes a truncated
-                        // "…" mid-flight, the jarring half of the switch.
-                        .fixedSize()
-                        .transition(.opacity)
-                }
+                // The label never enters or leaves the hierarchy and NEVER fades — selection
+                // morphs the plate's width and the clip reveals the label as the plate grows
+                // (user-directed 2026-08-03: opacity fades on the switch were retired; the
+                // width morph IS the gesture). `fixedSize` draws the glyphs at full width
+                // throughout, so mid-flight there is a clean reveal, not a "…" truncation.
+                Text(label)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .fixedSize()
+                    .frame(width: selected ? nil : 0, alignment: .leading)
+                    .clipped()
+                    .padding(.leading, selected ? 4 : 0)
             }
             .foregroundStyle(selected || hovering ? Slate.Text.primary : Slate.Text.icon)
             .padding(.horizontal, selected ? Slate.Metric.space2 : 0)
@@ -71,7 +73,7 @@ struct PanelTabPlate: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
-        // Selection is a RELAYOUT (the plate grows around the arriving label), not a hover
+        // Selection is a RELAYOUT (the plate morphs around the revealed label), not a hover
         // twinkle: it rides the tab-select token (`standard`, 0.20s symmetric ease). The hover
         // token here (0.12s ease-out) made the width change read as a pop.
         .animation(Slate.Anim.standard, value: selected)

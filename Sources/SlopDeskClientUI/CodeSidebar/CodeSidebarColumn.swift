@@ -86,28 +86,22 @@ struct CodeSidebarColumn: View {
             // ground band ends in an abrupt tone change against the workbench's own tab strip,
             // two mismatched grays stacked with no rule between them.
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            // A ZStack so a tab switch CROSSFADES the surfaces (the outgoing one fades over the
-            // incoming — both mounted for the 0.20s): the bare `switch` swapped them in one frame,
-            // a hard cut against the strip's animated plates (user-reported 2026-08-03). The
-            // webview's extra animated frames are warm-pool cheap; the poll task still cancels on
-            // unmount.
-            ZStack {
-                switch surfaceTab {
-                case .code:
-                    surface
-                case .desktop:
-                    // The announced window-OS surface — content still a placeholder; the TAB is
-                    // real (selecting it parks the Code surface, whose pooled webview survives
-                    // unmounted exactly like a project switch, and cancels the ensure poll until
-                    // Code returns).
-                    placeholder(
-                        symbol: .display,
-                        title: "Desktop",
-                        detail: "The host's window surface arrives here.",
-                    )
-                }
+            // The surfaces swap INSTANTLY — the strip's width morph is the whole switch gesture
+            // (user-directed 2026-08-03: the earlier crossfade was retired with every other
+            // opacity fade on this path; a hard cut under a morphing strip is the snappy read).
+            switch surfaceTab {
+            case .code:
+                surface
+            case .desktop:
+                // The announced window-OS surface — content still a placeholder; the TAB is real
+                // (selecting it parks the Code surface, whose pooled webview survives unmounted
+                // exactly like a project switch, and cancels the ensure poll until Code returns).
+                placeholder(
+                    symbol: .display,
+                    title: "Desktop",
+                    detail: "The host's window surface arrives here.",
+                )
             }
-            .animation(Slate.Anim.standard, value: surfaceTab)
         }
         .background(Slate.Surface.ground)
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
@@ -144,16 +138,17 @@ struct CodeSidebarColumn: View {
             }
             .help("Desktop — the host's window surface")
             Spacer(minLength: 0)
-            if surfaceTab == .code {
-                PlateIconButton(symbol: .arrowClockwise) {
-                    guard let root = activeProjectRoot else { return }
-                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                    model.requestReload()
-                }
-                .help("Reload the workbench")
-                // Fade with the tab switch instead of popping — the strip animates as one gesture.
-                .transition(.opacity)
+            // The reload plate rides the SAME width morph as the tab labels (no fade, no pop —
+            // user-directed 2026-08-03): always mounted, clipped to zero width while Desktop is
+            // up. A zero-width contentShape takes no clicks.
+            PlateIconButton(symbol: .arrowClockwise) {
+                guard let root = activeProjectRoot else { return }
+                CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                model.requestReload()
             }
+            .help("Reload the workbench")
+            .frame(width: surfaceTab == .code ? nil : 0, alignment: .leading)
+            .clipped()
             PlateIconButton(symbol: .sidebarRight) {
                 chrome.toggleCodeSidebar()
             }
