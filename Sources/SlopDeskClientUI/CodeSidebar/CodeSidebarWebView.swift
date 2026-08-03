@@ -493,6 +493,12 @@ final class CodeSidebarWebViewPool {
         let configuration = WKWebViewConfiguration()
         // No user-gesture gate on media — VS Code's own UI sounds/previews must not silently stall.
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        // The client's own faces, served as subresources instead of inlined into the sheet as
+        // ~4 MB of base64 (see `CodeSidebarFontScheme`). Must be set BEFORE the webview is built —
+        // a configuration is copied at construction.
+        configuration.setURLSchemeHandler(
+            Self.fontSchemeHandler, forURLScheme: CodeSidebarFontScheme.scheme,
+        )
         // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
         // letterpress) rides every navigation — user scripts persist on the controller, so a
         // reload/respawn re-dresses itself.
@@ -695,20 +701,27 @@ final class CodeSidebarWebViewPool {
         webViews.values.lazy.compactMap { $0 as? CodeSidebarWKWebView }.first { $0.window != nil }
     }
 
-    /// The dressing user-script source, built ONCE per process — the base64 font payloads total
-    /// ~4 MB (nerd symbols + the two JetBrains Mono variable faces), shared by every pooled
-    /// webview. Any missing bundle resource degrades to the remaining sheet parts, never a crash.
+    /// The dressing user-script source, built ONCE per process and shared by every pooled webview.
+    /// The faces themselves ride the `slopdesk-font:` scheme (``CodeSidebarFontScheme``) rather
+    /// than base64 data URIs, so this string is a couple of KB instead of ~4 MB. A face whose
+    /// bundle resource is missing is simply left out of the sheet, never a crash.
     private static let dressingScriptSource: String = CodeSidebarPageDressing.userScript(
         styleSheet: CodeSidebarPageDressing.styleSheet(
-            nerdFontBase64: base64Resource(NerdSymbolFont.bundledFontURL),
-            monoUprightBase64: base64Resource(JetBrainsMonoFont.bundledUprightURL),
-            monoItalicBase64: base64Resource(JetBrainsMonoFont.bundledItalicURL),
+            nerdFontURL: fontURL(.nerdSymbols),
+            monoUprightURL: fontURL(.monoUpright),
+            monoItalicURL: fontURL(.monoItalic),
         ),
     )
 
-    private static func base64Resource(_ url: URL?) -> String? {
-        url.flatMap { try? Data(contentsOf: $0) }?.base64EncodedString()
+    /// The sheet's `src` URL for a face, or `nil` when the bundle has no such resource — the
+    /// presence check stays HERE so the sheet never names a URL the handler would 404.
+    private static func fontURL(_ face: CodeSidebarFontScheme.Face) -> String? {
+        CodeSidebarFontScheme.bundledURL(for: face).map { _ in CodeSidebarFontScheme.url(for: face) }
     }
+
+    /// Serves the `slopdesk-font:` faces to every pooled configuration. One instance for the
+    /// process — the handler is stateless (it maps a URL to a memory-mapped bundle file).
+    private static let fontSchemeHandler = CodeSidebarFontSchemeHandler()
 
     /// The clipboard bridge's native side — retained by every pool configuration's user-content
     /// controller; writes each posted copy straight to the general pasteboard.

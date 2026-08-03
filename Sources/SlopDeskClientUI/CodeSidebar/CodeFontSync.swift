@@ -53,5 +53,24 @@ enum CodeFontSync {
         return nil
         #endif
     }
+
+    /// Whether an ensure round should carry the font push (verb 20). Pure — pinned by
+    /// `CodeFontSyncTests`.
+    ///
+    /// Three no's. No endpoint at all (nothing connected) has nowhere to send it. An
+    /// `.unavailable` host has no code-server and never will this session — the poll keeps turning
+    /// every ~3.6 s while the panel is open, and each round would patch a settings file no
+    /// workbench is ever going to read. And a spec byte-identical to the last one sent is a
+    /// round-trip that can only produce the answer "nothing changed", queued behind real metadata
+    /// work. `.starting` DOES push: the seed has to land before the booting workbench reads its
+    /// settings, so waiting for `.ready` would be a reload late.
+    static func shouldPush(
+        endpoint: MetadataCodec.CodeServerEndpoint?,
+        spec: MetadataCodec.CodeFontSpec,
+        lastSent: MetadataCodec.CodeFontSpec?,
+    ) -> Bool {
+        guard let endpoint, endpoint.state != .unavailable else { return false }
+        return spec != lastSent
+    }
 }
 #endif

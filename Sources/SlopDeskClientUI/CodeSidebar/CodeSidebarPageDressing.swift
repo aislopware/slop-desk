@@ -152,28 +152,30 @@ enum CodeSidebarPageDressing {
     }
     """
 
-    /// The injected sheet. Any nil font payload (bundle lookup failed) still ships the remaining
-    /// faces, the softening and the letterpress — the jobs are independent.
+    /// The injected sheet. Each font URL is a `slopdesk-font:` address the pool's scheme handler
+    /// answers (``CodeSidebarFontScheme``); `nil` means the bundle has no such resource, and the
+    /// sheet then simply omits that face — the softening and the letterpress are independent jobs
+    /// and still ship.
     static func styleSheet(
-        nerdFontBase64: String?,
-        monoUprightBase64: String? = nil,
-        monoItalicBase64: String? = nil,
+        nerdFontURL: String?,
+        monoUprightURL: String? = nil,
+        monoItalicURL: String? = nil,
     ) -> String {
         var sheet = ""
-        if let monoUprightBase64 {
+        if let monoUprightURL {
             sheet += fontFace(
-                family: monoFontFamilyName, base64: monoUprightBase64,
+                family: monoFontFamilyName, source: monoUprightURL,
                 descriptors: "font-style: normal;\n    font-weight: 100 800;",
             )
         }
-        if let monoItalicBase64 {
+        if let monoItalicURL {
             sheet += fontFace(
-                family: monoFontFamilyName, base64: monoItalicBase64,
+                family: monoFontFamilyName, source: monoItalicURL,
                 descriptors: "font-style: italic;\n    font-weight: 100 800;",
             )
         }
-        if let nerdFontBase64 {
-            sheet += fontFace(family: nerdFontFamilyName, base64: nerdFontBase64, descriptors: nil)
+        if let nerdFontURL {
+            sheet += fontFace(family: nerdFontFamilyName, source: nerdFontURL, descriptors: nil)
         }
         sheet += slateSofteningCSS
         let svgBase64 = Data(slopcatLetterpressSVG.utf8).base64EncodedString()
@@ -190,11 +192,11 @@ enum CodeSidebarPageDressing {
 
     /// One @font-face block. `descriptors` carries the style/weight lines for the variable faces
     /// (nil for the single-face nerd font).
-    private static func fontFace(family: String, base64: String, descriptors: String?) -> String {
+    private static func fontFace(family: String, source: String, descriptors: String?) -> String {
         """
         @font-face {
             font-family: "\(family)";
-            src: url("data:font/ttf;base64,\(base64)") format("truetype");
+            src: url("\(source)") format("truetype");
             \(descriptors.map { "\($0)\n    " } ?? "")font-display: block;
         }
 

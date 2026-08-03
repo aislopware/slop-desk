@@ -9,30 +9,34 @@ final class CodeSidebarPageDressingTests: XCTestCase {
     // MARK: Style sheet
 
     func testStyleSheetCarriesFontFaceAndLetterpressOverride() {
-        let sheet = CodeSidebarPageDressing.styleSheet(nerdFontBase64: "QUJD")
+        let sheet = CodeSidebarPageDressing.styleSheet(nerdFontURL: CodeSidebarFontScheme.url(for: .nerdSymbols))
         XCTAssertTrue(sheet.contains("@font-face"))
         XCTAssertTrue(sheet.contains("font-family: \"Symbols Nerd Font\""))
-        XCTAssertTrue(sheet.contains("data:font/ttf;base64,QUJD"))
+        // The face is NAMED, not inlined — the ~4 MB of base64 that used to sit here is now a
+        // subresource the pool's scheme handler answers.
+        XCTAssertTrue(sheet.contains(#"src: url("slopdesk-font://fonts/nerd-symbols.ttf")"#))
+        // (the slopcat letterpress SVG stays a data URI — it is a couple of KB, not a font.)
+        XCTAssertFalse(sheet.contains("font/ttf;base64"), "no font may ride the sheet as a data URI again")
         XCTAssertTrue(sheet.contains(".monaco-workbench .editor-group-watermark .letterpress"))
         XCTAssertTrue(sheet.contains("!important"))
     }
 
     func testStyleSheetCarriesBothJetBrainsMonoVariableFaces() {
         let sheet = CodeSidebarPageDressing.styleSheet(
-            nerdFontBase64: nil, monoUprightBase64: "QQ==", monoItalicBase64: "Qg==",
+            nerdFontURL: nil, monoUprightURL: "u://a", monoItalicURL: "u://b",
         )
         XCTAssertTrue(sheet.contains("font-family: \"JetBrains Mono\""))
         // Both faces declare the full variable weight range; only one is italic.
         XCTAssertEqual(sheet.components(separatedBy: "font-weight: 100 800;").count, 3)
         XCTAssertTrue(sheet.contains("font-style: normal;"))
         XCTAssertTrue(sheet.contains("font-style: italic;"))
-        XCTAssertTrue(sheet.contains("data:font/ttf;base64,QQ=="))
-        XCTAssertTrue(sheet.contains("data:font/ttf;base64,Qg=="))
+        XCTAssertTrue(sheet.contains("url(\"u://a\")"))
+        XCTAssertTrue(sheet.contains("url(\"u://b\")"))
     }
 
     func testStyleSheetWithoutFontsStillSoftensAndDressesTheLetterpress() {
         // A missing bundle resource degrades to the softening + letterpress sheet — never empty.
-        let sheet = CodeSidebarPageDressing.styleSheet(nerdFontBase64: nil)
+        let sheet = CodeSidebarPageDressing.styleSheet(nerdFontURL: nil)
         XCTAssertFalse(sheet.contains("@font-face"))
         XCTAssertTrue(sheet.contains(".editor-group-watermark .letterpress"))
         XCTAssertTrue(sheet.contains(".tabs-container > .tab"))
@@ -74,7 +78,7 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         // And the sheet embeds exactly that payload.
         let embedded = Data(svg.utf8).base64EncodedString()
         XCTAssertTrue(
-            CodeSidebarPageDressing.styleSheet(nerdFontBase64: nil).contains(embedded),
+            CodeSidebarPageDressing.styleSheet(nerdFontURL: nil).contains(embedded),
         )
     }
 

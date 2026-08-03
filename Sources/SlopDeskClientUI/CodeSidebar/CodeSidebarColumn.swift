@@ -109,6 +109,8 @@ struct CodeSidebarColumn: View {
         // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
         .onChange(of: fontSpec) { _, spec in
             guard let spec, let client = Self.firstConnectedMetadataClient(store) else { return }
+            // Records the push too, so the next ensure round does not re-send what just landed.
+            Self.lastPushedFontSpec = spec
             Task { await client.syncCodeFont(spec) }
         }
     }
@@ -319,20 +321,36 @@ struct CodeSidebarColumn: View {
 
     /// One ensure round: verb 18 through whichever pane carries a live metadata channel (resolved
     /// per call, like the host-info/vitals fetchers — survives pane churn/reconnects). `nil` when no
-    /// pane is connected (→ `.offline`, and the loop keeps polling). A round that reaches the host
-    /// also pushes the client's terminal-font spec (verb 20) — the host no-ops when nothing
-    /// changed, so re-sending per round is churn-free, and an old host's `.unsupportedVerb` is
-    /// silently ignored (the editor keeps the seeded defaults).
+    /// pane is connected (→ `.offline`, and the loop keeps polling). A round that reaches a host
+    /// which HAS code-server also pushes the client's terminal-font spec (verb 20) — the seed has
+    /// to land before the workbench reads its settings, so the push rides the starting rounds
+    /// rather than waiting for `.ready`. An old host's `.unsupportedVerb` is silently ignored (the
+    /// editor keeps the seeded defaults).
+    ///
+    /// Two things it deliberately does NOT do. It does not push to an `.unavailable` host: the
+    /// poll keeps running every ~3.6 s while the panel is open, and patching a settings file for a
+    /// workbench that will never boot is pure churn. And it does not re-push a spec identical to
+    /// the last one it sent on this round-trip path — the host no-ops such a write, but the
+    /// round-trip itself still occupies the metadata queue behind real work.
     private static func ensureEndpoint(
         projectRoot: String, store: WorkspaceStore, preferences: PreferencesStore?,
     ) async -> MetadataCodec.CodeServerEndpoint? {
         guard let client = firstConnectedMetadataClient(store) else { return nil }
         let endpoint = await client.ensureCodeServer(projectRoot: projectRoot)
-        if endpoint != nil, let terminal = preferences?.terminal {
-            await client.syncCodeFont(CodeFontSync.spec(terminal: terminal))
+        if let terminal = preferences?.terminal {
+            let spec = CodeFontSync.spec(terminal: terminal)
+            if CodeFontSync.shouldPush(endpoint: endpoint, spec: spec, lastSent: lastPushedFontSpec) {
+                lastPushedFontSpec = spec
+                await client.syncCodeFont(spec)
+            }
         }
         return endpoint
     }
+
+    /// The spec the last ensure round pushed — the dedupe key above. Static because the poll is
+    /// restarted per project/reload and the settings file it writes is host-global anyway; a
+    /// project switch must not re-push a spec the host already has.
+    @MainActor private static var lastPushedFontSpec: MetadataCodec.CodeFontSpec?
 
     private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
         for id in store.tree.activeSession?.allPaneIDs() ?? [] {

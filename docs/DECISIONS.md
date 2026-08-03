@@ -6725,3 +6725,32 @@ wire: verb 19's request, response and disposition byte are identical, so an old 
 new host still agree. The message set is deliberately minimal (hello + open) and versioned by
 its own `v` field; this is host-local IPC, not a fourth network path, and it is NOT
 golden-pinned.
+
+## The panel's fonts stop riding the injected script (2026-08-03)
+
+The webview's WebContent process cannot see fonts the app registers with `CTFontManager`
+(registration is process-scoped), so the panel ships its faces into the page. The first shape
+for that was a `data:font/ttf;base64,…` URI per face inside the injected style sheet — which
+meant the dressing user script carried 4,069,800 characters of base64 (3,052,348 bytes of TTF
+inflated by a third), re-injected and re-parsed on every workbench navigation, once per
+pooled webview.
+
+Now the sheet names three short `slopdesk-font://fonts/<face>.ttf` URLs and a
+`WKURLSchemeHandler` answers them with the bundle's bytes, memory-mapped. The script drops to
+a couple of KB; the faces arrive as ordinary subresources marked `immutable`, so a reload does
+not refetch them. A custom scheme rather than http: `setURLSchemeHandler` refuses the standard
+schemes, and the fonts are the CLIENT's resources — routing them through the loopback relay in
+front of the host's code-server would be wrong on the merits.
+
+Verified with a standalone `WKWebView` probe against a real http origin, reproducing the
+cross-origin condition the workbench page creates: the handler served 303,144 bytes and
+`document.fonts.check('13px "JetBrains Mono"')` returned true. The negative control was
+informative and corrected the comment that shipped first — WebKit loads the face WITHOUT
+`Access-Control-Allow-Origin` too, so that header is hygiene against a future tightening, not
+the mechanism. It is still sent, and the code says so honestly.
+
+Two riders on the same pass. Verb 20 (`syncCodeFont`) no longer rides every ensure round: an
+`.unavailable` host — no code-server binary, polled every ~3.6 s for as long as the panel is
+open — was being sent font settings for a workbench that will never boot, and an unchanged
+spec was making a round trip whose only possible answer is "nothing changed". `.starting`
+still pushes: the seed has to land before the booting workbench reads its settings.

@@ -99,7 +99,8 @@ public enum LinkActionPolicy {
     /// keyboard actuators one config-INDEPENDENT entry so neither can drift back onto the configurable gesture —
     /// wiring ⌘⇧J / ↩ through `link-cmd-click` directly would let `link-cmd-click = copy/nothing` silently turn
     /// them into copy / no-op. Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail: it stays
-    /// `.openHost`/`.openURLClient` under any config).
+    /// `.openCodeHost`/`.openURLClient` under any config — a path goes to the EMBEDDED editor, not
+    /// the host's default app).
     public static func explicitOpenAction(link: DetectedLink) -> LinkAction {
         action(for: .open, link: link)
     }

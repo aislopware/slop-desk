@@ -73,4 +73,49 @@ final class CodeFontSyncTests: XCTestCase {
         XCTAssertNil(CodeFontSync.installedFontRatio(family: "Menlo", size: 0))
     }
     #endif
+
+    // MARK: Push gate
+
+    private static let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 13, lineHeight: 1.32)
+
+    private func endpoint(_ state: MetadataCodec.CodeServerState) -> MetadataCodec.CodeServerEndpoint {
+        MetadataCodec.CodeServerEndpoint(state: state, port: state == .ready ? 1234 : 0)
+    }
+
+    /// The seed has to land BEFORE the booting workbench reads its settings, so a `.starting`
+    /// round pushes — waiting for `.ready` would be a reload late.
+    func testPushRidesTheStartingAndReadyRounds() {
+        for state in [MetadataCodec.CodeServerState.starting, .ready] {
+            XCTAssertTrue(
+                CodeFontSync.shouldPush(endpoint: endpoint(state), spec: Self.spec, lastSent: nil),
+                "\(state) pushes",
+            )
+        }
+    }
+
+    /// A host with no code-server binary never boots a workbench, and the panel keeps polling it
+    /// every ~3.6 s — patching a settings file nothing will read, forever, is pure churn.
+    func testUnavailableHostIsNeverPushedTo() {
+        XCTAssertFalse(
+            CodeFontSync.shouldPush(endpoint: endpoint(.unavailable), spec: Self.spec, lastSent: nil),
+        )
+    }
+
+    func testNoEndpointHasNowhereToPush() {
+        XCTAssertFalse(CodeFontSync.shouldPush(endpoint: nil, spec: Self.spec, lastSent: nil))
+    }
+
+    /// The host no-ops a write that changes nothing, but the ROUND TRIP still queues behind real
+    /// metadata work — so an unchanged spec is dropped client-side.
+    func testAnUnchangedSpecIsNotResent() {
+        XCTAssertFalse(
+            CodeFontSync.shouldPush(endpoint: endpoint(.ready), spec: Self.spec, lastSent: Self.spec),
+        )
+        var moved = Self.spec
+        moved.size += 1
+        XCTAssertTrue(
+            CodeFontSync.shouldPush(endpoint: endpoint(.ready), spec: moved, lastSent: Self.spec),
+            "a real font change still goes out",
+        )
+    }
 }
