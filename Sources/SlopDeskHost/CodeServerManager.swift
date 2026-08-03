@@ -995,6 +995,42 @@ final class CodeServerManager: @unchecked Sendable {
         }
     }
 
+    // MARK: - Extensions gallery
+
+    /// The OFFICIAL VS Code Marketplace, handed to every child through `EXTENSIONS_GALLERY` —
+    /// code-server's supported gallery override (its `server-main.js` parses the env var as JSON
+    /// and REPLACES the built-in Open VSX default wholesale, so the full URL set ships here,
+    /// mirroring VS Code stable's own `product.json`). Open VSX carries only the slice of the
+    /// catalog whose publishers opted in — most first-party `ms-*` tooling (Pylance, C/C++, …)
+    /// never did, and the embedded workbench should install from the official catalog
+    /// (user-directed 2026-08-03). No proxy is needed: the marketplace API answers CORS-open
+    /// (vscode.dev consumes it straight from a browser), so the webview workbench reaches it
+    /// directly. NOTE Microsoft's marketplace ToS scopes the API to VS Code products — this is
+    /// the operator's own personal setup, the same trade every code-server/VSCodium user makes.
+    static let marketplaceExtensionsGallery = """
+    {"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery",\
+    "itemUrl":"https://marketplace.visualstudio.com/items",\
+    "publisherUrl":"https://marketplace.visualstudio.com/publishers",\
+    "resourceUrlTemplate":"https://{publisher}.vscode-unpkg.net/{publisher}/{name}/{version}/{path}",\
+    "controlUrl":"https://main.vscode-cdn.net/extensions/marketplace.json",\
+    "nlsBaseUrl":"https://www.vscode-unpkg.net/_lp/"}
+    """
+
+    /// The environment every code-server child (server AND one-shot CLI) launches with: the
+    /// parent's, plus ``marketplaceExtensionsGallery`` under `EXTENSIONS_GALLERY` — unless the
+    /// operator exported their OWN gallery before hostd, which passes through untouched (the
+    /// escape hatch IS the env var, not a new flag — docs/DECISIONS: important features ship
+    /// unflagged).
+    static func childEnvironment(
+        base: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> [String: String] {
+        var environment = base
+        if (environment["EXTENSIONS_GALLERY"] ?? "").isEmpty {
+            environment["EXTENSIONS_GALLERY"] = marketplaceExtensionsGallery
+        }
+        return environment
+    }
+
     /// Extracts the bound port from code-server's own announcement, e.g.
     /// `[…] info  HTTP server listening on http://0.0.0.0:62636/`. `nil` for every other line.
     static func parseListeningPort(fromLogLine line: String) -> UInt16? {
@@ -1039,6 +1075,7 @@ final class CodeServerManager: @unchecked Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: binary)
             process.arguments = arguments
+            process.environment = childEnvironment()
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             process.terminationHandler = { finished in
@@ -1061,6 +1098,7 @@ final class CodeServerManager: @unchecked Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = childEnvironment()
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

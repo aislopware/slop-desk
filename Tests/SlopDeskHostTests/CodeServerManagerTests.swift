@@ -826,6 +826,41 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertFalse(arguments.contains { $0.hasPrefix("/") })
     }
 
+    func testChildEnvironmentInjectsTheOfficialMarketplaceGallery() throws {
+        // Every child (server + one-shot CLI) launches with `EXTENSIONS_GALLERY` pointing at the
+        // official VS Code Marketplace — code-server parses the env var as JSON and replaces its
+        // Open VSX default wholesale, so the value must be one valid JSON object carrying the
+        // full URL set (a partial set would silently drop e.g. the asset download template).
+        let environment = CodeServerManager.childEnvironment(base: ["PATH": "/usr/bin"])
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        let gallery = try XCTUnwrap(environment["EXTENSIONS_GALLERY"])
+        let parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(gallery.utf8)) as? [String: String],
+        )
+        XCTAssertEqual(
+            parsed["serviceUrl"], "https://marketplace.visualstudio.com/_apis/public/gallery",
+        )
+        XCTAssertEqual(parsed["itemUrl"], "https://marketplace.visualstudio.com/items")
+        XCTAssertNotNil(parsed["resourceUrlTemplate"])
+        XCTAssertNotNil(parsed["controlUrl"])
+        XCTAssertNotNil(parsed["nlsBaseUrl"])
+        XCTAssertNotNil(parsed["publisherUrl"])
+    }
+
+    func testChildEnvironmentKeepsAnOperatorsOwnGallery() {
+        // The escape hatch is the env var itself: an operator who exported EXTENSIONS_GALLERY
+        // before hostd keeps their gallery verbatim; only an EMPTY export is treated as unset.
+        let own = "{\"serviceUrl\":\"https://example.test/gallery\"}"
+        XCTAssertEqual(
+            CodeServerManager.childEnvironment(base: ["EXTENSIONS_GALLERY": own])["EXTENSIONS_GALLERY"],
+            own,
+        )
+        XCTAssertEqual(
+            CodeServerManager.childEnvironment(base: ["EXTENSIONS_GALLERY": ""])["EXTENSIONS_GALLERY"],
+            CodeServerManager.marketplaceExtensionsGallery,
+        )
+    }
+
     func testParseListeningPort() {
         XCTAssertEqual(
             CodeServerManager.parseListeningPort(
