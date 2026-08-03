@@ -10,8 +10,8 @@
 // `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
 //
 // The panel carries its OWN top strip (the otty right-panel pattern): a REAL tab row — "Files"
-// (the embedded workbench; renamed from "Code" with the `doc` glyph, user-directed 2026-08-03)
-// and "Desktop" (the window-OS surface; its content is still a
+// (the embedded workbench; renamed from "Code" with the `folder` glyph, user-directed
+// 2026-08-03) and "Desktop" (the window-OS surface; its content is still a
 // placeholder) — plus the trailing actions: the reload plate (Files only) and the panel's HIDE
 // toggle at the far trailing corner (user-directed 2026-08-03 — the same split the left sidebar
 // has: hide inside the surface, reopen in the titlebar). The selected tab expands to icon +
@@ -132,10 +132,10 @@ struct CodeSidebarColumn: View {
     private var strip: some View {
         HStack(spacing: Slate.Metric.space1) {
             PanelTabPlate(
-                // Raw name: the SF6 spelling ("document") has no pre-macOS-15 constant at the
-                // package floor, and the legacy `.doc` constant is deprecation-warned — the raw
-                // init is the only warning-free spelling. The app ships far above 15.
-                symbol: SFSymbol(rawValue: "document"), label: "Files",
+                // The folder register (user-directed 2026-08-03), not a lone document — the tab
+                // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
+                // family (SF6 renamed it wholesale; the new constants outrun the package floor).
+                symbol: .folder, label: "Files",
                 selected: surfaceTab == .code,
             ) { surfaceTab = .code }
                 .help("Files — the project's embedded editor")

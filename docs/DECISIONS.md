@@ -6614,7 +6614,10 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   relayout rides the tab-select token (`standard`, 0.20s symmetric); the reload plate fades on
   the same token; the surfaces crossfade in a ZStack (both mounted for the 0.20s — warm-pool
   cheap, the poll task still cancels on unmount). Filmstrip-verified both directions at 30fps.
-- ✅ **"Code" → "Files" (`document` glyph).** User-directed. Raw-name `SFSymbol(rawValue:)`
-  spelling: the SF6 constant needs a macOS 15 floor the package (14) does not have, and the
-  legacy `.doc` constant deprecation-warns at the app target — the raw init is the only
-  warning-free spelling on both gates.
+- ✅ **"Code" → "Files" (`folder` glyph).** User-directed, settled in two steps the same day:
+  first a lone `document`, then the folder register from a reference image — the tab opens the
+  whole project tree, not one file. Trap recorded on the way: the `doc` family is renamed
+  wholesale in SF6, so its new constants need a macOS 15 floor the package (14) does not have
+  while the legacy `.doc` deprecation-warns at the app target — if an SF6-only glyph is ever
+  required, the raw `SFSymbol(rawValue:)` spelling is the one warning-free path. `folder`
+  sidesteps the family entirely.
