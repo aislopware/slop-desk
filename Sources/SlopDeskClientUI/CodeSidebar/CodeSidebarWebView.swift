@@ -85,6 +85,21 @@ enum CodeSidebarFocusPolicy {
         default: return nil
         }
     }
+
+    /// The keyboard-ownership flag after a key-window change. Re-derive from the live responder only
+    /// while the app still HAS a key window — an intra-app move (a satellite pane window taking key)
+    /// really does relocate the keyboard without any responder transition. When `hasKeyWindow` is
+    /// false the whole APP lost the keyboard (⌘⇥ to another app fires `didResignKey` with
+    /// `NSApp.keyWindow` already nil): ownership WITHIN the app is unchanged, so the previous value
+    /// stands. Dropping the flag there let the workspace-focused terminal reclaim first responder
+    /// from the editor while the app sat in the background, so ⌘⇥-ing back landed the keyboard in
+    /// the terminal the user had left the editor from (user-reported 2026-08-03). Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`.
+    static func keyboardOwnership(
+        previous: Bool, hasKeyWindow: Bool, webViewHoldsFirstResponder: Bool,
+    ) -> Bool {
+        hasKeyWindow ? webViewHoldsFirstResponder : previous
+    }
 }
 
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
@@ -213,13 +228,19 @@ final class CodeSidebarWebViewPool {
         // The responder overrides keep `CodeSidebarKeyboardState` honest WITHIN one window, but a
         // key-window change moves the keyboard without any responder transition (the webview stays
         // its window's first responder while a satellite pane window is key). Re-derive on both
-        // edges so the flag always answers for the window that actually receives keys.
+        // edges so the flag always answers for the window that actually receives keys — but only
+        // while SOME window of ours is key: app deactivation is not an intra-app keyboard move
+        // (`CodeSidebarFocusPolicy.keyboardOwnership` — the ⌘⇥ round-trip fix).
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             keyWindowObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main,
             ) { _ in
                 MainActor.assumeIsolated {
-                    CodeSidebarKeyboardState.shared.set(Self.shared.holdsFirstResponder())
+                    CodeSidebarKeyboardState.shared.set(CodeSidebarFocusPolicy.keyboardOwnership(
+                        previous: CodeSidebarKeyboardState.shared.ownsKeyboard,
+                        hasKeyWindow: (NSApp as NSApplication?)?.keyWindow != nil,
+                        webViewHoldsFirstResponder: Self.shared.holdsFirstResponder(),
+                    ))
                 }
             })
         }

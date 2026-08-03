@@ -107,5 +107,32 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         let raw = NSEvent.ModifierFlags([.command, .init(rawValue: 0x108)])
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: raw, key: "v"), .paste)
     }
+
+    // MARK: Keyboard ownership across key-window changes
+
+    func testAppDeactivationPreservesOwnership() {
+        // ⌘⇥ to another app: `didResignKey` fires with NO key window left. The keyboard left the
+        // APP, not the editor — dropping the flag here is what let the terminal reclaim first
+        // responder in the background, so ⌘⇥-ing back landed in the terminal instead of the editor.
+        XCTAssertTrue(CodeSidebarFocusPolicy.keyboardOwnership(
+            previous: true, hasKeyWindow: false, webViewHoldsFirstResponder: false,
+        ))
+        // And a terminal-owned keyboard stays terminal-owned across the same round trip.
+        XCTAssertFalse(CodeSidebarFocusPolicy.keyboardOwnership(
+            previous: false, hasKeyWindow: false, webViewHoldsFirstResponder: false,
+        ))
+    }
+
+    func testIntraAppKeyWindowMoveRederivesFromTheLiveResponder() {
+        // A satellite pane window taking key moves the keyboard WITHOUT any responder transition —
+        // the webview stays its own window's first responder, but it no longer receives keys.
+        XCTAssertFalse(CodeSidebarFocusPolicy.keyboardOwnership(
+            previous: true, hasKeyWindow: true, webViewHoldsFirstResponder: false,
+        ))
+        // The main window taking key back with the webview still first responder re-lights it.
+        XCTAssertTrue(CodeSidebarFocusPolicy.keyboardOwnership(
+            previous: false, hasKeyWindow: true, webViewHoldsFirstResponder: true,
+        ))
+    }
 }
 #endif
