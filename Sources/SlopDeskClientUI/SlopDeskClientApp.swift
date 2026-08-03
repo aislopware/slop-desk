@@ -568,6 +568,9 @@ public struct SlopDeskClientApp: App {
             },
         )
         _keyDispatcher = State(initialValue: keyDispatcher)
+        // The code panel's warm-swap focus restore needs the workspace's ACTIVE TAB (the pool
+        // cannot see the store) — same late-wiring idiom as the dispatcher's closures above.
+        CodeSidebarWebViewPool.activeTabID = { [store] in store.tree.activeSession?.activeTab?.id }
         // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME
         // live stores the GUI uses (the backend holds them WEAKLY — the app retains the originals). Built
         // here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred off init).

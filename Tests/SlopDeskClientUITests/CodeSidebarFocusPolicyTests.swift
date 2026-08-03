@@ -134,5 +134,30 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
             previous: false, hasKeyWindow: true, webViewHoldsFirstResponder: true,
         ))
     }
+
+    // MARK: Remount restore (warm-swap focus hand-back)
+
+    func testRemountInTheClaimedTabRestores() {
+        // The editor owned the keyboard in tab A; a tab round-trip (or the panel's Desktop tab /
+        // a collapse) unmounted the webview. Remounting back in tab A hands the keyboard back —
+        // the workbench looks exactly as it was left, so typing must land in it again.
+        XCTAssertTrue(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: "A"))
+    }
+
+    func testRemountInAnotherTabNeverSteals() {
+        // Another tab's pane focusing into this project remounts the same pooled webview — the
+        // user just focused THAT pane; the editor must not yank the keyboard from it.
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: "B"))
+    }
+
+    func testUnclaimedOrUnwiredTabsNeverRestore() {
+        // No recorded claim, or the app never wired the active-tab provider (headless tests): the
+        // restore must stay off rather than fire on a nil == nil coincidence.
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: String?.none, activeTab: "A"))
+        XCTAssertFalse(
+            CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: String?.none, activeTab: String?.none),
+        )
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: String?.none))
+    }
 }
 #endif

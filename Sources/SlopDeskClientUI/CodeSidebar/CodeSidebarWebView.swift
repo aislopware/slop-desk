@@ -12,6 +12,7 @@
 
 #if os(macOS)
 import AppKit
+import SlopDeskWorkspaceModel
 import SwiftUI
 import WebKit
 
@@ -100,30 +101,87 @@ enum CodeSidebarFocusPolicy {
     ) -> Bool {
         hasKeyWindow ? webViewHoldsFirstResponder : previous
     }
+
+    /// Whether a REMOUNTED webview gets the keyboard handed back. The pool's webviews are warm —
+    /// a project switch (workspace tab carrying another project), the panel's Desktop tab, or a
+    /// panel collapse unmounts the view (which forcibly resigns first responder) and a later
+    /// remount shows the workbench exactly as it was left — so when the editor owned the keyboard
+    /// at unmount, the user reads the remount as "I'm back" and types straight into it; without
+    /// the hand-back those keys land in the terminal that auto-claimed in between (user-reported
+    /// 2026-08-03: ⌘⇧P after a tab round-trip opened the APP's palette, not VS Code's). Restore
+    /// only when the remount happens in the SAME workspace tab the keyboard was claimed in — a
+    /// remount in another tab (that tab's pane focusing into this project) must not yank the
+    /// keyboard from the pane the user just focused. Gesture-driven keyboard moves never reach
+    /// this question: a terminal/overlay click resigns the webview while it is still IN a window
+    /// (the pool clears the pending restore), whereas only the swap paths resign by unparenting.
+    /// Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    static func shouldRestoreOnRemount<Tab: Equatable>(claimedTab: Tab?, activeTab: Tab?) -> Bool {
+        claimedTab != nil && claimedTab == activeTab
+    }
 }
 
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
-/// embedded VS Code can never STEAL the keyboard — it can only be handed it by a click.
+/// embedded VS Code can never STEAL the keyboard — it can only be handed it by a click (or the
+/// pool's own remount RESTORE, which is app-directed, never page-directed).
 final class CodeSidebarWKWebView: WKWebView {
+    /// The pool key this webview serves — the focus-restore bookkeeping is keyed by it.
+    let projectRoot: String
+
+    /// Armed (scoped) by ``claimKeyboardForRestore()`` — the ONE non-click path
+    /// `becomeFirstResponder` honors. App-directed: only the pool's remount restore sets it; a
+    /// page-level `focus()` can never reach it.
+    private var programmaticRestoreArmed = false
+
+    init(projectRoot: String, frame: CGRect, configuration: WKWebViewConfiguration) {
+        self.projectRoot = projectRoot
+        super.init(frame: frame, configuration: configuration)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { nil }
+
     override func becomeFirstResponder() -> Bool {
         // `NSApp` is nil in a headless test process — optional access, never the implicit unwrap.
-        guard let app = NSApp as NSApplication?,
-              CodeSidebarFocusPolicy.shouldAcceptFocus(
-                  eventType: app.currentEvent?.type,
-                  clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
-              )
+        guard let app = NSApp as NSApplication? else { return false }
+        guard programmaticRestoreArmed
+            || CodeSidebarFocusPolicy.shouldAcceptFocus(
+                eventType: app.currentEvent?.type,
+                clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
+            )
         else { return false }
         let became = super.becomeFirstResponder()
-        if became { CodeSidebarKeyboardState.shared.set(true) }
+        if became {
+            CodeSidebarKeyboardState.shared.set(true)
+            CodeSidebarWebViewPool.shared.noteKeyboardClaimed(projectRoot: projectRoot)
+        }
         return became
+    }
+
+    /// The pool's remount hand-back (``CodeSidebarFocusPolicy/shouldRestoreOnRemount(claimedTab:activeTab:)``).
+    func claimKeyboardForRestore() {
+        guard let window else { return }
+        programmaticRestoreArmed = true
+        defer { programmaticRestoreArmed = false }
+        window.makeFirstResponder(self)
     }
 
     /// Anything that takes the keyboard back (a terminal click, an overlay, the panel collapsing
     /// and unparenting this view) resigns through here — the observable flag tracks it so the
-    /// workspace's focused pane re-lights the moment the keyboard actually returns.
+    /// workspace's focused pane re-lights the moment the keyboard actually returns. The resign's
+    /// CAUSE is classified one runloop later, once the swap (if any) has finished unparenting:
+    /// off-window ⇒ a warm-swap unmount (arm the remount restore), still-in-window ⇒ a genuine
+    /// keyboard move by gesture (drop any pending restore).
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { CodeSidebarKeyboardState.shared.set(false) }
+        if resigned {
+            CodeSidebarKeyboardState.shared.set(false)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                CodeSidebarWebViewPool.shared.classifyResign(
+                    projectRoot: projectRoot, stillInWindow: window != nil,
+                )
+            }
+        }
         return resigned
     }
 
@@ -219,10 +277,20 @@ private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegat
 final class CodeSidebarWebViewPool {
     static let shared = CodeSidebarWebViewPool()
 
+    /// The workspace's active tab — wired once by the app layer (the pool cannot see the store).
+    /// Drives the focus-restore tab match; the `nil` default (headless tests, pre-wiring renders)
+    /// simply never restores.
+    static var activeTabID: @MainActor () -> TabID? = { nil }
+
     private var webViews: [String: WKWebView] = [:]
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
     private var keyWindowObservers: [NSObjectProtocol] = []
+    /// The workspace tab the keyboard was last CLAIMED in (a click inside a webview, or a restore).
+    private var claimedTabID: TabID?
+    /// Armed when a webview loses the keyboard to a warm-swap UNMOUNT (never to a gesture) — the
+    /// remount of this project's webview in the claimed tab hands the keyboard back.
+    private var pendingRestore: (projectRoot: String, claimedTab: TabID)?
 
     init() {
         // The responder overrides keep `CodeSidebarKeyboardState` honest WITHIN one window, but a
@@ -300,7 +368,9 @@ final class CodeSidebarWebViewPool {
         configuration.userContentController.add(
             Self.clipboardBridge, name: CodeSidebarPageDressing.clipboardHandlerName,
         )
-        let webView = CodeSidebarWKWebView(frame: .zero, configuration: configuration)
+        let webView = CodeSidebarWKWebView(
+            projectRoot: projectRoot, frame: .zero, configuration: configuration,
+        )
         // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
         // window into a misbehaving code-server page.
         webView.isInspectable = true
@@ -324,6 +394,50 @@ final class CodeSidebarWebViewPool {
     /// (the accompanying generation bump re-ensures and mints one).
     func reload(projectRoot: String) {
         webViews[projectRoot]?.reload()
+    }
+
+    // MARK: Keyboard restore across warm swaps
+
+    /// A webview took the keyboard (click or restore) — remember WHICH workspace tab, and drop any
+    /// pending restore (a fresh claim supersedes whatever an earlier unmount had armed).
+    func noteKeyboardClaimed(projectRoot _: String) {
+        claimedTabID = Self.activeTabID()
+        pendingRestore = nil
+    }
+
+    /// The one-hop-deferred verdict on a webview resign (see
+    /// ``CodeSidebarWKWebView/resignFirstResponder()``): off-window ⇒ the warm swap took the
+    /// keyboard, arm the remount restore for the claimed tab; still-in-window ⇒ the USER moved the
+    /// keyboard (terminal click, overlay, find bar) — nothing may hand it back uninvited.
+    func classifyResign(projectRoot: String, stillInWindow: Bool) {
+        if stillInWindow {
+            claimedTabID = nil
+            pendingRestore = nil
+        } else if let claimedTab = claimedTabID {
+            claimedTabID = nil
+            pendingRestore = (projectRoot, claimedTab)
+        }
+    }
+
+    /// A pooled webview re-entered the hierarchy. When its project's restore is armed AND the
+    /// remount happens in the tab the keyboard was claimed in
+    /// (``CodeSidebarFocusPolicy/shouldRestoreOnRemount(claimedTab:activeTab:)``), the keyboard is
+    /// handed back — deferred TWO runloop hops so it lands after the focused terminal's own
+    /// deferred one-hop claim (the transition claim scheduled by the same render), settling the
+    /// race in the editor's favor exactly once. A matching remount consumes the arm either way; a
+    /// foreign-project remount leaves it for the real return.
+    func noteRemount(projectRoot: String) {
+        guard let pending = pendingRestore, pending.projectRoot == projectRoot else { return }
+        pendingRestore = nil
+        guard CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            claimedTab: pending.claimedTab, activeTab: Self.activeTabID(),
+        ) else { return }
+        let webView = webViews[projectRoot] as? CodeSidebarWKWebView
+        DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak webView] in
+                webView?.claimKeyboardForRestore()
+            }
+        }
     }
 
     /// The dressing user-script source, built ONCE per process — the base64 font payloads total
@@ -425,6 +539,9 @@ struct CodeSidebarWebView: NSViewRepresentable {
             ),
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        // A (re)mount may owe the keyboard back — the warm-swap focus restore (a first-ever mount
+        // has no restore armed; the call is then a no-op).
+        CodeSidebarWebViewPool.shared.noteRemount(projectRoot: projectRoot)
     }
 }
 
