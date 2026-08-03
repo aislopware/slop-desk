@@ -44,11 +44,16 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         // theme owns every colour; a colour here would drift the moment the theme changes).
         let css = CodeSidebarPageDressing.slateSofteningCSS
         XCTAssertTrue(css.contains(".tabs-container > .tab"))
-        XCTAssertTrue(css.contains("calc(var(--editor-group-tab-height) - 8px)"))
-        // The label's stock line-height equals the FULL tab-height var — the shrunk plate must
-        // recut it too, or the glyphs overflow the plate and the underline strikes through them.
-        XCTAssertTrue(css.contains(".tab .tab-label"))
-        XCTAssertEqual(css.components(separatedBy: "calc(var(--editor-group-tab-height) - 8px)").count, 3)
+        // The shrunk plate is made by RE-SCOPING the workbench's own tab-height var on the tab
+        // (captured into an intermediate on the title, since a self-referential calc is a cyclic
+        // custom-property reference) — every stock rule keyed on the var derives the plate height
+        // by itself. There must be NO per-rule `- 8px` recuts left: each one was a stock metric
+        // chased by hand (the label's line-height, the two tab-icon forms' heights), and any
+        // still-present copy means the derivation isn't trusted end to end.
+        XCTAssertTrue(css.contains("--slate-tab-plate: calc(var(--editor-group-tab-height) - 8px)"))
+        XCTAssertTrue(css.contains("--editor-group-tab-height: var(--slate-tab-plate)"))
+        XCTAssertEqual(css.components(separatedBy: "- 8px)").count, 3, "one capture + one comment mention")
+        XCTAssertFalse(css.contains(".tab .tab-label"))
         // A Slate plate carries selection by background fill — the underline containers go.
         XCTAssertTrue(css.contains(".tab-border-bottom-container"))
         XCTAssertTrue(css.contains("display: none !important"))

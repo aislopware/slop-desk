@@ -68,32 +68,41 @@ enum CodeSidebarPageDressing {
     /// the Slate ladder verbatim: tab/control 6 (`radiusTab`/`radiusControl`), card 8
     /// (`radiusCard`), small 4 (`radiusSmall`); the 4px tab inset rides the 4pt grid (`space1`).
     ///
-    ///   • TABS become floating rounded plates: inset 4px off the strip's top/bottom/left, height
-    ///     recut from the group's own `--editor-group-tab-height` var (compact density seeded), the
+    ///   • TABS become floating rounded plates: inset 4px off the strip's top/bottom/left, the
     ///     per-tab 1px dividers dropped (the strip background now separates them). The active tab's
     ///     background fill reads as a plate — exactly the app's `PanelTabPlate` at rest/selected.
-    ///     The label's stock `line-height` equals the FULL tab-height var, so the shrunk plate must
-    ///     recut it too or the glyphs overflow the plate; and the active-tab underline containers
-    ///     (`.tab-border-top/bottom-container`, absolute at the plate's edges) go entirely — a
-    ///     Slate plate carries selection by its background fill, never an underline.
+    ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
+    ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
+    ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
+    ///     at the plate's edges) go entirely — a Slate plate carries selection by its background
+    ///     fill, never an underline.
     ///   • Lists/trees (explorer rows, palette rows): the selection/hover fill rounds to 6.
     ///   • Scrollbar sliders round to 5 (half their 10px width — a capsule, not a bar).
     ///   • Inputs step from the stock 4 up to the control rung 6; menus/hovers/find ride the card
     ///     rung 8 (the widgets the workbench ALREADY tokenized — quick input, suggest — sit on
     ///     their own vars and are left alone).
     static let slateSofteningCSS = """
+    /* The plate height is made by RE-SCOPING the workbench's own `--editor-group-tab-height` on
+       the tab, not by overriding stock rules one at a time: every stock rule keyed on the var —
+       the tab's height, the label's line-height, and both tab-icon forms' heights
+       (`.monaco-icon-label::before` for font glyphs, `.monaco-icon-label-iconpath` for SVG
+       icons, each pinned to the FULL var by the stock sheet; a per-rule shrink here once left
+       the SVG form centering on the 35px box, 4px below the label's line) — derives the shrunk
+       value by itself. The strip and everything outside `.tab` still see the full var. The
+       derived value must be CAPTURED on an ancestor first: `--x: calc(var(--x) - 8px)` on the
+       tab itself is a cyclic custom-property reference, which invalidates the property. */
+    .monaco-workbench .part.editor > .content .editor-group-container > .title {
+        --slate-tab-plate: calc(var(--editor-group-tab-height) - 8px);
+    }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
+        --editor-group-tab-height: var(--slate-tab-plate);
         margin: 4px 0 4px 4px;
-        height: calc(var(--editor-group-tab-height) - 8px);
         border-radius: 6px;
         border-right: none !important;
         border-left: none !important;
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:last-child {
         margin-right: 4px;
-    }
-    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .tab-label {
-        line-height: calc(var(--editor-group-tab-height) - 8px);
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
