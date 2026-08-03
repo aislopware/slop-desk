@@ -120,8 +120,15 @@ struct SplitContainer: View {
                     store: store,
                     paneID: entry.id,
                     // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
-                    // focus-steal guard for hidden tabs).
-                    isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
+                    // focus-steal guard for hidden tabs). While the code panel's webview owns the
+                    // keyboard the workspace-focused pane renders UNFOCUSED (hollow cursor, no focus
+                    // chrome) — and, through the terminal's focus-gated responder claim, stops
+                    // re-taking the keyboard the editor is using.
+                    isFocused: CodeSidebarKeyboardState.paneRendersFocused(
+                        workspaceFocused: !entry.isHidden
+                            && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
+                        sidebarOwnsKeyboard: CodeSidebarKeyboardState.shared.ownsKeyboard,
+                    ),
                     // ON-SCREEN gate: visible ⟺ the pane's tab is the active tab AND it is
                     // not zoom-hidden. A video pane drives its `liveVideoCap` activation off THIS — a
                     // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,

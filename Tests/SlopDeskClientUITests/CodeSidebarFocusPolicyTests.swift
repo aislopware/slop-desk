@@ -78,5 +78,34 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [], key: "q"))
         XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: nil))
     }
+
+    // MARK: Editing chords
+
+    func testBareCommandEditingChordsMapToTheNativeEditingActions() {
+        // VS Code web never acts on raw ⌘C/⌘V/⌘X/⌘A keydowns — in a browser those are the Edit
+        // menu's, and this app's menus are shortcut-less. The webview claims them and drives
+        // WebKit's own editing actions instead; unclaimed they bounce back and became phantom
+        // terminal input (libghostty's cmd+v paste binding).
+        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "c"), .copy)
+        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "v"), .paste)
+        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "x"), .cut)
+        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "a"), .selectAll)
+    }
+
+    func testModifiedOrForeignChordsAreNotEditingCommands() {
+        // Shifted/optioned variants and every other letter stay with VS Code's own keymap
+        // (⌘⇧V markdown preview, ⌘⌥C toggle-case-sensitive find, …).
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .shift], key: "v"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .option], key: "c"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .control], key: "a"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "p"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [], key: "c"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: nil))
+    }
+
+    func testDeviceDependentFlagBitsDoNotDefeatTheEditingMatch() {
+        let raw = NSEvent.ModifierFlags([.command, .init(rawValue: 0x108)])
+        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: raw, key: "v"), .paste)
+    }
 }
 #endif

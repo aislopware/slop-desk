@@ -55,6 +55,36 @@ enum CodeSidebarFocusPolicy {
             return false
         }
     }
+
+    /// The standard editing command a bare ⌘-chord maps to while the webview owns the keyboard.
+    /// VS Code's WEB build does not act on raw ⌘C/⌘V/⌘X/⌘A keydowns — in a browser those belong to
+    /// the Edit menu, which drives the DOM copy/paste/cut/select-all natively — and this app's
+    /// menus are shortcut-less by design, so nobody sent WebKit the editing actions and the chords
+    /// fell through "unhandled". Worse than a no-op: WebKit re-dispatches an unhandled key
+    /// equivalent, and the terminal's doCommand-redispatch tail swallowed the second pass as
+    /// terminal input — libghostty's own `cmd+v = paste` binding then pasted into the PTY while
+    /// the user was looking at the editor (user-reported 2026-08-03). The webview claiming these
+    /// four (first-responder-gated, exactly like the terminal's own claim) is the same contract a
+    /// browser's Edit menu provides. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    enum EditingCommand: Equatable {
+        case copy
+        case paste
+        case cut
+        case selectAll
+    }
+
+    static func editingCommand(modifiers: NSEvent.ModifierFlags, key: String?) -> EditingCommand? {
+        guard let key,
+              modifiers.intersection([.command, .shift, .option, .control]) == [.command]
+        else { return nil }
+        switch key {
+        case "c": return .copy
+        case "v": return .paste
+        case "x": return .cut
+        case "a": return .selectAll
+        default: return nil
+        }
+    }
 }
 
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
@@ -68,7 +98,18 @@ final class CodeSidebarWKWebView: WKWebView {
                   clickWasInsideWebView: app.currentEvent.map(eventLandsInside) ?? false,
               )
         else { return false }
-        return super.becomeFirstResponder()
+        let became = super.becomeFirstResponder()
+        if became { CodeSidebarKeyboardState.shared.set(true) }
+        return became
+    }
+
+    /// Anything that takes the keyboard back (a terminal click, an overlay, the panel collapsing
+    /// and unparenting this view) resigns through here — the observable flag tracks it so the
+    /// workspace's focused pane re-lights the moment the keyboard actually returns.
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { CodeSidebarKeyboardState.shared.set(false) }
+        return resigned
     }
 
     /// Whether `event`'s location falls inside THIS webview — same window, point within bounds.
@@ -79,12 +120,37 @@ final class CodeSidebarWKWebView: WKWebView {
 
     /// Refuse the app-reserved chords (``CodeSidebarFocusPolicy/isReservedAppChord(modifiers:key:)``)
     /// so they continue up to the main menu — WebKit's own implementation forwards ⌘-chords to the
-    /// page and returns `true`, which is how a focused editor swallowed ⌘Q whole.
+    /// page and returns `true`, which is how a focused editor swallowed ⌘Q whole. The standard
+    /// editing chords are CLAIMED here instead and driven through WebKit's native editing actions
+    /// (``CodeSidebarFocusPolicy/editingCommand(modifiers:key:)`` — the Edit-menu contract a browser
+    /// gives VS Code web, which this app's shortcut-less menus never provided): the DOM
+    /// copy/paste/cut/select-all runs against whatever has focus in the page, and the clipboard
+    /// bridge sees the copies. First-responder-gated like the terminal's claim, so a focused find
+    /// bar / native field never loses its own ⌘C/⌘V to the panel.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if CodeSidebarFocusPolicy.isReservedAppChord(
-            modifiers: event.modifierFlags,
-            key: event.charactersIgnoringModifiers?.lowercased(),
-        ) { return false }
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        if CodeSidebarFocusPolicy.isReservedAppChord(modifiers: event.modifierFlags, key: key) {
+            return false
+        }
+        if event.type == .keyDown, window?.firstResponder === self,
+           let command = CodeSidebarFocusPolicy.editingCommand(modifiers: event.modifierFlags, key: key)
+        {
+            // WKWebView implements the standard editing IBActions (they back the Edit menu in every
+            // WebKit browser) without declaring them publicly — selector dispatch is the seam. The
+            // `responds` guard keeps a hypothetical WebKit that dropped one on the `super` path
+            // instead of silently eating the chord.
+            let action: Selector =
+                switch command {
+                case .copy: #selector(NSText.copy(_:))
+                case .paste: #selector(NSText.paste(_:))
+                case .cut: #selector(NSText.cut(_:))
+                case .selectAll: #selector(NSText.selectAll(_:))
+                }
+            if responds(to: action) {
+                perform(action, with: nil)
+                return true
+            }
+        }
         return super.performKeyEquivalent(with: event)
     }
 }
@@ -141,6 +207,23 @@ final class CodeSidebarWebViewPool {
     private var webViews: [String: WKWebView] = [:]
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
+    private var keyWindowObservers: [NSObjectProtocol] = []
+
+    init() {
+        // The responder overrides keep `CodeSidebarKeyboardState` honest WITHIN one window, but a
+        // key-window change moves the keyboard without any responder transition (the webview stays
+        // its window's first responder while a satellite pane window is key). Re-derive on both
+        // edges so the flag always answers for the window that actually receives keys.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            keyWindowObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main,
+            ) { _ in
+                MainActor.assumeIsolated {
+                    CodeSidebarKeyboardState.shared.set(Self.shared.holdsFirstResponder())
+                }
+            })
+        }
+    }
 
     /// The project's veil state — the column reads `veiled` to hold its dark waiting surface over
     /// the webview until the workbench paints. Created on demand so the read can precede the

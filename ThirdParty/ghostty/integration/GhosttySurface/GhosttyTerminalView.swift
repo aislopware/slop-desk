@@ -2518,6 +2518,16 @@ final class GhosttyLayerBackedView: NSView {
         guard event.type == .keyDown, event.timestamp != 0 else {
             return super.performKeyEquivalent(with: event)
         }
+        // The redispatch marker is a FIRST-RESPONDER-ONLY device: it reroutes an equivalent nobody
+        // claimed back into THIS surface as terminal input. While another view owns the keyboard
+        // (the code panel's webview), arming it turned every chord the web page declined into
+        // phantom terminal input — WebKit re-dispatches unhandled equivalents, the second pass
+        // matched the marker, and libghostty's own `cmd+v = paste` binding pasted into the PTY
+        // behind the editor the user was typing in (user-reported 2026-08-03).
+        guard window?.firstResponder === self else {
+            lastPerformKeyEvent = nil
+            return super.performKeyEquivalent(with: event)
+        }
         // Non-⌘/⌃ equivalents can't hit the input-context redirect; reset the marker.
         guard event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control) else {
             lastPerformKeyEvent = nil
