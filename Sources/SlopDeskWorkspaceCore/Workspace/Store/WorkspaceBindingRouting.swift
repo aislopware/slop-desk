@@ -25,6 +25,10 @@ struct RouteToggles {
     /// concern passed in as a closure (like `sidebar`, but with NO legacy store flag to fall back to);
     /// `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
     var codeSidebar: (() -> Void)?
+    /// Moves the keyboard into the code panel's embedded editor, or hands it back (⌥⌘R). Same shape
+    /// and same reasoning as `codeSidebar` — a macOS-only concern with no store flag behind it;
+    /// `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
+    var focusCodePanel: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (⌘J). A VIEW overlay (like `globalSearch`), passed in as a
     /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. Jump-To
@@ -71,12 +75,14 @@ public extension WorkspaceBindingRegistry {
         openQuickly: (() -> Void)? = nil,
         togglePinWindow: (() -> Void)? = nil,
         closeWindow: (() -> Void)? = nil,
+        focusCodePanel: (() -> Void)? = nil,
     ) {
         let toggles = RouteToggles(
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
             sidebar: toggleSidebar,
             codeSidebar: toggleCodeSidebar,
+            focusCodePanel: focusCodePanel,
             globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
@@ -227,6 +233,10 @@ public extension WorkspaceBindingRegistry {
         // (`WorkspaceChromeState.codeSidebarCollapsed`) with NO legacy store flag, so the closure is the
         // ONLY sink; `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
         case .toggleCodeSidebar: toggles.codeSidebar?()
+        // Focus Code Panel (⌥⌘R): move the keyboard into the embedded editor, or back to the pane
+        // that had it. Same closure-only shape as the toggle above — the sink is the macOS webview
+        // pool, which no store flag can stand in for.
+        case .focusCodePanel: toggles.focusCodePanel?()
         // Pin Window: float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
@@ -417,6 +427,7 @@ public extension WorkspaceBindingRegistry {
         case .toggleSidebar: toggles.sidebar?()
         // The right code panel is chrome on both paths — same closure, same graceful no-op default.
         case .toggleCodeSidebar: toggles.codeSidebar?()
+        case .focusCodePanel: toggles.focusCodePanel?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()

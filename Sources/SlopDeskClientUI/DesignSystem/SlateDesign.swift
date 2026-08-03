@@ -368,6 +368,11 @@ enum Slate {
         static let space3: CGFloat = 12
         static let space4: CGFloat = 16
 
+        /// The STATE DOT: a filled circle that qualifies the text beside it (unsaved changes, a
+        /// live indicator) rather than standing on its own. Sized to sit under a footnote's
+        /// x-height so it reads as punctuation, not as a badge.
+        static let dot: CGFloat = 6
+
         // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
         // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
         /// Popover/menu rows, chips, the titlebar clusters, plate buttons.

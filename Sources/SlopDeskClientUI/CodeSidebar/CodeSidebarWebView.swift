@@ -119,6 +119,53 @@ enum CodeSidebarFocusPolicy {
         claimedTab != nil && claimedTab == activeTab
     }
 
+    /// What ⌥⌘R (Focus Code Panel) should do, given where the keyboard is and whether the panel is
+    /// even on screen. One chord, both directions — the editor is otherwise reachable ONLY by
+    /// clicking it, because every other focus claim is refused by design (see
+    /// ``shouldAcceptFocus(eventType:clickWasInsideWebView:)``). Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`.
+    enum FocusToggleOutcome: Equatable {
+        /// The editor has the keyboard — give it back to the view it was taken from.
+        case handBack
+        /// The panel is up and mounted; claim the keyboard for the workbench.
+        case claimEditor
+        /// The panel is hidden: reveal it first, then claim once the webview mounts.
+        case revealThenClaim
+        /// Nothing to focus — the panel is open but showing a placeholder (no project, still
+        /// starting, no code-server), so there is no webview to hand the keyboard to.
+        case none
+    }
+
+    static func focusToggle(
+        webViewHoldsKeyboard: Bool, hasMountedWebView: Bool, panelCollapsed: Bool,
+    ) -> FocusToggleOutcome {
+        if webViewHoldsKeyboard { return .handBack }
+        if panelCollapsed { return .revealThenClaim }
+        return hasMountedWebView ? .claimEditor : .none
+    }
+
+    /// Which project's warm workbench to discard when the pool is over its cap, given `recency`
+    /// (least-recently-used FIRST) and the projects that must not be touched. `nil` = nothing to
+    /// evict.
+    ///
+    /// The pool exists to make a project switch instant, and it paid for that by keeping every
+    /// project's workbench alive for the app's lifetime — one WKWebView, one web content process
+    /// and one fully booted VS Code renderer apiece, with no ceiling. Across a working day of
+    /// hopping between repos that is unbounded growth for warmth nobody is going to use again. A
+    /// cap bounds it: the projects in active rotation stay instant, and a long-cold one pays a
+    /// workbench boot on return — its open editors come back regardless, because the workbench
+    /// keeps that state in browser storage on the proxy's deliberately stable origin.
+    ///
+    /// The MOUNTED project is never a victim (evicting the view on screen would blank it), and a
+    /// project with the keyboard-restore armed is spared too — its hand-back is still owed. Pure —
+    /// pinned by `CodeSidebarFocusPolicyTests`.
+    static func evictionVictim(
+        recency: [String], protected: Set<String>, cap: Int,
+    ) -> String? {
+        guard recency.count > cap else { return nil }
+        return recency.first { !protected.contains($0) }
+    }
+
     /// Whether `responder` is worth remembering as the keyboard's rightful owner — the repair
     /// target for a refused page focus pull (see ``CodeSidebarWKWebView/becomeFirstResponder()``).
     /// Only a real VIEW that is neither the window's stand-in (`firstResponder == window` IS the
@@ -284,6 +331,19 @@ final class CodeSidebarWebLoadState {
     func navigationSettled() { veiled = false }
 }
 
+/// Per-project readout of the workbench's active editor, fed by KVO on `WKWebView.title` (see
+/// ``CodeSidebarWorkbenchTitle``). `@Observable` so the panel's strip re-renders as the user opens
+/// files and edits them; pooled with the webview, so a warm project swap shows the right file
+/// immediately rather than blanking until the next title change.
+@MainActor
+@Observable
+final class CodeSidebarWorkbenchReadout {
+    private(set) var activeEditor: CodeSidebarActiveEditor?
+    func update(title: String?) {
+        activeEditor = CodeSidebarWorkbenchTitle.activeEditor(in: title)
+    }
+}
+
 /// The retained `WKNavigationDelegate` driving a ``CodeSidebarWebLoadState`` (`navigationDelegate`
 /// is weak — the pool holds this alongside the webview). Failures also settle: a dead endpoint must
 /// surface WebKit's error page, never an eternal spinner veil.
@@ -325,8 +385,20 @@ final class CodeSidebarWebViewPool {
     /// simply never restores.
     static var activeTabID: @MainActor () -> TabID? = { nil }
 
+    /// How many project workbenches stay warm at once. Three covers the rotation a person actually
+    /// keeps in their head (the repo, its dependency, the thing they are comparing against) while
+    /// bounding what an all-day session can accumulate — see ``CodeSidebarFocusPolicy/evictionVictim(recency:protected:cap:)``.
+    static let warmWebViewCap = 3
+
     private var webViews: [String: WKWebView] = [:]
+    /// Project roots in least-recently-used order — the eviction queue. Touched on every mint and
+    /// every mount, which between them are the only moments a project is "used".
+    private var recency: [String] = []
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
+    private var readouts: [String: CodeSidebarWorkbenchReadout] = [:]
+    /// Retains the `title` KVO registrations behind ``CodeSidebarWorkbenchReadout`` — an
+    /// `NSKeyValueObservation` stops observing the moment it is released.
+    private var titleObservations: [String: NSKeyValueObservation] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
     private var keyWindowObservers: [NSObjectProtocol] = []
     /// The workspace tab the keyboard was last CLAIMED in (a click inside a webview, or a restore).
@@ -398,10 +470,20 @@ final class CodeSidebarWebViewPool {
         return state
     }
 
+    /// The project's active-editor readout — created on demand for the same reason as
+    /// ``loadState(for:)`` (the strip reads it before the webview exists).
+    func readout(for projectRoot: String) -> CodeSidebarWorkbenchReadout {
+        if let existing = readouts[projectRoot] { return existing }
+        let readout = CodeSidebarWorkbenchReadout()
+        readouts[projectRoot] = readout
+        return readout
+    }
+
     /// The (created-on-first-use) webview for `projectRoot`, pointed at `url`. An existing entry is
     /// re-loaded ONLY when the endpoint moved (`CodeSidebarModel.endpointMoved` — a respawned
     /// code-server on a fresh port); the workbench otherwise owns its own navigation.
     func webView(for projectRoot: String, url: URL) -> WKWebView {
+        touch(projectRoot)
         if let existing = webViews[projectRoot] {
             if CodeSidebarModel.endpointMoved(current: existing.url, target: url) {
                 existing.load(URLRequest(url: url))
@@ -468,9 +550,58 @@ final class CodeSidebarWebViewPool {
         let observer = CodeSidebarNavigationObserver(state: loadState(for: projectRoot))
         navigationObservers[projectRoot] = observer
         webView.navigationDelegate = observer
+        // The active-file readout: the workbench keeps its document title in step with the active
+        // editor (seed v14's `window.title`), and WebKit republishes it here.
+        let readout = readout(for: projectRoot)
+        titleObservations[projectRoot] = webView.observe(\.title, options: [.initial, .new]) { observed, _ in
+            MainActor.assumeIsolated { readout.update(title: observed.title) }
+        }
         webView.load(URLRequest(url: url))
         webViews[projectRoot] = webView
+        evictColdestIfOverCap()
         return webView
+    }
+
+    // MARK: LRU
+
+    /// Mark `projectRoot` most-recently-used.
+    private func touch(_ projectRoot: String) {
+        recency.removeAll { $0 == projectRoot }
+        recency.append(projectRoot)
+    }
+
+    /// Discard the coldest evictable workbench while the pool sits over
+    /// ``warmWebViewCap``. Loops because a burst of mints (or a run of protected entries) can leave
+    /// more than one over the line.
+    private func evictColdestIfOverCap() {
+        while let victim = CodeSidebarFocusPolicy.evictionVictim(
+            recency: recency, protected: protectedProjectRoots(), cap: Self.warmWebViewCap,
+        ) {
+            evict(victim)
+        }
+    }
+
+    /// The roots eviction must leave alone: whatever is on screen, and whatever is owed a keyboard
+    /// hand-back on remount.
+    private func protectedProjectRoots() -> Set<String> {
+        var protected = Set(webViews.filter { $0.value.window != nil }.keys)
+        if let pending = pendingRestore { protected.insert(pending.projectRoot) }
+        return protected
+    }
+
+    /// Tear one project's workbench down completely. The webview is unparented by construction (a
+    /// mounted one is never a victim); stopping the load first keeps a half-finished navigation
+    /// from resolving into a released observer. Every side table drops with it, so the next visit
+    /// mints a fresh webview and re-veils honestly through its boot.
+    private func evict(_ projectRoot: String) {
+        let webView = webViews.removeValue(forKey: projectRoot)
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        titleObservations.removeValue(forKey: projectRoot)?.invalidate()
+        navigationObservers.removeValue(forKey: projectRoot)
+        loadStates.removeValue(forKey: projectRoot)
+        readouts.removeValue(forKey: projectRoot)
+        recency.removeAll { $0 == projectRoot }
     }
 
     /// Hard-reload the project's webview (the header's reload button) — a no-op if none exists yet
@@ -510,6 +641,9 @@ final class CodeSidebarWebViewPool {
     /// race in the editor's favor exactly once. A matching remount consumes the arm either way; a
     /// foreign-project remount leaves it for the real return.
     func noteRemount(projectRoot: String) {
+        // A mount is a use — it is what keeps the project in rotation ahead of the ones the user
+        // has stopped visiting.
+        touch(projectRoot)
         guard let pending = pendingRestore, pending.projectRoot == projectRoot else { return }
         pendingRestore = nil
         guard CodeSidebarFocusPolicy.shouldRestoreOnRemount(
@@ -521,6 +655,44 @@ final class CodeSidebarWebViewPool {
                 webView?.claimKeyboardForRestore()
             }
         }
+    }
+
+    // MARK: Keyboard focus by chord (⌥⌘R)
+
+    /// Actuates ``CodeSidebarFocusPolicy/focusToggle(webViewHoldsKeyboard:hasMountedWebView:panelCollapsed:)``.
+    /// `reveal` shows the panel when it is collapsed; the claim is then deferred until the webview
+    /// has actually been mounted by the resulting SwiftUI pass (two hops, the same settling the
+    /// warm-swap restore uses). Returns nothing — every outcome is best-effort chrome.
+    func toggleKeyboardFocus(panelCollapsed: Bool, reveal: @MainActor () -> Void) {
+        switch CodeSidebarFocusPolicy.focusToggle(
+            webViewHoldsKeyboard: holdsFirstResponder(),
+            hasMountedWebView: mountedWebView() != nil,
+            panelCollapsed: panelCollapsed,
+        ) {
+        case .handBack:
+            guard let owner = lastKeyboardOwner, let window = owner.window else { return }
+            window.makeFirstResponder(owner)
+        case .claimEditor:
+            mountedWebView()?.claimKeyboardForRestore()
+        case .revealThenClaim:
+            reveal()
+            DispatchQueue.main.async {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        Self.shared.mountedWebView()?.claimKeyboardForRestore()
+                    }
+                }
+            }
+        case .none:
+            break
+        }
+    }
+
+    /// The pooled webview currently IN the view hierarchy. At most one is mounted at a time (the
+    /// column shows the active project's workbench and unmounts the rest — that is what makes a
+    /// project switch a warm swap), so this is the chord's unambiguous target.
+    private func mountedWebView() -> CodeSidebarWKWebView? {
+        webViews.values.lazy.compactMap { $0 as? CodeSidebarWKWebView }.first { $0.window != nil }
     }
 
     /// The dressing user-script source, built ONCE per process — the base64 font payloads total

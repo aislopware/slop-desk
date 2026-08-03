@@ -102,6 +102,17 @@ public enum WorkspaceAction: Hashable, Sendable {
     // at that project's root). ⌘⇧R, mirroring ⌘⇧L on the left panel. Window-scope chrome → needs no
     // active pane; iOS has no code panel (documented no-op — the closure is never installed there).
     case toggleCodeSidebar
+    // View → Focus Code Panel: move the KEYBOARD between the terminal and the embedded editor, and
+    // back. ⌥⌘R, the sibling of ⌘⇧R (that one shows/hides the panel; this one decides who types
+    // into it). Until this existed the editor could only be reached by CLICKING it — the panel's
+    // focus policy refuses every claim that is not a mouse-down inside the webview, which is what
+    // keeps VS Code's own aggressive autofocus from stealing the keyboard mid-keystroke. A chord is
+    // app-directed, not page-directed, so it rides the same explicitly-armed path the pool's
+    // warm-swap restore uses and leaves that guarantee intact. One chord for both directions: with
+    // the editor holding the keyboard it hands back to the pane that had it, otherwise it reveals
+    // the panel (if hidden) and claims. Window-scope chrome → needs no active pane; iOS has no code
+    // panel (documented no-op — the closure is never installed there).
+    case focusCodePanel
     // View → Pin Window: keep the window floating above ALL other apps' windows. CHORD-LESS;
     // the live macOS app flips `WorkspaceChromeState.pinned` → `NSWindow.level = .floating` via the route
     // closure. Window-scope → needs no active pane; iOS has no window level (documented no-op).
@@ -272,6 +283,9 @@ public extension WorkspaceAction {
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
              .toggleCodeSidebar, // the right code panel — window-scope chrome, like the left sidebar
+             // Focus Code Panel reaches for the PANEL, not a pane — and its hand-back target is
+             // whatever last held the keyboard, which need not be a pane at all.
+             .focusCodePanel,
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
@@ -761,6 +775,17 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "r", [.command, .shift]),
             symbol: "chevron.left.forwardslash.chevron.right",
             keywords: "code panel vscode editor ide right sidebar hide show collapse code-server",
+        ),
+        // Focus Code Panel ⌥⌘R — the keyboard's way INTO the embedded editor and back out (⌘⇧R only
+        // shows/hides the panel). ⌥⌘R is FREE: `r` carries ⌘⇧R (this panel's toggle) and ⌃⌘R
+        // (Reset Zoom) only. `.focus` category — it moves the keyboard, exactly like the ⌃⌘arrow
+        // family beside it. Routed through a `focusCodePanel` view-closure onto the macOS panel's
+        // webview pool; iOS installs no closure (documented no-op). Pinned by E1KeymapParityTests.
+        WorkspaceBinding(
+            id: "focus.codePanel", action: .focusCodePanel, title: "Focus Code Panel",
+            category: .focus, chord: KeyChord(character: "r", [.command, .option]),
+            symbol: "keyboard",
+            keywords: "focus code panel editor vscode keyboard type into back terminal switch",
         ),
         // Pin Window ("View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord: nil`

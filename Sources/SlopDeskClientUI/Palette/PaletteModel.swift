@@ -104,6 +104,11 @@ public enum PaletteAction: Sendable {
     /// live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the macOS split read), so the row, the
     /// chord, the menu, and the ✓ stay in lockstep.
     case toggleCodeSidebar
+    /// Move the keyboard into the code panel's embedded editor, or hand it back to the pane that had
+    /// it (⌥⌘R) — routed by the overlay coordinator to the injected
+    /// ``OverlayCoordinator/focusCodePanel`` closure, the same sink the chord uses. Not a checkable
+    /// toggle: it moves first responder, which the ✓ gutter has no business mirroring.
+    case focusCodePanel
     /// Toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

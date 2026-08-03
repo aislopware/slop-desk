@@ -172,6 +172,99 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         ))
     }
 
+    // MARK: - ⌥⌘R: the keyboard's way in and out
+
+    func testFocusToggleHandsBackWhenTheEditorHasTheKeyboard() {
+        // Direction is read from where first responder actually IS, never from a remembered
+        // intent — the same chord has to work as "leave the editor" without a second binding.
+        for collapsed in [true, false] {
+            for mounted in [true, false] {
+                XCTAssertEqual(
+                    CodeSidebarFocusPolicy.focusToggle(
+                        webViewHoldsKeyboard: true, hasMountedWebView: mounted, panelCollapsed: collapsed,
+                    ),
+                    .handBack,
+                )
+            }
+        }
+    }
+
+    func testFocusToggleClaimsTheMountedEditor() {
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.focusToggle(
+                webViewHoldsKeyboard: false, hasMountedWebView: true, panelCollapsed: false,
+            ),
+            .claimEditor,
+        )
+    }
+
+    func testFocusToggleRevealsAHiddenPanelFirst() {
+        // Collapsed means the webview is unparented, so there is nothing to claim YET — the reveal
+        // has to come first and the claim has to wait for the mount it triggers.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.focusToggle(
+                webViewHoldsKeyboard: false, hasMountedWebView: false, panelCollapsed: true,
+            ),
+            .revealThenClaim,
+        )
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.focusToggle(
+                webViewHoldsKeyboard: false, hasMountedWebView: true, panelCollapsed: true,
+            ),
+            .revealThenClaim,
+        )
+    }
+
+    func testFocusToggleDoesNothingWithNoWorkbenchOnScreen() {
+        // The panel is open but showing a placeholder (no project in focus, code-server still
+        // starting, no binary on the host). Moving the keyboard to nothing would be worse than
+        // leaving it where the user can still type.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.focusToggle(
+                webViewHoldsKeyboard: false, hasMountedWebView: false, panelCollapsed: false,
+            ),
+            CodeSidebarFocusPolicy.FocusToggleOutcome.none,
+        )
+    }
+
+    // MARK: - Warm-pool eviction
+
+    func testNothingIsEvictedAtOrUnderTheCap() {
+        // The pool's whole value is warmth; it may only give it up once it is over the line.
+        XCTAssertNil(CodeSidebarFocusPolicy.evictionVictim(recency: [], protected: [], cap: 3))
+        XCTAssertNil(CodeSidebarFocusPolicy.evictionVictim(recency: ["a", "b", "c"], protected: [], cap: 3))
+    }
+
+    func testTheColdestProjectIsEvictedFirst() {
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.evictionVictim(recency: ["a", "b", "c", "d"], protected: [], cap: 3),
+            "a",
+        )
+    }
+
+    func testProtectedProjectsAreSkipped() {
+        // The mounted workbench and any project still owed a keyboard hand-back are protected;
+        // eviction walks past them to the next-coldest rather than giving up.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.evictionVictim(recency: ["a", "b", "c", "d"], protected: ["a"], cap: 3),
+            "b",
+        )
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.evictionVictim(
+                recency: ["a", "b", "c", "d"], protected: ["a", "b"], cap: 3,
+            ),
+            "c",
+        )
+    }
+
+    func testAnAllProtectedPoolEvictsNothing() {
+        // Over the cap but nothing may go: the pool stays oversized rather than blanking a live
+        // view. It comes back under the cap on the next mount that frees one.
+        XCTAssertNil(CodeSidebarFocusPolicy.evictionVictim(
+            recency: ["a", "b", "c", "d"], protected: ["a", "b", "c", "d"], cap: 3,
+        ))
+    }
+
     func testUnclaimedOrUnwiredTabsNeverRestore() {
         // No recorded claim, or the app never wired the active-tab provider (headless tests): the
         // restore must stay off rather than fire on a nil == nil coincidence.

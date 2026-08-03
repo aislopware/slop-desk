@@ -129,6 +129,10 @@ public final class OverlayCoordinator {
     /// to `chrome.toggleCodeSidebar()` — the SAME live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the
     /// palette ✓ read. No-op by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleCodeSidebar: @MainActor () -> Void = {}
+    /// Moves the keyboard into the code panel's embedded editor, or hands it back (⌥⌘R). Bound by
+    /// ``WorkspaceRootView`` to the same webview-pool hand-off the chord drives. No-op by default
+    /// (iOS / tests / previews), so the row is never a trap.
+    @ObservationIgnored public var focusCodePanel: @MainActor () -> Void = {}
     /// Toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
@@ -494,6 +498,11 @@ public final class OverlayCoordinator {
         case .toggleCodeSidebar:
             toggleCodeSidebar()
             if !keepOpen { closePalette() }
+        case .focusCodePanel:
+            // Always close: the point of the row is to leave the keyboard somewhere else, which a
+            // palette left open would immediately take back.
+            closePalette()
+            focusCodePanel()
         case .togglePinWindow:
             togglePinWindow()
             if !keepOpen { closePalette() }

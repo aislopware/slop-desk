@@ -56,6 +56,10 @@ final class WorkspaceKeyDispatcher {
     /// ``setToggleCodeSidebar(_:)`` like the left panel's. Until then `nil` ⇒ `.toggleCodeSidebar` is a
     /// graceful no-op via `route` (there is no legacy store flag to fall back to) — never a dead chord.
     private var toggleCodeSidebar: (() -> Void)?
+    /// The code panel's keyboard hand-off (⌥⌘R). Installed late by the root view via
+    /// ``setFocusCodePanel(_:)`` (it needs the chrome's collapsed flag to know whether to reveal
+    /// first); `nil` ⇒ a graceful no-op through `route`, never a dead chord.
+    private var focusCodePanel: (() -> Void)?
     /// "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), installed late by the
     /// root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window is CHORD-LESS by default, so
     /// this fires only if a user binds a chord to `.pinWindow`; until installed `nil` ⇒ graceful no-op.
@@ -152,6 +156,21 @@ final class WorkspaceKeyDispatcher {
     /// Install the RIGHT code panel's toggle once `WorkspaceChromeState` exists (the root view wires
     /// this to `chrome.toggleCodeSidebar` on appear) — ⌘⇧R collapses/reveals the native code-panel item.
     func setToggleCodeSidebar(_ toggle: @escaping () -> Void) { toggleCodeSidebar = toggle }
+
+    /// Install the code panel's keyboard hand-off once `WorkspaceChromeState` exists — ⌥⌘R moves the
+    /// keyboard into the embedded editor and back out again.
+    func setFocusCodePanel(_ focus: @escaping () -> Void) { focusCodePanel = focus }
+
+    /// The workspace actions that still fire while the embedded editor owns the keyboard. Everything
+    /// else passes through to WebKit untouched (that is the whole point of the yield), so this set
+    /// must stay exactly the size of its job: getting the keyboard back out of the panel. ⌘⇧R hides
+    /// the panel, ⌥⌘R hands the keyboard to the pane that had it — without one of these the only way
+    /// out of a focused editor is the mouse. Anything broader would start shadowing VS Code's own
+    /// chords, which the user reached the editor in order to use. Pure — pinned by
+    /// `DispatcherCodeSidebarYieldTests`.
+    static func survivesCodePanelYield(_ action: WorkspaceAction) -> Bool {
+        action == .toggleCodeSidebar || action == .focusCodePanel
+    }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
@@ -296,13 +315,15 @@ final class WorkspaceKeyDispatcher {
         // owns the keyboard (see `isCodeSidebarCapturingKeys`) — pass every chord through UNCHANGED so it
         // reaches WebKit (the menus are shortcut-less by design, so nothing else claims it on the way
         // down; system ⌘Q stays alive via the app menu, which fires only when the page declines the key).
-        // The ONE exception is the panel's own escape hatch: ⌘⇧R still closes the panel — the way the
-        // keyboard comes back without reaching for the mouse. (⌃⇥ already ran above — an app-level
-        // gesture VS Code does not use; literal-byte text bindings target the TERMINAL, so they must not
-        // fire into an editor and sit below this yield.)
+        // The exceptions are the panel's own escape hatches — the ways the keyboard comes back
+        // without reaching for the mouse (see `survivesCodePanelYield`). (⌃⇥ already ran above — an
+        // app-level gesture VS Code does not use; literal-byte text bindings target the TERMINAL, so
+        // they must not fire into an editor and sit below this yield.)
         if isCodeSidebarCapturingKeys() {
-            if WorkspaceBindingRegistry.resolvedChordTable[chord] == .toggleCodeSidebar {
-                dispatch(.toggleCodeSidebar)
+            if let action = WorkspaceBindingRegistry.resolvedChordTable[chord],
+               Self.survivesCodePanelYield(action)
+            {
+                dispatch(action)
                 return nil
             }
             return event
@@ -407,6 +428,7 @@ final class WorkspaceKeyDispatcher {
             openQuickly: toggleOpenQuickly,
             togglePinWindow: togglePinWindow,
             closeWindow: closeWindow,
+            focusCodePanel: focusCodePanel,
         )
     }
 }

@@ -72,6 +72,9 @@ public struct WorkspaceRootView: View {
     /// as `installSidebarToggle`): hands it `chrome.toggleCodeSidebar` so ⌘⇧R flips the LIVE
     /// `chrome.codeSidebarCollapsed` the native split reads. `nil` (default / iOS / tests) is a no-op.
     private let installCodeSidebarToggle: ((@escaping () -> Void) -> Void)?
+    /// Installs the code panel's keyboard hand-off on the dispatcher (same late-wiring): ⌥⌘R moves
+    /// the keyboard into the embedded editor and back. `nil` (default / iOS / tests) is a no-op.
+    private let installFocusCodePanel: ((@escaping () -> Void) -> Void)?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring as
     /// `installSidebarToggle`): hands it `chrome.togglePin` so a user-bound chord for the chord-less
     /// `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (default / iOS / tests) is a no-op —
@@ -92,6 +95,7 @@ public struct WorkspaceRootView: View {
         chrome: WorkspaceChromeState,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installCodeSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
+        installFocusCodePanel: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
         paneDrag: PaneDragCoordinator? = nil,
     ) {
@@ -101,6 +105,7 @@ public struct WorkspaceRootView: View {
         self.chrome = chrome
         self.installSidebarToggle = installSidebarToggle
         self.installCodeSidebarToggle = installCodeSidebarToggle
+        self.installFocusCodePanel = installFocusCodePanel
         self.installPinToggle = installPinToggle
         self.paneDrag = paneDrag
     }
@@ -222,6 +227,18 @@ public struct WorkspaceRootView: View {
         installSidebarToggle? { [chrome] in chrome.toggleSidebar() }
         // The RIGHT code panel's ⌘⇧R — same late-wiring onto the same live chrome.
         installCodeSidebarToggle? { [chrome] in chrome.toggleCodeSidebar() }
+        // ⌥⌘R: the keyboard's way into the embedded editor and back. The pool decides the direction
+        // from where first responder actually is; the chrome flag only says whether the panel has to
+        // be revealed first, and `toggleCodeSidebar` is the reveal (it is a two-way toggle, and this
+        // branch runs only while collapsed).
+        let focusCodePanel: @MainActor () -> Void = { [chrome] in
+            CodeSidebarWebViewPool.shared.toggleKeyboardFocus(
+                panelCollapsed: chrome.codeSidebarCollapsed,
+                reveal: { chrome.toggleCodeSidebar() },
+            )
+        }
+        installFocusCodePanel?(focusCodePanel)
+        overlay.focusCodePanel = focusCodePanel
         // Route the palette's chrome-toggle row through the SAME live `chrome` the chord + titlebar drive, so
         // "Toggle Tabs Panel" flips the flag the split + the ✓ read (not the dead `store.sidebarCollapsed`).
         // Bound here because `chrome` predates the app-built overlay.

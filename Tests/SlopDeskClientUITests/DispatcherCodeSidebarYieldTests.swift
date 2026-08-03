@@ -21,10 +21,12 @@ final class DispatcherCodeSidebarYieldTests: XCTestCase {
     /// `KeyChordNormalizer` reads.
     private func keyDown(
         _ chars: String, keyCode: UInt16, command: Bool = false, shift: Bool = false,
+        option: Bool = false,
     ) -> NSEvent {
         var flags: NSEvent.ModifierFlags = []
         if command { flags.insert(.command) }
         if shift { flags.insert(.shift) }
+        if option { flags.insert(.option) }
         return NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
             windowNumber: 0, context: nil, characters: chars, charactersIgnoringModifiers: chars,
@@ -113,6 +115,47 @@ final class DispatcherCodeSidebarYieldTests: XCTestCase {
 
         XCTAssertNil(result, "⌘⇧R is an owned chord at rest too")
         XCTAssertEqual(toggled, 1)
+    }
+
+    /// The SECOND escape hatch: ⌥⌘R hands the keyboard back to the pane WITHOUT closing the panel —
+    /// so it too has to survive the yield, or a focused editor could only be left by hiding it.
+    func testOptionCmdRStaysAppOwnedWhileWebViewFocused() {
+        let store = makeTwoLeafStore()
+        let dispatcher = makeDispatcher(store: store, webViewFocused: true)
+        var focused = 0
+        dispatcher.setFocusCodePanel { focused += 1 }
+
+        let result = dispatcher.handle(keyDown("r", keyCode: 15, command: true, option: true))
+
+        XCTAssertNil(result, "⌥⌘R is swallowed — the keyboard hand-off must work FROM inside the editor")
+        XCTAssertEqual(focused, 1, "⌥⌘R routed .focusCodePanel through the installed closure")
+    }
+
+    /// …and the same chord going the other way, with the terminal holding the keyboard.
+    func testOptionCmdRRoutesWhileWebViewUnfocused() {
+        let store = makeTwoLeafStore()
+        let dispatcher = makeDispatcher(store: store, webViewFocused: false)
+        var focused = 0
+        dispatcher.setFocusCodePanel { focused += 1 }
+
+        let result = dispatcher.handle(keyDown("r", keyCode: 15, command: true, option: true))
+
+        XCTAssertNil(result, "⌥⌘R is an owned chord at rest too")
+        XCTAssertEqual(focused, 1)
+    }
+
+    /// The yield's exemption set stays exactly two entries wide. Every other action must keep
+    /// passing through — the editor is where VS Code's own vocabulary has to work.
+    func testOnlyTheTwoEscapeHatchesSurviveTheYield() {
+        for action in [WorkspaceAction.toggleCodeSidebar, .focusCodePanel] {
+            XCTAssertTrue(WorkspaceKeyDispatcher.survivesCodePanelYield(action), "\(action) is an escape hatch")
+        }
+        for action in [WorkspaceAction.closePane, .splitRight, .toggleSidebar, .jumpTo, .pinWindow] {
+            XCTAssertFalse(
+                WorkspaceKeyDispatcher.survivesCodePanelYield(action),
+                "\(action) must yield to the embedded editor",
+            )
+        }
     }
 }
 #endif

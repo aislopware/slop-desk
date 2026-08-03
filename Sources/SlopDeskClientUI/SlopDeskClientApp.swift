@@ -600,6 +600,7 @@ public struct SlopDeskClientApp: App {
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
             // ⌘⇧R (Toggle Code Panel — the right sidebar's embedded VS Code) rides the same late-wiring.
             installCodeSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleCodeSidebar(toggle) },
+            installFocusCodePanel: { [keyDispatcher] focus in keyDispatcher.setFocusCodePanel(focus) },
             // Hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.

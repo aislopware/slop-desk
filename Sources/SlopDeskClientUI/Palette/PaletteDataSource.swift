@@ -195,6 +195,14 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleCodeSidebar), filter: .actions, category: .view,
             action: .toggleCodeSidebar,
         ),
+        // "Focus Code Panel" — the keyboard's way into the embedded editor and back out. Sits beside
+        // the panel's own toggle: one row decides whether the panel is THERE, this one decides who
+        // types into it.
+        PaletteItem(
+            id: "action.focusCodePanel", icon: "keyboard", title: "Focus Code Panel",
+            subtitle: nil, shortcut: glyph(.focusCodePanel), filter: .actions, category: .view,
+            action: .focusCodePanel,
+        ),
         // Read Only: toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's

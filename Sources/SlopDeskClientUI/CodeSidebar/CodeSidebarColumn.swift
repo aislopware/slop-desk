@@ -147,6 +147,7 @@ struct CodeSidebarColumn: View {
             }
             .help("Desktop — the host's window surface")
             Spacer(minLength: 0)
+            if surfaceTab == .code { activeEditorReadout }
             if surfaceTab == .code {
                 PlateIconButton(symbol: .arrowClockwise) {
                     guard let root = activeProjectRoot else { return }
@@ -162,6 +163,33 @@ struct CodeSidebarColumn: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.titlebarHeight)
+    }
+
+    /// The active editor's name (plus an unsaved-changes dot) read straight off the workbench's
+    /// document title — see ``CodeSidebarWorkbenchTitle``. It sits between the tab plates and the
+    /// actions, in the secondary register: this is a glance-readout, not a control. The workbench
+    /// renders the same fact in its own tab, so when nothing is open the readout says nothing
+    /// rather than reserving space for an em-dash.
+    @ViewBuilder
+    private var activeEditorReadout: some View {
+        if let root = activeProjectRoot,
+           let editor = CodeSidebarWebViewPool.shared.readout(for: root).activeEditor
+        {
+            HStack(spacing: Slate.Metric.space1) {
+                if editor.dirty {
+                    Circle()
+                        .fill(Slate.Text.secondary)
+                        .frame(width: Slate.Metric.dot, height: Slate.Metric.dot)
+                }
+                Text(editor.name)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(editor.dirty ? "\(editor.name) — unsaved changes" : editor.name)
+            .padding(.trailing, Slate.Metric.space1)
+        }
     }
 
     /// The workbench surface below the strip — phase-switched per the active project.
