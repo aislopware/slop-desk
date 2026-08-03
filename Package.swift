@@ -109,8 +109,9 @@ let package = Package(
                 // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
                 "SlopDeskWorkspaceModel",
             ],
-            // The Monokai Pro workbench themes `CodeServerManager` seeds into the code-server
-            // extensions directory (too large for a source literal).
+            // The Monokai Pro workbench themes (all eight variants, regenerated from the pinned
+            // upstream vsix by scripts/monokai-sync.sh) `CodeServerManager` seeds into the
+            // code-server extensions directory (too large for source literals).
             resources: [.copy("Resources")],
         ),
 

@@ -537,7 +537,7 @@ final class CodeServerManagerTests: XCTestCase {
 
     // MARK: Theme extension seed
 
-    func testThemeExtensionManifestAndThemeAreValidAndAgreeOnTheLabel() throws {
+    func testThemeExtensionManifestCarriesEveryVariantAndAgreesWithTheSeed() throws {
         let manifest = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.themeExtensionManifest.utf8),
@@ -545,36 +545,34 @@ final class CodeServerManagerTests: XCTestCase {
         )
         let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
         let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
-        XCTAssertEqual(themes.count, 2)
+        // ALL EIGHT stock variants ship (user-directed 2026-08-03) — the generated manifest must
+        // mirror the source-of-truth table row for row.
+        XCTAssertEqual(themes.count, CodeServerManager.themeExtensionThemes.count)
+        XCTAssertEqual(themes.count, 8)
+        for (entry, expected) in zip(themes, CodeServerManager.themeExtensionThemes) {
+            XCTAssertEqual(entry["label"] as? String, expected.label)
+            XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
+            XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
+        }
         // The settings seed selects the themes BY LABEL — a drift here is a silent stock-theme
         // boot. Dark is the base `workbench.colorTheme` AND the preferred-dark; light is the
         // preferred-light the seeded `window.autoDetectColorScheme` flips to on a light client.
-        XCTAssertEqual(themes[0]["label"] as? String, "Monokai Pro")
-        XCTAssertEqual(themes[0]["uiTheme"] as? String, "vs-dark")
-        XCTAssertEqual(themes[1]["label"] as? String, "Monokai Pro Light")
-        XCTAssertEqual(themes[1]["uiTheme"] as? String, "vs")
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.seededUserSettings.utf8),
             ) as? [String: Any],
         )
-        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes[0]["label"] as? String)
+        let labels = CodeServerManager.themeExtensionThemes.map(\.label)
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Monokai Pro")
         XCTAssertEqual(seeded["window.autoDetectColorScheme"] as? Bool, true)
-        XCTAssertEqual(
-            seeded["workbench.preferredDarkColorTheme"] as? String, themes[0]["label"] as? String,
-        )
-        XCTAssertEqual(
-            seeded["workbench.preferredLightColorTheme"] as? String, themes[1]["label"] as? String,
-        )
+        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Monokai Pro")
+        XCTAssertEqual(seeded["workbench.preferredLightColorTheme"] as? String, "Monokai Pro Light")
+        XCTAssertTrue(labels.contains("Monokai Pro"))
+        XCTAssertTrue(labels.contains("Monokai Pro Light"))
         // The folder name pins the manifest identity (publisher.name-version).
         let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
             + "-\(manifest["version"] as? String ?? "")"
         XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
-        // The theme paths in the manifest match the files the seeder writes.
-        XCTAssertEqual(themes[0]["path"] as? String, "./themes/slopdesk-monokai-color-theme.json")
-        XCTAssertEqual(
-            themes[1]["path"] as? String, "./themes/slopdesk-monokai-light-color-theme.json",
-        )
     }
 
     /// The seven structural part borders — the workbench's own seams. These are the ONLY colour
@@ -585,9 +583,38 @@ final class CodeServerManagerTests: XCTestCase {
         "statusBar.border", "statusBar.noFolderBorder", "titleBar.border",
     ]
 
+    func testEveryThemeResourceParsesWithSeamTintAndValidColors() throws {
+        // One resource per manifest row, every one loadable from the bundle, every one carrying
+        // the two (and only two) departures from stock: retinted seam borders per dark/light,
+        // no invalid colour values (the vsix's empty strings dropped by the sync script).
+        for theme in CodeServerManager.themeExtensionThemes {
+            let data = try XCTUnwrap(
+                CodeServerManager.themeExtensionThemeData(resource: theme.resource),
+                "\(theme.resource).json must resolve from the bundle",
+            )
+            let parsed = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(parsed["name"] as? String, theme.label)
+            XCTAssertEqual(parsed["type"] as? String, theme.dark ? "dark" : "light")
+            let colors = try XCTUnwrap(parsed["colors"] as? [String: Any])
+            XCTAssertGreaterThan(colors.count, 500, theme.label)
+            for key in Self.seamBorderKeys {
+                XCTAssertEqual(
+                    colors[key] as? String, theme.dark ? "#fcfcfa1a" : "#00000014",
+                    "\(theme.label) \(key)",
+                )
+            }
+            try assertEveryColorValueIsValidHex(colors)
+            XCTAssertFalse(
+                try XCTUnwrap(parsed["tokenColors"] as? [Any]).isEmpty,
+                "syntax rules ride along — the Monokai identity (\(theme.label))",
+            )
+        }
+    }
+
     func testThemeResourceIsStockMonokaiProWithSlateSeamBorders() throws {
         let data = try XCTUnwrap(
-            CodeServerManager.themeExtensionThemeData(), "the bundled theme resource must resolve",
+            CodeServerManager.themeExtensionThemeData(resource: "monokai-pro"),
+            "the bundled theme resource must resolve",
         )
         let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(theme["name"] as? String, "Monokai Pro")
@@ -632,7 +659,7 @@ final class CodeServerManagerTests: XCTestCase {
 
     func testLightThemeResourceIsStockMonokaiProLightWithSlateSeamBorders() throws {
         let data = try XCTUnwrap(
-            CodeServerManager.themeExtensionThemeData(resource: "slopdesk-monokai-light-color-theme"),
+            CodeServerManager.themeExtensionThemeData(resource: "monokai-pro-light"),
             "the bundled light theme resource must resolve",
         )
         let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -662,23 +689,51 @@ final class CodeServerManagerTests: XCTestCase {
 
     func testSeedThemeExtensionWritesOnceThenRepairsDrift() throws {
         let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
-        let themeFile = dir
-            .appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
-            .appendingPathComponent("themes/slopdesk-monokai-color-theme.json")
-        XCTAssertEqual(try Data(contentsOf: themeFile), Data("{}".utf8))
+        let fakeThemes: (String) -> Data? = { Data("{\"is\": \"\($0)\"}".utf8) }
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
+        let extensionRoot = dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
+        // One theme file per manifest row, each carrying its OWN resource's bytes.
+        for theme in CodeServerManager.themeExtensionThemes {
+            XCTAssertEqual(
+                try Data(contentsOf: extensionRoot.appendingPathComponent("themes/\(theme.resource).json")),
+                fakeThemes(theme.resource),
+            )
+        }
 
         // Byte-identical ⇒ idempotent no-op.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
 
         // OUR file drifted (a newer seed, a truncated write) ⇒ repaired — unlike the user's
         // settings file, the namespaced extension folder is ours to keep current.
+        let themeFile = extensionRoot.appendingPathComponent("themes/monokai-pro.json")
         try Data("stale".utf8).write(to: themeFile)
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
-        XCTAssertEqual(try Data(contentsOf: themeFile), Data("{}".utf8))
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
+        XCTAssertEqual(try Data(contentsOf: themeFile), fakeThemes("monokai-pro"))
 
         // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: nil))
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in nil }))
+    }
+
+    func testSeedThemeExtensionSweepsTheTwoVariantEraFileNames() throws {
+        // The pre-variant era wrote two differently named theme files; a deployed folder from
+        // that era must not keep them as orphans beside the eight the manifest now references.
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let extensionRoot = dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
+        try FileManager.default.createDirectory(
+            at: extensionRoot.appendingPathComponent("themes"), withIntermediateDirectories: true,
+        )
+        for legacy in CodeServerManager.legacyThemeFileNames {
+            try Data("old".utf8).write(to: extensionRoot.appendingPathComponent(legacy))
+        }
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
+        for legacy in CodeServerManager.legacyThemeFileNames {
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: extensionRoot.appendingPathComponent(legacy).path,
+                ),
+                legacy,
+            )
+        }
     }
 
     func testSeedThemeExtensionRegistersInTheProfileRegistry() throws {
@@ -691,7 +746,7 @@ final class CodeServerManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("[]".utf8).write(to: registry)
 
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
         let entries = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
         )
@@ -713,7 +768,7 @@ final class CodeServerManagerTests: XCTestCase {
         )
 
         // Registered and byte-current ⇒ the whole seed is an idempotent no-op.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
 
         // Foreign entries survive; a drifted OURS is replaced, not duplicated.
         let foreign: [[String: Any]] = [
@@ -732,7 +787,7 @@ final class CodeServerManagerTests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: foreign).write(to: registry)
         // The folder is already current, but the registry repair IS a write.
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
         let repaired = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
         )
@@ -744,13 +799,13 @@ final class CodeServerManagerTests: XCTestCase {
 
         // An unparseable registry is someone else's problem state — left alone.
         try Data("not json".utf8).write(to: registry)
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
         XCTAssertEqual(try Data(contentsOf: registry), Data("not json".utf8))
 
         // A MISSING registry file is created carrying our entry (fresh install: the seed runs
         // before code-server's first boot; that boot keeps existing entries).
         try FileManager.default.removeItem(at: registry)
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: Data("{}".utf8)))
+        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
         let fresh = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
         )

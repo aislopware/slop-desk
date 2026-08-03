@@ -259,8 +259,9 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Monokai Pro` / `Monokai Pro Light`, the seeded extension below — the two stock
-    /// Monokai Pro filters the client chrome runs on, only the seam borders retinted;
+    /// theme (`Monokai Pro` / `Monokai Pro Light` from the seeded extension below, which ships
+    /// ALL EIGHT stock Monokai Pro variants with only the seam borders retinted; the seeded pair
+    /// is the two filters the client chrome itself runs on;
     /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
     /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
     /// light client gets a light editor while a dark client on the same host stays dark, from the
@@ -901,55 +902,78 @@ final class CodeServerManager: @unchecked Sendable {
     static let themeExtensionDirectoryName =
         "\(themeExtensionPublisher).\(themeExtensionName)-\(themeExtensionVersion)"
 
-    /// The theme extension's manifest. The themes (`Monokai Pro` + `Monokai Pro Light`) are the
-    /// STOCK Monokai Pro pair (vsix 2.0.13, monokai.pro) — the two filters the client chrome
-    /// itself seeds from (`SlateDesign`'s classic + classic-light). Exactly two departures from
+    /// EVERY theme variant the vendored vsix contributes — label (what the settings and the ⌘K ⌘T
+    /// picker select by), dark/light, and the resource slug the sync script writes. This table is
+    /// the single source of truth: the manifest below is generated from it, the seeder writes one
+    /// file per row, and `scripts/monokai-sync.sh` fails loudly when the upstream vsix's theme set
+    /// stops matching it (its own mirror table). All EIGHT variants ship (user-directed
+    /// 2026-08-03) — the workbench's theme picker offers the full family, not just the pair the
+    /// app chrome seeds from.
+    static let themeExtensionThemes: [(label: String, dark: Bool, resource: String)] = [
+        ("Monokai Pro", true, "monokai-pro"),
+        ("Monokai Pro (Filter Octagon)", true, "monokai-pro-filter-octagon"),
+        ("Monokai Pro (Filter Ristretto)", true, "monokai-pro-filter-ristretto"),
+        ("Monokai Pro (Filter Spectrum)", true, "monokai-pro-filter-spectrum"),
+        ("Monokai Pro (Filter Machine)", true, "monokai-pro-filter-machine"),
+        ("Monokai Pro Light", false, "monokai-pro-light"),
+        ("Monokai Pro Light (Filter Sun)", false, "monokai-pro-light-filter-sun"),
+        ("Monokai Classic", true, "monokai-classic"),
+    ]
+
+    /// The theme extension's manifest — generated from ``themeExtensionThemes``. The themes are
+    /// STOCK Monokai Pro (all eight variants of vsix 2.0.13, monokai.pro — the pinned version
+    /// lives in `scripts/monokai.pin`; `scripts/monokai-sync.sh` regenerates the resources from a
+    /// newer upstream). Only the theme DATA is vendored — none of the upstream extension's
+    /// activation code (that code carries the license prompt; a data-only seed never nags, which
+    /// is why the marketplace extension is not installed directly). Exactly two departures from
     /// stock, both invisible-or-intentional (user-directed 2026-08-03; the earlier 17-key
     /// chrome-accent neutralization is REVERTED — the stock accents are the point):
     ///   • the seven structural seam borders (`sideBar`/`panel`/`activityBar`/`statusBar`(+
     ///     `noFolder`)/`titleBar`/`editorGroup` `.border` — near-black `#19181a` in the dark
-    ///     filter) carry the app's Slate `divider` tint instead, in the token's own alpha form
+    ///     filters) carry the app's Slate `divider` tint instead, in the token's own alpha form
     ///     (dark = foreground @ 0.10 `#fcfcfa1a`, light = black @ 0.08 `#00000014`), so the
     ///     workbench's seams match the split dividers around it;
     ///   • the vsix's five EMPTY-string colour values (`diffEditor.move.border` etc., rejected
     ///     per-key by the workbench) are dropped.
     /// Only the color themes ship — the vsix's icon themes are deliberately left behind (the
-    /// panel keeps the workbench's stock file icons). The workbench picks between the pair via
-    /// the seeded `window.autoDetectColorScheme` — the webview's `prefers-color-scheme` follows
-    /// the window's pinned `NSAppearance`, which the client pins to the active Slate theme — so
-    /// the editor flips light/dark WITH the app, per client, no shared-settings conflict.
-    /// Monokai Pro by Monokai (monokai.pro) — personal-use seed into the user's own code-server,
-    /// never redistributed.
-    static let themeExtensionManifest = """
-    {
-        "name": "slopdesk-monokai",
-        "displayName": "Monokai Pro (SlopDesk)",
-        "description": "Stock Monokai Pro by Monokai (monokai.pro); workbench seam borders carry the app's divider tint.",
-        "publisher": "slopdesk",
-        "version": "1.0.0",
-        "engines": { "vscode": "^1.0.0" },
-        "categories": ["Themes"],
-        "contributes": {
-            "themes": [
-                {
-                    "label": "Monokai Pro",
-                    "uiTheme": "vs-dark",
-                    "path": "./themes/slopdesk-monokai-color-theme.json"
-                },
-                {
-                    "label": "Monokai Pro Light",
-                    "uiTheme": "vs",
-                    "path": "./themes/slopdesk-monokai-light-color-theme.json"
-                }
-            ]
+    /// panel keeps the workbench's stock file icons). The workbench picks between the seeded
+    /// dark/light pair via `window.autoDetectColorScheme` — the webview's `prefers-color-scheme`
+    /// follows the window's pinned `NSAppearance`, which the client pins to the active Slate
+    /// theme — so the editor flips light/dark WITH the app, per client, no shared-settings
+    /// conflict. Monokai Pro by Monokai (monokai.pro) — personal-use seed into the user's own
+    /// code-server, never redistributed.
+    static let themeExtensionManifest: String = {
+        let themes = themeExtensionThemes.map { theme in
+            """
+                        {
+                            "label": "\(theme.label)",
+                            "uiTheme": "\(theme.dark ? "vs-dark" : "vs")",
+                            "path": "./themes/\(theme.resource).json"
+                        }
+            """
+        }.joined(separator: ",\n")
+        return """
+        {
+            "name": "slopdesk-monokai",
+            "displayName": "Monokai Pro (SlopDesk)",
+            "description": "Stock Monokai Pro by Monokai (monokai.pro); workbench seam borders carry the app's divider tint.",
+            "publisher": "slopdesk",
+            "version": "1.0.0",
+            "engines": { "vscode": "^1.0.0" },
+            "categories": ["Themes"],
+            "contributes": {
+                "themes": [
+        \(themes)
+                ]
+            }
         }
-    }
-    """
+        """
+    }()
 
     /// A theme JSON carried as a target resource (~600 colour keys each — too large for source
     /// literals). `nil` only if the bundle is broken (then the seed is a no-op and the workbench
     /// falls back to its stock theme — a nicety, never a failure).
-    static func themeExtensionThemeData(resource: String = "slopdesk-monokai-color-theme") -> Data? {
+    static func themeExtensionThemeData(resource: String) -> Data? {
         guard let url = Bundle.module.url(
             forResource: "Resources/\(resource)", withExtension: "json",
         ) ?? Bundle.module.url(forResource: resource, withExtension: "json")
@@ -957,23 +981,33 @@ final class CodeServerManager: @unchecked Sendable {
         return try? Data(contentsOf: url)
     }
 
-    /// Writes the theme extension under `extensionsDir` (creating directories), overwriting OUR
-    /// files when their bytes drifted from the current seed — the folder is namespaced
-    /// `slopdesk.*`, so unlike the settings file it is ours to keep current, never the user's.
-    /// Returns whether anything was written; failures are silent no-ops (see the settings seeder).
+    /// Theme files the two-variant era wrote into the extension folder — swept by the seeder so
+    /// the deployed folder carries exactly the current manifest's files, nothing stale.
+    static let legacyThemeFileNames = [
+        "themes/slopdesk-monokai-color-theme.json",
+        "themes/slopdesk-monokai-light-color-theme.json",
+    ]
+
+    /// Writes the theme extension under `extensionsDir` (creating directories) — the manifest plus
+    /// one theme file per ``themeExtensionThemes`` row — overwriting OUR files when their bytes
+    /// drifted from the current seed: the folder is namespaced `slopdesk.*`, so unlike the
+    /// settings file it is ours to keep current, never the user's. Files from retired manifest
+    /// generations (``legacyThemeFileNames``) are swept. Returns whether anything was written;
+    /// failures are silent no-ops (see the settings seeder).
     @discardableResult
     static func seedThemeExtension(
-        into extensionsDir: URL, themeData: Data? = themeExtensionThemeData(),
-        lightThemeData: Data? = themeExtensionThemeData(resource: "slopdesk-monokai-light-color-theme"),
+        into extensionsDir: URL,
+        themeData: (String) -> Data? = { themeExtensionThemeData(resource: $0) },
         fileManager: FileManager = .default,
     ) -> Bool {
-        guard let themeData, let lightThemeData else { return false }
         let root = extensionsDir.appendingPathComponent(themeExtensionDirectoryName)
-        let files: [(URL, Data)] = [
+        var files: [(URL, Data)] = [
             (root.appendingPathComponent("package.json"), Data(themeExtensionManifest.utf8)),
-            (root.appendingPathComponent("themes/slopdesk-monokai-color-theme.json"), themeData),
-            (root.appendingPathComponent("themes/slopdesk-monokai-light-color-theme.json"), lightThemeData),
         ]
+        for theme in themeExtensionThemes {
+            guard let data = themeData(theme.resource) else { return false }
+            files.append((root.appendingPathComponent("themes/\(theme.resource).json"), data))
+        }
         var wrote = false
         for (url, data) in files where (try? Data(contentsOf: url)) != data {
             do {
@@ -984,6 +1018,12 @@ final class CodeServerManager: @unchecked Sendable {
                 wrote = true
             } catch {
                 return wrote
+            }
+        }
+        for legacy in legacyThemeFileNames {
+            let url = root.appendingPathComponent(legacy)
+            if fileManager.fileExists(atPath: url.path), (try? fileManager.removeItem(at: url)) != nil {
+                wrote = true
             }
         }
         if registerThemeExtension(in: extensionsDir) { wrote = true }

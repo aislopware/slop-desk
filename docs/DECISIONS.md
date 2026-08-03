@@ -6660,3 +6660,22 @@ keeps its stock footing, its seam riding the retinted `statusBar.border`); v13 j
 `obsoleteSeeds` so pristine hosts upgrade in place. The extension id/folder
 (`slopdesk.slopdesk-monokai-1.0.0`) is unchanged — the drift-repair seeder rewrites the
 theme bytes on the next hostd start.
+
+## Every Monokai Pro variant ships, synced from upstream by pin (2026-08-03)
+
+Extends the stock-Monokai-Pro decision above from the two-filter pair to ALL EIGHT variants
+the upstream vsix contributes (Monokai Pro + Octagon/Ristretto/Spectrum/Machine filters,
+Monokai Pro Light + Filter Sun, Monokai Classic): the workbench's own theme picker (⌘K ⌘T)
+now offers the full family, while the seed still boots the classic pair. The vendored
+resources stop being a hand-transformed one-off and become REGENERABLE: `scripts/monokai.pin`
+records the upstream vsix version, and `scripts/monokai-sync.sh [--latest]` re-downloads,
+re-applies the two departures (seam-border retint per dark/light, empty-value drop) and
+rewrites `Sources/SlopDeskHost/Resources/` — following upstream is one command + a diff
+review, the herdr-sync pattern. The script cross-checks the vsix's contributed theme set
+against `CodeServerManager.themeExtensionThemes` (the single source of truth the manifest is
+now GENERATED from) and fails loudly on upstream adds/renames. Installing the real
+marketplace extension was considered for automatic updates and REJECTED: its activation code
+carries the recurring license prompt. The vendored seed takes the theme data only — no code,
+no nag (same personal-use posture as before). The extension id/folder stays
+`slopdesk.slopdesk-monokai-1.0.0`; the drift-repair seeder rewrites bytes in place and now
+also sweeps the two-variant era's differently named theme files.
