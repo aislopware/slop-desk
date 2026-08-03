@@ -6543,3 +6543,33 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   was already neutral — the one key the neutralization pass missed, now aligned. A test pins
   every colour value to `#rrggbb(aa)` and the two checkbox keys to each other, so conversion junk
   cannot return. Semantic accents (git-modified yellow, error red/pink, lightbulb) stay Monokai.
+
+## The panel tabs go live, and the navigator header becomes a search bar (2026-08-03)
+
+- ✅ **The strip's tabs are REAL — only Desktop's CONTENT is the placeholder.** User-directed:
+  `CodeSidebarColumn` grows a `SurfaceTab` selection (`@State`, per-window; survives a
+  collapse because the hosting controller keeps the SwiftUI hierarchy, resets to Code on
+  relaunch). Selecting Desktop unmounts the pooled webview (warm swap back — the workbench
+  returns instantly with its state intact) and shows the placeholder panel; the reload action
+  renders only while Code is selected. Pixel-proofed both directions with a live click pass.
+- ✅ **The navigator's caps header row is replaced by a full-width SEARCH FIELD.** User-directed,
+  two same-day follow-ups: NO trailing hamburger menu (its collapse-all / expand-all / refresh
+  actions are gone with it — the chevrons and the git line's own cadence cover them), and the
+  field shares the tab cards' exact gutter so both read as one column. The filter reuses the
+  pure `RailRowsBuilder` query pipeline the iOS `.searchable` path already exercised; an empty
+  result set shows the standard empty label.
+- ✅ **The right-panel toggle moves to the terminal section's top-right — and its persistence
+  was ALREADY real.** The strip's trailing collapse plate is gone; `SlateTitlebar`'s
+  hover-revealed trailing plate now toggles the panel in BOTH states (one location owns
+  show/hide). Investigating the "remember open/closed" ask found no defect:
+  `WorkspaceChromeState` seeds from `Defaults[.codeSidebarCollapsed]` and both write paths
+  persist — proven empirically on the deployed client and pinned headlessly by
+  `testCodeSidebarCollapseSeedsFromAndPersistsToDefaults`.
+- ✅ **Seed v12: the activity bar folds into the sidebar top — and buys back the web title
+  bar.** User-directed after v7's fully-hidden bar left Search / Source Control / Extensions
+  reachable by chord only. `workbench.activityBar.location: "top"` FORCE-SHOWS the web
+  workbench title bar (re-confirmed on 4.112 — it must host the relocated accounts + manage
+  actions; `window.customTitleBarVisibility` stays desktop-only). Accepted: one quiet themed
+  band naming the file + project, in exchange for clickable views. CSS-hiding it was rejected —
+  the workbench grid positions parts with inline absolute geometry, so `display: none` leaves a
+  dead gap rather than reflowing.

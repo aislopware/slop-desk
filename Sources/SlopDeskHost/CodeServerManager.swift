@@ -264,13 +264,15 @@ final class CodeServerManager: @unchecked Sendable {
     /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
     /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
     /// light client gets a light editor while a dark client on the same host stays dark, from the
-    /// one shared settings file) and CHROME-LESS, the panel's top
-    /// edge being the EXPLORER header itself: title bar, activity bar, menu bar, and status bar
-    /// all hidden. The title bar dies through `activityBar.location: "hidden"` + the menu bar
-    /// hidden + the command-center/layout/navigation strips off — on web that combination alone
-    /// hides it ("top"/"bottom" force-shows it; `window.customTitleBarVisibility` is desktop-only
-    /// and UNREGISTERED here, so seeding it only bought an unknown-setting warning — v7 dropped
-    /// it, pixel-verified equal). Every key seeded must be REGISTERED in the shipped web
+    /// one shared settings file) and LEAN: menu bar and status bar hidden, the ACTIVITY-BAR icons
+    /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
+    /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
+    /// location FORCE-SHOWS the web title bar (re-confirmed on 4.112, the v6-era observation): it
+    /// must host the relocated global actions (accounts + manage), so v12 accepts that one quiet
+    /// themed band as the price of clickable views — `window.title` keeps it saying the file +
+    /// project, and command-center/layout/navigation stay off
+    /// (`window.customTitleBarVisibility` stays desktop-only/UNREGISTERED — v7 dropped it,
+    /// pixel-verified equal). Every key seeded must be REGISTERED in the shipped web
     /// workbench's configuration schema (the settings editor flags unknown keys as warnings in a
     /// file we authored — the chat.* pair died with v6 for the same reason).
     /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
@@ -305,7 +307,7 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.editorAssociations": {
             "*.md": "vscode.markdown.preview.editor"
         },
-        "workbench.activityBar.location": "hidden",
+        "workbench.activityBar.location": "top",
         "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.menuBarVisibility": "hidden",
@@ -595,6 +597,42 @@ final class CodeServerManager: @unchecked Sendable {
             "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
             "workbench.statusBar.visible": false,
             "workbench.editor.empty.hint": "hidden",
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v11 — tab badges off, but the activity bar was still fully HIDDEN: reaching Search /
+        // Source Control / Extensions needed chords only. v12 folds the activity-bar icons into
+        // the sidebar TOP instead (user-directed 2026-08-03).
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
             "window.commandCenter": false,
             "workbench.layoutControl.enabled": false,
             "workbench.navigationControl.enabled": false,

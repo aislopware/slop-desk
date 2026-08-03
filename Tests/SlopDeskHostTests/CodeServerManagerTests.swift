@@ -482,7 +482,9 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
         // The chrome-less recipe: activity bar "hidden" + menu bar hidden + the strips off — that
         // combination alone hides the web title bar ("top"/"bottom" force-shows it).
-        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "hidden")
+        // v12: the activity-bar icons fold into the sidebar TOP (user-directed) — Search / Source
+        // Control / Extensions are clickable again; fully "hidden" left them chord-only.
+        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
         XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
         XCTAssertEqual(settings["workbench.statusBar.visible"] as? Bool, false)
         // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
