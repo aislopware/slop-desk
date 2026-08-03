@@ -55,6 +55,9 @@ final class CodeServerManager: @unchecked Sendable {
     /// itself failed). Distinct from ``Spawner`` — the CLI is a short-lived command whose EXIT CODE
     /// is the answer, not a supervised child.
     typealias CLIRunner = @Sendable (_ binary: String, _ arguments: [String]) async -> Int32?
+    /// Reads the profile registry (`extensions/extensions.json`) — the workbench's installed-set
+    /// source of truth — for the bundled-extension check. `nil` = no registry yet (pristine host).
+    typealias InstalledExtensionsRegistry = @Sendable () -> Data?
 
     /// Idle self-shutdown handed to the child (`--idle-timeout-seconds`): a workbench nobody has
     /// open for 2 h reaps itself instead of holding a Node runtime forever; the next sidebar expand
@@ -78,11 +81,20 @@ final class CodeServerManager: @unchecked Sendable {
     /// Latched by the first spawn — the settings seed runs at most once per manager lifetime (the
     /// seeder itself is also a no-op when the file exists; this just skips the repeat file checks).
     private var settingsSeeded = false
+    /// The one-shot marketplace install of ``bundledMarketplaceExtensions``, checked before the
+    /// first spawn: `.installing` DEFERS the spawn (ensure keeps answering `.starting`; the client
+    /// polls ~1 Hz) so the workbench's very first boot already scans the icon pack — install and
+    /// boot writing `extensions.json` concurrently is also how registrations get lost. `.done` is
+    /// latched even when an install FAILS (no network): the panel is never held hostage by a
+    /// nicety, and the next hostd launch retries because the registry still misses the id.
+    private enum BundledExtensionInstall { case unchecked, installing, done }
+    private var bundledExtensionInstall: BundledExtensionInstall = .unchecked
     private let locateBinary: BinaryLocator
     private let spawn: Spawner
     private let probe: ReadinessProbe
     private let seedSettings: SettingsSeeder
     private let runCLI: CLIRunner
+    private let installedExtensionsRegistry: InstalledExtensionsRegistry
     /// Where the instance-level font sync writes — injectable so unit tests NEVER resolve (and
     /// patch) the developer's real `~/.local/share/code-server/User/settings.json` (the same trap
     /// `SLOPDESK_WORKSPACE_STATE_DIR` guards on the workspace store).
@@ -97,6 +109,8 @@ final class CodeServerManager: @unchecked Sendable {
         readinessProbe: @escaping ReadinessProbe = CodeServerManager.defaultReadinessProbe,
         settingsSeeder: @escaping SettingsSeeder = CodeServerManager.defaultSettingsSeeder,
         cliRunner: @escaping CLIRunner = CodeServerManager.defaultCLIRunner,
+        installedExtensionsRegistry: @escaping InstalledExtensionsRegistry =
+            CodeServerManager.defaultInstalledExtensionsRegistry,
         settingsFileURL: @escaping @Sendable () -> URL = { CodeServerManager.userSettingsURL() },
         probeInterval: Duration = .milliseconds(500),
         openRetryDelay: Duration = .seconds(2),
@@ -106,6 +120,7 @@ final class CodeServerManager: @unchecked Sendable {
         probe = readinessProbe
         seedSettings = settingsSeeder
         runCLI = cliRunner
+        self.installedExtensionsRegistry = installedExtensionsRegistry
         self.settingsFileURL = settingsFileURL
         self.probeInterval = probeInterval
         self.openRetryDelay = openRetryDelay
@@ -135,6 +150,24 @@ final class CodeServerManager: @unchecked Sendable {
         if !settingsSeeded {
             settingsSeeded = true
             seedSettings()
+        }
+        // Bundled marketplace extensions install before the FIRST spawn (see
+        // ``BundledExtensionInstall`` / ``bundledMarketplaceExtensions``); while the one-shot CLI
+        // runs, ensure keeps its never-wait contract by answering `.starting`.
+        switch bundledExtensionInstall {
+        case .unchecked:
+            let missing = Self.missingBundledExtensions(inRegistry: installedExtensionsRegistry())
+            if missing.isEmpty {
+                bundledExtensionInstall = .done
+            } else {
+                bundledExtensionInstall = .installing
+                installBundledExtensions(missing, binary: binary)
+                return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+            }
+        case .installing:
+            return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+        case .done:
+            break
         }
         spawnGeneration += 1
         let generation = spawnGeneration
@@ -221,6 +254,33 @@ final class CodeServerManager: @unchecked Sendable {
         instance = live
     }
 
+    /// Runs `code-server --install-extension <id>` for each missing bundled extension off the
+    /// metadata queue, then flips ``bundledExtensionInstall`` to `.done` — unconditionally: a
+    /// failed install (offline host, marketplace hiccup) logs and moves on; the next hostd launch
+    /// retries because the registry still misses the id. Caller holds `lock` and has already set
+    /// `.installing`, so a racing second ensure never double-spawns the task.
+    private func installBundledExtensions(_ identifiers: [String], binary: String) {
+        let run = runCLI
+        Task { [weak self] in
+            for identifier in identifiers {
+                let status = await run(binary, ["--install-extension", identifier])
+                if status != 0 {
+                    FileHandle.standardError.write(Data(
+                        "slopdesk-hostd: code-server --install-extension \(identifier) failed\n".utf8,
+                    ))
+                }
+            }
+            self?.finishBundledExtensionInstall()
+        }
+    }
+
+    /// Synchronous `.done` flip for the install task (NSLock is unusable directly in async code).
+    private func finishBundledExtensionInstall() {
+        lock.lock()
+        bundledExtensionInstall = .done
+        lock.unlock()
+    }
+
     // MARK: - Pure helpers (unit-tested directly)
 
     /// Normalizes a request root: absolute, trailing-`/` trimmed (matching `projectKey`'s own
@@ -302,6 +362,9 @@ final class CodeServerManager: @unchecked Sendable {
     /// (`workbench.editorAssociations` → the built-in `vscode.markdown.preview.editor`): in this
     /// panel markdown is read (README, docs, agent output), not authored — a reader who wants the
     /// source is one "Open Source" click away, the inverse default costs a chord per file.
+    /// File icons are the Material Icon Theme (v15, user-directed 2026-08-03) — the
+    /// ``bundledMarketplaceExtensions`` install that precedes the first spawn, so the id resolves
+    /// on the very first boot.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -311,6 +374,7 @@ final class CodeServerManager: @unchecked Sendable {
         "window.autoDetectColorScheme": true,
         "workbench.preferredDarkColorTheme": "Monokai Pro",
         "workbench.preferredLightColorTheme": "Monokai Pro Light",
+        "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
             "*.md": "vscode.markdown.preview.editor"
@@ -733,6 +797,44 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v14 — the stock Monokai Pro pair with the status bar back, but file icons were still the
+        // workbench's minimal default. v15 selects the Material Icon Theme that
+        // ``bundledMarketplaceExtensions`` installs (user-directed 2026-08-03).
+        """
+        {
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -1080,6 +1182,39 @@ final class CodeServerManager: @unchecked Sendable {
         } catch {
             return false
         }
+    }
+
+    // MARK: - Bundled marketplace extensions
+
+    /// Marketplace extensions installed FOR REAL on first boot — unlike the vendored Monokai Pro
+    /// theme data these run their own code, so only fully-free extensions (no license/purchase
+    /// prompts in their activation path) qualify. Installed once via
+    /// `code-server --install-extension` before the first spawn (user-directed 2026-08-03);
+    /// updates ride the workbench's own extension updater from then on.
+    ///
+    /// - `pkief.material-icon-theme` — the Material Icon Theme file icons the seed's
+    ///   `workbench.iconTheme` selects (MIT-licensed, data-driven, no nag).
+    static let bundledMarketplaceExtensions = ["pkief.material-icon-theme"]
+
+    /// The bundled ids absent from the profile registry (`extensions.json` — the workbench's
+    /// installed-set source of truth; a folder scan lies once the file exists). `nil` or
+    /// unparseable registry ⇒ ALL bundled ids are missing: a pristine host has no registry yet,
+    /// and installing over a broken one lets the CLI rewrite it properly. Ids compare
+    /// case-insensitively (the marketplace treats them so). Pure — unit-tested directly.
+    static func missingBundledExtensions(inRegistry registry: Data?) -> [String] {
+        guard let registry,
+              let entries = try? JSONSerialization.jsonObject(with: registry) as? [[String: Any]]
+        else { return bundledMarketplaceExtensions }
+        let installed = Set(entries.compactMap {
+            (($0["identifier"] as? [String: Any])?["id"] as? String)?.lowercased()
+        })
+        return bundledMarketplaceExtensions.filter { !installed.contains($0.lowercased()) }
+    }
+
+    /// The production ``InstalledExtensionsRegistry``: the profile registry beside the seeded
+    /// theme extension, under the same data dir the children resolve.
+    static let defaultInstalledExtensionsRegistry: InstalledExtensionsRegistry = {
+        try? Data(contentsOf: dataDirURL().appendingPathComponent("extensions/extensions.json"))
     }
 
     // MARK: - Extensions gallery

@@ -70,16 +70,25 @@ final class CodeServerManagerTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: root)
     }
 
+    /// A registry that already carries every bundled marketplace extension — the helper's default,
+    /// so lifecycle tests exercise the post-install steady state (spawn on the first ensure).
+    private static func satisfiedRegistry() -> Data? {
+        let entries = CodeServerManager.bundledMarketplaceExtensions.map { ["identifier": ["id": $0]] }
+        return try? JSONSerialization.data(withJSONObject: entries)
+    }
+
     private func makeManager(
         spawner: FakeSpawner,
         binary: String? = "/fake/code-server",
         probe: @escaping @Sendable (UInt16) -> Bool = { _ in true },
         settingsSeeder: @escaping @Sendable () -> Void = {},
         cliRunner: @escaping CodeServerManager.CLIRunner = { _, _ in nil },
+        installedExtensionsRegistry: @escaping CodeServerManager.InstalledExtensionsRegistry =
+            CodeServerManagerTests.satisfiedRegistry,
     ) -> CodeServerManager {
-        // The seeder, CLI runner AND settings-file URL are ALWAYS injected — the default seams
-        // write the real user's `~/.local/share/code-server` settings / exec a real binary, which
-        // no test may touch.
+        // The seeder, CLI runner, registry reader AND settings-file URL are ALWAYS injected — the
+        // default seams read/write the real user's `~/.local/share/code-server` / exec a real
+        // binary, which no test may touch.
         let settingsURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
         return CodeServerManager(
             binaryLocator: { binary },
@@ -87,6 +96,7 @@ final class CodeServerManagerTests: XCTestCase {
             readinessProbe: probe,
             settingsSeeder: settingsSeeder,
             cliRunner: cliRunner,
+            installedExtensionsRegistry: installedExtensionsRegistry,
             settingsFileURL: { settingsURL },
             probeInterval: .zero,
             openRetryDelay: .zero,
@@ -297,6 +307,100 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(spawner: FakeSpawner(), binary: nil, settingsSeeder: { seeds.increment() })
         _ = manager.ensure(projectRoot: root)
         XCTAssertEqual(seeds.value, 0)
+    }
+
+    // MARK: Bundled marketplace extensions
+
+    func testMissingBundledExtensionsTruthTable() throws {
+        // No registry yet (pristine host) / unparseable registry ⇒ everything is missing — the
+        // install CLI rewrites a broken registry properly anyway.
+        XCTAssertEqual(
+            CodeServerManager.missingBundledExtensions(inRegistry: nil),
+            CodeServerManager.bundledMarketplaceExtensions,
+        )
+        XCTAssertEqual(
+            CodeServerManager.missingBundledExtensions(inRegistry: Data("not json".utf8)),
+            CodeServerManager.bundledMarketplaceExtensions,
+        )
+        // Ids compare case-insensitively; foreign entries (the seeded theme) don't satisfy.
+        let satisfied = try JSONSerialization.data(
+            withJSONObject: CodeServerManager.bundledMarketplaceExtensions.map {
+                ["identifier": ["id": $0.uppercased()]]
+            },
+        )
+        XCTAssertEqual(CodeServerManager.missingBundledExtensions(inRegistry: satisfied), [])
+        let foreign = try JSONSerialization.data(
+            withJSONObject: [["identifier": ["id": "slopdesk.slopdesk-monokai"]]],
+        )
+        XCTAssertEqual(
+            CodeServerManager.missingBundledExtensions(inRegistry: foreign),
+            CodeServerManager.bundledMarketplaceExtensions,
+        )
+    }
+
+    func testFirstEnsureInstallsBundledExtensionsBeforeTheFirstSpawn() async throws {
+        let spawner = FakeSpawner()
+        let cli = FakeCLI([0])
+        let manager = makeManager(
+            spawner: spawner,
+            cliRunner: { cli.run(binary: $0, arguments: $1) },
+            installedExtensionsRegistry: { nil },
+        )
+
+        // The install defers the spawn — the very first boot must already scan the icon pack, and
+        // install + boot writing `extensions.json` concurrently loses registrations. ensure keeps
+        // its never-wait contract via `.starting`.
+        XCTAssertEqual(
+            manager.ensure(projectRoot: root),
+            MetadataCodec.CodeServerEndpoint(state: .starting, port: 0),
+        )
+        XCTAssertEqual(spawner.spawnCount, 0, "no child boots while the install CLI runs")
+
+        // The client's ~1 Hz poll picks the spawn up once the one-shot install task lands.
+        try await pollUntilSpawn(manager: manager, spawner: spawner)
+        XCTAssertEqual(
+            cli.calls,
+            CodeServerManager.bundledMarketplaceExtensions.map { ["--install-extension", $0] },
+        )
+        XCTAssertEqual(spawner.spawnCount, 1)
+    }
+
+    func testFailedBundledInstallStillSpawns() async throws {
+        // Offline host / marketplace hiccup: the icon pack is a nicety — the panel is never held
+        // hostage. `.done` latches anyway; the next hostd launch retries (registry still missing).
+        let spawner = FakeSpawner()
+        let cli = FakeCLI([nil])
+        let manager = makeManager(
+            spawner: spawner,
+            cliRunner: { cli.run(binary: $0, arguments: $1) },
+            installedExtensionsRegistry: { nil },
+        )
+        _ = manager.ensure(projectRoot: root)
+        try await pollUntilSpawn(manager: manager, spawner: spawner)
+        XCTAssertEqual(
+            cli.calls.count, CodeServerManager.bundledMarketplaceExtensions.count,
+            "one attempt per id — no retry loop inside a manager lifetime",
+        )
+    }
+
+    func testSatisfiedRegistryNeverRunsTheInstallCLI() {
+        let spawner = FakeSpawner()
+        let cli = FakeCLI([0])
+        let manager = makeManager(spawner: spawner, cliRunner: { cli.run(binary: $0, arguments: $1) })
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(spawner.spawnCount, 1, "already installed ⇒ the first ensure spawns straight away")
+        XCTAssertTrue(cli.calls.isEmpty)
+    }
+
+    /// Drives the client's poll until the deferred first spawn happens (bounded — an install task
+    /// that never releases the spawn fails the test instead of hanging it).
+    private func pollUntilSpawn(manager: CodeServerManager, spawner: FakeSpawner) async throws {
+        for _ in 0..<500 {
+            _ = manager.ensure(projectRoot: root)
+            if spawner.spawnCount > 0 { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("the install task never released the spawn")
     }
 
     func testSeedUserSettingsWritesOnlyWhenAbsent() throws {
@@ -533,6 +637,9 @@ final class CodeServerManagerTests: XCTestCase {
         // v11: no git-decoration letter badge on editor TABS — the sub-baseline "A"/"M" reads as
         // a stray character beside the label. The explorer keeps its own badges.
         XCTAssertEqual(settings["workbench.editor.decorations.badges"] as? Bool, false)
+        // v15: Material Icon Theme file icons — the id the bundled marketplace install provides
+        // (`bundledMarketplaceExtensions`), so it resolves on the very first boot.
+        XCTAssertEqual(settings["workbench.iconTheme"] as? String, "material-icon-theme")
     }
 
     // MARK: Theme extension seed

@@ -6679,3 +6679,20 @@ carries the recurring license prompt. The vendored seed takes the theme data onl
 no nag (same personal-use posture as before). The extension id/folder stays
 `slopdesk.slopdesk-monokai-1.0.0`; the drift-repair seeder rewrites bytes in place and now
 also sweeps the two-variant era's differently named theme files.
+
+## Free marketplace extensions install for real; the first one is Material Icon Theme (2026-08-03)
+
+The vendored-data-only rule above exists because the Monokai Pro extension's ACTIVATION CODE
+nags for a license — it is not a blanket ban on installing extensions. For fully-free
+extensions (no license/purchase prompt anywhere in their activation path) the real install
+is strictly better: the workbench's own updater then tracks upstream, nothing is vendored,
+nothing needs a sync script. `CodeServerManager.bundledMarketplaceExtensions` lists the ids
+the host installs ONCE via `code-server --install-extension` (user-directed 2026-08-03),
+checked against the profile registry (`extensions.json` — the installed-set source of truth;
+a folder scan lies once the file exists) and run BEFORE the first spawn: ensure answers
+`.starting` while the one-shot CLI runs (the client polls ~1 Hz), both so the very first
+boot already scans the pack and because install + boot writing the registry concurrently
+loses registrations. A failed install (offline host) latches done anyway — the panel is
+never held hostage by a nicety; the next hostd launch retries. The first entry is
+`pkief.material-icon-theme` (MIT), and seed v15 selects it (`workbench.iconTheme:
+"material-icon-theme"`); v14 joins `obsoleteSeeds` so pristine hosts upgrade in place.
