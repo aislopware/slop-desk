@@ -34,6 +34,8 @@ Low-latency remote coding for Apple platforms (macOS host; macOS + iOS/iPadOS cl
 | 18 | [18-risk-resolutions.md](18-risk-resolutions.md) | Risk resolutions + measurements |
 | 20 | [20-wire-protocol.md](20-wire-protocol.md) | Terminal wire protocol |
 | 22 | [22-workspace-architecture.md](22-workspace-architecture.md) | Workspace (Session → Tab → split tree) |
+| 45 | [45-multi-client-state-sync.md](45-multi-client-state-sync.md) | Multi-client workspace document + PTY fan-out |
+| 46 | [46-gates-env-paths.md](46-gates-env-paths.md) | Gate matrix, `SLOPDESK_*` env, three paths (detail split out of `CLAUDE.md`) |
 
 ### GUI video path (design depth)
 | # | File | |
