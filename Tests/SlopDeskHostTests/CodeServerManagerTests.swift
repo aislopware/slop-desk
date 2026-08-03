@@ -517,6 +517,10 @@ final class CodeServerManagerTests: XCTestCase {
         // 8px) left 14px plates — too squat next to the app's own tab plates. Absent ⇒ the stock
         // 35px row ⇒ 27px plates, ≈ the app's control height.
         XCTAssertNil(settings["window.density.editorTabHeight"])
+        // v10: markdown opens straight into the RENDERED preview — in this panel markdown is
+        // read, not authored. The value is the built-in markdown extension's custom-editor id.
+        let associations = try XCTUnwrap(settings["workbench.editorAssociations"] as? [String: Any])
+        XCTAssertEqual(associations["*.md"] as? String, "vscode.markdown.preview.editor")
     }
 
     // MARK: Theme extension seed
@@ -586,10 +590,29 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(colors["tab.inactiveBackground"] as? String, "#2d2a2e")
         // Semantic yellows stay Monokai (git-modified — the app's own git ramp uses yellow there).
         XCTAssertEqual(colors["gitDecoration.modifiedResourceForeground"] as? String, "#ffd866")
+        // The settings editor's checkbox mark follows the plain checkbox — the ONE chrome key the
+        // neutralization pass originally missed (it sat accent-yellow beside a neutral twin).
+        XCTAssertEqual(
+            colors["settings.checkboxForeground"] as? String, colors["checkbox.foreground"] as? String,
+        )
+        try assertEveryColorValueIsValidHex(colors)
         XCTAssertFalse(
             try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
             "syntax rules ride along — the Monokai identity",
         )
+    }
+
+    /// Every workbench colour must be `#rrggbb`/`#rrggbbaa` — the vsix conversion once carried
+    /// five EMPTY-string values (`diffEditor.move.border` etc.), which the workbench rejects
+    /// per-key; a file we author carries no invalid values.
+    private func assertEveryColorValueIsValidHex(_ colors: [String: Any]) throws {
+        for (key, value) in colors {
+            let hex = try XCTUnwrap(value as? String, "\(key) must be a string colour")
+            XCTAssertTrue(
+                hex.wholeMatch(of: /#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?/) != nil,
+                "\(key) carries an invalid colour value '\(hex)'",
+            )
+        }
     }
 
     func testLightThemeResourceIsValidLightThemeWithNeutralizedChrome() throws {
@@ -617,6 +640,11 @@ final class CodeServerManagerTests: XCTestCase {
         // Semantic pinks stay Monokai — only the CHROME keys moved (deleted-file decoration
         // keeps the filter's pink, exactly as the dark theme keeps its semantic yellows).
         XCTAssertEqual(colors["gitDecoration.deletedResourceForeground"] as? String, "#e14775")
+        // Mirrored settings-checkbox neutralization + no invalid values (see the dark test).
+        XCTAssertEqual(
+            colors["settings.checkboxForeground"] as? String, colors["checkbox.foreground"] as? String,
+        )
+        try assertEveryColorValueIsValidHex(colors)
         XCTAssertFalse(
             try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
             "syntax rules ride along — the Monokai identity",

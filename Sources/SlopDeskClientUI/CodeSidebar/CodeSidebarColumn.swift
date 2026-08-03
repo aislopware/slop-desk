@@ -9,10 +9,10 @@
 // webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the
 // `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
 //
-// The panel carries its OWN top strip (the otty right-panel pattern): the tab plate ("Code",
-// selected — the strip is where future panel surfaces would tab between), a reload plate, and the
-// `sidebar.right` collapse — the workbench sits BELOW the strip. The titlebar keeps only the
-// mirrored REOPEN plate while the panel is collapsed.
+// The panel carries its OWN top strip (the otty right-panel pattern): the tab plates ("Code"
+// selected + the "Desktop" placeholder — selected expands to icon + label, the rest are icon-only),
+// a reload plate, and the `sidebar.right` collapse — the workbench sits BELOW the strip. The
+// titlebar keeps only the mirrored REOPEN plate while the panel is collapsed.
 
 #if os(macOS)
 import SFSafeSymbols
@@ -86,14 +86,19 @@ struct CodeSidebarColumn: View {
     }
 
     /// The panel's OWN top strip (user-directed: "tab phải ở trên top của right sidebar" — the tabs
-    /// belong to the panel, over the panel, never over the terminal). Trailing-aligned like the otty
-    /// strip; top-anchored at the same row as the titlebar plates so the two chrome rows read as ONE
-    /// line across the divider.
+    /// belong to the panel, over the panel, never over the terminal). Tab plates lead, actions
+    /// trail (the otty strip layout); top-anchored at the same row as the titlebar plates so the
+    /// two chrome rows read as ONE line across the divider. Tab vocabulary is otty's: the SELECTED
+    /// surface expands to icon + label, every other tab collapses to its icon (user-directed,
+    /// 2026-08-03). "Desktop" is the announced second surface — a placeholder plate today (the
+    /// window-OS panel it will select does not exist yet), so its click is a no-op.
     private var strip: some View {
         let rowTop: CGFloat = 3
-        return HStack(spacing: Slate.Metric.space2) {
+        return HStack(spacing: Slate.Metric.space1) {
             PanelTabPlate(symbol: .chevronLeftForwardslashChevronRight, label: "Code", selected: true)
                 .help("Code — the project's embedded editor")
+            PanelTabPlate(symbol: .macwindow, label: "Desktop", selected: false)
+                .help("Desktop — coming soon")
             Spacer(minLength: 0)
             PlateIconButton(symbol: .arrowClockwise) {
                 guard let root = activeProjectRoot else { return }

@@ -288,7 +288,11 @@ final class CodeServerManager: @unchecked Sendable {
     /// chords (⌘⇧M problems); `window.title` drops the `${appName}` suffix so any surface that
     /// ever renders it says the project, not "code-server". Auto-save on focus change: the
     /// terminal pane beside the editor is where builds/tests run, and switching to it IS the
-    /// moment the file must be on disk. Every key here is USER-scope-overridable in the workbench
+    /// moment the file must be on disk. Markdown opens straight into the RENDERED preview
+    /// (`workbench.editorAssociations` → the built-in `vscode.markdown.preview.editor`): in this
+    /// panel markdown is read (README, docs, agent output), not authored — a reader who wants the
+    /// source is one "Open Source" click away, the inverse default costs a chord per file.
+    /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
@@ -298,6 +302,9 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
         "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
         "workbench.startupEditor": "none",
+        "workbench.editorAssociations": {
+            "*.md": "vscode.markdown.preview.editor"
+        },
         "workbench.activityBar.location": "hidden",
         "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
@@ -519,6 +526,37 @@ final class CodeServerManager: @unchecked Sendable {
             "window.menuBarVisibility": "hidden",
             "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
             "window.density.editorTabHeight": "compact",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v9 — full-height tab plates, but markdown still opened as raw source; v10 adds the
+        // preview-first editor association.
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
             "workbench.statusBar.visible": false,
             "workbench.editor.empty.hint": "hidden",
             "window.commandCenter": false,

@@ -6508,3 +6508,25 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   landed: every fixture key silently reads default (light theme, panel collapsed, fresh-install
   path). Always rebuild gate apps the way `check-macos.sh` does: `CODE_SIGNING_ALLOWED=NO
   CODE_SIGNING_REQUIRED=NO`.
+
+## The panel strip becomes a real tab row, and markdown reads rendered (2026-08-03)
+
+- ✅ **The strip speaks otty's tab vocabulary, with a second surface announced.** User-directed:
+  "tab kiểu như otty — mở thì expand symbol + text, collapsed thì chỉ icon". `PanelTabPlate`
+  already encodes that grammar (selected = icon + label on the filled plate; unselected = bare
+  icon); the strip now leads with the selected "Code" plate AND the icon-only **Desktop**
+  placeholder (`macwindow`) beside it — the window-OS surface the 07-22 pivot promised, a no-op
+  click until that panel exists. Actions (reload, collapse) stay trailing.
+- ✅ **Seed v10: markdown opens as the RENDERED preview.** `workbench.editorAssociations` maps
+  `*.md` to the built-in `vscode.markdown.preview.editor` — in this panel markdown is READ
+  (README, docs, agent output), not authored; "Open Source" is one click when needed. v9 moved
+  verbatim into `obsoleteSeeds` (10 entries), the font-blind pristine-upgrade carries a
+  font-synced v9 forward. Pixel-proofed: README.md boots as a styled preview, no gutter.
+- ✅ **Theme polish: the vsix conversion's junk is gone.** Both themes carried five EMPTY-string
+  colour values (`diffEditor.move.border`, `diffEditor.moveActive.border`,
+  `simpleFindWidget.sashBorder`, `statusBarItem.offlineBackground/Foreground`) — invalid per the
+  workbench's colour parser, dropped (defaults are correct). And `settings.checkboxForeground`
+  still sat on the chrome ACCENT (yellow dark / pink light) while its twin `checkbox.foreground`
+  was already neutral — the one key the neutralization pass missed, now aligned. A test pins
+  every colour value to `#rrggbb(aa)` and the two checkbox keys to each other, so conversion junk
+  cannot return. Semantic accents (git-modified yellow, error red/pink, lightbulb) stay Monokai.
