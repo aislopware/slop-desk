@@ -201,11 +201,10 @@ struct NavigatorColumn: View {
                 Image(systemSymbol: .magnifyingglass)
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.Text.icon)
-                TextField("Search tabs", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
-                    .tint(Slate.Text.primary) // caret in the text's own ink, not an accent
+                // AppKit-backed on purpose: a SwiftUI `TextField` at footnote size bumps its
+                // text up 1pt on focus (cell-draw vs field-editor baseline split — see
+                // `SlateSearchField`'s header). User-reported 2026-08-03.
+                SlateSearchField(placeholder: "Search tabs", text: $query)
                 if !query.isEmpty {
                     Button {
                         query = ""
