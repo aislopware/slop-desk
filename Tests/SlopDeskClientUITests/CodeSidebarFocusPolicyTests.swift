@@ -51,14 +51,20 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
     // MARK: Reserved app chords
 
     func testAppManagementChordsAreReserved() {
-        // Quit / Hide / Hide Others / Minimize / window cycling belong to the APP even while the
-        // editor holds the keyboard — WKWebView's performKeyEquivalent would otherwise feed them to
-        // the page before the main menu ever sees them.
+        // Quit / Hide / Hide Others / Minimize belong to the APP even while the editor holds the
+        // keyboard — WKWebView's performKeyEquivalent would otherwise feed them to the page before
+        // the main menu ever sees them.
         XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "q"))
         XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "h"))
         XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command, .option], key: "h"))
         XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "m"))
-        XCTAssertTrue(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "`"))
+    }
+
+    /// ⌘` is deliberately NOT reserved here any more: the NSEvent monitor claims it ahead of this
+    /// seam and hands the keyboard back to the terminal pane instead of cycling windows
+    /// (`DispatcherCodeSidebarYieldTests`). Listing it would be a rule that never runs.
+    func testWindowCyclingIsNoLongerClaimedAtThisSeam() {
+        XCTAssertFalse(CodeSidebarFocusPolicy.isReservedAppChord(modifiers: [.command], key: "`"))
     }
 
     func testDeviceDependentFlagBitsDoNotDefeatTheMatch() {

@@ -42,6 +42,11 @@ enum CodeSidebarFocusPolicy {
     /// ⌘W (close editor tab), ⌘, (VS Code settings), ⌘P/⌘F/… — stays with the workbench, which the
     /// user focused ON PURPOSE (the click-to-focus rule above). Pure — pinned by
     /// `CodeSidebarFocusPolicyTests`. The key arrives as `charactersIgnoringModifiers` lowercased.
+    ///
+    /// ⌘` (cycle app windows) used to be listed here and no longer is: the app's NSEvent monitor runs
+    /// ahead of the whole responder chain and now spends ⌘`/⌃` on the hand-back to the terminal pane
+    /// while the editor holds the keyboard (`WorkspaceKeyDispatcher.codePanelLocalAction`), so this
+    /// seam is never reached for it. A case here would only read as a live rule that isn't one.
     static func isReservedAppChord(modifiers: NSEvent.ModifierFlags, key: String?) -> Bool {
         guard let key else { return false }
         let chord = modifiers.intersection([.command, .shift, .option, .control])
@@ -49,8 +54,7 @@ enum CodeSidebarFocusPolicy {
         case ([.command], "q"), // Quit
              ([.command], "h"), // Hide SlopDesk
              ([.command, .option], "h"), // Hide Others
-             ([.command], "m"), // Minimize
-             ([.command], "`"): // Cycle app windows
+             ([.command], "m"): // Minimize
             return true
         default:
             return false

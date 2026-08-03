@@ -172,6 +172,28 @@ final class WorkspaceKeyDispatcher {
         action == .toggleCodeSidebar || action == .focusCodePanel
     }
 
+    /// Chords that mean something ONLY while the embedded editor holds the keyboard — resolved
+    /// inside the yield, absent from the workspace chord table, so the app's at-rest keyboard is
+    /// untouched by them.
+    ///
+    /// The pair here is "take me to the terminal". Reaching for a terminal from inside an editor is
+    /// ⌃` muscle memory, and in the embedded workbench that chord opens VS Code's OWN integrated
+    /// terminal — a shell that is not a SlopDesk pane: no agent detection, no PTY fan-out to the
+    /// other clients, no replay, nothing the app exists to provide. So the chord is claimed and
+    /// spent on the real thing instead: the keyboard goes back to the terminal PANE
+    /// (``WorkspaceAction/focusCodePanel`` resolves to its hand-back arm whenever the webview is the
+    /// one holding focus, which inside this branch it always is). ⌘` rides along at the user's
+    /// direction (2026-08-03) — it costs AppKit's cycle-windows only while the editor has the
+    /// keyboard, and every other focus keeps it.
+    ///
+    /// Pure — pinned by `DispatcherCodeSidebarYieldTests`.
+    static func codePanelLocalAction(for chord: KeyChord) -> WorkspaceAction? {
+        let terminalReach: Set<KeyChord> = [
+            KeyChord(character: "`", [.control]), KeyChord(character: "`", [.command]),
+        ]
+        return terminalReach.contains(chord) ? .focusCodePanel : nil
+    }
+
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
     /// binds a chord to the `.pinWindow` action; until installed `.pinWindow` is a graceful no-op.
@@ -320,6 +342,12 @@ final class WorkspaceKeyDispatcher {
         // app-level gesture VS Code does not use; literal-byte text bindings target the TERMINAL, so
         // they must not fire into an editor and sit below this yield.)
         if isCodeSidebarCapturingKeys() {
+            // PANEL-LOCAL chords first: keys with no workspace meaning at rest that DO mean
+            // something inside the editor (see `codePanelLocalAction`).
+            if let action = Self.codePanelLocalAction(for: chord) {
+                dispatch(action)
+                return nil
+            }
             if let action = WorkspaceBindingRegistry.resolvedChordTable[chord],
                Self.survivesCodePanelYield(action)
             {

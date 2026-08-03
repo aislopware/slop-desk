@@ -195,11 +195,10 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleCodeSidebar), filter: .actions, category: .view,
             action: .toggleCodeSidebar,
         ),
-        // "Focus Code Panel" — the keyboard's way into the embedded editor and back out. Sits beside
-        // the panel's own toggle: one row decides whether the panel is THERE, this one decides who
-        // types into it.
+        // The keyboard's way into the embedded editor and back out. Sits beside the panel's own
+        // toggle: one row decides whether the panel is THERE, this one decides who types into it.
         PaletteItem(
-            id: "action.focusCodePanel", icon: "keyboard", title: "Focus Code Panel",
+            id: "action.focusCodePanel", icon: "keyboard", title: "Switch Editor / Terminal Focus",
             subtitle: nil, shortcut: glyph(.focusCodePanel), filter: .actions, category: .view,
             action: .focusCodePanel,
         ),

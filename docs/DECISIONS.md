@@ -6754,3 +6754,25 @@ Two riders on the same pass. Verb 20 (`syncCodeFont`) no longer rides every ensu
 open — was being sent font settings for a workbench that will never boot, and an unchanged
 spec was making a round trip whose only possible answer is "nothing changed". `.starting`
 still pushes: the seed has to land before the booting workbench reads its settings.
+
+## ⌃` / ⌘` inside the editor reach the terminal PANE (2026-08-03)
+
+The embedded workbench ships VS Code's integrated terminal, and ⌃` opens it. That shell is
+outside everything this app exists to provide: no agent detection, no PTY fan-out to the other
+clients, no replay buffer, no scrollback journal — a second, worse terminal one muscle-memory
+chord away from the good one. Rather than hide it (removing an escape hatch nobody asked to
+lose), the chord is spent on the real thing: while the editor holds the keyboard, ⌃` and ⌘`
+hand the keyboard back to the terminal pane instead.
+
+They resolve from a PANEL-LOCAL table consulted only inside the webview-yield branch, not from
+the chord registry. Keeping them out of the registry is the whole point — the app's at-rest
+keyboard is untouched, so AppKit's ⌘` (cycle app windows) and the terminal's own ⌃` keep
+working at every other focus, and the cost is paid only where the alternative was worse. ⌘` is
+included at the user's direction (2026-08-03); ⌃` is the one VS Code actually binds.
+
+Both spend `.focusCodePanel`, whose hand-back arm fires whenever the webview is the one holding
+focus — which inside that branch it always is. The binding is now titled "Switch Editor /
+Terminal Focus" in the menu and the palette, which is what it has always done; the id is
+unchanged, so no keybinding a user saved moves. ⌘` also came OUT of the webview's reserved-app-
+chord list: the NSEvent monitor runs ahead of the whole responder chain, so that case could no
+longer run and would have read as a live rule that was not one.

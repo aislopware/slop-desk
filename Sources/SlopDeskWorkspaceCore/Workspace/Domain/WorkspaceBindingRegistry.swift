@@ -102,8 +102,8 @@ public enum WorkspaceAction: Hashable, Sendable {
     // at that project's root). ⌘⇧R, mirroring ⌘⇧L on the left panel. Window-scope chrome → needs no
     // active pane; iOS has no code panel (documented no-op — the closure is never installed there).
     case toggleCodeSidebar
-    // View → Focus Code Panel: move the KEYBOARD between the terminal and the embedded editor, and
-    // back. ⌥⌘R, the sibling of ⌘⇧R (that one shows/hides the panel; this one decides who types
+    // View → Switch Editor / Terminal Focus: move the KEYBOARD between the terminal and the embedded
+    // editor, and back. ⌥⌘R, the sibling of ⌘⇧R (that one shows/hides the panel; this one decides who types
     // into it). Until this existed the editor could only be reached by CLICKING it — the panel's
     // focus policy refuses every claim that is not a mouse-down inside the webview, which is what
     // keeps VS Code's own aggressive autofocus from stealing the keyboard mid-keystroke. A chord is
@@ -776,13 +776,17 @@ public enum WorkspaceBindingRegistry {
             symbol: "chevron.left.forwardslash.chevron.right",
             keywords: "code panel vscode editor ide right sidebar hide show collapse code-server",
         ),
-        // Focus Code Panel ⌥⌘R — the keyboard's way INTO the embedded editor and back out (⌘⇧R only
-        // shows/hides the panel). ⌥⌘R is FREE: `r` carries ⌘⇧R (this panel's toggle) and ⌃⌘R
-        // (Reset Zoom) only. `.focus` category — it moves the keyboard, exactly like the ⌃⌘arrow
-        // family beside it. Routed through a `focusCodePanel` view-closure onto the macOS panel's
-        // webview pool; iOS installs no closure (documented no-op). Pinned by E1KeymapParityTests.
+        // Switch Editor / Terminal Focus ⌥⌘R — the keyboard's way INTO the embedded editor and back
+        // out (⌘⇧R only shows/hides the panel). It reads as one gesture in both directions, which
+        // is why the title names the switch rather than one end of it. ⌥⌘R is FREE: `r` carries
+        // ⌘⇧R (this panel's toggle) and ⌃⌘R (Reset Zoom) only. `.focus` category — it moves the
+        // keyboard, exactly like the ⌃⌘arrow family beside it. Routed through a `focusCodePanel`
+        // view-closure onto the macOS panel's webview pool; iOS installs no closure (documented
+        // no-op). Inside the editor ⌃` and ⌘` reach the same action without appearing in this
+        // table — see `WorkspaceKeyDispatcher.codePanelLocalAction`. Pinned by E1KeymapParityTests.
         WorkspaceBinding(
-            id: "focus.codePanel", action: .focusCodePanel, title: "Focus Code Panel",
+            id: "focus.codePanel", action: .focusCodePanel,
+            title: "Switch Editor / Terminal Focus",
             category: .focus, chord: KeyChord(character: "r", [.command, .option]),
             symbol: "keyboard",
             keywords: "focus code panel editor vscode keyboard type into back terminal switch",
