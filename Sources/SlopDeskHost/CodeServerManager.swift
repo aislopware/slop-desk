@@ -365,6 +365,13 @@ final class CodeServerManager: @unchecked Sendable {
     /// File icons are the Material Icon Theme (v15, user-directed 2026-08-03) — the
     /// ``bundledMarketplaceExtensions`` install that precedes the first spawn, so the id resolves
     /// on the very first boot.
+    /// The reading aids come on (v16, user-directed 2026-08-04): indentation guides pinned
+    /// explicitly (default-on today, but the named ask deserves a named key), the ACTIVE bracket
+    /// pair's guide (`editor.guides.bracketPairs: "active"` — the full rainbow is noise at this
+    /// panel width), sticky scroll (shipped default is OFF — verified in the 4.112 bundle), and
+    /// trailing-whitespace rendering. The file tree matches: indent guides always visible (stock
+    /// only shows them on hover) over a 16px indent — the default 8px barely steps a deep Swift
+    /// tree.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -401,6 +408,12 @@ final class CodeServerManager: @unchecked Sendable {
         "editor.lineNumbersMinChars": 3,
         "editor.glyphMargin": false,
         "editor.folding": false,
+        "editor.guides.indentation": true,
+        "editor.guides.bracketPairs": "active",
+        "editor.stickyScroll.enabled": true,
+        "editor.renderWhitespace": "trailing",
+        "workbench.tree.renderIndentGuides": "always",
+        "workbench.tree.indent": 16,
         "files.autoSave": "onFocusChange"
     }
     """
@@ -806,6 +819,46 @@ final class CodeServerManager: @unchecked Sendable {
             "window.autoDetectColorScheme": true,
             "workbench.preferredDarkColorTheme": "Monokai Pro",
             "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v15 — Material Icon Theme, but the reading aids were still the workbench's quiet
+        // defaults. v16 turns on the structure guides (indentation pinned, active bracket pair,
+        // sticky scroll, always-on tree guides with a deeper tree indent) and trailing-whitespace
+        // rendering (user-directed 2026-08-04).
+        """
+        {
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {
                 "*.md": "vscode.markdown.preview.editor"

@@ -598,6 +598,16 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["editor.lineNumbersMinChars"] as? Int, 3)
         XCTAssertEqual(settings["editor.glyphMargin"] as? Bool, false)
         XCTAssertEqual(settings["editor.folding"] as? Bool, false)
+        // v16: the reading aids (user-directed 2026-08-04) — structure guides in the editor AND
+        // the file tree. Sticky scroll and always-on tree guides are genuine non-defaults
+        // (verified in the shipped 4.112 bundle: `stickyScroll={enabled:!1`, tree guides
+        // default "onHover"); the indentation-guide pin is the ask by its own name.
+        XCTAssertEqual(settings["editor.guides.indentation"] as? Bool, true)
+        XCTAssertEqual(settings["editor.guides.bracketPairs"] as? String, "active")
+        XCTAssertEqual(settings["editor.stickyScroll.enabled"] as? Bool, true)
+        XCTAssertEqual(settings["editor.renderWhitespace"] as? String, "trailing")
+        XCTAssertEqual(settings["workbench.tree.renderIndentGuides"] as? String, "always")
+        XCTAssertEqual(settings["workbench.tree.indent"] as? Int, 16)
         // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
         // flags unknown keys as warnings in a file we authored. These three were v6's offenders
         // (desktop-only / Code-OSS-absent): they must never come back.
