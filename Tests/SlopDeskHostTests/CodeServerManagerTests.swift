@@ -3,6 +3,42 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
+/// A bridge that binds nothing and answers whatever the test says — the real one opens an
+/// `AF_UNIX` listener, which no unit test may do. File-scoped: both suites below inject it.
+private final class FakeBridge: CodeBridgeRouting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var attached = false
+    private(set) var startedPaths: [String] = []
+    private(set) var opened: [String] = []
+    private(set) var stopCount = 0
+
+    /// Makes ``open(target:)`` answer `true`, as if a workbench window were attached.
+    func attach() {
+        lock.lock()
+        attached = true
+        lock.unlock()
+    }
+
+    func start(path: String) {
+        lock.lock()
+        startedPaths.append(path)
+        lock.unlock()
+    }
+
+    func open(target: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        opened.append(target)
+        return attached
+    }
+
+    func stop() {
+        lock.lock()
+        stopCount += 1
+        lock.unlock()
+    }
+}
+
 /// ``CodeServerManager`` against FAKE seams — the hang-safety rule extends here: no test may spawn
 /// a real code-server (a multi-second Node boot, a network listener, a Homebrew dependency). The
 /// spawner/locator/probe are all injected fakes; only `canonicalRoot` touches the real filesystem
@@ -85,10 +121,11 @@ final class CodeServerManagerTests: XCTestCase {
         cliRunner: @escaping CodeServerManager.CLIRunner = { _, _ in nil },
         installedExtensionsRegistry: @escaping CodeServerManager.InstalledExtensionsRegistry =
             CodeServerManagerTests.satisfiedRegistry,
+        bridge: FakeBridge = FakeBridge(),
     ) -> CodeServerManager {
-        // The seeder, CLI runner, registry reader AND settings-file URL are ALWAYS injected — the
-        // default seams read/write the real user's `~/.local/share/code-server` / exec a real
-        // binary, which no test may touch.
+        // The seeder, CLI runner, registry reader, settings-file URL AND bridge are ALWAYS
+        // injected — the default seams read/write the real user's `~/.local/share/code-server`,
+        // exec a real binary or bind a real socket, none of which a test may touch.
         let settingsURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
         return CodeServerManager(
             binaryLocator: { binary },
@@ -98,6 +135,7 @@ final class CodeServerManagerTests: XCTestCase {
             cliRunner: cliRunner,
             installedExtensionsRegistry: installedExtensionsRegistry,
             settingsFileURL: { settingsURL },
+            bridge: bridge,
             probeInterval: .zero,
             openRetryDelay: .zero,
         )
@@ -281,6 +319,158 @@ final class CodeServerManagerTests: XCTestCase {
         // A post-shutdown ensure starts over (no zombie record).
         _ = manager.ensure(projectRoot: root)
         XCTAssertEqual(spawner.spawnCount, 2)
+    }
+
+    // MARK: Workbench file-open (verb 19's bridge arm)
+
+    /// With a workbench window attached to the bridge the file opens over the socket and the CLI —
+    /// a whole Node process, plus the retry window that pays for its session registration — never
+    /// runs at all.
+    func testOpenInWorkbenchPrefersTheBridge() async {
+        let cli = FakeCLI([0])
+        let bridge = FakeBridge()
+        bridge.attach()
+        let manager = makeManager(
+            spawner: FakeSpawner(), cliRunner: { cli.run(binary: $0, arguments: $1) }, bridge: bridge,
+        )
+
+        let landed = await manager.openInWorkbench(target: root + "/main.py:12:3", projectRoot: root)?.value
+
+        XCTAssertEqual(landed, true)
+        XCTAssertTrue(cli.calls.isEmpty, "the bridge landed it — no CLI process is spawned")
+        XCTAssertEqual(
+            bridge.opened, [root + "/main.py:12:3"], "the :line:col suffix rides through unsplit",
+        )
+    }
+
+    /// No window attached (nothing booted, or the file lives outside every open folder) ⇒ the CLI
+    /// arm still carries the open, and the bridge is re-offered on EVERY attempt so whichever route
+    /// comes up first during a cold start wins.
+    func testOpenInWorkbenchFallsBackToTheCLIWithoutAnAttachedWindow() async {
+        let cli = FakeCLI([1, 0])
+        let bridge = FakeBridge()
+        let manager = makeManager(
+            spawner: FakeSpawner(), cliRunner: { cli.run(binary: $0, arguments: $1) }, bridge: bridge,
+        )
+
+        let landed = await manager.openInWorkbench(target: "/x/y.txt", projectRoot: root)?.value
+
+        XCTAssertEqual(landed, true)
+        XCTAssertEqual(cli.calls.count, 2)
+        XCTAssertEqual(bridge.opened.count, 2, "offered once per attempt, not only on the first")
+    }
+
+    /// The listener binds lazily — once, before the first child can inherit its path — so a host
+    /// whose user never opens the code panel never creates the socket.
+    func testBridgeBindsOnceBeforeTheFirstSpawn() {
+        let bridge = FakeBridge()
+        let manager = makeManager(spawner: FakeSpawner(), bridge: bridge)
+
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(bridge.startedPaths, [CodeServerManager.bridgeSocketPath])
+
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(bridge.startedPaths.count, 1, "latched — the second ensure re-binds nothing")
+    }
+
+    func testShutdownReleasesTheBridge() {
+        let bridge = FakeBridge()
+        let manager = makeManager(spawner: FakeSpawner(), bridge: bridge)
+        _ = manager.ensure(projectRoot: root)
+
+        manager.shutdown()
+
+        XCTAssertEqual(bridge.stopCount, 1, "hostd going down must not strand the socket file")
+        _ = manager.ensure(projectRoot: root)
+        XCTAssertEqual(bridge.startedPaths.count, 2, "a post-shutdown ensure binds a fresh listener")
+    }
+
+    /// The path the extension connects back to reaches it the only way it can: the environment
+    /// every code-server child inherits.
+    func testChildEnvironmentHandsDownTheBridgeSocket() {
+        let environment = CodeServerManager.childEnvironment(base: [:], bridgeSocket: "/tmp/b.sock")
+
+        XCTAssertEqual(environment["SLOPDESK_CODE_BRIDGE_SOCKET"], "/tmp/b.sock")
+    }
+
+    // MARK: Bridge extension seed
+
+    func testBridgeSeedWritesTheManifestAndSourceThenRegisters() throws {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let source = { Data("module.exports = {};".utf8) }
+
+        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: source))
+
+        let folder = dir.appendingPathComponent(CodeServerManager.bridgeExtensionDirectoryName)
+        XCTAssertEqual(
+            try Data(contentsOf: folder.appendingPathComponent("extension.js")), source(),
+        )
+        let manifest = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: folder.appendingPathComponent("package.json")),
+        ) as? [String: Any]
+        XCTAssertEqual(manifest?["main"] as? String, "./extension.js")
+
+        let registry = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: dir.appendingPathComponent("extensions.json")),
+        ) as? [[String: Any]]
+        let ids = registry?.compactMap { ($0["identifier"] as? [String: Any])?["id"] as? String }
+        XCTAssertEqual(ids, ["slopdesk.slopdesk-bridge"], "a folder drop alone is invisible to the workbench")
+    }
+
+    /// Re-seeding an unchanged folder writes nothing (the second call reports no work), and a
+    /// DRIFTED `extension.js` — a hostd carrying a newer bridge — is overwritten in place.
+    func testBridgeSeedIsIdempotentButUpgradesDriftedSource() throws {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let old = { Data("// v1".utf8) }
+        let new = { Data("// v2".utf8) }
+
+        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: old))
+        XCTAssertFalse(CodeServerManager.seedBridgeExtension(into: dir, source: old))
+        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: new))
+
+        let js = dir.appendingPathComponent(CodeServerManager.bridgeExtensionDirectoryName)
+            .appendingPathComponent("extension.js")
+        XCTAssertEqual(try Data(contentsOf: js), new())
+    }
+
+    /// A broken bundle is a no-op, never a half-written extension folder the workbench would then
+    /// try to activate.
+    func testBridgeSeedWithoutSourceWritesNothing() {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+
+        XCTAssertFalse(CodeServerManager.seedBridgeExtension(into: dir, source: { nil }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    }
+
+    /// The manifest, the folder name and the registry entry all have to agree on ONE identity —
+    /// they are written from the same three constants, and this is what keeps them there.
+    func testBridgeManifestAgreesWithTheSeededIdentity() throws {
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(CodeServerManager.bridgeExtensionManifest.utf8),
+        ) as? [String: Any])
+
+        XCTAssertEqual(manifest["name"] as? String, CodeServerManager.bridgeExtensionName)
+        XCTAssertEqual(manifest["publisher"] as? String, CodeServerManager.bridgeExtensionPublisher)
+        XCTAssertEqual(manifest["version"] as? String, CodeServerManager.bridgeExtensionVersion)
+        XCTAssertEqual(
+            CodeServerManager.bridgeExtensionDirectoryName, "slopdesk.slopdesk-bridge-1.0.0",
+        )
+        XCTAssertEqual(
+            manifest["extensionKind"] as? [String], ["workspace"],
+            "the socket and the files live on the HOST — the web worker host has neither",
+        )
+    }
+
+    /// The shipped `extension.js` is a real resource in the target bundle (a broken `.copy` rule
+    /// would silently degrade every open back to the CLI) and it reads the env var hostd sets.
+    func testBridgeSourceShipsInTheBundle() throws {
+        let source = try XCTUnwrap(
+            CodeServerManager.bridgeExtensionSource(), "Resources/bridge/extension.js is missing",
+        )
+        let text = try XCTUnwrap(String(data: source, encoding: .utf8))
+
+        XCTAssertTrue(text.contains("SLOPDESK_CODE_BRIDGE_SOCKET"))
+        XCTAssertTrue(text.contains("module.exports"))
     }
 
     // MARK: Settings seed
@@ -1080,9 +1270,10 @@ final class HostCodeServerPerformerTests: XCTestCase {
         spawned: @escaping @Sendable () -> Void = {},
         cli: RunnerRecord = RunnerRecord(),
         settingsFileURL: URL? = nil,
+        bridge: FakeBridge = FakeBridge(),
     ) -> CodeServerManager {
-        // settingsSeeder / cliRunner / settingsFileURL injected as fakes — the default seams touch
-        // the real user's settings file / exec a real binary.
+        // settingsSeeder / cliRunner / settingsFileURL / bridge injected as fakes — the default
+        // seams touch the real user's settings file, exec a real binary or bind a real socket.
         let settingsURL = settingsFileURL
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("performer-tests-absent-\(UUID().uuidString).json")
@@ -1099,6 +1290,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 return 0
             },
             settingsFileURL: { settingsURL },
+            bridge: bridge,
             probeInterval: .zero,
             openRetryDelay: .zero,
         )

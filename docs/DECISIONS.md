@@ -6696,3 +6696,32 @@ loses registrations. A failed install (offline host) latches done anyway — the
 never held hostage by a nicety; the next hostd launch retries. The first entry is
 `pkief.material-icon-theme` (MIT), and seed v15 selects it (`workbench.iconTheme:
 "material-icon-theme"`); v14 joins `obsoleteSeeds` so pristine hosts upgrade in place.
+
+## The code panel gets a first-party extension: `slopdesk.slopdesk-bridge` (2026-08-03)
+
+Opening a file in the embedded editor ran `code-server -r <path>`: a fresh Node CLI process
+routed through the per-user session socket. Two costs, both measured. It lands in the most
+recently registered workbench SESSION, which is not necessarily the window whose folder holds
+the file — with two projects open the file could surface in the wrong one. And the session
+registers only once some webview has finished booting the workbench, which is why the open
+carries a 10 × 2 s retry budget: an 18-second worst case on a cold panel. Even warm the CLI
+measured ~160 ms per open (Node boot + IPC), for a command whose payload is one path.
+
+So the host now ships its own extension into the workbench profile, on the same seeding terms
+as the Monokai theme (`slopdesk.*` namespace, drift-repaired in place, registered in
+`extensions.json` because a folder drop is invisible once that file exists) — except this one
+is CODE, not data, which the vendored-theme rule never forbade: it forbade shipping SOMEONE
+ELSE's code that nags. `CodeBridgeServer` binds an `AF_UNIX` socket (pid-keyed, 0600, lazily —
+a host whose user never opens the panel never creates it), hands the path down through
+`childEnvironment` as `SLOPDESK_CODE_BRIDGE_SOCKET`, and every workbench window's extension
+host connects back announcing its workspace folder. An open is then one line of NDJSON to the
+window whose folder CONTAINS the target, deepest folder first. Verified end to end against a
+real code-server 4.112: the extension attached with the right root, and a commanded
+`line 3, col 2` open put the caret exactly there.
+
+The CLI arm stays as the fallback and the two are raced on every retry attempt — during a cold
+start neither route exists yet, and whichever appears first should win. Nothing changed on the
+wire: verb 19's request, response and disposition byte are identical, so an old client and a
+new host still agree. The message set is deliberately minimal (hello + open) and versioned by
+its own `v` field; this is host-local IPC, not a fourth network path, and it is NOT
+golden-pinned.

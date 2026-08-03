@@ -95,6 +95,12 @@ final class CodeServerManager: @unchecked Sendable {
     private let seedSettings: SettingsSeeder
     private let runCLI: CLIRunner
     private let installedExtensionsRegistry: InstalledExtensionsRegistry
+    /// The bridge extension's host end — injectable so unit tests never bind a real `AF_UNIX`
+    /// listener (hang-safety, same reason the spawner is faked).
+    private let bridge: any CodeBridgeRouting
+    /// Latched with ``settingsSeeded`` — the listener binds once, lazily, so a host whose user
+    /// never opens the code panel never creates the socket at all.
+    private var bridgeStarted = false
     /// Where the instance-level font sync writes — injectable so unit tests NEVER resolve (and
     /// patch) the developer's real `~/.local/share/code-server/User/settings.json` (the same trap
     /// `SLOPDESK_WORKSPACE_STATE_DIR` guards on the workspace store).
@@ -112,9 +118,11 @@ final class CodeServerManager: @unchecked Sendable {
         installedExtensionsRegistry: @escaping InstalledExtensionsRegistry =
             CodeServerManager.defaultInstalledExtensionsRegistry,
         settingsFileURL: @escaping @Sendable () -> URL = { CodeServerManager.userSettingsURL() },
+        bridge: any CodeBridgeRouting = CodeBridgeServer(),
         probeInterval: Duration = .milliseconds(500),
         openRetryDelay: Duration = .seconds(2),
     ) {
+        self.bridge = bridge
         locateBinary = binaryLocator
         spawn = spawner
         probe = readinessProbe
@@ -151,6 +159,12 @@ final class CodeServerManager: @unchecked Sendable {
             settingsSeeded = true
             seedSettings()
         }
+        // The bridge listener must exist BEFORE the child inherits its path, or the extension's
+        // first connect races the bind and burns a 5 s reconnect delay on every cold start.
+        if !bridgeStarted {
+            bridgeStarted = true
+            bridge.start(path: Self.bridgeSocketPath)
+        }
         // Bundled marketplace extensions install before the FIRST spawn (see
         // ``BundledExtensionInstall`` / ``bundledMarketplaceExtensions``); while the one-shot CLI
         // runs, ensure keeps its never-wait contract by answering `.starting`.
@@ -183,8 +197,16 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// Opens `target` (a host file path, optionally `:line[:col]`-suffixed) in the running
-    /// workbench: `code-server -r <target>` routed through the session socket to the most recently
-    /// registered open workbench (folder-prefix matches sort first). Ensures the SERVER first (the
+    /// workbench. TWO routes, tried in that order:
+    ///
+    ///   1. the ``CodeBridgeServer`` socket — one line to the already-attached extension host of
+    ///      the window whose folder contains the file, which opens it in the same tick;
+    ///   2. `code-server -r <target>` — a fresh Node CLI process routed through the per-user
+    ///      session socket to the most recently registered workbench (folder-prefix matches sort
+    ///      first), the fallback for a window that has not attached (or a code-server whose
+    ///      profile never got the seeded extension).
+    ///
+    /// Ensures the SERVER first (the
     /// panel may have been collapsed, its child never spawned), then retries the CLI asynchronously —
     /// the workbench SESSION registers only once a client's webview has booted the page, and the
     /// client typically expands the panel in the same breath as this call, so the first attempts can
@@ -197,8 +219,14 @@ final class CodeServerManager: @unchecked Sendable {
         _ = ensure(projectRoot: projectRoot)
         let run = runCLI
         let delay = openRetryDelay
+        let bridge = bridge
         return Task {
             for attempt in 0..<Self.openAttempts {
+                // The bridge is tried FIRST on every attempt, not just the first: on a cold start
+                // neither route exists yet, and whichever appears first should win the race. Once
+                // a window is attached this returns on the opening attempt, so the CLI — a whole
+                // Node process — never runs at all.
+                if bridge.open(target: target) { return true }
                 if await run(binary, ["-r", target]) == 0 { return true }
                 guard attempt + 1 < Self.openAttempts else { break }
                 try? await Task.sleep(for: delay)
@@ -220,8 +248,10 @@ final class CodeServerManager: @unchecked Sendable {
         lock.lock()
         let stranded = instance
         instance = nil
+        bridgeStarted = false
         lock.unlock()
         stranded?.handle.terminate()
+        bridge.stop()
     }
 
     // MARK: - Locked helpers
@@ -1136,6 +1166,84 @@ final class CodeServerManager: @unchecked Sendable {
         return try? Data(contentsOf: url)
     }
 
+    // MARK: - Bridge extension
+
+    /// The seeded BRIDGE extension's identity — the app's own extension, the one piece of code
+    /// (as opposed to theme data) SlopDesk runs inside the workbench. See
+    /// `Resources/bridge/extension.js` for what it does and ``CodeBridgeServer`` for the host end.
+    static let bridgeExtensionPublisher = "slopdesk"
+    static let bridgeExtensionName = "slopdesk-bridge"
+    static let bridgeExtensionVersion = "1.0.0"
+
+    static let bridgeExtensionDirectoryName =
+        "\(bridgeExtensionPublisher).\(bridgeExtensionName)-\(bridgeExtensionVersion)"
+
+    /// The bridge extension's manifest. `extensionKind: ["workspace"]` pins it to the REMOTE
+    /// extension host — the one running on this machine, next to the socket and the files; the web
+    /// worker host has neither. `onStartupFinished` keeps it off the workbench's critical path:
+    /// the first open command cannot arrive before a window exists to receive it anyway.
+    static let bridgeExtensionManifest = """
+    {
+        "name": "\(bridgeExtensionName)",
+        "displayName": "SlopDesk Bridge",
+        "description": "Opens files sent by the SlopDesk host, in the window that owns them.",
+        "publisher": "\(bridgeExtensionPublisher)",
+        "version": "\(bridgeExtensionVersion)",
+        "engines": { "vscode": "^1.0.0" },
+        "extensionKind": ["workspace"],
+        "activationEvents": ["onStartupFinished"],
+        "main": "./extension.js"
+    }
+    """
+
+    /// The bridge extension's entry point, carried as a target resource (real JS, kept in a `.js`
+    /// file so it reads and lints as JavaScript rather than as a Swift string literal). `nil` only
+    /// if the bundle is broken — then the seed is a no-op and opens fall back to the CLI.
+    static func bridgeExtensionSource() -> Data? {
+        guard let url = Bundle.module.url(
+            forResource: "Resources/bridge/extension", withExtension: "js",
+        ) ?? Bundle.module.url(forResource: "extension", withExtension: "js")
+        else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    /// Writes the bridge extension under `extensionsDir` and registers it, on the same terms as
+    /// the theme seeder: the folder is namespaced `slopdesk.*`, so OUR files are overwritten
+    /// whenever their bytes drift from the current source — that is how a hostd carrying a newer
+    /// `extension.js` upgrades the deployed copy without a version bump.
+    @discardableResult
+    static func seedBridgeExtension(
+        into extensionsDir: URL,
+        source: () -> Data? = { bridgeExtensionSource() },
+        fileManager: FileManager = .default,
+    ) -> Bool {
+        guard let js = source() else { return false }
+        let root = extensionsDir.appendingPathComponent(bridgeExtensionDirectoryName)
+        let files: [(URL, Data)] = [
+            (root.appendingPathComponent("package.json"), Data(bridgeExtensionManifest.utf8)),
+            (root.appendingPathComponent("extension.js"), js),
+        ]
+        var wrote = false
+        for (url, data) in files where (try? Data(contentsOf: url)) != data {
+            do {
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                )
+                try data.write(to: url)
+                wrote = true
+            } catch {
+                return wrote
+            }
+        }
+        let registered = registerExtension(
+            id: "\(bridgeExtensionPublisher).\(bridgeExtensionName)",
+            version: bridgeExtensionVersion,
+            directoryName: bridgeExtensionDirectoryName,
+            in: extensionsDir,
+        )
+        return wrote || registered
+    }
+
     /// Theme files the two-variant era wrote into the extension folder — swept by the seeder so
     /// the deployed folder carries exactly the current manifest's files, nothing stale.
     static let legacyThemeFileNames = [
@@ -1196,6 +1304,19 @@ final class CodeServerManager: @unchecked Sendable {
     static func registerThemeExtension(
         in extensionsDir: URL, fileManager _: FileManager = .default,
     ) -> Bool {
+        registerExtension(
+            id: "\(themeExtensionPublisher).\(themeExtensionName)",
+            version: themeExtensionVersion,
+            directoryName: themeExtensionDirectoryName,
+            in: extensionsDir,
+        )
+    }
+
+    /// The registry write itself, shared by the theme and bridge seeders — see
+    /// ``registerThemeExtension(in:fileManager:)`` for the contract this implements.
+    static func registerExtension(
+        id: String, version: String, directoryName: String, in extensionsDir: URL,
+    ) -> Bool {
         let registryURL = extensionsDir.appendingPathComponent("extensions.json")
         var entries: [[String: Any]] = []
         if let bytes = try? Data(contentsOf: registryURL) {
@@ -1203,16 +1324,15 @@ final class CodeServerManager: @unchecked Sendable {
             else { return false }
             entries = parsed
         }
-        let id = "\(themeExtensionPublisher).\(themeExtensionName)"
         let ours: [String: Any] = [
             "identifier": ["id": id],
-            "version": themeExtensionVersion,
+            "version": version,
             "location": [
                 "$mid": 1,
-                "path": extensionsDir.appendingPathComponent(themeExtensionDirectoryName).path,
+                "path": extensionsDir.appendingPathComponent(directoryName).path,
                 "scheme": "file",
             ],
-            "relativeLocation": themeExtensionDirectoryName,
+            "relativeLocation": directoryName,
             "metadata": ["installedTimestamp": 0, "pinned": true, "source": "resource"],
         ]
         let existing = entries.firstIndex {
@@ -1291,18 +1411,27 @@ final class CodeServerManager: @unchecked Sendable {
     "nlsBaseUrl":"https://www.vscode-unpkg.net/_lp/"}
     """
 
+    /// Where ``CodeBridgeServer`` listens: the user's temp dir, keyed by pid exactly like the
+    /// agent hook and control sockets, so two hosts on one machine never share a socket file.
+    static let bridgeSocketPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("slopdesk-code-bridge-\(getpid()).sock").path
+
     /// The environment every code-server child (server AND one-shot CLI) launches with: the
     /// parent's, plus ``marketplaceExtensionsGallery`` under `EXTENSIONS_GALLERY` — unless the
     /// operator exported their OWN gallery before hostd, which passes through untouched (the
     /// escape hatch IS the env var, not a new flag — docs/DECISIONS: important features ship
-    /// unflagged).
+    /// unflagged) — plus ``bridgeSocketPath`` under `SLOPDESK_CODE_BRIDGE_SOCKET`, which the
+    /// remote extension host inherits and the seeded bridge extension connects back to. A
+    /// workbench started outside hostd sees no such var and the extension stays dormant.
     static func childEnvironment(
         base: [String: String] = ProcessInfo.processInfo.environment,
+        bridgeSocket: String = bridgeSocketPath,
     ) -> [String: String] {
         var environment = base
         if (environment["EXTENSIONS_GALLERY"] ?? "").isEmpty {
             environment["EXTENSIONS_GALLERY"] = marketplaceExtensionsGallery
         }
+        environment["SLOPDESK_CODE_BRIDGE_SOCKET"] = bridgeSocket
         return environment
     }
 
@@ -1323,7 +1452,9 @@ final class CodeServerManager: @unchecked Sendable {
     /// plus the ``seedThemeExtension(into:themeData:fileManager:)`` the seeded theme name refers to.
     static let defaultSettingsSeeder: SettingsSeeder = {
         seedUserSettings(at: userSettingsURL())
-        seedThemeExtension(into: dataDirURL().appendingPathComponent("extensions"))
+        let extensions = dataDirURL().appendingPathComponent("extensions")
+        seedThemeExtension(into: extensions)
+        seedBridgeExtension(into: extensions)
     }
 
     /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`

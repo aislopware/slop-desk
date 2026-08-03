@@ -311,8 +311,10 @@ never offers or falls back to another version.
     host-update hint.
   - **`openInCodeServer` (19) is the open-from-terminal verb** (⌘click / hint-mode / jump-to
     "open" on a detected terminal path routes HERE instead of verb 9): the host opens the file in
-    the running embedded workbench via the code-server CLI (`code-server -r path[:line[:col]]`,
-    which lands in the most recently registered workbench session). Request payload: raw UTF-8
+    the running embedded workbench, by preference over the `slopdesk.slopdesk-bridge` extension's
+    socket (one line to the extension host of the window whose folder CONTAINS the file), else via
+    the code-server CLI (`code-server -r path[:line[:col]]`, which lands in the most recently
+    registered workbench session). The choice is invisible on the wire. Request payload: raw UTF-8
     host path — absolute or `~`-anchored (expanded host-side like verb 9), optionally suffixed
     `:line[:col]` (ASCII digits, at most two runs; the existence check strips the suffix, the CLI
     keeps it). Response: status + a **1-byte** `CodeOpenDisposition` payload — `0` workbench (the
@@ -320,10 +322,11 @@ never offers or falls back to another version.
     target opened via the verb-9 default-app fallback; the panel stays put). A **directory**, or a
     host **without** the code-server binary, takes the fallback (`ok`/`notFound`/`error` per the
     fallback's own verb-9 semantics + disposition `1`); a workbench-bound file answers `ok` + `0`
-    **immediately — accepted, not completed** (the CLI lands only after a workbench session has
-    registered, which typically happens in the same breath as the reveal this very reply triggers,
-    so the host retries the CLI async — 10 × 2 s — and the metadata queue never sits out a
-    workbench boot). `notFound` = the bare path does not exist on the host; `error` = a malformed
+    **immediately — accepted, not completed** (neither route exists until a workbench window has
+    come up, which typically happens in the same breath as the reveal this very reply triggers, so
+    the host retries async — 10 × 2 s, offering the bridge before the CLI on every attempt — and the
+    metadata queue never sits out a workbench boot). `notFound` = the bare path does not exist on
+    the host; `error` = a malformed
     (empty/relative/non-UTF-8) payload. An unknown future disposition byte reads *workbench*
     client-side (worst case a revealed panel, never a silently invisible open); a trailing payload
     byte is tolerated. **Host-global** like 18 (same shared instance; no cwd confinement — no host
