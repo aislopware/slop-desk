@@ -1,12 +1,12 @@
-// NavigatorColumn — the left sidebar navigator: a flat "TABS" panel on the `Slate.Surface.ground`
-// background (NOT native `.sidebar` vibrancy — the host split item is a PLAIN item), the caps
-// "TABS" label with the trailing panel-menu icon, and rows ALWAYS grouped into By-Project sections
-// under a gutter-chevron + NAME group header that shares ONE left rail with its rows — the live
-// git line (mono metadata) on a second line beneath the name, the hidden-row count trailing while
-// collapsed (``SidebarSectionHeaderRow``, collapsible with an animated glide; each pane's key is
-// HOST-pushed — see `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). No
-// search field — the sidebar is bare rows; jumping is ⌘⇧O's job. Top 40pt is reserved for the
-// traffic lights under the hidden titlebar.
+// NavigatorColumn — the left sidebar navigator: a flat tabs panel on the `Slate.Surface.ground`
+// background (NOT native `.sidebar` vibrancy — the host split item is a PLAIN item), a header
+// SEARCH FIELD spanning the full row width (it shares the tab cards' gutter — no trailing
+// controls), and rows ALWAYS grouped into By-Project sections under a gutter-chevron + NAME group
+// header that shares ONE left rail with its rows — the live git line (mono metadata) on a second
+// line beneath the name, the hidden-row count trailing while collapsed
+// (``SidebarSectionHeaderRow``, collapsible with an animated glide; each pane's key is
+// HOST-pushed — see `WorkspaceStore.paneProjectKey`; sections and rows follow creation order).
+// Top 40pt is reserved for the traffic lights under the hidden titlebar.
 //
 // iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
 // button list does not drive column navigation). Themed to match macOS but keeps the system list's navigation
@@ -52,11 +52,11 @@ struct NavigatorColumn: View {
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
 
-    #if os(iOS)
-    /// The transient sidebar search query (iOS `.searchable` only — the macOS panel is bare rows,
-    /// the otty way) — narrows the rows via the pure ``RailRowsBuilder/filtered``.
+    /// The transient sidebar search query — narrows the rows via the pure
+    /// ``RailRowsBuilder/filtered``. On iOS it feeds the system `.searchable`; on macOS the
+    /// panel's own header search field (user-directed 2026-08-03: the header row IS the search
+    /// bar — it replaced the caps "TABS" label). Session-scoped, never persisted.
     @State private var query = ""
-    #endif
 
     /// The memoized row model: the sidebar body reads its rows from HERE so a settled body
     /// registers NO Observation dependency on the store's volatile per-pane dicts — a status/git/progress
@@ -161,7 +161,7 @@ struct NavigatorColumn: View {
     /// native vibrancy/rounding).
     private var macSidebar: some View {
         let allRows = renderedRows
-        let sections = buildSections(allRows, query: "")
+        let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
             // Traffic-light strip: ONLY the sidebar-collapse toggle (top-trailing). Connection lives in the
             // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
@@ -191,51 +191,47 @@ struct NavigatorColumn: View {
             }
             .frame(height: Slate.Metric.titlebarHeight)
             .background(HoverSensor { stripHover = $0 })
-            HStack(spacing: 0) {
-                // The otty panel label: caps, SYSTEM face, the measured `.tracking(0.6)` — chrome's
-                // own register (the lightest ink in the panel; project headers sit one step darker).
-                Text("TABS")
-                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                    .tracking(Slate.Typeface.capsTracking)
-                    .foregroundStyle(Slate.State.header)
-                Spacer(minLength: 0)
-                // otty's trailing panel-menu icon. Theirs offers grouping/order modes; ours is
-                // always-grouped-by-project, so the menu carries only the honest actions.
-                Menu {
-                    Button("Collapse All Groups") {
-                        withAnimation(Slate.Anim.standard) {
-                            collapsedSections = Set(sections.map { Self.collapseKey($0.projectKey) })
-                        }
+            // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
+            // "TABS" label AND its trailing groups menu, both user-retired): a quiet inset field
+            // on the hover tint, filtering the rows below through the SAME pure
+            // `RailRowsBuilder.filtered` the iOS `.searchable` rides. Clearing is one click (the
+            // ⓧ appears only while a query is live). Full-row width — the field shares the LIST's
+            // 8pt gutter, so it reads as wide as the tab cards under it.
+            HStack(spacing: Slate.Metric.space1) {
+                Image(systemSymbol: .magnifyingglass)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.icon)
+                TextField("Search tabs", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.primary)
+                    .tint(Slate.Text.primary) // caret in the text's own ink, not an accent
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemSymbol: .xmarkCircleFill)
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(Slate.Text.icon)
+                            .contentShape(.rect)
                     }
-                    Button("Expand All Groups") {
-                        withAnimation(Slate.Anim.standard) { collapsedSections.removeAll() }
-                    }
-                    Divider()
-                    Button("Refresh Git Status") {
-                        for key in sections.compactMap(\.projectKey) {
-                            store.refreshGitSummary(forProject: key)
-                        }
-                    }
-                } label: {
-                    Image(systemSymbol: .line3HorizontalDecrease)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                        .foregroundStyle(Slate.State.header)
+                    .buttonStyle(.plain)
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Tab groups")
             }
-            // list inset + row inset — the caps label sits on the same left rail as every text
-            // run below it (header names, git lines, row titles).
-            .padding(.horizontal, Slate.Metric.space2 + Slate.Metric.tabRowInset)
+            .padding(.horizontal, Slate.Metric.space2)
+            .frame(height: Slate.Metric.heightControl)
+            .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
+            // share one width.
+            .padding(.horizontal, 8)
             .padding(.bottom, 6)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if allRows.isEmpty {
                         emptyLabel("No tabs open")
+                    } else if sections.isEmpty {
+                        emptyLabel("No matching tabs")
                     } else {
                         ForEach(sections) { section in
                             let collapseKey = Self.collapseKey(section.projectKey)

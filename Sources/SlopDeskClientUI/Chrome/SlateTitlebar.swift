@@ -3,10 +3,10 @@
 //   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed (expanded toggle
 //     lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the RIGHT-panel REOPEN (`sidebar.right`), only while that panel is collapsed (the
-//     expanded panel's tabs/reload/collapse live in its OWN top strip — `CodeSidebarColumn`); and
-//     the connection cluster ONLY while the LEFT sidebar is collapsed (resting home is the
-//     sidebar FOOTER).
+//   • right — the RIGHT-panel TOGGLE (`sidebar.right`), hover-revealed in BOTH states: the
+//     terminal section's top-right corner owns the panel's show/hide (the panel's own strip
+//     carries only its tabs + reload); and the connection cluster ONLY while the LEFT sidebar is
+//     collapsed (resting home is the sidebar FOOTER).
 // The plate buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
 // faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
 // strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
@@ -86,12 +86,12 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the RIGHT-panel REOPEN (`sidebar.right`) — only while the panel is collapsed
-            // and the top strip is hovered, the exact mirror of the left sidebar's reopen. While
-            // expanded, the panel's own top strip (`CodeSidebarColumn`) owns its tabs, reload and
-            // collapse — the strip lives ON the panel it controls, not over the terminal. The slot
-            // is ALWAYS reserved (hidden ⇒ transparent, not absent) so the connection cluster
-            // never shifts — the zero-shift rule.
+            // Right: the RIGHT-panel TOGGLE (`sidebar.right`) — hover-revealed in BOTH states
+            // (user-directed 2026-08-03: the panel's show/hide control lives at the terminal
+            // section's top-right corner, not inside the panel it hides — a control that removes
+            // its own surface would take its reopen with it). The slot is ALWAYS reserved
+            // (hidden ⇒ transparent, not absent) so the connection cluster never shifts — the
+            // zero-shift rule.
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -103,10 +103,10 @@ struct SlateTitlebar: View {
                     )
                 }
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
-                    .opacity(!codeSidebarVisible && topHover ? 1 : 0)
-                    .allowsHitTesting(!codeSidebarVisible && topHover)
+                    .opacity(topHover ? 1 : 0)
+                    .allowsHitTesting(topHover)
                     .animation(Slate.Anim.smallFade, value: topHover)
-                    .help("Show the right panel")
+                    .help(codeSidebarVisible ? "Hide the right panel" : "Show the right panel")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)

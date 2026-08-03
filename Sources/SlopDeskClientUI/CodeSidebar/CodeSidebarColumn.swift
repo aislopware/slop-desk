@@ -9,10 +9,12 @@
 // webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the
 // `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
 //
-// The panel carries its OWN top strip (the otty right-panel pattern): the tab plates ("Code"
-// selected + the "Desktop" placeholder — selected expands to icon + label, the rest are icon-only),
-// a reload plate, and the `sidebar.right` collapse — the workbench sits BELOW the strip. The
-// titlebar keeps only the mirrored REOPEN plate while the panel is collapsed.
+// The panel carries its OWN top strip (the otty right-panel pattern): a REAL tab row — "Code"
+// (the embedded workbench) and "Desktop" (the window-OS surface; its content is still a
+// placeholder) — plus the reload plate. The selected tab expands to icon + label, the other
+// collapses to its icon; clicking switches the surface below. The panel's show/hide toggle lives
+// in the TITLEBAR over the terminal (`SlateTitlebar`, user-directed 2026-08-03), not in this
+// strip.
 
 #if os(macOS)
 import SFSafeSymbols
@@ -26,8 +28,9 @@ struct CodeSidebarColumn: View {
     /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
     /// (`target.host`), on the shared code-server port the ensure RPC reports.
     let connection: AppConnection
-    /// The shared chrome state — the strip's collapse plate flips `codeSidebarCollapsed`, the same
-    /// flag the titlebar's reopen plate flips back while the panel is hidden.
+    /// The shared chrome state. The panel's show/hide toggle moved to the terminal's titlebar
+    /// (`SlateTitlebar` — user-directed 2026-08-03), so this column no longer flips the flag
+    /// itself; the reference stays for the surfaces that will need chrome (Desktop reveal etc.).
     let chrome: WorkspaceChromeState
     /// The live preferences store (nil only in previews/automation shells) — the terminal font
     /// prefs the panel pushes host-side (verb 20) so the editor reads like the terminal beside it.
@@ -36,6 +39,16 @@ struct CodeSidebarColumn: View {
     let preferences: PreferencesStore?
 
     @State private var model = CodeSidebarModel()
+
+    /// The panel surface the strip's tab row selects. Per-window view state (the hosting
+    /// controller keeps the SwiftUI hierarchy across collapse/expand, so the choice survives a
+    /// hide — but not a relaunch; the panel always comes back on Code, the primary surface).
+    enum SurfaceTab {
+        case code
+        case desktop
+    }
+
+    @State private var surfaceTab: SurfaceTab = .code
 
     private var activePane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
@@ -73,7 +86,19 @@ struct CodeSidebarColumn: View {
             // ground band ends in an abrupt tone change against the workbench's own tab strip,
             // two mismatched grays stacked with no rule between them.
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            surface
+            switch surfaceTab {
+            case .code:
+                surface
+            case .desktop:
+                // The announced window-OS surface — content still a placeholder; the TAB is real
+                // (selecting it parks the Code surface, whose pooled webview survives unmounted
+                // exactly like a project switch, and cancels the ensure poll until Code returns).
+                placeholder(
+                    symbol: .display,
+                    title: "Desktop",
+                    detail: "The host's window surface arrives here.",
+                )
+            }
         }
         .background(Slate.Surface.ground)
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
@@ -89,28 +114,35 @@ struct CodeSidebarColumn: View {
     /// never over the terminal). Tab plates lead, actions trail (the otty strip layout); the row
     /// is CENTERED in the strip band (user-directed 2026-08-03, overriding the earlier
     /// titlebar-row top-anchor). Tab vocabulary is otty's: the SELECTED surface expands to
-    /// icon + label, every other tab collapses to its icon. "Desktop" is the announced second
-    /// surface — a placeholder plate today (the window-OS panel it will select does not exist
-    /// yet), so its click is a no-op; its glyph is `display`, the app's existing GUI-surface
-    /// vocabulary (`macwindow` read as a blob at strip size — user-rejected).
+    /// icon + label, every other tab collapses to its icon; both tabs are REAL (click = switch
+    /// the surface below). Desktop's glyph is `display`, the app's existing GUI-surface
+    /// vocabulary (`macwindow` read as a blob at strip size — user-rejected). The reload plate
+    /// rides only the Code surface (Desktop has nothing to reload); the panel's hide toggle
+    /// lives in the terminal's titlebar, not here.
     private var strip: some View {
         HStack(spacing: Slate.Metric.space1) {
-            PanelTabPlate(symbol: .chevronLeftForwardslashChevronRight, label: "Code", selected: true)
+            PanelTabPlate(
+                symbol: .chevronLeftForwardslashChevronRight, label: "Code",
+                selected: surfaceTab == .code,
+            ) { surfaceTab = .code }
                 .help("Code — the project's embedded editor")
-            PanelTabPlate(symbol: .display, label: "Desktop", selected: false)
-                .help("Desktop — coming soon")
-            Spacer(minLength: 0)
-            PlateIconButton(symbol: .arrowClockwise) {
-                guard let root = activeProjectRoot else { return }
-                CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                model.requestReload()
+            PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {
+                surfaceTab = .desktop
             }
-            .help("Reload the workbench")
-            PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
-                .help("Hide the right panel")
+            .help("Desktop — the host's window surface")
+            Spacer(minLength: 0)
+            if surfaceTab == .code {
+                PlateIconButton(symbol: .arrowClockwise) {
+                    guard let root = activeProjectRoot else { return }
+                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                    model.requestReload()
+                }
+                .help("Reload the workbench")
+            }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.titlebarHeight)
+        .animation(Slate.Anim.smallFade, value: surfaceTab == .code)
     }
 
     /// The workbench surface below the strip — phase-switched per the active project.

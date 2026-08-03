@@ -8,12 +8,42 @@
 // the `WorkspaceChromeState.pinned` flag + the `OverlayCoordinator.togglePinWindow` seam the root view
 // (`wireChromeToggles`) and the menu (`WorkspaceCommands`) flip — driven headlessly, no AppKit.
 
+import Defaults
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class WorkspaceChromePinTests: XCTestCase {
+    /// The RIGHT code panel's collapse is the one PERSISTED chrome flag: a fresh
+    /// `WorkspaceChromeState` (≙ a relaunch) seeds from `Defaults[.codeSidebarCollapsed]`, and both
+    /// write paths (`toggleCodeSidebar` / `revealCodeSidebar`) store the choice back — the full
+    /// remember-open/closed round-trip, headless. (Runs against the per-pid XCTest defaults suite,
+    /// so nothing leaks into the developer's real prefs; still restored below for suite-mates.)
+    func testCodeSidebarCollapseSeedsFromAndPersistsToDefaults() {
+        let original = Defaults[.codeSidebarCollapsed]
+        defer { Defaults[.codeSidebarCollapsed] = original }
+
+        Defaults[.codeSidebarCollapsed] = false
+        let chrome = WorkspaceChromeState()
+        XCTAssertFalse(chrome.codeSidebarCollapsed, "a chrome born after an expanded session restores expanded")
+
+        chrome.toggleCodeSidebar()
+        XCTAssertTrue(chrome.codeSidebarCollapsed)
+        XCTAssertTrue(Defaults[.codeSidebarCollapsed], "the manual hide persists")
+        XCTAssertTrue(
+            WorkspaceChromeState().codeSidebarCollapsed,
+            "a relaunch (fresh chrome) reads the persisted hide",
+        )
+
+        chrome.toggleCodeSidebar()
+        XCTAssertFalse(Defaults[.codeSidebarCollapsed], "the manual show persists too")
+
+        chrome.toggleCodeSidebar() // hidden again…
+        chrome.revealCodeSidebar() // …and the open-in-code reveal is the second write path
+        XCTAssertFalse(Defaults[.codeSidebarCollapsed], "revealCodeSidebar persists the expand")
+    }
+
     /// A fresh window is NOT pinned (pinning is an explicit affordance), and `togglePin()`
     /// flips the flag each call. REVERT-TO-CONFIRM-FAIL: the property / method do not exist on the un-fixed
     /// `WorkspaceChromeState`, so this fails to compile-then-pass only once the property / method are added.
