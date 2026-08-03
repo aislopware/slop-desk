@@ -6622,3 +6622,20 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   while the legacy `.doc` deprecation-warns at the app target — if an SF6-only glyph is ever
   required, the raw `SFSymbol(rawValue:)` spelling is the one warning-free path. `folder`
   sidesteps the family entirely.
+
+## The workbench installs from the official VS Code Marketplace (2026-08-03)
+
+code-server ships pointed at Open VSX, whose catalog is opt-in — most first-party `ms-*`
+tooling (Pylance, C/C++, …) is simply absent, so the panel's Extensions view could not serve
+the extensions a user actually reaches for (user-directed). Every code-server child hostd
+spawns — the supervised server and the one-shot CLI — now launches with `EXTENSIONS_GALLERY`
+set to the official marketplace URL set (the override code-server itself supports: the env var
+is JSON-parsed and replaces the Open VSX default wholesale, so the value mirrors VS Code
+stable's `product.json` in full). Consciously NO new flag (important features ship unflagged):
+the escape hatch is the env var itself — an operator who exports their own gallery before
+hostd keeps it verbatim. No proxy either: the marketplace API answers CORS-open (vscode.dev
+consumes it from a browser), so the webview workbench reaches it directly. The ToS trade
+(Microsoft scopes the marketplace API to VS Code products) is the operator's own, the same one
+every code-server/VSCodium user makes on their personal setup. Proven end-to-end in the GUI
+fixture: search finds Pylance, Trust-Publisher + Install lands `ms-python.vscode-pylance` in
+the profile's extensions dir, and the language server starts analyzing.
