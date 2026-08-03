@@ -45,7 +45,7 @@ final class CodeSidebarModelTests: XCTestCase {
             CodeSidebarModel.phase(
                 for: .init(state: .ready, port: 8080), host: "h", projectRoot: "/p",
             ),
-            .ready(XCTUnwrap(URL(string: "http://h:8080/?folder=/p"))),
+            .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://h:8080/?folder=/p"))),
         )
     }
 
@@ -95,7 +95,10 @@ final class CodeSidebarModelTests: XCTestCase {
             ensure: { _ in states[min(round.next(), states.count - 1)] },
             interval: .zero,
         )
-        try XCTAssertEqual(model.phase, .ready(XCTUnwrap(URL(string: "http://h:6000/?folder=/p"))))
+        try XCTAssertEqual(
+            model.phase,
+            .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://h:6000/?folder=/p"))),
+        )
         XCTAssertEqual(round.value, 3)
     }
 
@@ -113,7 +116,10 @@ final class CodeSidebarModelTests: XCTestCase {
             },
             interval: .zero,
         )
-        try XCTAssertEqual(model.phase, .ready(XCTUnwrap(URL(string: "http://h:7000/?folder=/p"))))
+        try XCTAssertEqual(
+            model.phase,
+            .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://h:7000/?folder=/p"))),
+        )
     }
 
     func testPollLocalizesOnlyTheReadyRound() async throws {
@@ -139,7 +145,7 @@ final class CodeSidebarModelTests: XCTestCase {
             interval: .zero,
         )
         try XCTAssertEqual(
-            model.phase, .ready(XCTUnwrap(URL(string: "http://127.0.0.1:50001/?folder=/p"))),
+            model.phase, .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://127.0.0.1:50001/?folder=/p"))),
         )
         XCTAssertEqual(localized.value, 1)
     }
@@ -155,7 +161,8 @@ final class CodeSidebarModelTests: XCTestCase {
             interval: .zero,
         )
         try XCTAssertEqual(
-            model.phase, .ready(XCTUnwrap(URL(string: "http://mesh-host:6000/?folder=/p"))),
+            model.phase,
+            .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://mesh-host:6000/?folder=/p"))),
         )
     }
 

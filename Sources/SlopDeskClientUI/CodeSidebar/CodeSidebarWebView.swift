@@ -261,17 +261,39 @@ private final class CodeSidebarClipboardBridge: NSObject, WKScriptMessageHandler
     }
 }
 
-/// Mounts the pooled webview for one project inside a plain container view. A container (not the
-/// webview itself) because the pooled NSView must survive this representable's teardown — SwiftUI
-/// destroys `makeNSView`'s product on structural identity changes, and the whole point of the pool
-/// is that the workbench outlives the column's re-renders and project switches.
+/// The webview's mount that DECAPITATES the web title bar. The workbench force-shows its title
+/// bar while the activity bar sits at "top" (seed v12 — the band must host the relocated
+/// accounts/manage actions), and the grid positions every part with inline absolute geometry, so
+/// a CSS `display: none` leaves a dead gap instead of reflowing. The clip is the clean cut: the
+/// webview is laid out TALLER than the container by exactly the title-bar height and shifted up,
+/// so the band renders above the clip line — the workbench still believes in it, the user never
+/// sees it (user-directed 2026-08-03). Hit-testing is bounds-guarded: without it the overhang
+/// would sit under the panel's strip and eat its clicks.
+final class CodeSidebarClippedContainer: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview, bounds.contains(convert(point, from: superview)) else { return nil }
+        return super.hitTest(point)
+    }
+}
+
+/// Mounts the pooled webview for one project inside a clipping container view. A container (not
+/// the webview itself) because the pooled NSView must survive this representable's teardown —
+/// SwiftUI destroys `makeNSView`'s product on structural identity changes, and the whole point of
+/// the pool is that the workbench outlives the column's re-renders and project switches.
 struct CodeSidebarWebView: NSViewRepresentable {
     let projectRoot: String
     let url: URL
 
+    /// The web workbench title bar's CSS height (35px at zoom 1 — VS Code's fixed titlebar
+    /// metric, pixel-verified against 4.112). The webview overhangs the container by this much;
+    /// see ``CodeSidebarClippedContainer``. Coupled to seed v12's `activityBar.location: "top"` —
+    /// a seed that stops forcing the title bar should retire this to 0.
+    static let clippedTitleBarHeight: CGFloat = 35
+
     func makeNSView(context _: Context) -> NSView {
-        let container = NSView()
+        let container = CodeSidebarClippedContainer()
         container.wantsLayer = true
+        container.clipsToBounds = true
         return container
     }
 
@@ -284,7 +306,9 @@ struct CodeSidebarWebView: NSViewRepresentable {
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.topAnchor.constraint(
+                equalTo: container.topAnchor, constant: -Self.clippedTitleBarHeight,
+            ),
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
     }

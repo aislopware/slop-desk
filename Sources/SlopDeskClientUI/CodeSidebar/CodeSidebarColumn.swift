@@ -183,14 +183,19 @@ struct CodeSidebarColumn: View {
         }
     }
 
-    /// The phase surface for the active project. The webview mounts ONLY in `.ready` — the pooled
-    /// instance underneath survives the unmount (project switches are warm swaps).
+    /// The phase surface for the active project. The webview mounts ONLY in a `.ready` whose root
+    /// matches the ACTIVE project — a `.ready` still carrying the previous project (the render
+    /// between a switch and its restarted poll) renders the waiting surface instead. Minting the
+    /// pool's webview from that stale phase opened the OLD project's folder for the new root and
+    /// stuck there (user-reported 2026-08-03; the pool re-loads only on a host/port move). The
+    /// pooled instance underneath survives the unmount (project switches are warm swaps).
     @ViewBuilder
     private func content(projectRoot: String) -> some View {
         switch model.phase {
-        case let .ready(url):
+        case let .ready(root, url) where root == projectRoot:
             webContent(projectRoot: projectRoot, url: url)
-        case .starting:
+        case .ready,
+             .starting:
             waiting("Starting code-server…")
         case .unavailable:
             placeholder(

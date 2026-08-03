@@ -25,8 +25,13 @@ enum CodeSidebarPhase: Equatable {
     /// No code-server binary on the host — render the install hint. Still polled (slowly): a
     /// `brew install code-server` mid-session is picked up without a restart.
     case unavailable
-    /// The workbench is reachable — load `url` in the webview and stop polling.
-    case ready(URL)
+    /// The workbench is reachable — load `url` in the webview and stop polling. Carries the
+    /// project root the URL was built FOR: on a project switch the column re-renders before the
+    /// new poll task runs, so a `.ready` can be a stale leftover of the PREVIOUS project — and a
+    /// webview minted from it would open the old folder and stick (the pool's re-load check
+    /// compares host/port only, never the folder). The column mounts the webview only when this
+    /// root matches the active one.
+    case ready(projectRoot: String, url: URL)
 }
 
 /// The poll-loop model, one per code panel column. `@Observable` so the column re-renders on each
@@ -93,7 +98,7 @@ final class CodeSidebarModel {
         case .ready:
             guard let host, let url = folderURL(host: host, port: endpoint.port, projectRoot: projectRoot)
             else { return .offline }
-            return .ready(url)
+            return .ready(projectRoot: projectRoot, url: url)
         }
     }
 
