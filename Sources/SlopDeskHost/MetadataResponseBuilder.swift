@@ -199,7 +199,8 @@ struct MetadataResponseBuilder {
             return reply(requestID, .error, Data())
 
         case .ensureCodeServer,
-             .openInCodeServer:
+             .openInCodeServer,
+             .syncCodeFont:
             // The embedded-editor verbs are likewise NOT this READ-ONLY builder's job —
             // `MuxChannelSession.serveMetadata` routes them to `HostCodeServerPerformer` BEFORE the
             // builder (they spawn / drive a code-server child), so they never reach here in

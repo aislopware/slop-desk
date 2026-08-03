@@ -46,6 +46,102 @@ final class CodeServerEndpointCodecTests: XCTestCase {
     }
 }
 
+/// The ``MetadataCodec/CodeFontSpec`` wire codec (`syncCodeFont` = 20): the
+/// `[UInt16 len][family UTF-8][UInt64 BE size bits][UInt64 BE lineHeight bits]` shape,
+/// validate-then-drop on truncation AND on out-of-range values — these numbers land in a settings
+/// file the workbench trusts, so the DECODER is the range gate, not the writer.
+final class CodeFontSpecCodecTests: XCTestCase {
+    func testRoundTrip() throws {
+        let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
+        let decoded = try MetadataCodec.decodeCodeFontSpec(MetadataCodec.encodeCodeFontSpec(spec))
+        XCTAssertEqual(decoded, spec)
+    }
+
+    func testEncodedShapeIsPinned() {
+        // [u16 len][utf8][size bitPattern BE][lineHeight bitPattern BE] — 14.0 = 0x402C…, 1.5 = 0x3FF8….
+        let data = MetadataCodec.encodeCodeFontSpec(
+            MetadataCodec.CodeFontSpec(family: "JB", size: 14, lineHeight: 1.5),
+        )
+        XCTAssertEqual(
+            Array(data),
+            [
+                0x00,
+                0x02,
+                0x4A,
+                0x42,
+                0x40,
+                0x2C,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0x3F,
+                0xF8,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+        )
+    }
+
+    func testTruncatedThrows() {
+        let full = MetadataCodec.encodeCodeFontSpec(
+            MetadataCodec.CodeFontSpec(family: "JB", size: 14, lineHeight: 1.5),
+        )
+        for cut in 0..<full.count {
+            XCTAssertThrowsError(try MetadataCodec.decodeCodeFontSpec(full.prefix(cut)))
+        }
+    }
+
+    func testTrailerTolerated() throws {
+        var data = MetadataCodec.encodeCodeFontSpec(
+            MetadataCodec.CodeFontSpec(family: "JB", size: 14, lineHeight: 1.5),
+        )
+        data.append(contentsOf: [0xAB, 0xCD]) // a future field must not break this reader
+        XCTAssertEqual(try MetadataCodec.decodeCodeFontSpec(data).family, "JB")
+    }
+
+    func testBlankFamilyDrops() {
+        for family in ["", "   "] {
+            XCTAssertThrowsError(try MetadataCodec.decodeCodeFontSpec(
+                MetadataCodec.encodeCodeFontSpec(
+                    MetadataCodec.CodeFontSpec(family: family, size: 14, lineHeight: 1.5),
+                ),
+            ))
+        }
+    }
+
+    func testOutOfRangeAndNaNDrop() {
+        // Size clamps to 4…128, lineHeight to 0.5…4; NaN fails BOTH `>=` gates by comparison
+        // semantics — no explicit isNaN check needed, and these pin that stays true.
+        let bad: [(Double, Double)] = [
+            (3.9, 1.5), (128.1, 1.5), (14, 0.49), (14, 4.1),
+            (Double.nan, 1.5), (14, Double.nan),
+        ]
+        for (size, lineHeight) in bad {
+            XCTAssertThrowsError(try MetadataCodec.decodeCodeFontSpec(
+                MetadataCodec.encodeCodeFontSpec(
+                    MetadataCodec.CodeFontSpec(family: "JB", size: size, lineHeight: lineHeight),
+                ),
+            ), "size \(size) lineHeight \(lineHeight) must drop")
+        }
+    }
+
+    func testBoundaryValuesPass() throws {
+        for (size, lineHeight) in [(4.0, 0.5), (128.0, 4.0)] {
+            let spec = MetadataCodec.CodeFontSpec(family: "JB", size: size, lineHeight: lineHeight)
+            XCTAssertEqual(
+                try MetadataCodec.decodeCodeFontSpec(MetadataCodec.encodeCodeFontSpec(spec)), spec,
+            )
+        }
+    }
+}
+
 /// The ``MetadataCodec/CodeOpenDisposition`` wire codec (`openInCodeServer` = 19): the 1-byte
 /// payload, truncation, trailer toleration, and the forward-tolerant unknown byte (→ `.workbench`,
 /// the benign reveal-the-panel fallback).

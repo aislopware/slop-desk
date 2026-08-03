@@ -77,14 +77,17 @@ final class CodeServerManagerTests: XCTestCase {
         settingsSeeder: @escaping @Sendable () -> Void = {},
         cliRunner: @escaping CodeServerManager.CLIRunner = { _, _ in nil },
     ) -> CodeServerManager {
-        // The seeder and CLI runner are ALWAYS injected — the default seams write the real user's
-        // `~/.local/share/code-server` settings / exec a real binary, which no test may touch.
-        CodeServerManager(
+        // The seeder, CLI runner AND settings-file URL are ALWAYS injected — the default seams
+        // write the real user's `~/.local/share/code-server` settings / exec a real binary, which
+        // no test may touch.
+        let settingsURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
+        return CodeServerManager(
             binaryLocator: { binary },
             spawner: { bin, args, onLine in spawner.spawn(binary: bin, arguments: args, onLine: onLine) },
             readinessProbe: probe,
             settingsSeeder: settingsSeeder,
             cliRunner: cliRunner,
+            settingsFileURL: { settingsURL },
             probeInterval: .zero,
             openRetryDelay: .zero,
         )
@@ -332,6 +335,127 @@ final class CodeServerManagerTests: XCTestCase {
         }
     }
 
+    func testFontSyncedFormerSeedStillUpgrades() throws {
+        // A former seed whose ONLY divergence is the verb-20 font trio (sync rewrote the file,
+        // re-serializing it wholesale) is still OURS — the format-blind + font-blind comparator
+        // must upgrade it, or every font-synced host is stranded on its old seed forever.
+        let fileURL = URL(fileURLWithPath: root)
+            .appendingPathComponent("data/code-server/User/settings.json")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+        )
+        for former in CodeServerManager.obsoleteSeeds {
+            try Data(former.utf8).write(to: fileURL)
+            CodeServerManager.syncEditorFont(
+                MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44),
+                at: fileURL,
+            )
+            XCTAssertNotEqual(try Data(contentsOf: fileURL), Data(former.utf8))
+            XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
+            XCTAssertEqual(
+                try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
+            )
+        }
+    }
+
+    func testFontSyncedCurrentSeedIsLeftAlone() throws {
+        // The CURRENT seed with synced fonts is up to date — a rewrite would clobber the client's
+        // sync on every manager lifetime (the seed lays defaults; the sync overrides them).
+        let fileURL = URL(fileURLWithPath: root)
+            .appendingPathComponent("data/code-server/User/settings.json")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+        )
+        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
+        CodeServerManager.syncEditorFont(
+            MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44), at: fileURL,
+        )
+        let synced = try Data(contentsOf: fileURL)
+        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(try Data(contentsOf: fileURL), synced)
+    }
+
+    func testUserEditedFormerSeedNeverUpgradesEvenWithFontDrift() throws {
+        // A REAL user edit beyond the font trio (here: wordWrap) makes the file theirs — no
+        // upgrade, no matter how seed-like the rest looks.
+        let fileURL = URL(fileURLWithPath: root)
+            .appendingPathComponent("data/code-server/User/settings.json")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+        )
+        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.last)
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(former.utf8)) as? [String: Any],
+        )
+        object["editor.wordWrap"] = "on"
+        object["editor.fontSize"] = 15
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted])
+            .write(to: fileURL)
+        let edited = try Data(contentsOf: fileURL)
+        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(try Data(contentsOf: fileURL), edited)
+    }
+
+    // MARK: Editor font sync (verb 20)
+
+    func testSyncEditorFontPatchesTheTrioAndKeepsEveryOtherKey() throws {
+        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
+        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
+        XCTAssertTrue(CodeServerManager.syncEditorFont(
+            MetadataCodec.CodeFontSpec(family: "Iosevka", size: 14, lineHeight: 1.58), at: fileURL,
+        ))
+        let settings = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any],
+        )
+        XCTAssertEqual(
+            settings["editor.fontFamily"] as? String,
+            "'Iosevka', 'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+        )
+        XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
+        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
+        // Every non-font key rides through untouched.
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "SlopDesk Monokai")
+        XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
+    }
+
+    func testSyncEditorFontIsChurnFreeWhenAlreadyInSync() throws {
+        // Every ensure round re-syncs — the second identical spec must NOT rewrite the file (the
+        // workbench's settings watcher would reload for nothing).
+        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
+        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
+        let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
+        XCTAssertTrue(CodeServerManager.syncEditorFont(spec, at: fileURL))
+        let once = try Data(contentsOf: fileURL)
+        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: fileURL))
+        XCTAssertEqual(try Data(contentsOf: fileURL), once)
+    }
+
+    func testSyncEditorFontNeverCreatesAndNeverRewritesJSONC() throws {
+        let spec = MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44)
+        // Missing file → no-op, still missing (the sync is layered over the seed, never a creator).
+        let missing = URL(fileURLWithPath: root).appendingPathComponent("absent.json")
+        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: missing))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        // JSONC (comments — JSONSerialization rejects it) → the USER's file, byte-untouched.
+        let jsonc = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
+        let contents = "// mine\n{\"editor.fontSize\": 11}\n"
+        try Data(contents.utf8).write(to: jsonc)
+        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: jsonc))
+        XCTAssertEqual(try String(contentsOf: jsonc, encoding: .utf8), contents)
+    }
+
+    func testEditorFontFamilyStack() {
+        let fallback = "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace"
+        // The embedded default and degenerate families collapse to the seeded stack (no repeat).
+        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "JetBrains Mono"), fallback)
+        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "  "), fallback)
+        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "'\"'"), fallback)
+        // A real family heads the stack, quote-stripped and single-quoted.
+        XCTAssertEqual(
+            CodeServerManager.editorFontFamilyStack(for: " 'SF Mono' "), "'SF Mono', \(fallback)",
+        )
+    }
+
     func testCurrentSeedIsNotListedObsolete() {
         // The upgrade rule keys on obsoleteSeeds — the CURRENT seed in that list would make every
         // pristine host rewrite (and log a seed) on every manager lifetime.
@@ -382,6 +506,10 @@ final class CodeServerManagerTests: XCTestCase {
         )
         // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
+        // v9: NO compact tab density. The 22px compact row minus the Slate plate recut (height −
+        // 8px) left 14px plates — too squat next to the app's own tab plates. Absent ⇒ the stock
+        // 35px row ⇒ 27px plates, ≈ the app's control height.
+        XCTAssertNil(settings["window.density.editorTabHeight"])
     }
 
     // MARK: Theme extension seed
@@ -700,10 +828,14 @@ final class HostCodeServerPerformerTests: XCTestCase {
         binary: String? = "/fake/code-server",
         spawned: @escaping @Sendable () -> Void = {},
         cli: RunnerRecord = RunnerRecord(),
+        settingsFileURL: URL? = nil,
     ) -> CodeServerManager {
-        // settingsSeeder / cliRunner injected as fakes — the default seams touch the real user's
-        // settings file / exec a real binary.
-        CodeServerManager(
+        // settingsSeeder / cliRunner / settingsFileURL injected as fakes — the default seams touch
+        // the real user's settings file / exec a real binary.
+        let settingsURL = settingsFileURL
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("performer-tests-absent-\(UUID().uuidString).json")
+        return CodeServerManager(
             binaryLocator: { binary },
             spawner: { _, _, _ in
                 spawned()
@@ -715,6 +847,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 cli.record(arguments)
                 return 0
             },
+            settingsFileURL: { settingsURL },
             probeInterval: .zero,
             openRetryDelay: .zero,
         )
@@ -736,7 +869,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
     }
 
     func testOtherVerbsFallThrough() {
-        let embedded: Set<MetadataVerb> = [.ensureCodeServer, .openInCodeServer]
+        let embedded: Set<MetadataVerb> = [.ensureCodeServer, .openInCodeServer, .syncCodeFont]
         for verb in MetadataVerb.allCases where !embedded.contains(verb) {
             XCTAssertNil(
                 HostCodeServerPerformer.response(
@@ -767,6 +900,64 @@ final class HostCodeServerPerformerTests: XCTestCase {
         XCTAssertEqual(requestID, 7)
         XCTAssertEqual(status, MetadataStatus.error.rawValue)
         XCTAssertTrue(payload.isEmpty)
+    }
+
+    func testSyncFontMalformedPayloadIsError() {
+        for payload in [Data(), Data([0x00])] {
+            let response = HostCodeServerPerformer.response(
+                requestID: 11, verb: MetadataVerb.syncCodeFont.rawValue,
+                payload: payload, manager: makeManager(),
+            )
+            guard case let .metadataResponse(requestID, status, body)? = response else {
+                XCTFail("expected a metadataResponse")
+                return
+            }
+            XCTAssertEqual(requestID, 11)
+            XCTAssertEqual(status, MetadataStatus.error.rawValue)
+            XCTAssertTrue(body.isEmpty)
+        }
+    }
+
+    func testSyncFontValidSpecAnswersOkAndPatchesTheFile() throws {
+        let dir = NSTemporaryDirectory() + "performer-font-tests-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let fileURL = URL(fileURLWithPath: dir).appendingPathComponent("settings.json")
+        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
+
+        let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
+        let response = HostCodeServerPerformer.response(
+            requestID: 12, verb: MetadataVerb.syncCodeFont.rawValue,
+            payload: MetadataCodec.encodeCodeFontSpec(spec),
+            manager: makeManager(settingsFileURL: fileURL),
+        )
+        guard case let .metadataResponse(requestID, status, body)? = response else {
+            XCTFail("expected a metadataResponse")
+            return
+        }
+        XCTAssertEqual(requestID, 12)
+        XCTAssertEqual(status, MetadataStatus.ok.rawValue)
+        XCTAssertTrue(body.isEmpty)
+        let settings = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any],
+        )
+        XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
+        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
+    }
+
+    func testSyncFontMissingSettingsFileStillAnswersOk() {
+        // No settings file on the host is a no-op, not a failure — the spec decoded fine, and
+        // "nothing to patch" must not surface an error toast client-side.
+        let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
+        let response = HostCodeServerPerformer.response(
+            requestID: 13, verb: MetadataVerb.syncCodeFont.rawValue,
+            payload: MetadataCodec.encodeCodeFontSpec(spec), manager: makeManager(),
+        )
+        guard case let .metadataResponse(_, status, _)? = response else {
+            XCTFail("expected a metadataResponse")
+            return
+        }
+        XCTAssertEqual(status, MetadataStatus.ok.rawValue)
     }
 
     func testMissingRootIsNotFound() {

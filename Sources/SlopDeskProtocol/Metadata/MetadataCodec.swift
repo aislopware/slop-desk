@@ -735,6 +735,62 @@ public enum MetadataCodec {
         return CodeOpenDisposition(rawValue: byte) ?? .workbench
     }
 
+    // MARK: - Code font spec  (syncCodeFont = 20)
+
+    /// The client's terminal-font truth for the embedded workbench — the ``MetadataVerb/syncCodeFont``
+    /// REQUEST payload. The terminal face/size/rhythm are CLIENT state (libghostty renders on the
+    /// client; the prefs never otherwise cross the wire), while the editor reads the host-side shared
+    /// `settings.json` — so the client pushes the three values and the host folds them into the seeded
+    /// editor keys (`CodeServerManager.syncEditorFont`). `lineHeight` is the EFFECTIVE cell-height
+    /// RATIO (family metrics × the adjust-cell-height mode), not the raw preference.
+    public struct CodeFontSpec: Equatable, Sendable {
+        /// The terminal font family name (the preference string, e.g. "JetBrains Mono").
+        public var family: String
+        /// The terminal font size in points.
+        public var size: Double
+        /// The effective line-height ratio (editor `lineHeight` semantics — a multiple of `size`).
+        public var lineHeight: Double
+
+        public init(family: String, size: Double, lineHeight: Double) {
+            self.family = family
+            self.size = size
+            self.lineHeight = lineHeight
+        }
+    }
+
+    /// Encodes a ``MetadataVerb/syncCodeFont`` request payload:
+    /// `[UInt16 len][family UTF-8][UInt64 BE size bitPattern][UInt64 BE lineHeight bitPattern]`.
+    /// Doubles ride as IEEE-754 bit patterns (bit-exact floats invariant — no textual round-trip).
+    public static func encodeCodeFontSpec(_ spec: CodeFontSpec) -> Data {
+        var data = Data()
+        appendString(spec.family, to: &data)
+        data.appendBE(spec.size.bitPattern)
+        data.appendBE(spec.lineHeight.bitPattern)
+        return data
+    }
+
+    /// Decodes a ``MetadataVerb/syncCodeFont`` request payload (validate-then-drop): truncated bodies
+    /// and invalid UTF-8 throw, and so do out-of-range values — an empty family, a size outside
+    /// `4…128` pt, or a ratio outside `0.5…4` (NaN fails every comparison → throws). The host writes
+    /// these into a file the workbench trusts; hostile bytes must die here, not there. A longer body
+    /// is tolerated (trailer ignored) so a future field can be appended.
+    public static func decodeCodeFontSpec(_ data: Data) throws -> CodeFontSpec {
+        var reader = BigEndianReader(data)
+        let family = try readString(&reader, "codeFontSpec.family")
+        let size = try Double(bitPattern: reader.readUInt64())
+        let lineHeight = try Double(bitPattern: reader.readUInt64())
+        guard !family.trimmingCharacters(in: .whitespaces).isEmpty else {
+            throw SlopDeskError.malformedBody("codeFontSpec.family: empty")
+        }
+        guard size >= 4, size <= 128 else {
+            throw SlopDeskError.malformedBody("codeFontSpec.size: out of range")
+        }
+        guard lineHeight >= 0.5, lineHeight <= 4 else {
+            throw SlopDeskError.malformedBody("codeFontSpec.lineHeight: out of range")
+        }
+        return CodeFontSpec(family: family, size: size, lineHeight: lineHeight)
+    }
+
     // MARK: - Shared encode/decode helpers
 
     /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry

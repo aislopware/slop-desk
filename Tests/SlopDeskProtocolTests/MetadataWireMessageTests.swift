@@ -277,10 +277,12 @@ final class MetadataWireMessageTests: XCTestCase {
         XCTAssertEqual(MetadataVerb.ensureCodeServer.rawValue, 18)
         // The workbench file-open (side-effecting `code-server -r`; [disposition] payload, docs/20).
         XCTAssertEqual(MetadataVerb.openInCodeServer.rawValue, 19)
+        // The editor font sync (side-effecting settings patch; CodeFontSpec payload, docs/20).
+        XCTAssertEqual(MetadataVerb.syncCodeFont.rawValue, 20)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap. The probe
-        // moves up with each verb added (it was 19 before openInCodeServer).
+        // moves up with each verb added (it was 20 before syncCodeFont).
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 20))
+        XCTAssertNil(MetadataVerb(rawValue: 21))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

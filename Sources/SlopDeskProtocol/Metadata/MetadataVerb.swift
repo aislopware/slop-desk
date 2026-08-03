@@ -158,6 +158,20 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// cwd confinement (only a status + one disposition byte cross back — same rationale as 9/10).
     /// An OLD host answers `.unsupportedVerb`.
     case openInCodeServer = 19
+    /// **Side-effecting.** Push the CLIENT's terminal-font truth into the shared workbench settings
+    /// (the embedded editor must read like the terminal beside it, and the terminal renders with
+    /// CLIENT-side prefs the wire never otherwise carries). Request payload:
+    /// ``MetadataCodec/CodeFontSpec`` — `[UInt16 len][family][UInt64 BE size][UInt64 BE lineHeight]`
+    /// (doubles as IEEE-754 bit patterns; `lineHeight` is the EFFECTIVE cell-height ratio the client
+    /// derives from the family metrics × its adjust-cell-height mode). The host folds the spec into
+    /// `settings.json`'s `editor.fontFamily`/`fontSize`/`lineHeight` (family FIRST, the seeded
+    /// fallback stack kept behind it), writing only on a real change — the workbench's own settings
+    /// watcher applies it live. Response payload: empty (`.ok`); out-of-range/malformed specs answer
+    /// `.error` (validate-then-drop in the decoder — the payload lands in a file the workbench
+    /// trusts). Host-global like 18: ONE shared settings file, so the last client to sync wins —
+    /// the same last-writer-wins the workspace document already established. An OLD host answers
+    /// `.unsupportedVerb`; the client sends this best-effort and ignores the reply.
+    case syncCodeFont = 20
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

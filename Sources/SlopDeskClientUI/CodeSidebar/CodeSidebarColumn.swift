@@ -29,6 +29,11 @@ struct CodeSidebarColumn: View {
     /// The shared chrome state — the strip's collapse plate flips `codeSidebarCollapsed`, the same
     /// flag the titlebar's reopen plate flips back while the panel is hidden.
     let chrome: WorkspaceChromeState
+    /// The live preferences store (nil only in previews/automation shells) — the terminal font
+    /// prefs the panel pushes host-side (verb 20) so the editor reads like the terminal beside it.
+    /// Passed explicitly: this column lives in its own `NSHostingController`, which does NOT
+    /// inherit the WindowGroup's `\.preferencesStore` environment.
+    let preferences: PreferencesStore?
 
     @State private var model = CodeSidebarModel()
 
@@ -54,12 +59,30 @@ struct CodeSidebarColumn: View {
         return store.paneProjectKey(pane) != nil
     }
 
+    /// The client's current terminal-font spec — recomputed whenever the observed terminal prefs
+    /// change (the store is `@Observable`; reading `terminal` here subscribes the view).
+    private var fontSpec: MetadataCodec.CodeFontSpec? {
+        preferences.map { CodeFontSync.spec(terminal: $0.terminal) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             strip
+            // The strip's bottom edge: the Slate divider hairline — the SAME faint fg-tint the
+            // split divider carries (batch 12's one visual language for seams). Without it the
+            // ground band ends in an abrupt tone change against the workbench's own tab strip,
+            // two mismatched grays stacked with no rule between them.
+            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             surface
         }
         .background(Slate.Surface.ground)
+        // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
+        // settings watcher applies it without a reload). The ensure-round sync below covers the
+        // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
+        .onChange(of: fontSpec) { _, spec in
+            guard let spec, let client = Self.firstConnectedMetadataClient(store) else { return }
+            Task { await client.syncCodeFont(spec) }
+        }
     }
 
     /// The panel's OWN top strip (user-directed: "tab phải ở trên top của right sidebar" — the tabs
@@ -97,7 +120,11 @@ struct CodeSidebarColumn: View {
                         await model.poll(
                             projectRoot: root,
                             host: { [connection] in connection.target.host },
-                            ensure: { [store] in await Self.ensureEndpoint(projectRoot: $0, store: store) },
+                            ensure: { [store, preferences] in
+                                await Self.ensureEndpoint(
+                                    projectRoot: $0, store: store, preferences: preferences,
+                                )
+                            },
                             // Front the remote endpoint with the loopback relay: a secure browser
                             // context (no insecure-context toast) on an origin that survives
                             // respawns. On bind failure the remote address rides through — the ATS
@@ -204,12 +231,19 @@ struct CodeSidebarColumn: View {
 
     /// One ensure round: verb 18 through whichever pane carries a live metadata channel (resolved
     /// per call, like the host-info/vitals fetchers — survives pane churn/reconnects). `nil` when no
-    /// pane is connected (→ `.offline`, and the loop keeps polling).
+    /// pane is connected (→ `.offline`, and the loop keeps polling). A round that reaches the host
+    /// also pushes the client's terminal-font spec (verb 20) — the host no-ops when nothing
+    /// changed, so re-sending per round is churn-free, and an old host's `.unsupportedVerb` is
+    /// silently ignored (the editor keeps the seeded defaults).
     private static func ensureEndpoint(
-        projectRoot: String, store: WorkspaceStore,
+        projectRoot: String, store: WorkspaceStore, preferences: PreferencesStore?,
     ) async -> MetadataCodec.CodeServerEndpoint? {
         guard let client = firstConnectedMetadataClient(store) else { return nil }
-        return await client.ensureCodeServer(projectRoot: projectRoot)
+        let endpoint = await client.ensureCodeServer(projectRoot: projectRoot)
+        if endpoint != nil, let terminal = preferences?.terminal {
+            await client.syncCodeFont(CodeFontSync.spec(terminal: terminal))
+        }
+        return endpoint
     }
 
     private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {

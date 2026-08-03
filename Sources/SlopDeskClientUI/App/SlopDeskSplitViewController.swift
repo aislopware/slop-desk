@@ -140,8 +140,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         //    pooled WKWebView (and its web-content process) survives for a warm re-expand. Same holding
         //    priority as the left sidebar so a window resize grows the CONTENT column.
         let codeColumn = NSHostingController(
-            rootView: CodeSidebarColumn(store: store, connection: connection, chrome: chrome)
-                .overlayCoordinator(overlay),
+            rootView: CodeSidebarColumn(
+                store: store, connection: connection, chrome: chrome, preferences: preferences,
+            )
+            .overlayCoordinator(overlay),
         )
         let codeSidebarItem = NSSplitViewItem(viewController: codeColumn)
         codeSidebarItem.minimumThickness = Self.codeSidebarMinWidth
@@ -271,7 +273,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
         // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both are set
-        // to `flatDividerTone()` (the sidebar `ground`), so the seam is just the ground→face luminance step.
+        // to `flatDividerTone()` — the chrome ground carrying the Slate `divider` hairline tint (a faint
+        // FOREGROUND wash, user-directed: "1 line màu fg nhẹ, kiểu tint trắng nhẹ"), so the seam reads as a
+        // deliberate native hairline instead of a bare luminance step.
         //
         // CRITICAL — repaint on a RUNTIME theme switch: `drawDivider` draws OPAQUE ground pixels that AppKit
         // CACHES in the layer; a plain `needsDisplay` does NOT re-invoke it for the divider rect, so after a
@@ -517,28 +521,37 @@ extension SlopDeskSplitViewController {
     }
 }
 
-/// The flat divider tone: the sidebar `ground` surface as an OPAQUE sRGB colour — NO drawn hairline.
+/// The flat divider tone: the Slate `divider` hairline tint (foreground at ~7%) composited over the sidebar
+/// `ground`, as ONE opaque sRGB colour.
 ///
-/// MERIDIAN L5 (depth by light, not lines): the sidebar (`ground`) and the content (`face`) are separated by
-/// ONE luminance step, NO divider line. So the 1px split gap must NOT be a hairline lighter/darker than both
-/// surfaces — it must blend into the sidebar so only the natural ground→face step reads as the seam.
-///
-/// Why not composite the `Slate.Line.divider` hairline here: the sidebar seam borders
-/// the DARKER `ground` on one side and the LIGHTER `face` on the other, and the hairline's tint FLIPS per
-/// appearance (near-white on dark, near-black on light). Over `face` the white hairline read as a bright
-/// near-white seam against the dark sidebar; over `ground` the black hairline
-/// read as a heavy dark line on the light chrome. No single composite base is faint against
-/// BOTH a dark-ish and a light-ish neighbour, so we draw NO line at all — the gap is `ground`, and the seam is
-/// purely the ground→face luminance step, faint and clean in both appearances (the pane-grid dividers keep
-/// their own faint hairline; the sidebar boundary is chrome, not a content split).
+/// REVERSES the earlier bare-ground rule (which drew NO hairline, leaving only the ground→face luminance
+/// step) — user-directed 2026-08-03: "Divider xấu, tôi nghĩ có 1 line màu fg nhẹ, kiểu tint trắng nhẹ thì
+/// đẹp và native hơn". The earlier worry — a hairline that reads heavy against one of its two differently-lit
+/// neighbours — is answered by using the theme's own `divider` token at its hairline OPACITY over `ground`
+/// (not a raw white/black line): the tint tracks the theme's foreground, so it lifts the seam by the same
+/// ~7% wash on dark and light alike, exactly the register the pane-grid dividers already use.
 ///
 /// Resolved via `Color.resolve(in:)` (NOT `NSColor(_: SwiftUI.Color)`, which resolves through the effective
-/// appearance and read black on the light themes) — `ground` is a concrete `Color(.sRGB, …)`, so resolve is
+/// appearance and read black on the light themes) — both tokens are concrete `Color(.sRGB, …)`, so resolve is
 /// appearance-stable and exact.
 @MainActor
 private func flatDividerTone() -> NSColor {
-    let g = Slate.theme.ground.resolve(in: EnvironmentValues())
-    return NSColor(srgbRed: CGFloat(g.red), green: CGFloat(g.green), blue: CGFloat(g.blue), alpha: 1)
+    // The Slate `divider` hairline (foreground at ~7%) composited OVER the chrome ground — AppKit
+    // needs one OPAQUE colour (the layer background under the column gaps cannot alpha-blend
+    // against anything), so the tint is folded in here. Plain per-channel lerp (never fused —
+    // the bit-exact-floats convention).
+    let ground = Slate.theme.ground.resolve(in: EnvironmentValues())
+    let tint = Slate.theme.divider.resolve(in: EnvironmentValues())
+    let alpha = tint.opacity
+    func blend(_ top: Float, _ bottom: Float) -> CGFloat {
+        CGFloat(top * alpha + bottom * (1 - alpha))
+    }
+    return NSColor(
+        srgbRed: blend(tint.red, ground.red),
+        green: blend(tint.green, ground.green),
+        blue: blend(tint.blue, ground.blue),
+        alpha: 1,
+    )
 }
 
 private extension NSColor {

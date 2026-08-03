@@ -264,6 +264,17 @@ public final class MetadataClient {
         return try? MetadataCodec.decodeCodeOpenDisposition(payload)
     }
 
+    /// Pushes the CLIENT's terminal-font truth into the shared workbench settings
+    /// (``MetadataVerb/syncCodeFont``; the embedded editor must read like the terminal beside it).
+    /// Best-effort by design — the caller fires it after an ensure round or a live prefs change and
+    /// ignores the reply (an OLD host answers `.unsupportedVerb`; the editor simply keeps the
+    /// seeded defaults). Returns whether the host acknowledged, for tests.
+    @discardableResult
+    public func syncCodeFont(_ spec: MetadataCodec.CodeFontSpec) async -> Bool {
+        let (status, _) = await request(.syncCodeFont, payload: MetadataCodec.encodeCodeFontSpec(spec))
+        return status == .ok
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

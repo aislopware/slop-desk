@@ -190,10 +190,11 @@ never offers or falls back to another version.
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
     `14` hostInfo (a **pure read** returning the host machine's own hostname), the **clipboard-sync**
     verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), `17` hostVitals
-    (a **pure read** returning the host machine's CPU/memory/disk pulse), and the two
+    (a **pure read** returning the host machine's CPU/memory/disk pulse), and the three
     **embedded-VS Code** verbs `18` ensureCodeServer (**side-effecting** — lazily spawns/reports the
     shared code-server instance) / `19` openInCodeServer (**side-effecting** — opens a host file in
-    the running workbench). `payload` is the
+    the running workbench) / `20` syncCodeFont (**side-effecting** — folds the client's terminal
+    font prefs into the shared workbench settings). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
@@ -329,6 +330,31 @@ never offers or falls back to another version.
     bytes cross the wire beyond the status + disposition, the verb-9 trust model). The host routes
     19 to `HostCodeServerPerformer` BEFORE the read-only responder; an OLD host answers
     `unsupportedVerb` and the client raises its path-action failure toast.
+  - **`syncCodeFont` (20) is the editor-font-parity verb** (2026-08-03): the client folds its LIVE
+    terminal font prefs into the shared workbench `settings.json` so the embedded editor reads like
+    the terminal beside it — the CURRENT settings, not the seeded defaults. Request payload:
+    `[UInt16 BE len][family UTF-8][UInt64 BE size Double-bitPattern][UInt64 BE lineHeight
+    Double-bitPattern]` — the family is the terminal's configured name, `size` the point size,
+    `lineHeight` the client-computed EFFECTIVE cell-height ratio (the resolved face's metrics ratio
+    — CoreText for an installed family, the embedded JetBrainsMono constant `1.32` when the family
+    resolves nowhere, exactly when the terminal falls back to that face too — times the
+    `adjust-cell-height` multiplier, rounded to two decimals). Response: status + **empty payload**.
+    The DECODER is the validator (validate-then-drop — these values land in a file the workbench
+    trusts): non-empty family after whitespace trim, `size` in `4…128`, `lineHeight` in `0.5…4`
+    (NaN fails both range gates by comparison semantics); any violation or truncation → `error`.
+    A decoded spec always answers `ok` — the host patches ONLY the three keys
+    `editor.fontFamily` (the family FIRST, quote-stripped and single-quoted, then the seeded
+    fallback stack) / `editor.fontSize` / `editor.lineHeight`, skips the write when the file is
+    already in sync (churn-free — the client re-sends every ensure round), and no-ops on a missing
+    or JSONC/unparseable file (the sync is layered over the seed, never a file creator; a
+    commented file is the user's). **Host-global, last-writer-wins** (ONE shared settings file —
+    the workspace document's rule applied to chrome; the workbench's settings watcher applies the
+    change live). Carried on the ensure round (panel open) and on a live Settings edit
+    (`CodeSidebarColumn.onChange`). The host routes 20 to `HostCodeServerPerformer` BEFORE the
+    read-only responder; an OLD host answers `unsupportedVerb` and the client silently keeps the
+    seeded terminal-parity defaults. The seed-upgrade rule stays compatible: a former seed whose
+    only divergence is this synced trio still upgrades (format-blind + font-blind canonical
+    compare), so the sync never strands a pristine host on an old seed.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

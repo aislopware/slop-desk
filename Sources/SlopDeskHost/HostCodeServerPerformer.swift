@@ -46,9 +46,29 @@ enum HostCodeServerPerformer {
             openResponse(
                 requestID: requestID, payload: payload, manager: manager, fallbackOpen: fallbackOpen,
             )
+        case .syncCodeFont:
+            syncFontResponse(requestID: requestID, payload: payload, manager: manager)
         default:
             nil // not an embedded-editor verb → caller uses the read-only builder
         }
+    }
+
+    /// Verb 20: fold the client's terminal-font spec into the shared workbench settings. The
+    /// decoder is the validator (range-checked, validate-then-drop — these values land in a file
+    /// the workbench trusts); a spec that decodes always answers `.ok`, whether or not the file
+    /// needed a write (already-in-sync is success, not failure).
+    private static func syncFontResponse(
+        requestID: UInt32, payload: Data, manager: CodeServerManager,
+    ) -> WireMessage {
+        guard let spec = try? MetadataCodec.decodeCodeFontSpec(payload) else {
+            return .metadataResponse(
+                requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
+            )
+        }
+        manager.syncEditorFont(spec)
+        return .metadataResponse(
+            requestID: requestID, status: MetadataStatus.ok.rawValue, payload: Data(),
+        )
     }
 
     private static func ensureResponse(

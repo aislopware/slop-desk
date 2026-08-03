@@ -6464,3 +6464,47 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   window `NSAppearance` to the active Slate theme, the webview's `prefers-color-scheme` follows
   it, and the workbench flips per client — a dark client and a light client on the SAME host
   each see their own register (pixel-proofed both directions in the gate fixture).
+
+### The panel syncs the CURRENT terminal settings, and the chrome grows its seam language (2026-08-03)
+
+> User-reported, third round: the editor's 13/1.32 are the terminal's DEFAULTS, not the client's
+> CURRENT settings (macbook-pro runs 14pt / loose) — "cần sync cả current settings"; the compact
+> tabs recut to 14px plates "nhìn height ngắn rất xấu"; the bare split divider "xấu, tôi nghĩ có 1
+> line màu fg nhẹ… đẹp và native hơn"; the panel's top bar "nhìn xấu".
+
+- ✅ **Verb 20 `syncCodeFont` — the client's LIVE font truth crosses the wire.** Font prefs are
+  client-side (`PreferencesStore.terminal`) and never reached the host (EnvBridge carries no font
+  keys), so the seed could only ever guess defaults. Now every ensure round (and every live
+  Settings edit) pushes `[family][size][effective line-height ratio]`; the host patches exactly
+  the three `editor.font*` keys in the shared settings.json (family first, then the seeded
+  fallback stack), churn-free when in sync, never a file creator, JSONC = the user's. The RATIO is
+  computed client-side the way the terminal actually renders: CoreText metrics for an installed
+  family, the embedded JetBrainsMono 1.32 when the family resolves nowhere (exactly when ghostty
+  falls back to that face), × the `adjust-cell-height` multiplier — macbook-pro's 14/loose lands
+  as `14` / `1.58`. Host-global last-writer-wins (one shared file — the workspace document's rule
+  applied to chrome). The decoder is the validator (family non-blank, size 4…128, ratio 0.5…4;
+  NaN fails the range gates). Old host → `unsupportedVerb`, silently kept defaults.
+- ✅ **Seed-upgrade stays FONT-BLIND.** A pristine former seed that verb 20 has re-serialized would
+  never again be byte-identical — the comparator now canonicalizes both sides (sorted-keys JSON)
+  with the three synced keys dropped, so a font-synced seed still upgrades and any OTHER
+  divergence stays the user's. The current seed with synced fonts is left alone.
+- ✅ **Seed v9 drops `window.density.editorTabHeight`.** Compact = 22px rows; the Slate plate
+  recut (height − 8) squeezed those to 14px plates. Stock 35px rows → 27px plates ≈ the app's own
+  control height.
+- ✅ **The split divider carries the Slate `divider` tint — reversing the bare-ground rule.**
+  User-directed: the seam gets "1 line màu fg nhẹ". `flatDividerTone()` now composites the theme's
+  `divider` token (fg at its hairline opacity) over `ground` into one opaque colour (the layer bg
+  cannot alpha-blend), per-channel plain lerp. The old worry (a raw white/black hairline reads
+  heavy against one neighbour) is answered by using the THEME's tint at hairline opacity — the
+  same register the pane-grid dividers already draw, so every seam in the window speaks one line.
+- ✅ **The panel strip gets a bottom edge in the same language.** A `Slate.Line.divider` hairline
+  under the strip closes the ground band against the workbench's tab row — previously two
+  mismatched grays stacked with no rule between them. Pixel-proofed: strip hairline, both split
+  dividers and the pane-grid line all sample the identical composite tone.
+- ⚠️ **Gate trap (cost a full bisect): a SIGNED verify app silently loses the defaults suite.**
+  The GUI gates' `SLOPDESK_DEFAULTS_SUITE` mechanism assumes the app is UNSANDBOXED — an
+  xcodebuild WITHOUT `CODE_SIGNING_ALLOWED=NO` produces a signed, sandboxed app whose
+  suite-named `UserDefaults` resolves in its CONTAINER, where the gate's `defaults write` never
+  landed: every fixture key silently reads default (light theme, panel collapsed, fresh-install
+  path). Always rebuild gate apps the way `check-macos.sh` does: `CODE_SIGNING_ALLOWED=NO
+  CODE_SIGNING_REQUIRED=NO`.

@@ -83,6 +83,10 @@ final class CodeServerManager: @unchecked Sendable {
     private let probe: ReadinessProbe
     private let seedSettings: SettingsSeeder
     private let runCLI: CLIRunner
+    /// Where the instance-level font sync writes — injectable so unit tests NEVER resolve (and
+    /// patch) the developer's real `~/.local/share/code-server/User/settings.json` (the same trap
+    /// `SLOPDESK_WORKSPACE_STATE_DIR` guards on the workspace store).
+    private let settingsFileURL: @Sendable () -> URL
     private let probeInterval: Duration
     private let openRetryDelay: Duration
     private let clock = ContinuousClock()
@@ -93,6 +97,7 @@ final class CodeServerManager: @unchecked Sendable {
         readinessProbe: @escaping ReadinessProbe = CodeServerManager.defaultReadinessProbe,
         settingsSeeder: @escaping SettingsSeeder = CodeServerManager.defaultSettingsSeeder,
         cliRunner: @escaping CLIRunner = CodeServerManager.defaultCLIRunner,
+        settingsFileURL: @escaping @Sendable () -> URL = { CodeServerManager.userSettingsURL() },
         probeInterval: Duration = .milliseconds(500),
         openRetryDelay: Duration = .seconds(2),
     ) {
@@ -101,6 +106,7 @@ final class CodeServerManager: @unchecked Sendable {
         probe = readinessProbe
         seedSettings = settingsSeeder
         runCLI = cliRunner
+        self.settingsFileURL = settingsFileURL
         self.probeInterval = probeInterval
         self.openRetryDelay = openRetryDelay
     }
@@ -297,7 +303,6 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.menuBarVisibility": "hidden",
         "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
-        "window.density.editorTabHeight": "compact",
         "workbench.statusBar.visible": false,
         "workbench.editor.empty.hint": "hidden",
         "window.commandCenter": false,
@@ -498,6 +503,39 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v8 — JetBrains Mono + lineHeight 1.32 + per-client light/dark, but still the COMPACT tab
+        // density: 22px tabs that the Slate plate recut (height − 8) squeezed to 14px — "tab
+        // nhìn height ngắn rất xấu". v9 drops the density line (default 35px → 27px plates).
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "window.density.editorTabHeight": "compact",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -508,8 +546,8 @@ final class CodeServerManager: @unchecked Sendable {
     static func seedUserSettings(at fileURL: URL, fileManager: FileManager = .default) -> Bool {
         do {
             if fileManager.fileExists(atPath: fileURL.path) {
-                let existing = try String(contentsOf: fileURL, encoding: .utf8)
-                guard obsoleteSeeds.contains(existing) else { return false }
+                let existing = try Data(contentsOf: fileURL)
+                guard isPristineFormerSeed(existing) else { return false }
                 try Data(seededUserSettings.utf8).write(to: fileURL)
                 return true
             }
@@ -521,6 +559,97 @@ final class CodeServerManager: @unchecked Sendable {
         } catch {
             return false
         }
+    }
+
+    /// Whether `existing` is a former seed this manager may upgrade. Byte-identical to one is the
+    /// fast path; otherwise the comparison goes FORMAT-BLIND and FONT-BLIND: canonical JSON with
+    /// the client-synced font keys (verb 20 — ``syncedFontKeys``) dropped from both sides. A file
+    /// whose only divergence from a former seed is the synced font trio is still OURS (the sync
+    /// wrote it, and re-lands right after the upgrade's next ensure round); any other divergence is
+    /// the user's and stays untouchable. Unparseable (JSONC comments etc.) ⇒ the user's.
+    static func isPristineFormerSeed(_ existing: Data) -> Bool {
+        if let string = String(data: existing, encoding: .utf8), obsoleteSeeds.contains(string) {
+            return true
+        }
+        guard let canonical = canonicalDroppingFontKeys(existing) else { return false }
+        return obsoleteSeeds.contains { canonicalDroppingFontKeys(Data($0.utf8)) == canonical }
+    }
+
+    /// Sorted-keys canonical JSON bytes with the ``syncedFontKeys`` removed — the font-blind
+    /// comparator behind ``isPristineFormerSeed(_:)``. `nil` when `data` is not a JSON object.
+    private static func canonicalDroppingFontKeys(_ data: Data) -> Data? {
+        guard var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        for key in syncedFontKeys { object.removeValue(forKey: key) }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    // MARK: - Editor font sync (verb 20)
+
+    /// The three settings keys the CLIENT owns via ``MetadataVerb/syncCodeFont``: the seed lays
+    /// terminal-parity DEFAULTS, then a connected client overwrites them with its live terminal
+    /// prefs (family/size/effective line-height ratio). One shared file ⇒ the last client to sync
+    /// wins — the workspace document's last-writer-wins, applied to chrome.
+    static let syncedFontKeys: Set<String> = [
+        "editor.fontFamily", "editor.fontSize", "editor.lineHeight",
+    ]
+
+    /// The editor `fontFamily` stack for a synced terminal family: the family FIRST (single-quoted;
+    /// quote characters stripped defensively — they cannot survive into a CSS family list), then
+    /// the seeded fallback stack (the injected JetBrains Mono faces, the system mono, the nerd
+    /// symbols). A family already heading the stack is not repeated.
+    static func editorFontFamilyStack(for family: String) -> String {
+        let cleaned = family
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\"", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        let fallback = "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace"
+        guard !cleaned.isEmpty, cleaned != "JetBrains Mono" else { return fallback }
+        return "'\(cleaned)', \(fallback)"
+    }
+
+    /// Folds a client's ``MetadataCodec/CodeFontSpec`` into the live settings file (the instance
+    /// entry point the performer calls — serialized under the manager lock like every other
+    /// settings touch).
+    @discardableResult
+    func syncEditorFont(_ spec: MetadataCodec.CodeFontSpec) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.syncEditorFont(spec, at: settingsFileURL())
+    }
+
+    /// The pure worker: parse → patch the three ``syncedFontKeys`` → write back canonical
+    /// (sorted-keys pretty JSON — the workbench's settings watcher applies the change live).
+    /// Returns whether the file changed; an already-in-sync file is deliberately NOT rewritten
+    /// (every ensure round syncs — a no-change write would churn the workbench's file watcher).
+    /// A missing or unparseable file is a no-op: the sync is a nicety layered over the seed,
+    /// never a file creator, and a JSONC-commented file is the user's, not ours to rewrite.
+    @discardableResult
+    static func syncEditorFont(_ spec: MetadataCodec.CodeFontSpec, at fileURL: URL) -> Bool {
+        guard let existing = try? Data(contentsOf: fileURL),
+              var settings = (try? JSONSerialization.jsonObject(with: existing)) as? [String: Any]
+        else { return false }
+        settings["editor.fontFamily"] = editorFontFamilyStack(for: spec.family)
+        settings["editor.fontSize"] = spec.size
+        settings["editor.lineHeight"] = spec.lineHeight
+        let options: JSONSerialization.WritingOptions = [
+            .sortedKeys, .prettyPrinted, .withoutEscapingSlashes,
+        ]
+        guard let updated = try? JSONSerialization.data(withJSONObject: settings, options: options),
+              !isAlreadyInSync(existing: existing, updated: updated)
+        else { return false }
+        return (try? updated.write(to: fileURL)) != nil
+    }
+
+    /// Format-blind "nothing to do" check: both sides canonicalized WITH the font keys included.
+    private static func isAlreadyInSync(existing: Data, updated: Data) -> Bool {
+        func canonical(_ data: Data) -> Data? {
+            guard let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+            return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        }
+        guard let a = canonical(existing), let b = canonical(updated) else { return false }
+        return a == b
     }
 
     /// Where THIS process's code-server children read user settings: `--user-data-dir` is not
