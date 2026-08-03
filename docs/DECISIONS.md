@@ -6573,3 +6573,25 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
   band naming the file + project, in exchange for clickable views. CSS-hiding it was rejected —
   the workbench grid positions parts with inline absolute geometry, so `display: none` leaves a
   dead gap rather than reflowing.
+
+## The title bar loses its head, the panel follows the project, the gutter slims (2026-08-03)
+
+- ✅ **The web title bar is CLIPPED off client-side.** User-directed. No seedable key hides it
+  while the activity bar sits at "top" (the band must host the relocated accounts/manage
+  actions), and CSS `display: none` leaves a dead gap — the workbench grid positions parts with
+  inline absolute geometry. The macOS mount (`CodeSidebarWebView`) now lays the webview out
+  35px taller than its clipping container and shifts it up by the same: the workbench keeps
+  believing in its title bar, the user never sees it. The container bounds-guards `hitTest` —
+  without that the overhang sits under the panel's strip and eats its clicks.
+- ✅ **A project switch can no longer strand the panel on the OLD project's folder.**
+  User-reported: focusing another project's pane left the workbench on the previous project.
+  Root cause: the column re-renders BEFORE the switched project's poll task runs, so
+  `CodeSidebarModel.phase` still holds the previous `.ready` — and the pool minted the NEW
+  root's webview from that stale URL (`?folder=` of the old project), then never corrected it
+  (the re-load check compares host/port only, and the shared code-server keeps both constant).
+  `.ready` now carries the project root it was ensured for, and the column mounts the webview
+  only when that root matches the active one.
+- ✅ **Seed v13: the gutter slims.** User-directed ("wasted width"): the panel reads code beside
+  a terminal, it does not debug it. `editor.lineNumbersMinChars` 5→3, `editor.glyphMargin` off
+  (breakpoints have no meaning here), `editor.folding` off (the arrows column; folding by
+  command still works for the rare need). v12 joins `obsoleteSeeds` (13 entries).

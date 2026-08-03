@@ -268,11 +268,17 @@ final class CodeServerManager: @unchecked Sendable {
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.112, the v6-era observation): it
-    /// must host the relocated global actions (accounts + manage), so v12 accepts that one quiet
-    /// themed band as the price of clickable views — `window.title` keeps it saying the file +
-    /// project, and command-center/layout/navigation stay off
+    /// must host the relocated global actions (accounts + manage). No seedable key hides it
     /// (`window.customTitleBarVisibility` stays desktop-only/UNREGISTERED — v7 dropped it,
-    /// pixel-verified equal). Every key seeded must be REGISTERED in the shipped web
+    /// pixel-verified equal), so the CLIENT clips the band off instead — the macOS webview mount
+    /// overhangs its container by the title-bar height (`CodeSidebarWebView.clippedTitleBarHeight`,
+    /// user-directed v13 era). Command-center/layout/navigation stay off regardless: any other
+    /// client (iOS later) sees the quiet band, not the stripped-out extras. v13 also slims the
+    /// editor GUTTER — the panel is a READING surface beside a terminal, where a five-char
+    /// line-number reserve plus breakpoint glyph margin plus folding arrows spent ~½ of a code
+    /// column's leading edge on emptiness (user-directed): `lineNumbersMinChars` 3,
+    /// `glyphMargin` off (no debugger here), `folding` off (the arrows column; ⌘⇧P still folds
+    /// by command for the rare need). Every key seeded must be REGISTERED in the shipped web
     /// workbench's configuration schema (the settings editor flags unknown keys as warnings in a
     /// file we authored — the chat.* pair died with v6 for the same reason).
     /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
@@ -327,6 +333,9 @@ final class CodeServerManager: @unchecked Sendable {
         "editor.lineHeight": 1.32,
         "editor.overviewRulerBorder": false,
         "editor.hideCursorInOverviewRuler": true,
+        "editor.lineNumbersMinChars": 3,
+        "editor.glyphMargin": false,
+        "editor.folding": false,
         "files.autoSave": "onFocusChange"
     }
     """
@@ -626,6 +635,42 @@ final class CodeServerManager: @unchecked Sendable {
                 "*.md": "vscode.markdown.preview.editor"
             },
             "workbench.activityBar.location": "hidden",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.statusBar.visible": false,
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v12 — the activity bar folded into the sidebar top, but the editor gutter still spent a
+        // five-char line-number reserve + glyph margin + folding arrows on emptiness. v13 slims
+        // all three (user-directed 2026-08-03).
+        """
+        {
+            "workbench.colorTheme": "SlopDesk Monokai",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "SlopDesk Monokai",
+            "workbench.preferredLightColorTheme": "SlopDesk Monokai Light",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
             "workbench.sideBar.location": "right",
             "workbench.secondarySideBar.defaultVisibility": "hidden",
             "window.menuBarVisibility": "hidden",

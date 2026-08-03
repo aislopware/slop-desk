@@ -480,13 +480,18 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
         XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
         XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
-        // The chrome-less recipe: activity bar "hidden" + menu bar hidden + the strips off — that
-        // combination alone hides the web title bar ("top"/"bottom" force-shows it).
         // v12: the activity-bar icons fold into the sidebar TOP (user-directed) — Search / Source
-        // Control / Extensions are clickable again; fully "hidden" left them chord-only.
+        // Control / Extensions are clickable again; fully "hidden" left them chord-only. "top"
+        // force-shows the web title bar; the CLIENT clips that band off
+        // (`CodeSidebarWebView.clippedTitleBarHeight`).
         XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
         XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
         XCTAssertEqual(settings["workbench.statusBar.visible"] as? Bool, false)
+        // v13: the gutter slims — the panel reads code, it does not debug it (user-directed):
+        // three-char line numbers, no breakpoint glyph margin, no folding-arrow column.
+        XCTAssertEqual(settings["editor.lineNumbersMinChars"] as? Int, 3)
+        XCTAssertEqual(settings["editor.glyphMargin"] as? Bool, false)
+        XCTAssertEqual(settings["editor.folding"] as? Bool, false)
         // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
         // flags unknown keys as warnings in a file we authored. These three were v6's offenders
         // (desktop-only / Code-OSS-absent): they must never come back.
