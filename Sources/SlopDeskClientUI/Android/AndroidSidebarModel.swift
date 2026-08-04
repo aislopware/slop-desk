@@ -53,6 +53,15 @@ final class AndroidSidebarModel {
     let frames = AndroidFrameSink()
     /// Whether DECODABLE video has arrived for the current selection. The one thing about the stream
     /// the panel draws differently, and the reason the sink can stay silent otherwise.
+    ///
+    /// ⚠️ It changes exactly TWICE a session and every write to it must be guarded, because
+    /// `@Observable` does not compare. The macro's setter notifies on assignment, not on change, so
+    /// `hasVideo = true` on each arriving frame — which is what this handler used to do — invalidates
+    /// every view that reads it at the frame rate, and the stage rebuilds header, toolbar, device
+    /// body and log drawer on the main actor between the pointer events the user is making. That is
+    /// the precise cost ``AndroidFrameSink`` exists to avoid, leaking back in through a one-word
+    /// assignment, and it scales with how well the device is doing: at the 58 fps a hardware-rendered
+    /// emulator gives, it is 58 full rebuilds a second.
     private(set) var hasVideo = false
     /// Set while a boot/shutdown is in flight, so the row can show it and refuse a second click.
     private(set) var pending: Set<String> = []
@@ -352,6 +361,26 @@ final class AndroidSidebarModel {
         send(AndroidControlMessage.simple(AndroidControlMessage.resetVideo))
     }
 
+    /// A frame arrived. Called on EVERY one, so it must be free once the first has landed — see the
+    /// warning on ``hasVideo``.
+    private func noteVideoArrived() {
+        guard Self.videoArrivalIsNews(hasVideo: hasVideo, isAwaitingStream: isAwaitingStream) else {
+            return
+        }
+        settleStream()
+        hasVideo = true
+    }
+
+    /// Whether an arriving frame has anything to tell the observable layer.
+    ///
+    /// The FIRST one does — it ends the wait and turns the stage from a veil into a screen. Every one
+    /// after it says only what the layer already knows, and saying it anyway is a full SwiftUI
+    /// invalidation per frame (``hasVideo``). Both flags are read because they can disagree: a retry
+    /// re-arms the wait, so a stream that is awaited again is news again.
+    static func videoArrivalIsNews(hasVideo: Bool, isAwaitingStream: Bool) -> Bool {
+        !hasVideo || isAwaitingStream
+    }
+
     /// The stream has answered — with video, with an error, or by ending.
     private func settleStream() {
         streamWatchdog?.cancel()
@@ -618,12 +647,10 @@ final class AndroidSidebarModel {
             // stage draw a correctly-shaped frame during the beat before the first keyframe.
             observed(streamSize: CGSize(width: width, height: height))
         case let .parameterSets(sets, codec):
-            settleStream()
-            hasVideo = true
+            noteVideoArrived()
             frames.deliver(parameterSets: sets, codec: codec)
         case let .accessUnit(data, isKeyframe):
-            settleStream()
-            hasVideo = true
+            noteVideoArrived()
             frames.deliver(accessUnit: data, isKeyframe: isKeyframe)
         case let .ended(reason):
             settleStream()

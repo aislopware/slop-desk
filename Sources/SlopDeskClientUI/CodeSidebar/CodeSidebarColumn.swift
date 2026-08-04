@@ -175,7 +175,7 @@ struct CodeSidebarColumn: View {
             // else in the panel the marks stay shapes (`AndroidDeviceKind`); this is the one place
             // where the brand IS the distinction being drawn.
             PanelTabPlate(
-                symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
+                mark: .brand(.appleLogo), label: "Simulators", selected: surfaceTab == .simulators,
             ) { selectSurface(.simulators) }
                 .help("Simulators — the host's iOS Simulator devices")
             PanelTabPlate(

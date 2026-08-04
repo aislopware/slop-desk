@@ -83,9 +83,12 @@ final class AndroidSocket: @unchecked Sendable {
         return AndroidSocket(descriptor: fd)
     }
 
-    /// Turns off Nagle. Set on the CONTROL leg: a 32-byte touch message that waits for a companion
-    /// before leaving is a pointer that lags behind the finger, and coalescing buys nothing when the
-    /// messages are already this small.
+    /// Turns off Nagle. Set on BOTH legs of a mirror, for two different reasons.
+    ///
+    /// Upstream: a 32-byte touch message that waits for a companion before leaving is a pointer that
+    /// lags behind the finger, and coalescing buys nothing when the messages are already this small.
+    /// Downstream: a frame is one `writeAll` but leaves as full segments plus a short tail, and Nagle
+    /// holds that tail until the peer acknowledges the rest — landing the delay on a frame boundary.
     func setNoDelay() {
         var enabled: Int32 = 1
         withDescriptor { setsockopt($0, IPPROTO_TCP, TCP_NODELAY, &enabled, socklen_t(MemoryLayout<Int32>.size)) }

@@ -19,13 +19,21 @@
 // The antennae are a SEPARATE shape layered beneath rather than a third subpath of the same one.
 // Even-odd cancels overlap, so an antenna crossing the dome's rim would subtract a notch from it
 // exactly where the two meet.
+//
+// IT FILLS ITS BOX (user-directed 2026-08-04). The first cut drew the dome at four fifths of the
+// width and half the height, on the theory that a mark wants air around it — which is true of a
+// symbol on Apple's optical grid, where the grid IS the air, and false of a path in a plain frame,
+// where the frame's own padding already supplies it. Rendered beside `folder` and `display` at true
+// size the head read as a smaller mark rather than a wider one. The dome is now the full width of
+// its box and the whole drawing is centred on what it actually draws.
 
 import SwiftUI
 
 /// Android's robot head at `side` points square, in the current foreground style.
 struct AndroidRobotMark: View {
-    /// The mark's box. A tab plate passes the same measure it gives an SF Symbol, so the two tabs'
-    /// marks are the same optical size.
+    /// The mark's box — ``Slate/Metric/brandMark``, not the type size the plate's symbols take. A
+    /// drawn brand mark and an SF Symbol do not weigh the same at the same measure; the token has
+    /// the account.
     let side: CGFloat
 
     var body: some View {
@@ -39,16 +47,20 @@ struct AndroidRobotMark: View {
     // MARK: Geometry
 
     // Proportions of the box, so the mark is resolution- and size-independent. The dome sits low and
-    // the antennae reach up, which puts the drawn mass — antenna tips at 0.27, flat base at 0.76 —
+    // the antennae reach up, which puts the drawn mass — antenna tips at 0.23, flat base at 0.805 —
     // centred on the box rather than the dome alone being centred and the whole thing riding high.
-    private static let baseline: CGFloat = 0.76
-    private static let radius: CGFloat = 0.40
+    //
+    // The head is the WIDEST part, and that is a constraint rather than an observation: an antenna
+    // tip sits `sin(38°) × reach` from the centre, so any reach past 1.62 radii would push the tips
+    // outside the dome and make the mark's width depend on the antennae instead of the head.
+    private static let baseline: CGFloat = 0.805
+    private static let radius: CGFloat = 0.47
     /// Measured from straight up, in degrees. Android's own mark splays them near 40°.
     private static let antennaAngle: CGFloat = 38
     private static let antennaReach: CGFloat = 1.55
-    private static let antennaWidth: CGFloat = 0.075
-    private static let eyeRadius: CGFloat = 0.05
-    private static let eyeOffset = CGPoint(x: 0.16, y: 0.16)
+    private static let antennaWidth: CGFloat = 0.085
+    private static let eyeRadius: CGFloat = 0.058
+    private static let eyeOffset = CGPoint(x: 0.19, y: 0.19)
 
     private struct Head: Shape {
         func path(in rect: CGRect) -> Path {

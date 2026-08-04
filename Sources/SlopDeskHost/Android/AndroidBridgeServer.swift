@@ -247,8 +247,22 @@ final class AndroidBridgeServer: @unchecked Sendable {
 
     /// Boots an AVD **headless**. A SlopDesk host is a machine nobody is sitting at, so an emulator
     /// window there is a window the user will never see that steals focus from whoever is. The panel
-    /// mirrors it instead. `SLOPDESK_ANDROID_EMULATOR_ARGS` appends flags for the host whose GPU
-    /// needs `-gpu swiftshader_indirect` to run windowless.
+    /// mirrors it instead.
+    ///
+    /// ⚠️ **`-gpu host` is the difference between a mirror and a slideshow, and it must be stated.**
+    /// `-no-window` makes the emulator's `auto` renderer resolve to a SOFTWARE one — measured
+    /// 2026-08-04 on this host, `emulator -avd … -no-window` with no `-gpu` flag settles on
+    /// `lavapipe` and Android renders its own frames at **113 ms apiece, 98.7% of them janky**, which
+    /// reaches the panel as **6.4 fps with gaps up to 677 ms**. `-gpu swiftshader_indirect` is barely
+    /// better (19.5 fps, 99.6% janky). The SAME device, the same drag and the same panel on
+    /// `-gpu host` — Metal, and headless is no obstacle to it — is **58 fps, 2.6% janky, worst gap
+    /// 71 ms**. Nothing in SlopDesk's own path was ever the stutter: measured across three vantage
+    /// points (scrcpy direct, through the bridge on loopback, through the bridge over the mesh) the
+    /// numbers are the same to within run-to-run noise.
+    ///
+    /// `SLOPDESK_ANDROID_EMULATOR_ARGS` still appends whatever a host needs, and a `-gpu` of its own
+    /// REPLACES this one rather than fighting it — a host with no usable GPU is the case that flag
+    /// exists for.
     private func boot(avd: String?) -> AndroidBridgeError? {
         guard let avd, !avd.isEmpty else { return .badRequest }
         guard let emulator = toolchain.emulator else { return .emulatorMissing }
@@ -256,7 +270,7 @@ final class AndroidBridgeServer: @unchecked Sendable {
             .split(whereSeparator: \.isWhitespace).map(String.init) ?? []
         let process = Process()
         process.executableURL = URL(fileURLWithPath: emulator)
-        process.arguments = ["-avd", avd, "-no-window", "-no-boot-anim"] + extra
+        process.arguments = Self.emulatorArguments(avd: avd, extra: extra)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
@@ -264,6 +278,17 @@ final class AndroidBridgeServer: @unchecked Sendable {
         // that started it, and hostd restarting must not take the user's device down with it.
         do { try process.run() } catch { return .launchFailed }
         return nil
+    }
+
+    /// The emulator's argument vector. Pure, because the `-gpu` rule above is worth pinning and a
+    /// `Process` is not something a test may run.
+    static func emulatorArguments(avd: String, extra: [String]) -> [String] {
+        ["-avd", avd, "-no-window", "-no-boot-anim"]
+            // Stated only when the operator has not stated one. Appending unconditionally would rely
+            // on the emulator preferring the later of two `-gpu` flags, which is a behaviour nothing
+            // documents; leaving theirs alone is the same decision without the assumption.
+            + (extra.contains("-gpu") ? [] : ["-gpu", "host"])
+            + extra
     }
 
     /// Shuts a device down. `adb emu kill` is the emulator's own clean exit; a physical device is
@@ -398,6 +423,13 @@ final class AndroidBridgeServer: @unchecked Sendable {
         lock.lock()
         sessions.append(session)
         lock.unlock()
+
+        // Nagle on the downstream leg too, and not only on the control leg it was first set for. A
+        // frame is written as one call but leaves as a run of full segments and one short tail, and
+        // it is the tail that Nagle holds back until the client acknowledges what came before —
+        // which the client, having a whole frame to decode, is in no hurry to do. The delay lands at
+        // a frame boundary every time, which is exactly where the eye is looking for it.
+        client.setNoDelay()
 
         reply(client, ["ok": true, "device": session.deviceName])
 

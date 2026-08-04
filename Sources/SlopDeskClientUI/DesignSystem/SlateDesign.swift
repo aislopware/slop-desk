@@ -477,6 +477,16 @@ enum Slate {
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
         static let deviceCardWidth: CGFloat = 180
+        /// A BRAND mark's box in a tab plate — `apple.logo` and `AndroidRobotMark`, and nothing else.
+        ///
+        /// Three points above the `footnote` measure the plate's shape symbols take, because a brand
+        /// is not drawn on Apple's optical grid. `folder` and `display` fill their em; `apple.logo`
+        /// is a small silhouette with a lot of clear space around it, and a hand-drawn path has
+        /// whatever proportions its own logo has. Given the same measure the two platform tabs read
+        /// as the undersized pair in the strip (user-reported 2026-08-04). Picked by rendering the
+        /// whole strip at 11 / 13 / 14 / 15 at true size: 13 still sat light against `folder`, 15
+        /// began to outweigh it, 14 matched.
+        static let brandMark: CGFloat = 14
         /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
         /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
         /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into

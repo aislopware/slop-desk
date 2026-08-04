@@ -220,6 +220,47 @@ accepting fingers.
 | `adb exec-out screencap -p` | 300 KB, ~250 ms | **no thumbnail polling on cards** — against the simulator server's 13.5 KB / 22 ms scaled JPEG, a 2 s poll per device would be ~150 KB/s and a real slice of the device's CPU |
 | raw `screencap` | 10.4 MB, 755 ms | why `-p` |
 
+### ⚠️⚠️⚠️ The emulator's RENDERER decides whether the panel is smooth. Nothing in this repo does.
+
+Reported as "scrolling stutters, and I can't tell whether it's input or output" (2026-08-04). It was
+neither: an emulator booted headless renders in **software** unless told otherwise, and the panel was
+faithfully mirroring a device that was itself running at six frames a second.
+
+`-no-window` makes the emulator's `auto` renderer resolve to a software one. Measured on this host,
+same AVD, same synthetic drag through `Settings`, same 460×1024 stream:
+
+| `-gpu` | fps at the client | gap p90 | worst gap | device's own janky frames |
+|---|---|---|---|---|
+| *(none — `auto` + `-no-window` → `lavapipe`)* | **6.4** | 436 ms | 677 ms | **98.7%**, 113 ms/frame |
+| `swiftshader_indirect` | 19.5 | 102 ms | 216 ms | **99.6%**, 97 ms/frame |
+| **`host`** (Metal, and headless is no obstacle) | **58.1** | **28 ms** | **71 ms** | **2.6%**, 22 ms/frame |
+
+The device-side column is `dumpsys gfxinfo <pkg>` and it is the one that settles the question: at
+98.7% janky the device never produced the frames, so no transport could have carried them.
+
+**SlopDesk's own path adds nothing measurable.** The same drag, measured at three vantage points with
+one probe:
+
+| Vantage | fps | gap p90 | worst |
+|---|---|---|---|
+| scrcpy direct over `adb`, on the host | 19.5\* | 102 ms | 216 ms |
+| through the bridge, loopback | 19.5\* | 102 ms | 216 ms |
+| through the bridge, over the mesh from the client machine | 59.0† | 27 ms | 72 ms |
+
+\* software renderer. † hardware renderer — the mesh row is identical to the loopback row taken under
+the same renderer (58.1 / 28 ms / 71 ms). The host's byte pump, the WireGuard hop and the client's
+decoder are all inside the noise.
+
+So `AndroidBridgeServer.boot` states `-gpu host` outright, and `SLOPDESK_ANDROID_EMULATOR_ARGS`
+replaces it rather than fighting it if a host needs something else.
+
+⚠️ **An emulator the panel did not boot keeps whatever flag it was started with.** Android Studio's
+own launches, and anything with `-gpu swiftshader_indirect` in it, land in the 19.5 fps row and look
+exactly like a panel bug. The guest cannot tell you which: `ro.hardware.egl` is `emulation` either
+way. `adb shell dumpsys SurfaceFlinger | grep GLES:` can — it names the HOST's renderer
+(`… (Apple M1 Max), OpenGL ES 3.0 (4.1 Metal - 90.5)` against
+`… (SwiftShader Device (LLVM 10.0.0)), ANGLE 2.1.1`).
+
 ---
 
 ## The list, and the fact Android has that iOS does not

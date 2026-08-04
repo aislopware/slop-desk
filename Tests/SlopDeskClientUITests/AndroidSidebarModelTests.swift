@@ -65,6 +65,34 @@ final class AndroidSidebarPhaseTests: XCTestCase {
         XCTAssertEqual(address?.host, "h")
         XCTAssertEqual(address?.port, 1)
     }
+
+    /// Only the FIRST frame is news, and this is the whole reason it is a function.
+    ///
+    /// `@Observable` notifies on assignment rather than on change, so a handler that writes
+    /// `hasVideo = true` per access unit invalidates every view reading it at the frame rate — the
+    /// stage rebuilding header, toolbar, device body and drawer on the main actor between the pointer
+    /// events the user is making. It is the cost `AndroidFrameSink` exists to keep out of the video
+    /// path, leaking back in through one assignment.
+    func testOnlyTheFirstFrameOfAStreamIsWorthTelling() {
+        XCTAssertTrue(
+            AndroidSidebarModel.videoArrivalIsNews(hasVideo: false, isAwaitingStream: true),
+        )
+        XCTAssertFalse(
+            AndroidSidebarModel.videoArrivalIsNews(hasVideo: true, isAwaitingStream: false),
+        )
+    }
+
+    func testARetryMakesTheNextFrameNewsAgain() {
+        // `retry()` re-arms the wait, and the veil it raises has to come back down.
+        XCTAssertTrue(
+            AndroidSidebarModel.videoArrivalIsNews(hasVideo: true, isAwaitingStream: true),
+        )
+        // A stream that has neither video nor a wait outstanding is one the panel gave up on; its
+        // late frame still ends the failure state.
+        XCTAssertTrue(
+            AndroidSidebarModel.videoArrivalIsNews(hasVideo: false, isAwaitingStream: false),
+        )
+    }
 }
 
 // MARK: - The video path
