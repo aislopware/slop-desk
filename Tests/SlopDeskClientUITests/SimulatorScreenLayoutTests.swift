@@ -73,16 +73,6 @@ final class SimulatorScreenLayoutTests: XCTestCase {
 
     // MARK: Scroll
 
-    func testTheSwipeRunsTheWayTheVectorPoints() {
-        // `swipeEnd` takes an already-resolved SWIPE VECTOR — direction is `swipeVector`'s job, so
-        // this end point simply follows it.
-        let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
-        let end = SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 200), delta: CGSize(width: 0, height: -50), fitted: fitted,
-        )
-        XCTAssertEqual(end, CGPoint(x: 100, y: 150))
-    }
-
     func testTheDeltaSSignIsPassedThroughRatherThanReinterpreted() {
         // AppKit has already applied the user's scroll-direction preference: a positive delta always
         // means "toward the top of the document", which on a touch surface is a finger travelling DOWN
@@ -90,70 +80,123 @@ final class SimulatorScreenLayoutTests: XCTestCase {
         // from `isDirectionInvertedFromDevice` double-applies the preference and the device's list
         // moved opposite to a native scroll view given the same gesture.
         XCTAssertEqual(
-            SimulatorScreenLayout.swipeVector(delta: CGSize(width: 0, height: -3), isPrecise: true).height, -3,
+            SimulatorScreenLayout.scrollVector(
+                delta: CGSize(width: 0, height: -3), isPrecise: true, orientation: .portrait,
+            ).height, -3,
         )
         XCTAssertEqual(
-            SimulatorScreenLayout.swipeVector(delta: CGSize(width: 4, height: 0), isPrecise: true).width, 4,
+            SimulatorScreenLayout.scrollVector(
+                delta: CGSize(width: 4, height: 0), isPrecise: true, orientation: .portrait,
+            ).width, 4,
         )
-    }
-
-    func testWheelJitterDoesNotFireASwipePerTick() {
-        let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
-        XCTAssertNil(SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 200), delta: CGSize(width: 1, height: 1), fitted: fitted,
-        ))
     }
 
     func testAWheelNotchIsScaledFromLinesToPointsButATrackpadIsNot() {
         // AppKit reports a trackpad's delta in POINTS and a wheel's in LINES. Measured 2026-08-04:
-        // taking a line as a point sends a swipe of one or two pixels, under iOS's own pan slop, so
+        // taking a line as a point moves the finger one or two pixels, under iOS's own pan slop, so
         // the device ignores every tick and the panel looks like it eats scrolls.
-        let wheel = SimulatorScreenLayout.swipeVector(
-            delta: CGSize(width: 0, height: 3), isPrecise: false,
+        let wheel = SimulatorScreenLayout.scrollVector(
+            delta: CGSize(width: 0, height: 3), isPrecise: false, orientation: .portrait,
         )
         XCTAssertEqual(wheel.height, 3 * SimulatorScreenLayout.pointsPerLine)
-        let trackpad = SimulatorScreenLayout.swipeVector(
-            delta: CGSize(width: 0, height: 3), isPrecise: true,
+        let trackpad = SimulatorScreenLayout.scrollVector(
+            delta: CGSize(width: 0, height: 3), isPrecise: true, orientation: .portrait,
         )
         XCTAssertEqual(trackpad.height, 3)
     }
 
-    func testOneWheelNotchClearsTheSwipeStep() {
-        // The point of the scale factor: a single notch must be a swipe the device acts on, not one
-        // banked against the next tick.
-        let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
-        let notch = SimulatorScreenLayout.swipeVector(
-            delta: CGSize(width: 0, height: 1), isPrecise: false,
+    func testATurnedDeviceScrollsTheWayTheUserIsLooking() {
+        // The one thing that is NOT pass-through. A scroll delta arrives in SCREEN space — AppKit
+        // knows nothing about the `rotationEffect` the bezel is drawn under — while the framebuffer
+        // never turns. Before this the panel scrolled sideways on a device held on its side.
+        let down = CGSize(width: 0, height: 10)
+        XCTAssertEqual(
+            SimulatorScreenLayout.scrollVector(
+                delta: down, isPrecise: true, orientation: .landscapeLeft,
+            ),
+            CGSize(width: 10, height: 0),
         )
-        XCTAssertNotNil(SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 200), delta: notch, fitted: fitted,
+        XCTAssertEqual(
+            SimulatorScreenLayout.scrollVector(
+                delta: down, isPrecise: true, orientation: .landscapeRight,
+            ),
+            CGSize(width: -10, height: 0),
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.scrollVector(
+                delta: down, isPrecise: true, orientation: .portraitUpsideDown,
+            ),
+            CGSize(width: 0, height: -10),
+        )
+    }
+
+    func testAQuarterTurnIsUndoneRatherThanApproximated() {
+        // Spelled out per angle rather than run through trigonometry, so this pins the four cases
+        // exactly — a `sin(90°)` that comes back as 0.9999999 would leave a scroll drifting sideways.
+        let vector = CGSize(width: 3, height: 7)
+        XCTAssertEqual(SimulatorScreenLayout.unrotated(vector, by: 0), vector)
+        XCTAssertEqual(
+            SimulatorScreenLayout.unrotated(vector, by: 180), CGSize(width: -3, height: -7),
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.unrotated(SimulatorScreenLayout.unrotated(vector, by: 90), by: -90),
+            vector,
+        )
+    }
+
+    // MARK: Edges
+
+    func testAContactInTheBandsCarriesTheEdgeTheHostNeeds() {
+        // The hint is what lets a drag reach the home indicator and the pull-down shades at all —
+        // without it those gestures exist only as toolbar buttons.
+        let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
+        XCTAssertEqual(
+            SimulatorScreenLayout.edge(
+                at: CGPoint(x: 100, y: 395), fitted: fitted, orientation: .portrait,
+            ), "bottom",
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.edge(
+                at: CGPoint(x: 100, y: 4), fitted: fitted, orientation: .portrait,
+            ), "top",
+        )
+        XCTAssertNil(SimulatorScreenLayout.edge(
+            at: CGPoint(x: 100, y: 200), fitted: fitted, orientation: .portrait,
         ))
     }
 
-    func testATrackpadFrameIsBankedRatherThanSentAsItsOwnSwipe() {
-        // A trackpad emits a delta per frame. Sending each one would put sixty swipes a second on the
-        // wire; the step is what makes the caller accumulate them into one.
+    func testUpsideDownMovesTheBandsOntoTheOtherAxis() {
+        // The one orientation that is not a rotation of the others: the physical home-indicator edge
+        // lands on visual LEFT, so the bands swap axes rather than ends.
         let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
-        let frame = SimulatorScreenLayout.swipeVector(
-            delta: CGSize(width: 0, height: 2), isPrecise: true,
+        XCTAssertEqual(
+            SimulatorScreenLayout.edge(
+                at: CGPoint(x: 4, y: 200), fitted: fitted, orientation: .portraitUpsideDown,
+            ), "bottom",
         )
-        XCTAssertNil(SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 200), delta: frame, fitted: fitted,
+        XCTAssertNil(SimulatorScreenLayout.edge(
+            at: CGPoint(x: 100, y: 395), fitted: fitted, orientation: .portraitUpsideDown,
         ))
     }
 
-    func testASwipeIsKeptInsideTheFrameSoItIsNotASystemGesture() {
-        // A swipe ending past the edge is the app switcher or control centre on iOS — not what
-        // someone scrolling a list meant.
+    // MARK: Pinch
+
+    func testThePinchPairStraddlesItsCentreAndStaysOnScreen() {
         let fitted = CGRect(x: 0, y: 0, width: 200, height: 400)
-        let end = SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 20), delta: CGSize(width: 0, height: -900), fitted: fitted,
+        let (first, second) = SimulatorScreenLayout.pinchFingers(
+            centre: CGPoint(x: 100, y: 200), spread: 100, fitted: fitted,
         )
-        XCTAssertEqual(end, CGPoint(x: 100, y: 1))
-        let sideways = SimulatorScreenLayout.swipeEnd(
-            from: CGPoint(x: 100, y: 200), delta: CGSize(width: 900, height: 0), fitted: fitted,
+        XCTAssertEqual((first.x + second.x) / 2, 100, accuracy: 0.001)
+        XCTAssertEqual((first.y + second.y) / 2, 200, accuracy: 0.001)
+        XCTAssertGreaterThan(first.x, second.x)
+
+        // A spread wider than the frame is clamped: a contact past the edge is a system gesture on
+        // iOS rather than a zoom.
+        let (wide, _) = SimulatorScreenLayout.pinchFingers(
+            centre: CGPoint(x: 100, y: 200), spread: 4000, fitted: fitted,
         )
-        XCTAssertEqual(sideways, CGPoint(x: 199, y: 200))
+        XCTAssertLessThanOrEqual(wide.x, fitted.width)
+        XCTAssertLessThanOrEqual(wide.y, fitted.height)
     }
 }
 #endif

@@ -21,7 +21,7 @@ import SwiftUI
 
 struct SimulatorBezelView: View {
     var assets: SimulatorChromeAssets
-    var frame: SimulatorScreenFrame
+    var frames: SimulatorFrameSink
     var orientation: SimulatorOrientation
     var send: (SimulatorInputEnvelope) -> Void
     /// Declared AFTER `send` so an unlabelled trailing closure still matches `send` — Swift's forward
@@ -72,10 +72,12 @@ struct SimulatorBezelView: View {
     /// the "looks unfinished" the bezel is here to fix.
     private func screen(scale: CGFloat, origin: CGPoint) -> some View {
         let rect = assets.chrome.screen.rect
-        return SimulatorScreenView(frame: frame, send: send, onContentSize: onContentSize)
-            .frame(width: rect.width * scale, height: rect.height * scale)
-            .clipShape(.rect(cornerRadius: assets.chrome.screen.clipRadius * scale))
-            .offset(x: (rect.minX - origin.x) * scale, y: (rect.minY - origin.y) * scale)
+        return SimulatorScreenView(
+            frames: frames, orientation: orientation, send: send, onContentSize: onContentSize,
+        )
+        .frame(width: rect.width * scale, height: rect.height * scale)
+        .clipShape(.rect(cornerRadius: assets.chrome.screen.clipRadius * scale))
+        .offset(x: (rect.minX - origin.x) * scale, y: (rect.minY - origin.y) * scale)
     }
 
     private func button(
@@ -138,7 +140,7 @@ struct SimulatorBezelView: View {
 /// the same way the bezel is, for the same reason: the framebuffer never rotates, so a landscape
 /// device would otherwise read sideways here too.
 struct SimulatorBareScreen: View {
-    var frame: SimulatorScreenFrame
+    var frames: SimulatorFrameSink
     var orientation: SimulatorOrientation
     var send: (SimulatorInputEnvelope) -> Void
     /// After `send`, for the reason ``SimulatorBezelView`` states.
@@ -147,11 +149,13 @@ struct SimulatorBareScreen: View {
     var body: some View {
         GeometryReader { proxy in
             let box = SimulatorBezelView.footprint(proxy.size, turned: orientation.isLandscape)
-            SimulatorScreenView(frame: frame, send: send, onContentSize: onContentSize)
-                .frame(width: box.width, height: box.height)
-                .rotationEffect(.degrees(orientation.viewAngle))
-                .animation(Slate.Anim.smallFade, value: orientation)
-                .frame(width: proxy.size.width, height: proxy.size.height)
+            SimulatorScreenView(
+                frames: frames, orientation: orientation, send: send, onContentSize: onContentSize,
+            )
+            .frame(width: box.width, height: box.height)
+            .rotationEffect(.degrees(orientation.viewAngle))
+            .animation(Slate.Anim.smallFade, value: orientation)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }

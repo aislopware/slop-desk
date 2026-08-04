@@ -47,9 +47,14 @@ final class SimulatorSidebarModel {
     private(set) var devices: [SimulatorDevice] = []
     /// The UDID whose stream is live, or `nil` for the device list.
     private(set) var selection: String?
-    /// The latest frame message for the screen view. A one-slot mailbox, not a queue: the view
-    /// enqueues into a display layer that has its own, and buffering here would only add latency.
-    private(set) var frame = SimulatorScreenFrame()
+    /// The video path to the mounted screen view. NOT observable state, and deliberately: at the
+    /// 69.5 frames per second a device under a drag was measured to produce, publishing each access
+    /// unit rebuilt the whole stage seventy times a second. See ``SimulatorFrameSink``.
+    let frames = SimulatorFrameSink()
+    /// Whether DECODABLE video has arrived for the current selection. The one thing about the stream
+    /// the panel draws differently, and the reason the sink can stay silent otherwise: this changes
+    /// twice a stream, not seventy times a second.
+    private(set) var hasVideo = false
     /// Set while a boot/shutdown is in flight, so the row can show it and refuse a second click.
     private(set) var pending: Set<String> = []
     /// The last failure worth showing. Cleared by the next success — a stale error over a working
@@ -122,7 +127,6 @@ final class SimulatorSidebarModel {
     private var stream: SimulatorStreaming?
     private var logStream: SimulatorLogStreaming?
     private var logSequence: UInt64 = 0
-    private var frameSequence: UInt64 = 0
     /// Bezel artwork by UDID. Worth keeping: it is per-model, never changes, and re-fetching three
     /// images every time someone steps back to the list and in again is visible as a blank frame.
     private var chromeCache: [String: SimulatorChromeAssets] = [:]
@@ -266,7 +270,8 @@ final class SimulatorSidebarModel {
         stream?.disconnect()
         stream = nil
         settleStream()
-        frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
+        frames.reset()
+        hasVideo = false
         selection = udid
         // Every one of these is a claim about the PREVIOUS device. Carrying them over would have the
         // new screen rotate from the old one's angle, its status-bar toggle show the wrong position,
@@ -320,7 +325,8 @@ final class SimulatorSidebarModel {
         stream?.disconnect()
         settleStream()
         failure = nil
-        frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
+        frames.reset()
+        hasVideo = false
         openStream(udid, host: host, port: port)
     }
 
@@ -605,28 +611,21 @@ final class SimulatorSidebarModel {
         case let .configuration(record):
             guard let configuration = SimulatorWireProtocol.parseAVCConfiguration(record) else { return }
             settleStream()
-            frame = SimulatorScreenFrame(latest: .configuration(configuration), sequence: nextSequence())
+            hasVideo = true
+            frames.deliver(configuration: configuration)
         case let .accessUnit(data, isKeyframe):
             // DECODABLE VIDEO ends the loading state; the JPEG seed below does NOT. The seed is a
             // still the server sends while its encoder starts, so treating it as arrival would drop
             // the indicator over a picture that is already stale and may never move — which is the
             // hang this deadline exists to catch, wearing a screenshot as a disguise.
             settleStream()
-            frame = SimulatorScreenFrame(
-                latest: .accessUnit(data, isKeyframe: isKeyframe), sequence: nextSequence(),
-            )
+            hasVideo = true
+            frames.deliver(accessUnit: data, isKeyframe: isKeyframe)
         case let .jpeg(data):
-            frame = SimulatorScreenFrame(latest: .seed(data), sequence: nextSequence())
+            frames.deliver(seed: data)
         case .unknown:
             break
         }
-    }
-
-    /// Monotonic, so two identical frames still read as two updates. SwiftUI coalesces equal values,
-    /// and two consecutive delta frames of identical bytes are entirely possible on a static screen.
-    private func nextSequence() -> UInt64 {
-        frameSequence &+= 1
-        return frameSequence
     }
 
     /// One line, for a placeholder. The status code matters (a refused boot is a 4xx and says so);

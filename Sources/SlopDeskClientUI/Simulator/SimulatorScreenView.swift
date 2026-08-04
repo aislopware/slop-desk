@@ -6,18 +6,27 @@
 // a cursor overlay and 1:1 snapping. This needs one rectangle at panel size, so the simpler API is
 // not a shortcut — it is the whole feature.
 //
+// FRAMES DO NOT ARRIVE AS STATE. The view registers itself with the model's ``SimulatorFrameSink`` on
+// mount and is fed directly from the socket; SwiftUI is not in the path. See that file for the
+// measurement that forced it — 69.5 frames a second, each one invalidating the entire stage.
+//
 // INPUT MODEL. A press-drag-release becomes `touch1-down`/`move`/`up`, which is what makes a swipe,
 // a drag and a long-press all work without special cases. A click with no movement is still sent as
 // that triple rather than as `tap`, so the timing is the user's own — a deliberate hold on a list row
 // opens its context menu exactly as it would on a device, where a synthesized 50 ms `tap` never
-// could. `tap` stays for programmatic use.
+// could. It is also 3000× cheaper: measured 2026-08-04, `tap` occupies the server for 73 ms and a
+// `touch1-*` for 0.03 ms.
 //
-// Scroll becomes a swipe rather than a touch sequence: a wheel has no contact to track, and the
-// discrete gesture is what the host interpolates smoothly.
+// SCROLL IS A FINGER, not a flick — see ``SimulatorScrollGesture`` for the 275 ms that bought.
+// PINCH is the trackpad's own magnify gesture as a two-finger contact; it is rate-limited because
+// `touch2-move` costs 25 ms a piece, twenty times what the single-finger path costs.
+// EDGES: a contact that starts in iOS's own edge bands carries the `edge` hint, which is what makes
+// swipe-up-for-home and pull-down-for-the-shades work from a drag rather than only from a button.
 //
 // Hang-safety: this file builds a display layer, which spins up a decompression session on first
 // enqueue. Nothing here may be constructed in a unit test — the geometry it depends on lives in
-// ``SimulatorScreenLayout`` and the sample construction in ``SimulatorVideoFormat``, both pure.
+// ``SimulatorScreenLayout``, the gesture machine in ``SimulatorScrollGesture`` and the sample
+// construction in ``SimulatorVideoFormat``, all pure.
 
 #if os(macOS)
 import AppKit
@@ -28,10 +37,14 @@ import SwiftUI
 /// The AppKit surface. A plain `NSView` hosting the display layer, plus the mouse/scroll handling —
 /// SwiftUI gesture recognizers cannot express "report every intermediate point of a drag at the rate
 /// they arrive", which is precisely what a touch sequence is.
-final class SimulatorScreenNSView: NSView {
+final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
     /// Where a gesture goes. Set by the representable; nil until then, so an early click is dropped
     /// rather than queued against a device that may not be the one finally selected.
     var send: ((SimulatorInputEnvelope) -> Void)?
+
+    /// Which way the device is being held. Needed for the SCROLL DELTA and the edge bands, neither of
+    /// which passes through the view's own geometry — see ``SimulatorScreenLayout/scrollVector(delta:isPrecise:orientation:)``.
+    var orientation: SimulatorOrientation = .portrait
 
     /// Reports the framebuffer size upward the moment the decoder works it out. The header prints
     /// it, and this is the only place in the app that knows: the size is in the SPS, and the layer
@@ -148,10 +161,19 @@ final class SimulatorScreenNSView: NSView {
     /// deliver an `up`, or the device is left with a finger permanently down.
     private var isTracking = false
 
+    /// Which system edge the press started in, carried on every event of that gesture. iOS decides
+    /// whether a drag is a scroll or a system gesture from where the finger LANDED, so the hint has
+    /// to ride the whole sequence rather than only its first envelope.
+    private var trackingEdge: String?
+
     override func mouseDown(with event: NSEvent) {
         guard let point = devicePoint(for: event) else { return }
+        endScroll()
         isTracking = true
-        send?(.touch(.down, x: point.x, y: point.y, in: surface))
+        trackingEdge = SimulatorScreenLayout.edge(
+            at: point, fitted: fitted, orientation: orientation,
+        )
+        send?(.touch(.down, x: point.x, y: point.y, edge: trackingEdge, in: surface))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -159,41 +181,132 @@ final class SimulatorScreenNSView: NSView {
         // Clamped rather than dropped: a drag that leaves the frame is still a drag, and the device
         // needs the intermediate points to interpret it as a swipe rather than a jump.
         let point = clampedDevicePoint(for: event)
-        send?(.touch(.move, x: point.x, y: point.y, in: surface))
+        send?(.touch(.move, x: point.x, y: point.y, edge: trackingEdge, in: surface))
     }
 
     override func mouseUp(with event: NSEvent) {
         guard isTracking else { return }
         isTracking = false
         let point = clampedDevicePoint(for: event)
-        send?(.touch(.up, x: point.x, y: point.y, in: surface))
+        send?(.touch(.up, x: point.x, y: point.y, edge: trackingEdge, in: surface))
+        trackingEdge = nil
     }
 
-    /// Scroll that has arrived but not yet been worth a swipe. Accumulating rather than dropping is
-    /// what makes a wheel work at all: one notch is under iOS's pan slop, so sending it immediately
-    /// would have the device ignore every tick, and dropping it would lose the travel instead of
-    /// banking it. Measured 2026-08-04 — a per-tick swipe moved a Settings list not at all.
-    private var scrollTravel: CGSize = .zero
+    // MARK: Scroll
+
+    private var scroll = SimulatorScrollGesture()
+    /// Closes a CLASSIC WHEEL's gesture. A wheel has no phases, so nothing on the wire says the user
+    /// stopped — the finger is lifted once the notches stop coming. A trackpad never uses this: its
+    /// own `.ended` is exact, and waiting out an idle window after it would hold a contact down for a
+    /// tenth of a second after the fingers left.
+    private var wheelIdle: Timer?
+    /// Matches `baguette`'s own web UI, which closes a synthesized wheel gesture on the same window.
+    private static let wheelIdleInterval: TimeInterval = 0.12
 
     override func scrollWheel(with event: NSEvent) {
-        guard let origin = devicePoint(for: event) else { return }
-        let step = SimulatorScreenLayout.swipeVector(
+        // MOMENTUM IS THE DEVICE'S JOB. macOS keeps delivering deltas after the fingers lift, and
+        // replaying them as finger movement would scroll twice: once from our synthetic travel and
+        // again from the deceleration iOS computes from the touch history at lift. Dropping them is
+        // what makes the device's own inertia the only inertia.
+        guard event.momentumPhase.isEmpty else { return }
+
+        let phase: SimulatorScrollGesture.Phase
+        switch event.phase {
+        case .began: phase = .began
+        case .changed: phase = .changed
+        case .ended,
+             .cancelled: phase = .ended
+        case []: phase = .wheel
+        default: return // `.mayBegin` and anything later — not a delta worth acting on.
+        }
+
+        guard let origin = devicePoint(for: event) ?? scroll.finger else { return }
+        let envelopes = scroll.accept(
             delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY),
             isPrecise: event.hasPreciseScrollingDeltas,
+            phase: phase, pointer: origin, fitted: fitted, orientation: orientation,
         )
-        scrollTravel = CGSize(
-            width: scrollTravel.width + step.width, height: scrollTravel.height + step.height,
+        for envelope in envelopes { send?(envelope) }
+
+        wheelIdle?.invalidate()
+        wheelIdle = nil
+        guard phase == .wheel else { return }
+        wheelIdle = Timer.scheduledTimer(
+            withTimeInterval: Self.wheelIdleInterval, repeats: false,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endScroll() }
+        }
+    }
+
+    /// Lift whatever the scroll left down. Called by the wheel's idle timer, and by a mouse press —
+    /// a click while a synthetic finger is still on the screen would be two contacts at once.
+    private func endScroll() {
+        wheelIdle?.invalidate()
+        wheelIdle = nil
+        for envelope in scroll.lift(in: fitted) { send?(envelope) }
+    }
+
+    /// The view is going away — a device switch, or the panel closing. The contact is forgotten
+    /// rather than lifted: an `up` has nowhere to go once the socket for it is gone.
+    func abandonGestures() {
+        wheelIdle?.invalidate()
+        wheelIdle = nil
+        scroll.abandon()
+        pinchCentre = nil
+        isTracking = false
+    }
+
+    // MARK: Pinch
+
+    /// The trackpad's own magnify gesture, as the two contacts a device understands. `touch2-move`
+    /// costs 25 ms of server time — a thousand times a `touch1-move` — so this is the one input path
+    /// that is deliberately rate-limited rather than reported at the rate the events arrive.
+    private var pinchCentre: CGPoint?
+    private var pinchSpread: CGFloat = 0
+    private var pinchSentAt: TimeInterval = 0
+    /// The pair's starting separation, and the floor a full pinch closes to. Wide enough that a
+    /// spread has somewhere to go, narrow enough to sit inside a phone's width.
+    private static let pinchSpread: CGFloat = 160
+    private static let pinchInterval: TimeInterval = 0.04
+
+    override func magnify(with event: NSEvent) {
+        switch event.phase {
+        case .began:
+            guard let centre = devicePoint(for: event) else { return }
+            pinchCentre = centre
+            pinchSpread = Self.pinchSpread
+            pinchSentAt = 0
+            sendPinch(phase: .down)
+        case .changed:
+            guard pinchCentre != nil else { return }
+            // Multiplicative: magnification is a fractional delta, so a pinch and the spread that
+            // undoes it have to be the same factor in each direction.
+            pinchSpread = min(max(pinchSpread * (1 + event.magnification), 24), 2000)
+            let now = event.timestamp
+            guard now - pinchSentAt >= Self.pinchInterval else { return }
+            pinchSentAt = now
+            sendPinch(phase: .move)
+        case .ended,
+             .cancelled:
+            guard pinchCentre != nil else { return }
+            sendPinch(phase: .up)
+            pinchCentre = nil
+        default:
+            break
+        }
+    }
+
+    private func sendPinch(phase: SimulatorInputEnvelope.TouchPhase) {
+        guard let pinchCentre else { return }
+        let (first, second) = SimulatorScreenLayout.pinchFingers(
+            centre: pinchCentre, spread: pinchSpread, fitted: fitted,
         )
-        guard let end = SimulatorScreenLayout.swipeEnd(
-            from: origin, delta: scrollTravel, fitted: fitted,
-        ) else { return }
-        scrollTravel = .zero
-        // Short duration: a wheel tick is an impulse, and a 250 ms default would make the device lag
-        // a scroll by a quarter second per tick.
-        send?(.swipe(
-            fromX: origin.x, fromY: origin.y, toX: end.x, toY: end.y, duration: 0.05, in: surface,
+        send?(.touch2(
+            phase, x1: first.x, y1: first.y, x2: second.x, y2: second.y, in: surface,
         ))
     }
+
+    // MARK: Geometry
 
     private var surface: SimulatorInputEnvelope.Surface {
         SimulatorScreenLayout.surface(fitted: fitted)
@@ -236,11 +349,11 @@ final class SimulatorScreenNSView: NSView {
     }
 }
 
-/// The device's frame as a SwiftUI view.
+/// The device's frame as a SwiftUI view. It carries no frame data: the view attaches itself to the
+/// model's sink and is fed from the socket directly.
 struct SimulatorScreenView: NSViewRepresentable {
-    /// The stream's latest message. Driving the view from a value rather than reaching into it keeps
-    /// the model the single owner of the connection.
-    var frame: SimulatorScreenFrame
+    var frames: SimulatorFrameSink
+    var orientation: SimulatorOrientation
     var send: (SimulatorInputEnvelope) -> Void
     /// Optional so the bezel and the bare fallback can both mount this view while only the stage
     /// that owns the header cares what size the device turned out to be.
@@ -249,35 +362,22 @@ struct SimulatorScreenView: NSViewRepresentable {
     func makeNSView(context _: Context) -> SimulatorScreenNSView {
         let view = SimulatorScreenNSView(frame: .zero)
         view.send = send
+        view.orientation = orientation
         view.onContentSize = onContentSize
+        frames.attach(view)
         return view
     }
 
     func updateNSView(_ view: SimulatorScreenNSView, context _: Context) {
         view.send = send
+        view.orientation = orientation
         view.onContentSize = onContentSize
-        switch frame.latest {
-        case let .configuration(configuration): view.apply(configuration: configuration)
-        case let .accessUnit(data, isKeyframe): view.enqueue(accessUnit: data, isKeyframe: isKeyframe)
-        case let .seed(jpeg): view.showSeed(jpeg)
-        case .none: view.reset()
-        }
-    }
-}
-
-/// The one-slot mailbox between the model and the view. A `struct` carrying the LATEST message plus a
-/// monotonic sequence: SwiftUI coalesces updates, so a value that compares equal to the previous one
-/// would be skipped — and two consecutive delta frames of identical bytes are entirely possible on a
-/// static screen.
-struct SimulatorScreenFrame: Equatable {
-    enum Latest: Equatable {
-        case none
-        case configuration(SimulatorWireProtocol.AVCConfiguration)
-        case accessUnit(Data, isKeyframe: Bool)
-        case seed(Data)
     }
 
-    var latest: Latest = .none
-    var sequence: UInt64 = 0
+    static func dismantleNSView(_ view: SimulatorScreenNSView, coordinator _: ()) {
+        view.abandonGestures()
+        view.send = nil
+        view.onContentSize = nil
+    }
 }
 #endif

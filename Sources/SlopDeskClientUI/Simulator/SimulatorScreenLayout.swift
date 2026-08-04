@@ -53,20 +53,13 @@ enum SimulatorScreenLayout {
     }
 
     /// What a classic wheel NOTCH is worth in points. AppKit reports a trackpad's delta already in
-    /// points and a wheel's in LINES, and a line taken as a point is a swipe of one or two pixels —
-    /// under iOS's own pan slop, so the device ignores it entirely and the panel looks like it eats
-    /// scrolls. Set ABOVE ``swipeStep`` on purpose — one detent of a physical wheel has to scroll,
-    /// never bank against the next one.
+    /// points and a wheel's in LINES, and a line taken as a point is a finger movement of one or two
+    /// pixels — under iOS's own pan slop, so the device ignores it entirely and the panel looks like
+    /// it eats scrolls.
     static let pointsPerLine: CGFloat = 32
 
-    /// How far the accumulated scroll must travel before it is sent as one swipe. Two jobs: it clears
-    /// iOS's pan slop (a swipe under ~10 pt is not a pan at all), and it rate-limits a trackpad —
-    /// which emits a delta per frame, and would otherwise put sixty swipes a second on the wire.
-    static let swipeStep: CGFloat = 24
-
-    /// One scroll event's delta as a SWIPE VECTOR in points — the direction a finger should travel on
-    /// the device. Measured 2026-08-04 against a live device; getting this wrong produces a panel that
-    /// scrolls backwards or not at all.
+    /// One scroll event's delta as FINGER TRAVEL on the framebuffer, in points. Measured 2026-08-04
+    /// against a live device; getting this wrong produces a panel that scrolls backwards or not at all.
     ///
     /// SCALE. `isPrecise` is `NSEvent.hasPreciseScrollingDeltas`: a trackpad reports points and is
     /// used as-is, a classic wheel reports LINES and is scaled by ``pointsPerLine``.
@@ -75,31 +68,87 @@ enum SimulatorScreenLayout {
     /// preference to `scrollingDeltaY`: a positive value always means "move toward the top of the
     /// document", whichever way the fingers physically went. On a touch surface that is a finger
     /// travelling DOWN the screen, which in this view's flipped space is +y — so the delta maps
-    /// straight onto the swipe. `NSEvent.isDirectionInvertedFromDevice` reports the RAW device
+    /// straight onto the finger. `NSEvent.isDirectionInvertedFromDevice` reports the RAW device
     /// direction and is informational; folding it in here double-applies the preference, and
     /// synthesized events report it `false` regardless of the setting. Measured both ways 2026-08-04:
     /// with the flag folded in, one scroll gesture moved the device's list opposite to the way the
     /// same gesture moved a native scroll view in the same window.
-    static func swipeVector(delta: CGSize, isPrecise: Bool) -> CGSize {
+    ///
+    /// ORIENTATION is the one thing that is NOT pass-through, and it was wrong before this existed.
+    /// A scroll delta arrives in SCREEN space — AppKit knows nothing about the `rotationEffect` the
+    /// bezel is drawn under — while the framebuffer never turns, so on a device on its side the two
+    /// disagree by a quarter turn. Points do not need this (SwiftUI hit-tests a rotated view in its
+    /// unrotated local space, so a click already arrives in framebuffer coordinates); a delta that
+    /// never passed through the view's geometry does.
+    static func scrollVector(
+        delta: CGSize, isPrecise: Bool, orientation: SimulatorOrientation,
+    ) -> CGSize {
         let scale = isPrecise ? 1 : pointsPerLine
-        return CGSize(width: delta.width * scale, height: delta.height * scale)
+        return unrotated(
+            CGSize(width: delta.width * scale, height: delta.height * scale),
+            by: orientation.viewAngle,
+        )
     }
 
-    /// A swipe vector becomes an end point from the pointer. Returns `nil` when the gesture is too
-    /// small to be intentional, so wheel jitter does not fire a swipe per tick — the caller banks the
-    /// leftover rather than dropping it.
+    /// A screen-space vector in the space of a view drawn at `angle` degrees clockwise. Quarter turns
+    /// only, which is all ``SimulatorOrientation`` produces — spelled out rather than run through
+    /// trigonometry so the four cases are readable and a test can pin them exactly.
+    static func unrotated(_ vector: CGSize, by angle: Double) -> CGSize {
+        switch Int(angle.rounded()) {
+        case 90: CGSize(width: vector.height, height: -vector.width)
+        case -90,
+             270: CGSize(width: -vector.height, height: vector.width)
+        case 180,
+             -180: CGSize(width: -vector.width, height: -vector.height)
+        default: vector
+        }
+    }
+
+    /// How far into the frame iOS's own edge gestures reach, as a fraction of the framebuffer.
+    /// `baguette`'s own web UI uses these two numbers and this classification; they are copied rather
+    /// than re-derived because the server interprets the `edge` hint against them.
+    static let bottomBand: CGFloat = 0.93
+    static let topBand: CGFloat = 0.07
+
+    /// Which system edge, if any, a contact starting at `point` belongs to — the hint that lets the
+    /// host drive the home indicator, the app switcher and the pull-down shades from a drag instead
+    /// of only from a button.
     ///
-    /// The end point is clamped INSIDE the rect: a swipe that ends past the edge is a system gesture
-    /// on iOS (app switcher, control centre), which is not what someone scrolling a list meant.
-    static func swipeEnd(
-        from origin: CGPoint, delta: CGSize, fitted: CGRect, minimumDistance: CGFloat = swipeStep,
-    ) -> CGPoint? {
-        guard abs(delta.width) + abs(delta.height) >= minimumDistance else { return nil }
-        let unclamped = CGPoint(x: origin.x + delta.width, y: origin.y + delta.height)
+    /// `portrait-upside-down` is the case that is not a rotation of the others: the physical bottom
+    /// edge lands on visual LEFT, so the bands swap axes. The landscape cases deliberately do not —
+    /// the framebuffer stays portrait whichever way the device is held, and the home indicator stays
+    /// on the same framebuffer edge.
+    static func edge(
+        at point: CGPoint, fitted: CGRect, orientation: SimulatorOrientation,
+    ) -> String? {
+        guard fitted.width > 0, fitted.height > 0 else { return nil }
+        let xNorm = point.x / fitted.width
+        let yNorm = point.y / fitted.height
+        let isUpsideDown = orientation == .portraitUpsideDown
+        let inBottom = isUpsideDown ? xNorm <= 1 - bottomBand : yNorm >= bottomBand
+        let inTop = isUpsideDown ? xNorm >= bottomBand : yNorm <= topBand
+        if inBottom { return "bottom" }
+        return inTop ? "top" : nil
+    }
+
+    /// The two contacts a pinch is made of: a pair straddling `centre`, `spread` points apart along
+    /// the diagonal. The diagonal rather than the horizontal so a spread has room in both axes on a
+    /// screen that is far taller than it is wide, and clamped inside the frame because a finger past
+    /// the edge is a system gesture rather than a zoom.
+    static func pinchFingers(
+        centre: CGPoint, spread: CGFloat, fitted: CGRect,
+    ) -> (CGPoint, CGPoint) {
+        let arm = spread / 2 * CGFloat(2.0.squareRoot() / 2)
         let inset: CGFloat = 1
-        return CGPoint(
-            x: min(max(unclamped.x, inset), fitted.width - inset),
-            y: min(max(unclamped.y, inset), fitted.height - inset),
+        let clamped = { (point: CGPoint) -> CGPoint in
+            CGPoint(
+                x: min(max(point.x, inset), max(inset, fitted.width - inset)),
+                y: min(max(point.y, inset), max(inset, fitted.height - inset)),
+            )
+        }
+        return (
+            clamped(CGPoint(x: centre.x + arm, y: centre.y + arm)),
+            clamped(CGPoint(x: centre.x - arm, y: centre.y - arm)),
         )
     }
 }

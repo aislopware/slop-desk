@@ -93,23 +93,16 @@ struct SimulatorStageView: View {
         return model.devices.first { $0.udid == udid }
     }
 
-    /// Streaming means DECODABLE VIDEO is arriving, which is why the seed does not count: the JPEG
-    /// seed is what the server sends while its encoder starts, so a seed-only stream is a still
-    /// photograph of a device nobody is driving — the exact thing that must not pass for live.
-    private var isStreaming: Bool {
-        switch model.frame.latest {
-        case .accessUnit,
-             .configuration: true
-        case .none,
-             .seed: false
-        }
-    }
-
     /// The stream is over waiting and there is still no video. Distinct from "loading" by the model's
-    /// deadline and from "streaming" by the frames themselves, so the stage always resolves into one
-    /// of three definite things rather than into an indicator with no end.
+    /// deadline and from "streaming" by ``SimulatorSidebarModel/hasVideo``, so the stage always
+    /// resolves into one of three definite things rather than into an indicator with no end.
+    ///
+    /// `hasVideo` and not the frames themselves: the seed does not count (a seed-only stream is a
+    /// photograph of a device nobody is driving), and the frames no longer pass through this view at
+    /// all — reading them here would put the whole stage back on the 70 fps invalidation path that
+    /// ``SimulatorFrameSink`` exists to take it off.
     private var isStalled: Bool {
-        model.selection != nil && !model.isAwaitingStream && !isStreaming
+        model.selection != nil && !model.isAwaitingStream && !model.hasVideo
     }
 
     // MARK: The device
@@ -118,13 +111,13 @@ struct SimulatorStageView: View {
         Group {
             if let chrome = model.chrome {
                 SimulatorBezelView(
-                    assets: chrome, frame: model.frame, orientation: model.orientation,
+                    assets: chrome, frames: model.frames, orientation: model.orientation,
                     send: { model.send($0) }, onContentSize: { model.observed(resolution: $0) },
                 )
                 .padding(Slate.Metric.space3)
             } else {
                 SimulatorBareScreen(
-                    frame: model.frame, orientation: model.orientation,
+                    frames: model.frames, orientation: model.orientation,
                     send: { model.send($0) }, onContentSize: { model.observed(resolution: $0) },
                 )
             }

@@ -189,6 +189,65 @@ retry). Reproduce either case with a bare websocket client; a `101` alone proves
 Measured codec: `avc1.640033` = H.264 **High 5.1**, ~350 kbit/s at 1206×2622 (iPhone 17 Pro).
 **No HEVC is offered** — `format=avcc` is H.264 or nothing.
 
+**The frame rate is content-driven, and it is high.** Measured 2026-08-04: a static screen emits
+~13 frames/s (p50 gap 78 ms, ~1.6 KB each); a device under a continuous drag emits **69.5 frames/s**
+(p50 gap 12.1 ms, 2.1 Mbit/s). That number is why frames do not travel as `@Observable` state —
+see `SimulatorFrameSink`. **`fps`, `scale` and `bitrate` are `baguette stream` flags and are NOT
+honoured on the websocket**: measured with each appended to the query, the seed still came back
+1206×2622 and the rate was unchanged. Do not add them to the URL expecting an effect.
+
+### ⚠️⚠️ The upstream verbs are NOT equally priced
+
+Measured 2026-08-04 by feeding `baguette input` back-to-back envelopes and timing its per-envelope
+acks. The spread is three orders of magnitude, and it decides the whole input design:
+
+| verb | server time per envelope |
+| --- | --- |
+| `swipe` (duration 0.01 / 0.05 / 0.25) | **275 / 281 / 744 ms** |
+| `type`, one character | 147 ms |
+| `button` | 147 ms |
+| `key` | 131 ms |
+| `tap` (duration 0.05) | 73 ms |
+| `touch2-move` | 25 ms |
+| **`touch1-down` / `-move` / `-up`** | **0.0–0.1 ms** |
+
+`swipe`'s 275 ms is a FIXED cost, not the interpolation — it barely moves between a 10 ms and a 50 ms
+nominal duration — and it occupies the server's main actor, so nothing else is serviced while it runs.
+The consequence, measured end to end: **two seconds of scrolling built on `swipe` left the device
+still moving 5.29 s after the user stopped.** The same two seconds as a `touch1` stream: **0.00 s**.
+
+So the panel's scroll is one contact that moves (`SimulatorScrollGesture`), never a run of flicks, and
+`swipe`/`tap` appear nowhere on the interactive path. `touch2-*` is used only for pinch, where 25 ms
+is affordable because the gesture is rate-limited to 25 Hz.
+
+The one ceiling this side cannot lift: **typing is ~7 characters per second**, and batching does not
+help (10 envelopes of one character and one envelope of ten characters both cost ~140 ms/char). That
+is inside the server's HID key dispatch.
+
+### The gesture surface
+
+Every pointer gesture is a `touch1` stream, for the cost reason above and because it is what iOS
+recognisers are built for:
+
+| what the user does | what goes on the wire |
+| --- | --- |
+| click / press-and-hold | `touch1-down` … `touch1-up` — the timing is the user's own, so a hold opens a context menu |
+| drag | the same, with a `touch1-move` per `mouseDragged` |
+| drag starting in an edge band | the same, `edge: "bottom"` / `"top"` on every envelope of the sequence |
+| trackpad scroll | one contact, planted under the cursor, moved per event, lifted on `.ended` |
+| wheel scroll | the same, closed by a 120 ms idle timer — a wheel reports no phase |
+| trackpad pinch (`magnify`) | `touch2-*` around the pointer, rate-limited to 25 Hz |
+
+The **edge hint** is what lets a drag reach the home indicator and the pull-down shades at all —
+without it those gestures exist only as toolbar buttons. The bands are `baguette`'s own (bottom 7 %,
+top 7 %), copied rather than re-derived because the server interprets the hint against them; only
+`portrait-upside-down` swaps them onto the other axis.
+
+A scroll gesture can travel further than the device is tall, and a finger cannot leave the screen and
+keep going, so the contact **re-grips**: lift at the boundary, plant again at the far side, inside a
+24 pt margin — planting on the edge itself would land in iOS's own system-gesture band and summon the
+app switcher instead of continuing.
+
 ### Coordinates are NOT pixels
 
 Every positional envelope carries the `width`/`height` of the surface the client measured the gesture
@@ -317,6 +376,32 @@ facts that are always there.
 Pinned by `SimulatorDeviceTests` — the console and the test read the same `tint(for:)`, so the
 rendered ink cannot drift from the rule.
 
+### Frames do not travel as state
+
+At the 69.5 frames/s measured above, publishing each access unit as `@Observable` state rebuilt the
+whole stage — header, toolbar, bezel artwork, and the console's up-to-600 rows — seventy times a
+second, on the same main thread that has to dispatch the mouse events the user is making at that
+moment. The frames were not the point of that work; the panel was being rebuilt as a side effect of
+them arriving.
+
+So `SimulatorFrameSink` carries them: the model writes into it, the mounted screen view registers
+itself with it, and each access unit goes straight to the display layer. What stays observable is
+`hasVideo` and `resolution` — things that change twice a stream, not seventy times a second.
+
+Two details are load-bearing:
+
+- **The replay is not optional.** The view mounts a beat after the socket opens, and `.id(selection)`
+  builds a fresh one on every device switch; the parameter sets and the last keyframe arrive in that
+  gap. So the sink holds exactly what a cold decoder needs — avcC, the seed, the most recent
+  keyframe — and hands them over on attach. Without it a panel opened onto a quiet device sits black
+  until the next IDR, which was measured at **one per eight-second idle window**.
+- **Delta frames are never replayed**, and new parameter sets drop the held keyframe. Both are only
+  meaningful against a reference the new layer never had.
+
+An `@Observable` one-slot mailbox was measured before this change and does NOT lose frames at 70 Hz
+in a trivial view tree (0 of 355; 2 of 461 at 120 Hz). Cost, not correctness, is the reason — do not
+"restore" the old shape on the grounds that nothing was being dropped.
+
 ### Three states, all of them definite
 
 The stage resolves into exactly one of three things, and none of them is open-ended
@@ -373,19 +458,24 @@ pass as live, wearing a screenshot as a disguise.
 - **Use `layer.sampleBufferRenderer`, not the layer's own `enqueue`/`flush`/`status`** — the latter
   are deprecated on macOS 15+, and mixing the two spellings on one layer is the documented way to get
   an inconsistent status.
+- ⚠️⚠️ **`swipe` and `tap` are not interactive verbs — see the cost table above.** Anything that can
+  be expressed as `touch1-*` must be. This is not an optimisation; a scroll built on `swipe` accrues
+  seconds of lag per second of use, and it looked like a network problem for a week.
 - **A scroll event is already in the user's preferred direction — do not re-derive it from
   `NSEvent.isDirectionInvertedFromDevice`.** That flag reports the RAW device direction and is
   informational; AppKit has already applied the scroll-direction preference to `scrollingDeltaY`, so
   folding the flag in double-applies it, and a synthesized `CGEvent` reports it `false` whatever the
   setting says. Measured 2026-08-04 both ways against a live device: with the flag folded in, one
   gesture moved the device's list opposite to the way the same gesture moved a native scroll view in
-  the same window. `swipeVector` passes the sign straight through, and `swipeEnd` is `origin + delta`.
-- **A per-tick swipe does nothing.** One wheel notch is under iOS's own pan slop, so the device
-  ignores it. `SimulatorScreenView` banks the travel and sends one swipe once it clears
-  `swipeStep` — and `pointsPerLine` is deliberately ABOVE that step so a single physical detent still
-  scrolls rather than banking against the next one. Isolated with the CLI while debugging: `baguette
-  swipe --duration 0.05` over 32 pt DOES scroll, so a short fast swipe is not the problem; magnitude
-  and sign were.
+  the same window. `scrollVector` passes the sign straight through.
+- **A scroll DELTA needs the orientation; a scroll POINT does not.** SwiftUI hit-tests a rotated view
+  in its unrotated local space, so a click already arrives in framebuffer coordinates — but a
+  `scrollingDeltaY` never passed through the view's geometry, and the framebuffer never turns. Before
+  `scrollVector` took `orientation`, a device held sideways scrolled sideways.
+- **Do not replay macOS scroll MOMENTUM as finger movement.** The deltas that keep arriving after the
+  fingers lift are the Mac's own inertia; iOS computes its own from the touch history at the moment of
+  the `touch1-up`. Sending both scrolls twice. `SimulatorScreenView` drops every event with a
+  non-empty `momentumPhase`.
 - **A button box outside 0–100 % is not a bad decode.** Side buttons protrude from the body on
   purpose. Clamping the box, or laying out to the viewport instead of `SimulatorChrome.bleed`, shaves
   them off at the panel's edge and looks like missing artwork.
@@ -442,7 +532,7 @@ pass as live, wearing a screenshot as a disguise.
 | `Simulator/SimulatorInputEnvelope.swift` | pure encoder: every upstream JSON envelope |
 | `Simulator/SimulatorDevice.swift` | pure decoder: `/simulators.json` |
 | `Simulator/SimulatorEndpoints.swift` | the whole route table, pure |
-| `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, pure |
+| `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, scroll vector, edge bands, pinch pair — pure |
 | `Simulator/SimulatorVideoFormat.swift` | `CMFormatDescription` + `CMSampleBuffer` construction |
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
@@ -450,7 +540,9 @@ pass as live, wearing a screenshot as a disguise.
 | `Simulator/SimulatorOrientation.swift` | the quarter-turn cycle + wire spelling + demo status bar, pure |
 | `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
 | `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |
-| `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/key mapping |
+| `Simulator/SimulatorScrollGesture.swift` | scroll → ONE continuous `touch1` contact, with re-grip; pure |
+| `Simulator/SimulatorFrameSink.swift` | the video path with SwiftUI taken out of it: direct delivery + cold-start replay |
+| `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/pinch/edge/key mapping |
 | `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
 | `Simulator/SimulatorStageView.swift` | the streaming surface: header + device + toolbar + drawer + banner + drop target |
 | `Simulator/SimulatorDeviceHeader.swift` | what device this is: name, measured facts, back |

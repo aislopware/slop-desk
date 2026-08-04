@@ -565,38 +565,55 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertEqual(model.failure, "iPhone B is running but not sending video.")
     }
 
-    func testFramesAdvanceTheSequenceEvenWhenTheBytesRepeat() async {
+    func testEveryFrameReachesTheRendererEvenWhenTheBytesRepeat() async {
         let (model, stream) = await readyModel(FakeControl())
         model.select("A")
+        let renderer = FakeRenderer()
+        model.frames.attach(renderer)
         let unit = Data([0, 0, 0, 1, 0x65])
         stream()?.sink(.message(.accessUnit(unit, isKeyframe: true)))
-        let first = model.frame.sequence
         stream()?.sink(.message(.accessUnit(unit, isKeyframe: true)))
-        // SwiftUI coalesces equal values, and two identical delta frames are ordinary on a static
-        // screen — without the counter the second one would never reach the layer.
-        XCTAssertGreaterThan(model.frame.sequence, first)
-        XCTAssertEqual(model.frame.latest, .accessUnit(unit, isKeyframe: true))
+        // Two identical delta frames are ordinary on a static screen. They used to travel as
+        // `@Observable` state, where equal values coalesce; a direct call cannot lose one.
+        XCTAssertEqual(renderer.calls, ["enqueue(key)", "enqueue(key)"])
+        XCTAssertTrue(model.hasVideo)
     }
 
     func testAMalformedConfigurationRecordIsDroppedRatherThanRendered() async {
         let (model, stream) = await readyModel(FakeControl())
         model.select("A")
-        let before = model.frame.sequence
+        let renderer = FakeRenderer()
+        model.frames.attach(renderer)
         stream()?.sink(.message(.configuration(Data([0x01, 0x02]))))
         // Untrusted input: validate then drop. A half-parsed avcC would build a format description
         // that fails every decode after it.
-        XCTAssertEqual(model.frame.sequence, before)
+        XCTAssertTrue(renderer.calls.isEmpty)
+        XCTAssertFalse(model.hasVideo)
+    }
+
+    func testTheSeedIsShownButIsNotVideo() async {
+        let (model, stream) = await readyModel(FakeControl())
+        model.select("A")
+        let renderer = FakeRenderer()
+        model.frames.attach(renderer)
+        stream()?.sink(.message(.jpeg(Data([0xFF, 0xD8]))))
+        XCTAssertEqual(renderer.calls, ["seed"])
+        // A still the server sends while its encoder starts is not a device anyone is driving.
+        XCTAssertFalse(model.hasVideo)
     }
 
     func testGoingBackToTheListDropsTheSocketAndTheFrame() async {
         let (model, stream) = await readyModel(FakeControl())
         model.select("A")
         stream()?.sink(.message(.jpeg(Data([0xFF, 0xD8]))))
+        let renderer = FakeRenderer()
+        model.frames.attach(renderer)
         model.select(nil)
         XCTAssertNil(model.selection)
         XCTAssertEqual(stream()?.disconnects, 1)
         // Cleared, not left showing: the next selection must not open on the previous device's frame.
-        XCTAssertEqual(model.frame.latest, .none)
+        XCTAssertEqual(renderer.calls.last, "reset")
+        XCTAssertFalse(model.hasVideo)
     }
 
     func testInputGoesNowhereWithNothingSelected() async {
