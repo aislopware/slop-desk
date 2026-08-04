@@ -153,19 +153,14 @@ struct SimulatorStageView: View {
                 // `swipe-to-app-switcher` behaves identically; neither is an idempotent "show".
                 PlateIconButton(symbol: .squareOnSquare) { model.send(.button("app-switcher")) }
                     .help("App Switcher — press again to dismiss")
-                // The shade, which a device only has as an edge swipe and a mouse therefore cannot
-                // reach: the drag has to START outside the frame and end inside it, and a press that
-                // begins off the screen is a press this panel never sees. Control Centre has no
-                // counterpart here on purpose — the server's button set is home, lock, power, the
-                // volume pair, action, the crown, the side buttons, the app switcher, the two
-                // swipe-to gestures, the lock-screen pull and this one. There is no control-centre
-                // token to send.
-                PlateIconButton(symbol: .bell) {
-                    model.send(.button("pull-down-to-notification-center"))
-                }
-                .help("Notification Centre")
-                PlateIconButton(symbol: .lock) { model.send(.button("lock")) }
-                    .help("Lock")
+                // NOTIFICATION CENTRE AND LOCK ARE GONE (user-directed 2026-08-04). Both were here
+                // because the server offers the verb, which is not a reason: nobody driving an app
+                // reaches for the shade or the lock screen, and both are DESTRUCTIVE to the thing
+                // you are actually doing — a mis-click blanks the device and costs a wake and a
+                // swipe to undo. A rail earns its width by what gets used, and the cost of the
+                // wrong plate being adjacent to Home outweighed a verb neither of us ever sent.
+                // The server still accepts `pull-down-to-notification-center` and `lock`; nothing
+                // upstream changed, only what this panel puts under the pointer.
             }
             SlatePlateGroup {
                 PlateIconButton(symbol: .cameraViewfinder) { Task { await model.copyScreenshot() } }

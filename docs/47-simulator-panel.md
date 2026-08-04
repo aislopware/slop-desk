@@ -117,8 +117,9 @@ panel sends neither: both are motion over time and want a map to draw the path o
 The **hardware-button set** is closed and is exactly: `home`, `lock`, `power`, `volume-up`,
 `volume-down`, `action`, `digital-crown`, `side-button`, `left-side-button`, `app-switcher`,
 `swipe-to-app-switcher`, `swipe-to-home`, `pull-down-to-lock-screen`, `pull-down-to-notification-center`.
-There is **no control-centre token** — the toolbar offers Notification Centre and stops there rather
-than sending a verb the server will refuse.
+There is **no control-centre token**, so nothing here may offer one. The toolbar sends two of this
+set — `home` and `app-switcher` — and the panel's own gesture layer covers the rest; a verb existing
+upstream has never been a reason to put a plate under the pointer.
 
 `files` is deliberately not classified client-side: the server installs an `.app`/`.ipa` and drops an
 image or video into Photos, and guessing that taxonomy locally would reject the one build someone
@@ -219,12 +220,16 @@ it as the device's age.
 artwork on touch-down and fire the envelope on **release**, which is what makes a long-press on Power
 do what a long-press on Power does.
 
-*Verbs* — the toolbar carries only what the body cannot offer: rotate left/right; Home, App Switcher
-and Notification Centre (gestures with no hardware to click — and the shade in particular is
-unreachable with a mouse, since the drag has to start outside the frame); Lock; copy screenshot; the
-demo status-bar toggle; then, right-aligned, the location popover and the console latch. Screenshots
-go to the **clipboard**, not to a file — the client app is sandboxed, and a screenshot's next stop is
-a message or a PR. Any file dropped on the stage is sent to `files`.
+*Verbs* — the toolbar carries only what the body cannot offer AND what actually gets used: rotate
+left/right; Home and App Switcher (gestures with no hardware to click); copy screenshot; the demo
+status-bar toggle; then, right-aligned, the location popover and the console latch. Screenshots go to
+the **clipboard**, not to a file — the client app is sandboxed, and a screenshot's next stop is a
+message or a PR. Any file dropped on the stage is sent to `files`.
+
+**Notification Centre and Lock were removed** (user-directed 2026-08-04). Both were there because the
+server offers the verb, which is not a reason. Neither is reached for while driving an app, and both
+are destructive to what you are doing — a mis-click beside Home blanks the device and costs a wake
+and a swipe to undo. The verbs still exist upstream; a rail earns its width by what gets used.
 
 *Output* — `SimulatorConsoleView`, a fixed-height drawer under the device rather than a tab. A console
 that replaces the screen breaks the tap-watch-read loop it exists for. Its level menu **re-subscribes**
