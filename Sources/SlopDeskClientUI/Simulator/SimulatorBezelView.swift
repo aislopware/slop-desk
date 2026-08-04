@@ -24,6 +24,10 @@ struct SimulatorBezelView: View {
     var frame: SimulatorScreenFrame
     var orientation: SimulatorOrientation
     var send: (SimulatorInputEnvelope) -> Void
+    /// Declared AFTER `send` so an unlabelled trailing closure still matches `send` — Swift's forward
+    /// scan takes the first function-typed parameter it has not filled, and putting this one earlier
+    /// would silently rebind every existing call site's gesture handler to the size callback.
+    var onContentSize: ((CGSize) -> Void)?
 
     @State private var pressed: String?
 
@@ -68,7 +72,7 @@ struct SimulatorBezelView: View {
     /// the "looks unfinished" the bezel is here to fix.
     private func screen(scale: CGFloat, origin: CGPoint) -> some View {
         let rect = assets.chrome.screen.rect
-        return SimulatorScreenView(frame: frame, send: send)
+        return SimulatorScreenView(frame: frame, send: send, onContentSize: onContentSize)
             .frame(width: rect.width * scale, height: rect.height * scale)
             .clipShape(.rect(cornerRadius: assets.chrome.screen.clipRadius * scale))
             .offset(x: (rect.minX - origin.x) * scale, y: (rect.minY - origin.y) * scale)
@@ -137,11 +141,13 @@ struct SimulatorBareScreen: View {
     var frame: SimulatorScreenFrame
     var orientation: SimulatorOrientation
     var send: (SimulatorInputEnvelope) -> Void
+    /// After `send`, for the reason ``SimulatorBezelView`` states.
+    var onContentSize: ((CGSize) -> Void)?
 
     var body: some View {
         GeometryReader { proxy in
             let box = SimulatorBezelView.footprint(proxy.size, turned: orientation.isLandscape)
-            SimulatorScreenView(frame: frame, send: send)
+            SimulatorScreenView(frame: frame, send: send, onContentSize: onContentSize)
                 .frame(width: box.width, height: box.height)
                 .rotationEffect(.degrees(orientation.viewAngle))
                 .animation(Slate.Anim.smallFade, value: orientation)

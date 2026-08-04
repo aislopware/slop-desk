@@ -104,18 +104,50 @@ clipRadius 29, three buttons.
 | `/simulators/<udid>/orientation` | POST | `?value=landscape-left` | kebab-case; the four quarter turns |
 | `/simulators/<udid>/screenshot.jpg` | GET | `?t=<nonce>` | JPEG of NOW — the nonce is the cache-buster |
 | `/simulators/<udid>/status-bar` | POST / **DELETE** | JSON body / — | POST sets overrides, DELETE restores |
+| `/simulators/<udid>/location` | POST / **DELETE** | `{latitude,longitude}` / — | POST pins GPS, DELETE restores live |
 | `/simulators/<udid>/files` | POST | `?name=<file>`, body = bytes | routed **by extension** server-side |
 | `/simulators/<udid>/bezel.png` | GET | `?buttons=false` | body artwork |
 | `/simulators/<udid>/chrome-button/<file>` | GET | — | one button's rest / pressed art |
+
+`location` also accepts a `{waypoints:[…]}` route and a `{latitude,longitude,bearing,speed}` walk. The
+panel sends neither: both are motion over time and want a map to draw the path on. An empty POST is
+`400 location body must be a point {latitude,longitude}, a {waypoints:[…]} route, or a
+{latitude,longitude,bearing,speed} walk`.
+
+The **hardware-button set** is closed and is exactly: `home`, `lock`, `power`, `volume-up`,
+`volume-down`, `action`, `digital-crown`, `side-button`, `left-side-button`, `app-switcher`,
+`swipe-to-app-switcher`, `swipe-to-home`, `pull-down-to-lock-screen`, `pull-down-to-notification-center`.
+There is **no control-centre token** — the toolbar offers Notification Centre and stops there rather
+than sending a verb the server will refuse.
 
 `files` is deliberately not classified client-side: the server installs an `.app`/`.ipa` and drops an
 image or video into Photos, and guessing that taxonomy locally would reject the one build someone
 wanted. The upload uses its own long timeout (`SimulatorControlClient.uploadTimeout`, 300 s) — an
 `.ipa` install is not a 15-second request.
 
-Deliberately **not** surfaced yet, though the server offers them: `logs`, `location`, `camera` /
-`camera-source`, `3d-model.json` / `render-3d.png` / `stream.3d.*`. Each needs UI of its own (a log
-console, a map picker, a 3D viewport) rather than another toolbar plate.
+### The log socket
+
+`ws://<host>:<port>/simulators/<udid>/logs?level=<level>&style=compact` — **text down, nothing up**.
+A second socket beside the frame stream, not a channel on it: the two have opposite lifetimes (the
+console opens and closes while the stream stays up), and a log subscription that died with a video
+reconnect would lose the output covering the moment being investigated.
+
+```
+{"type":"log_started"}
+{"type":"log","lines":["2026-08-04 13:50:19.565 Df Unity2025Poster[76037:219b94d] [sub:cat] message"]}
+```
+
+The server **batches at ~50 ms** rather than emitting a message per line, so the socket's message rate
+is bounded whatever the device is doing. `log_started` is its own message on purpose: it is the only
+signal separating "connected and the device is quiet" from "connected and nothing works".
+
+`--style compact`'s type column, counted off 10,244 real lines (2026-08-04): `Db` 7455, `Df` 958,
+`E` 780, `I` 564, `A` 90, `F` 7. The panel inks fault/error/info/debug and leaves `Df` (default)
+plain — default is the ordinary case and tinting it would light most of the console.
+
+Still **not** surfaced, though the server offers them: `camera` / `camera-source`, `3d-model.json` /
+`render-3d.png` / `stream.3d.*`. Each needs UI of its own (a camera-source picker, a 3D viewport)
+rather than another toolbar plate.
 
 ### The stream socket
 
@@ -162,13 +194,38 @@ when not) — a hover-only control in a list you are scanning is a control you c
 row boots a shut-down device and opens a booted one. The context menu carries Open / Boot / Shut Down
 plus Copy UDID and Copy Name.
 
-**The stage.** The stream is seated in the real body, side buttons and all. Buttons swap to their
-pressed artwork on touch-down and fire the envelope on **release**, which is what makes a long-press
-on Power do what a long-press on Power does. The toolbar carries only what the body cannot offer:
-rotate left/right, Home and App Switcher (gestures with no hardware to click), Lock, copy screenshot,
-and the demo status-bar toggle. Screenshots go to the **clipboard**, not to a file — the client app is
-sandboxed, and a screenshot's next stop is a message or a PR. Any file dropped on the stage is sent
-to `files`.
+**The stage.** Four bands, top to bottom: identity, device, verbs, output.
+
+*Identity* — `SimulatorDeviceHeader`: the back control (navigation belongs beside the device's name,
+not in the surface strip), the device name, a live/connecting dot, and a facts line of runtime,
+measured resolution, orientation when it is not portrait, the pinned position when there is one, and
+the short UDID — each with its own Copy. **Every figure is measured**: the resolution comes from the
+decoder's own format description via `SimulatorScreenView.onContentSize`, not from a table. The one
+figure the reference designs show that is deliberately absent is **uptime** — `/simulators.json`
+carries `name`, `runtime`, `state`, `udid` and nothing else, so a "booted 3m ago" would be the panel
+timing its own first sighting and printing it as the device's age.
+
+*Device* — the stream seated in the real body, side buttons and all. Buttons swap to their pressed
+artwork on touch-down and fire the envelope on **release**, which is what makes a long-press on Power
+do what a long-press on Power does.
+
+*Verbs* — the toolbar carries only what the body cannot offer: rotate left/right; Home, App Switcher
+and Notification Centre (gestures with no hardware to click — and the shade in particular is
+unreachable with a mouse, since the drag has to start outside the frame); Lock; copy screenshot; the
+demo status-bar toggle; then, right-aligned, the location popover and the console latch. Screenshots
+go to the **clipboard**, not to a file — the client app is sandboxed, and a screenshot's next stop is
+a message or a PR. Any file dropped on the stage is sent to `files`.
+
+*Output* — `SimulatorConsoleView`, a fixed-height drawer under the device rather than a tab. A console
+that replaces the screen breaks the tap-watch-read loop it exists for. Its level menu **re-subscribes**
+(the server takes `--level` at subscribe time and cannot change it on a live socket) and keeps the
+rows already collected; its substring filter is client-side and must not, because narrowing the view
+is the one thing that has to keep the history it is narrowing. Follow is an explicit **latch**, not an
+inferred scroll position — `onScrollGeometryChange` is macOS 15 and the target is 14.
+
+*Location* — `SimulatorLocationPopover`: a shortlist of places plus a coordinate field. A popover
+rather than a drawer because it is set-and-forget; what stays visible afterwards is the header's
+readout.
 
 Without chrome — still loading, or a model the server cannot describe — the stage falls back to the
 plain rectangle. A working screen with no bezel is a working screen; refusing to draw until the
@@ -236,6 +293,20 @@ artwork arrives makes a slow fetch look like a dead stream.
   and Shut Down — position followed the state, content did not, from a single `isBooted` read.
   `SimulatorDeviceList.entries` flattens headings and rows into ONE `ForEach` over
   `SimulatorListEntry`, whose id is `section/udid`, so changing group is a remove and an insert.
+- **The log socket upgrades whatever `level` you send.** An invented level (`verbose`, `warn`) gets a
+  successful websocket handshake and then dies when the server's `log stream` child refuses it — which
+  reads as a console that connects and never prints. `SimulatorLogLevel` is a closed set of the five
+  the child accepts (`debug | info | notice | error | fault`) precisely because the handshake will not
+  catch a bad one.
+- **The device entry has no uptime and no resolution.** `/simulators.json` is four fields. Anything
+  the header prints beyond them has to come from somewhere that actually measured it — the resolution
+  from the decoder's format description, the position from the call that succeeded. A "booted N s"
+  synthesized from first sighting reads as fact and is wrong after every client restart.
+- **`location` clears with a DELETE**, like `status-bar`. There is no `{clear:true}` and an empty POST
+  is a 400 — a clear spelled as a POST fails rather than no-ops.
+- **`SimulatorBezelView`/`SimulatorBareScreen` declare `onContentSize` AFTER `send`.** Swift's
+  trailing-closure forward scan takes the first unfilled function-typed parameter, so putting the size
+  callback earlier silently rebinds every existing call site's gesture handler to it.
 
 ---
 
@@ -257,13 +328,20 @@ artwork arrives makes a slow fetch look like a dead stream.
 | `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/key mapping |
 | `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
-| `Simulator/SimulatorStageView.swift` | the streaming surface: device + toolbar + banner + drop target |
+| `Simulator/SimulatorStageView.swift` | the streaming surface: header + device + toolbar + drawer + banner + drop target |
+| `Simulator/SimulatorDeviceHeader.swift` | what device this is: name, live dot, measured facts, back |
+| `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
+| `Simulator/SimulatorLogLine.swift` | pure: compact-line parse, log envelope decode, the level set |
+| `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
+| `Simulator/SimulatorPlace.swift` | pure: coordinate parse / body / readout + the preset shortlist |
+| `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
-| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream |
+| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console |
 
-Both runtime seams are injectable (`SimulatorControlling`, `SimulatorStreaming`) so the model is
-tested end to end **without a socket** — the hang-safety rule: no unit test builds an `NWConnection`,
-a display layer, an `SCStream`, a `VT*Session` or a Metal device.
+All three runtime seams are injectable (`SimulatorControlling`, `SimulatorStreaming`,
+`SimulatorLogStreaming`) so the model is tested end to end **without a socket** — the hang-safety
+rule: no unit test builds an `NWConnection`, a display layer, an `SCStream`, a `VT*Session` or a Metal
+device.
 
 Host side: `SlopDeskHost/{HostSimulatorPerformer,SimulatorServerManager,HostServiceProcess}.swift`.
 

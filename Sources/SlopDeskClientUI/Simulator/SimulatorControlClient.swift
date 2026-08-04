@@ -1,5 +1,5 @@
 // SimulatorControlClient — the panel's non-streaming half: list and lifecycle, the device's body,
-// and every host-side setting (orientation, status bar, screenshot, file drop).
+// and every host-side setting (orientation, status bar, screenshot, file drop, simulated GPS).
 //
 // Behind a protocol so the model that drives it is testable without a server: the real client is the
 // only thing here that touches `URLSession`, and a test supplies its own. That split is the reason
@@ -35,6 +35,10 @@ protocol SimulatorControlling: Sendable {
     /// Hand the device a file: `.app`/`.ipa` installs, image/video lands in Photos.
     func sendFile(
         host: String, port: UInt16, udid: String, name: String, contents: Data,
+    ) async throws
+    /// Pin the device's simulated GPS position, or restore live values when `coordinate` is nil.
+    func setLocation(
+        host: String, port: UInt16, udid: String, coordinate: SimulatorCoordinate?,
     ) async throws
 }
 
@@ -140,6 +144,24 @@ struct SimulatorControlClient: SimulatorControlling {
             // Uploading an .app is orders of magnitude more than a control call, and timing it out at
             // eight seconds would fail every install that is actually working.
             timeout: Self.uploadTimeout,
+        )
+    }
+
+    /// One route, two verbs again — and for the same reason the status bar has two: clearing carries
+    /// no body, and the server answers a bodyless POST here with a 400 naming the three shapes it
+    /// accepts. `DELETE` is the documented clear.
+    func setLocation(
+        host: String, port: UInt16, udid: String, coordinate: SimulatorCoordinate?,
+    ) async throws {
+        let url = SimulatorEndpoints.location(host: host, port: port, udid: udid)
+        guard let coordinate else {
+            try await send("DELETE", url)
+            return
+        }
+        try await send(
+            "POST", url,
+            body: try? JSONSerialization.data(withJSONObject: coordinate.body),
+            contentType: "application/json",
         )
     }
 

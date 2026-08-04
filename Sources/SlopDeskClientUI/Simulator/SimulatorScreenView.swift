@@ -33,10 +33,21 @@ final class SimulatorScreenNSView: NSView {
     /// rather than queued against a device that may not be the one finally selected.
     var send: ((SimulatorInputEnvelope) -> Void)?
 
+    /// Reports the framebuffer size upward the moment the decoder works it out. The header prints
+    /// it, and this is the only place in the app that knows: the size is in the SPS, and the layer
+    /// has already parsed it to build a format description. Reaching for it any other way means
+    /// parsing that record a second time to learn something that is already sitting here.
+    var onContentSize: ((CGSize) -> Void)?
+
     /// The stream's pixel size, learned from the format description. `.zero` until the first
     /// configuration message, which is what makes the fitted rect empty and every click a miss —
     /// correct, since there is nothing on screen to click yet.
-    private(set) var contentSize: CGSize = .zero
+    private(set) var contentSize: CGSize = .zero {
+        didSet {
+            guard contentSize != oldValue, contentSize != .zero else { return }
+            onContentSize?(contentSize)
+        }
+    }
 
     private let displayLayer = AVSampleBufferDisplayLayer()
     /// The JPEG seed, shown until the first access unit decodes. Its own layer rather than a draw
@@ -231,15 +242,20 @@ struct SimulatorScreenView: NSViewRepresentable {
     /// the model the single owner of the connection.
     var frame: SimulatorScreenFrame
     var send: (SimulatorInputEnvelope) -> Void
+    /// Optional so the bezel and the bare fallback can both mount this view while only the stage
+    /// that owns the header cares what size the device turned out to be.
+    var onContentSize: ((CGSize) -> Void)?
 
     func makeNSView(context _: Context) -> SimulatorScreenNSView {
         let view = SimulatorScreenNSView(frame: .zero)
         view.send = send
+        view.onContentSize = onContentSize
         return view
     }
 
     func updateNSView(_ view: SimulatorScreenNSView, context _: Context) {
         view.send = send
+        view.onContentSize = onContentSize
         switch frame.latest {
         case let .configuration(configuration): view.apply(configuration: configuration)
         case let .accessUnit(data, isKeyframe): view.enqueue(accessUnit: data, isKeyframe: isKeyframe)

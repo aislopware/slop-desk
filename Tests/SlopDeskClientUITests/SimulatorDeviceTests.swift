@@ -135,6 +135,25 @@ final class SimulatorDeviceTests: XCTestCase {
             SimulatorEndpoints.statusBar(host: host, port: port, udid: udid)?.absoluteString,
             "http://10.0.0.7:54593/simulators/01D1D359/status-bar",
         )
+        // One route, two methods: POST pins, DELETE restores live values. There is no separate
+        // clear route to get wrong.
+        XCTAssertEqual(
+            SimulatorEndpoints.location(host: host, port: port, udid: udid)?.absoluteString,
+            "http://10.0.0.7:54593/simulators/01D1D359/location",
+        )
+    }
+
+    func testTheConsoleSocketPinsTheCompactStyleAndCarriesTheLevelAsAQueryItem() {
+        // `style=compact` is not a preference: it is the one style whose line shape
+        // `SimulatorLogLine` can split, and a server default of anything else would leave every row
+        // unparsed. The level goes straight to the server's `log stream --level`.
+        XCTAssertEqual(
+            SimulatorEndpoints.logs(
+                host: "10.0.0.7", port: 54593, udid: "01D1D359", level: "error",
+            )?.absoluteString,
+            "ws://10.0.0.7:54593/simulators/01D1D359/logs?level=error&style=compact",
+        )
+        XCTAssertNil(SimulatorEndpoints.logs(host: "10.0.0.7", port: 0, udid: "u", level: "info"))
     }
 
     func testTheSettingRoutesCarryTheirArgumentInTheQueryStringAsTheServerExpects() {

@@ -67,6 +67,28 @@ enum SimulatorEndpoints {
         action(host: host, port: port, udid: udid, action: "status-bar")
     }
 
+    /// `POST` JSON `{latitude, longitude}` — pin the device's simulated GPS position. `DELETE` on
+    /// the same route restores live values. The server also accepts a `{waypoints}` route and a
+    /// bearing/speed walk on this route; the panel sends neither (see ``SimulatorPlace``).
+    static func location(host: String, port: UInt16, udid: String) -> URL? {
+        action(host: host, port: port, udid: udid, action: "location")
+    }
+
+    /// The console's websocket. `style=compact` is not a preference — it is the only style whose
+    /// line shape ``SimulatorLogLine`` can colour by severity. `level` is passed to the server's own
+    /// `log stream --level`, so only ``SimulatorLogLevel``'s closed set may reach it: an invented
+    /// level still upgrades the socket and then dies when the child refuses it.
+    static func logs(host: String, port: UInt16, udid: String, level: String) -> URL? {
+        guard var components = components(host: host, port: port) else { return nil }
+        components.scheme = "ws"
+        components.path = "/simulators/\(escape(udid))/logs"
+        components.queryItems = [
+            URLQueryItem(name: "level", value: level),
+            URLQueryItem(name: "style", value: "compact"),
+        ]
+        return components.url
+    }
+
     /// `POST`, raw file bytes — hand the device a file. The server routes on the extension: an
     /// `.app`/`.ipa` is installed, an image or video lands in Photos. The name rides the query string
     /// because the body is the file itself.

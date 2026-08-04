@@ -402,6 +402,11 @@ enum Slate {
         static let heightStrip: CGFloat = 40
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
         static let heightInput: CGFloat = 48
+        /// A drawer that shares a column with the thing it is about (the simulator console under the
+        /// device). Fixed rather than proportional: the drawer is a reading surface and a share-of-the
+        /// -column would make its row count depend on the window height, so the same log would show
+        /// four lines on a laptop and twenty on a display. Six rows plus the drawer's own strip.
+        static let heightDrawer: CGFloat = 180
 
         // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
         static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
@@ -456,6 +461,13 @@ enum Slate {
         /// stretching its columns, so every card in Settings is the same size (a theme swatch is exactly as
         /// wide as a caret card). 116 fits the longest card label ("Classic Light") without truncating.
         static let settingsCardWidth: CGFloat = 116
+
+        /// A popover's content width. FIXED for the same reason the notification card is: a popover that
+        /// hugs its content is a popover whose width is decided by whichever row happens to hold the
+        /// longest string, so the same control opens at a different size on different data. 260 is the
+        /// sidebar's own working width — a popover anchored in the sidebar reads as belonging to it
+        /// rather than as a window that happened to land there.
+        static let popoverWidth: CGFloat = 260
 
         // Notification stack (`ToastStackView`) — a notification is a pane speaking from off-screen, so it
         // is a small card in the corner, never a sheet.

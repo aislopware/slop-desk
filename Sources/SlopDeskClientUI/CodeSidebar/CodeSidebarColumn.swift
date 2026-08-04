@@ -169,10 +169,9 @@ struct CodeSidebarColumn: View {
                 }
                 .help("Reload the workbench")
             case .simulators:
-                if simulatorModel.selection != nil {
-                    PlateIconButton(symbol: .chevronBackward) { simulatorModel.select(nil) }
-                        .help("Back to the device list")
-                }
+                // No back control here: leaving a device is navigation within the surface, and it
+                // now sits beside the device's own name in `SimulatorDeviceHeader` — where every
+                // other split view in the app puts it. This strip stays surface-level verbs only.
                 PlateIconButton(symbol: .arrowClockwise) { simulatorModel.requestReload() }
                     .help("Reload the simulator list")
             case .desktop:

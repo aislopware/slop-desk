@@ -18,6 +18,7 @@
 // enough to test without a socket, and everything that is not is behind ``SimulatorControlling``.
 
 #if canImport(SwiftUI)
+import CoreGraphics
 import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
@@ -71,6 +72,32 @@ final class SimulatorSidebarModel {
     /// Set while a file is uploading, so the drop target can say so — an `.app` bundle takes long
     /// enough that silence reads as a drop that missed.
     private(set) var isSendingFile = false
+    /// The device's real framebuffer size, learned from the stream rather than assumed. `nil` until
+    /// the first seed or keyframe: the panel does not know how big a device is until it sends one,
+    /// and printing a guess in the header would be a number that is wrong on exactly the models
+    /// nobody has checked.
+    private(set) var resolution: CGSize?
+    /// The last position the panel pinned, for the header's readout. `nil` means the device is on
+    /// live values — either never pinned, or cleared.
+    private(set) var pinnedLocation: SimulatorCoordinate?
+
+    // MARK: The console
+
+    /// Whether the log drawer is open. Drives the SOCKET as well as the layout: `log stream` is a
+    /// child process on the host per subscriber, so a console nobody can see must not stay
+    /// subscribed.
+    private(set) var isConsoleOpen = false
+    private(set) var logLevel: SimulatorLogLevel = .info
+    private(set) var logLines: [SimulatorLogLine] = []
+    /// True once the server reports its `log stream` child is up. The distinction the console draws
+    /// is between a quiet device and a console that never started.
+    private(set) var isLogStarted = false
+
+    /// How many rows the console keeps. A device under load emits thousands a minute and every row
+    /// is a retained view; trimming from the front bounds both the memory and the scrollback that
+    /// SwiftUI has to diff. Chosen for a sidebar's width — far more than fits on screen, far less
+    /// than a full session.
+    static let logCapacity = 600
 
     /// Bumped by the strip's reload button — part of the column's `.task` id, so a bump cancels the
     /// settled loop and re-ensures from scratch (respawning a server that died).
@@ -85,7 +112,11 @@ final class SimulatorSidebarModel {
     /// exercise selection, frame delivery and teardown without opening one — this project does not
     /// build network objects in unit tests.
     private let makeStream: @MainActor (@escaping (SimulatorStreamEvent) -> Void) -> SimulatorStreaming
+    /// The console's socket, built the same injectable way and for the same reason.
+    private let makeLogStream: @MainActor (@escaping (SimulatorLogEvent) -> Void) -> SimulatorLogStreaming
     private var stream: SimulatorStreaming?
+    private var logStream: SimulatorLogStreaming?
+    private var logSequence: UInt64 = 0
     private var frameSequence: UInt64 = 0
     /// Bezel artwork by UDID. Worth keeping: it is per-model, never changes, and re-fetching three
     /// images every time someone steps back to the list and in again is visible as a blank frame.
@@ -101,9 +132,12 @@ final class SimulatorSidebarModel {
         control: SimulatorControlling = SimulatorControlClient(),
         makeStream: @escaping @MainActor (@escaping (SimulatorStreamEvent) -> Void) -> SimulatorStreaming
             = { SimulatorStreamConnection(sink: $0) },
+        makeLogStream: @escaping @MainActor (@escaping (SimulatorLogEvent) -> Void)
+            -> SimulatorLogStreaming = { SimulatorLogConnection(sink: $0) },
     ) {
         self.control = control
         self.makeStream = makeStream
+        self.makeLogStream = makeLogStream
     }
 
     // MARK: The ensure loop
@@ -209,17 +243,31 @@ final class SimulatorSidebarModel {
         stream = nil
         frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
         selection = udid
-        // Both are claims about the PREVIOUS device. Carrying them over would have the new screen
-        // rotate from the old one's angle and its status-bar toggle show the wrong position.
+        // Every one of these is a claim about the PREVIOUS device. Carrying them over would have the
+        // new screen rotate from the old one's angle, its status-bar toggle show the wrong position,
+        // its header print the old model's resolution, and its console keep the old device's output
+        // under a new device's name.
         orientation = .portrait
         isStatusBarOverridden = false
+        resolution = nil
+        pinnedLocation = nil
+        logLines.removeAll()
+        isLogStarted = false
+        logStream?.disconnect()
+        logStream = nil
 
         guard let udid, case let .ready(host, port) = phase else {
             chromeLoad?.cancel()
             chrome = nil
+            // Leaving the list open with the drawer still latched would reopen a console for
+            // whatever gets selected next, which nobody asked for.
+            isConsoleOpen = false
             return
         }
         loadChrome(for: udid)
+        // The drawer stays latched across a device switch — someone reading logs while stepping
+        // between two devices means to keep reading logs — so the socket follows the selection.
+        if isConsoleOpen { openConsole() }
         let connection = makeStream { [weak self] event in
             self?.handle(event, for: udid)
         }
@@ -297,6 +345,107 @@ final class SimulatorSidebarModel {
             show(notice: "Sent \(name)")
         } catch {
             failure = Self.describe(error)
+        }
+    }
+
+    /// Pin the device somewhere, or pass `nil` to restore live values. The readout follows the call
+    /// rather than the click: a pin the server refused must not leave the header claiming a position
+    /// the device is not at.
+    func pin(_ coordinate: SimulatorCoordinate?) async {
+        guard case let .ready(host, port) = phase, let udid = selection else { return }
+        do {
+            try await control.setLocation(host: host, port: port, udid: udid, coordinate: coordinate)
+            pinnedLocation = coordinate
+            show(notice: coordinate.map { "Location \($0.readout)" } ?? "Live location restored")
+        } catch {
+            failure = Self.describe(error)
+        }
+    }
+
+    /// The device's framebuffer size, reported by the view that decoded it. A callback rather than a
+    /// read: only the decoder knows, and the alternative is parsing the SPS a second time here to
+    /// learn something the layer already worked out.
+    func observed(resolution size: CGSize) {
+        guard size.width > 0, size.height > 0, resolution != size else { return }
+        resolution = size
+    }
+
+    // MARK: The console
+
+    /// Open or close the log drawer, opening and closing the socket with it.
+    func toggleConsole() {
+        if isConsoleOpen {
+            closeConsole()
+        } else {
+            openConsole()
+        }
+    }
+
+    /// Re-subscribe at a new level. The server takes `--level` at subscribe time and has no way to
+    /// change it on a live socket, so this reconnects — and keeps the rows already collected, since
+    /// dropping the history someone just widened the level to explain would be the wrong half to
+    /// throw away.
+    func setLogLevel(_ level: SimulatorLogLevel) {
+        guard level != logLevel else { return }
+        logLevel = level
+        guard isConsoleOpen else { return }
+        openConsole()
+    }
+
+    func clearLog() {
+        logLines.removeAll()
+    }
+
+    private func openConsole() {
+        logStream?.disconnect()
+        logStream = nil
+        isConsoleOpen = true
+        isLogStarted = false
+        guard let udid = selection, case let .ready(host, port) = phase else { return }
+        let connection = makeLogStream { [weak self] event in
+            self?.handle(event, for: udid)
+        }
+        logStream = connection
+        connection.connect(host: host, port: port, udid: udid, level: logLevel)
+    }
+
+    private func closeConsole() {
+        isConsoleOpen = false
+        isLogStarted = false
+        logStream?.disconnect()
+        logStream = nil
+    }
+
+    private func handle(_ event: SimulatorLogEvent, for udid: String) {
+        // A late event from a socket opened for the previous device must not paint into this one's
+        // console.
+        guard selection == udid, isConsoleOpen else { return }
+        switch event {
+        case .connected:
+            break
+        case .started:
+            isLogStarted = true
+        case let .lines(lines):
+            append(lines)
+        case let .ended(reason):
+            isLogStarted = false
+            if let reason { failure = reason }
+        }
+    }
+
+    /// Append a batch and trim from the front. One splice per batch rather than per line: the server
+    /// batches at ~50 ms precisely so its consumers can, and an observable write per line would make
+    /// SwiftUI diff the whole console twenty times a second.
+    private func append(_ lines: [String]) {
+        guard !lines.isEmpty else { return }
+        logLines.append(contentsOf: lines.map { text in
+            var line = SimulatorLogLine.parse(text)
+            logSequence &+= 1
+            line.id = logSequence
+            return line
+        })
+        if logLines.count > Self.logCapacity {
+            logLines.removeFirst(logLines.count - Self.logCapacity)
         }
     }
 

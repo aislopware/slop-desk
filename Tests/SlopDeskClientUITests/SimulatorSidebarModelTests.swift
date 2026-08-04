@@ -96,6 +96,18 @@ private final class FakeControl: SimulatorControlling, @unchecked Sendable {
         if let failure { throw failure }
         files.append((name, contents.count))
     }
+
+    /// Every position the panel asked for, `nil` standing for the DELETE that restores live values —
+    /// so a test can tell a clear from a pin to the origin, which is the one pair the route's two
+    /// methods make easy to confuse.
+    private(set) var locations: [SimulatorCoordinate?] = []
+
+    func setLocation(
+        host _: String, port _: UInt16, udid _: String, coordinate: SimulatorCoordinate?,
+    ) throws {
+        if let failure { throw failure }
+        locations.append(coordinate)
+    }
 }
 
 @MainActor
@@ -117,6 +129,26 @@ private final class FakeStream: SimulatorStreaming {
     func disconnect() { disconnects += 1 }
 
     func send(_ envelope: SimulatorInputEnvelope) { sent.append(envelope) }
+}
+
+/// The console's socket, same shape and for the same reason: the model's console lifecycle is a
+/// subscribe/unsubscribe machine, and testing it against a real one would open a websocket and spawn
+/// a `log stream` child on the host.
+@MainActor
+private final class FakeLogStream: SimulatorLogStreaming {
+    let sink: (SimulatorLogEvent) -> Void
+    private(set) var connections: [(host: String, port: UInt16, udid: String, level: SimulatorLogLevel)] = []
+    private(set) var disconnects = 0
+
+    init(sink: @escaping (SimulatorLogEvent) -> Void) {
+        self.sink = sink
+    }
+
+    func connect(host: String, port: UInt16, udid: String, level: SimulatorLogLevel) {
+        connections.append((host, port, udid, level))
+    }
+
+    func disconnect() { disconnects += 1 }
 }
 
 // MARK: - Tests
@@ -147,6 +179,26 @@ final class SimulatorSidebarModelTests: XCTestCase {
 
     private func model(_ control: FakeControl = FakeControl()) -> SimulatorSidebarModel {
         SimulatorSidebarModel(control: control) { FakeStream(sink: $0) }
+    }
+
+    /// A ready model plus a peek at every console socket it has built, in order. The list rather than
+    /// the latest, because "did opening the console at a new level build a SECOND socket" is exactly
+    /// what the re-subscribe tests are about.
+    private func consoleModel(
+        _ control: FakeControl = FakeControl(),
+    ) async -> (SimulatorSidebarModel, () -> [FakeLogStream]) {
+        var built: [FakeLogStream] = []
+        let model = SimulatorSidebarModel(
+            control: control,
+            makeStream: { FakeStream(sink: $0) },
+            makeLogStream: { sink in
+                let stream = FakeLogStream(sink: sink)
+                built.append(stream)
+                return stream
+            },
+        )
+        await model.poll(host: { [host] in host }, ensure: { [port] in .init(state: .ready, port: port) })
+        return (model, { built })
     }
 
     // MARK: The phase machine
@@ -559,6 +611,245 @@ final class SimulatorSidebarModelTests: XCTestCase {
         model.report("Could not read Demo.app.")
         XCTAssertEqual(model.failure, "Could not read Demo.app.")
         XCTAssertNil(model.notice)
+    }
+
+    // MARK: Simulated location
+
+    func testPinningSendsThePositionAndTheHeaderFollowsTheCallRatherThanTheClick() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        let park = SimulatorCoordinate(latitude: 37.334886, longitude: -122.008988)
+        await model.pin(park)
+        XCTAssertEqual(control.locations, [park])
+        XCTAssertEqual(model.pinnedLocation, park)
+        XCTAssertEqual(model.notice, "Location 37.334886, -122.008988")
+    }
+
+    func testClearingIsItsOwnCallAndItsOwnConfirmation() async {
+        // `nil` is the DELETE, not a pin to the origin — and the readout has to go back to nothing,
+        // since a header still naming a place is the panel claiming a position the device left.
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        let somewhere = SimulatorCoordinate(latitude: 1, longitude: 2)
+        await model.pin(somewhere)
+        await model.pin(nil)
+        XCTAssertEqual(control.locations, [somewhere, nil])
+        XCTAssertNil(model.pinnedLocation)
+        XCTAssertEqual(model.notice, "Live location restored")
+    }
+
+    func testARefusedPinLeavesTheHeaderSayingWhatIsStillTrue() async {
+        let control = FakeControl()
+        control.failure = SimulatorControlError.status(400)
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.pin(SimulatorCoordinate(latitude: 1, longitude: 2))
+        XCTAssertNil(model.pinnedLocation)
+        XCTAssertEqual(model.failure, "The simulator server answered 400.")
+    }
+
+    func testAPinGoesNowhereWithNothingSelected() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        await model.pin(SimulatorCoordinate(latitude: 1, longitude: 2))
+        XCTAssertTrue(control.locations.isEmpty)
+    }
+
+    // MARK: The measured resolution
+
+    func testTheResolutionIsWhatTheDecoderReportedAndZeroIsNotAReport() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        XCTAssertNil(model.resolution)
+        // A `.zero` would be the view asking before its format description exists; printing it would
+        // put "0 × 0" in the header for as long as the stream takes to start.
+        model.observed(resolution: .zero)
+        XCTAssertNil(model.resolution)
+        model.observed(resolution: CGSize(width: 1206, height: 2622))
+        XCTAssertEqual(model.resolution, CGSize(width: 1206, height: 2622))
+    }
+
+    func testTheResolutionAndThePinBothBelongToTheDeviceThatWasSelected() async {
+        // Both are claims about the previous device: carried over, the header would print one model's
+        // pixel size and another's position under the new device's name.
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        model.observed(resolution: CGSize(width: 1206, height: 2622))
+        await model.pin(SimulatorCoordinate(latitude: 1, longitude: 2))
+
+        model.select("B")
+        XCTAssertNil(model.resolution)
+        XCTAssertNil(model.pinnedLocation)
+    }
+
+    // MARK: The console
+
+    func testOpeningTheConsoleSubscribesForTheSelectedDeviceAtTheChosenLevel() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        XCTAssertTrue(model.isConsoleOpen)
+        XCTAssertEqual(streams().count, 1)
+        let connection = streams().first?.connections.first
+        XCTAssertEqual(connection?.host, host)
+        XCTAssertEqual(connection?.port, port)
+        XCTAssertEqual(connection?.udid, "A")
+        XCTAssertEqual(connection?.level, .info)
+    }
+
+    func testClosingTheConsoleDropsTheSocketRatherThanJustHidingIt() async {
+        // `log stream` is a child process on the host per subscriber, so a console nobody can see
+        // must not stay subscribed.
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        model.toggleConsole()
+        XCTAssertFalse(model.isConsoleOpen)
+        XCTAssertEqual(streams().first?.disconnects, 1)
+        XCTAssertFalse(model.isLogStarted)
+    }
+
+    func testChangingTheLevelReSubscribesAndKeepsTheRowsAlreadyCollected() async {
+        // The server takes `--level` at subscribe time and cannot change it on a live socket. The
+        // history stays: dropping the output someone just widened the level to explain would be the
+        // wrong half to throw away.
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.lines(["2026-08-04 13:50:19.565 I p[1:2] first"]))
+        XCTAssertEqual(model.logLines.count, 1)
+
+        model.setLogLevel(.debug)
+        XCTAssertEqual(streams().count, 2)
+        XCTAssertEqual(streams()[0].disconnects, 1)
+        XCTAssertEqual(streams()[1].connections.first?.level, .debug)
+        XCTAssertEqual(model.logLines.count, 1)
+        // The new socket has not reported its child yet, so the console says connecting rather than
+        // claiming a stream that does not exist.
+        XCTAssertFalse(model.isLogStarted)
+    }
+
+    func testSettingTheLevelWithTheConsoleClosedChangesNothingButTheLevel() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.setLogLevel(.fault)
+        XCTAssertEqual(model.logLevel, .fault)
+        XCTAssertTrue(streams().isEmpty)
+    }
+
+    func testTheStartedEnvelopeIsWhatSeparatesAQuietDeviceFromADeadConsole() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        XCTAssertFalse(model.isLogStarted)
+        streams()[0].sink(.started)
+        XCTAssertTrue(model.isLogStarted)
+    }
+
+    func testEveryLineOfABatchGetsItsOwnIdentitySoIdenticalRowsStayTwoRows() async {
+        // A content-derived id would collapse a repeated line into one row, which is the opposite of
+        // what a console is for: the repetition IS the signal.
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.lines(["same", "same"]))
+        XCTAssertEqual(model.logLines.count, 2)
+        XCTAssertNotEqual(model.logLines[0].id, model.logLines[1].id)
+        XCTAssertEqual(model.logLines.map(\.message), ["same", "same"])
+    }
+
+    func testTheConsoleTrimsFromTheFrontAtCapacity() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        let overflow = SimulatorSidebarModel.logCapacity + 10
+        streams()[0].sink(.lines((0..<overflow).map { "line \($0)" }))
+        XCTAssertEqual(model.logLines.count, SimulatorSidebarModel.logCapacity)
+        // The OLDEST go: a console that dropped the newest would stop updating under load, which is
+        // exactly when anyone is watching it.
+        XCTAssertEqual(model.logLines.first?.message, "line 10")
+        XCTAssertEqual(model.logLines.last?.message, "line \(overflow - 1)")
+    }
+
+    func testAnEmptyBatchIsNotARow() async {
+        // The server batches on a timer, so a tick with nothing to say arrives regularly.
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.lines([]))
+        XCTAssertTrue(model.logLines.isEmpty)
+    }
+
+    func testAnEventFromThePreviousDevicesConsoleCannotPaintIntoThisOne() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        let stale = streams()[0]
+        model.select("B")
+        stale.sink(.lines(["from A"]))
+        stale.sink(.started)
+        XCTAssertTrue(model.logLines.isEmpty)
+        XCTAssertFalse(model.isLogStarted)
+    }
+
+    func testTheDrawerStaysLatchedAcrossADeviceSwitchAndTheSocketFollowsIt() async {
+        // Someone reading logs while stepping between two devices means to keep reading logs — but
+        // the ROWS are the old device's and must not survive under the new device's name.
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.lines(["from A"]))
+
+        model.select("B")
+        XCTAssertTrue(model.isConsoleOpen)
+        XCTAssertTrue(model.logLines.isEmpty)
+        XCTAssertEqual(streams().count, 2)
+        XCTAssertEqual(streams()[1].connections.first?.udid, "B")
+    }
+
+    func testGoingBackToTheListUnlatchesTheDrawerInsteadOfArmingItForTheNextDevice() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        model.select(nil)
+        XCTAssertFalse(model.isConsoleOpen)
+        XCTAssertEqual(streams()[0].disconnects, 1)
+        XCTAssertEqual(streams().count, 1)
+    }
+
+    func testClearingEmptiesTheRowsWithoutTouchingTheSubscription() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.started)
+        streams()[0].sink(.lines(["a"]))
+        model.clearLog()
+        XCTAssertTrue(model.logLines.isEmpty)
+        XCTAssertTrue(model.isConsoleOpen)
+        XCTAssertTrue(model.isLogStarted)
+        XCTAssertEqual(streams()[0].disconnects, 0)
+    }
+
+    func testALogSocketThatDiesSaysSoAndStopsClaimingItStarted() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.started)
+        streams()[0].sink(.ended(reason: "connection reset"))
+        XCTAssertFalse(model.isLogStarted)
+        XCTAssertEqual(model.failure, "connection reset")
+    }
+
+    func testACleanCloseIsNotAFailureBanner() async {
+        let (model, streams) = await consoleModel()
+        model.select("A")
+        model.toggleConsole()
+        streams()[0].sink(.ended(reason: nil))
+        XCTAssertNil(model.failure)
     }
 
     // MARK: Notices
