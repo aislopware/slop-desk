@@ -477,6 +477,26 @@ enum Slate {
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
         static let deviceCardWidth: CGFloat = 180
+        /// ``AndroidRobotMark``'s box in a tab plate — the ONE mark in the app that is a drawn path
+        /// rather than an SF Symbol, and therefore the one that needs a number of its own.
+        ///
+        /// The number came from measuring ink rather than ems. A tab's mark is drawn at a point size
+        /// and READ at whatever height that produces, and the two are different quantities: an early
+        /// pass sized the platform marks by em (14 against the shapes' 11) on the theory that a brand
+        /// needs more room than a symbol, and measured on the drawn pixels `apple.logo` then stood
+        /// 13.50 tall against the robot's 8.75 — the pair that reads as a pair had become the two
+        /// extremes of the strip. At ONE em the SF Symbols already agree, because agreeing is what
+        /// Apple's optical grid is for: at 13, `folder` measures 11.88, `apple.logo` 12.50, `display`
+        /// 13.12 and `arrow.clockwise` 13.88.
+        ///
+        /// The robot cannot join that band on both axes — a dome under splayed antennae is 1.57 times
+        /// as wide as it is tall at any size — so this is the size where it misses each by about the
+        /// same amount: 16.75 × 10.62. 19 equalises the ink heights and the robot then outweighs
+        /// everything beside it; lengthening the antennae fixes the ratio arithmetically and reads as
+        /// ears. The number survived the tabs gaining labels (`1f06cd0a` → the round after it): a
+        /// mark beside its own word is no longer compared with the mark two tabs over, so the width
+        /// this costs stopped mattering, and nothing recommended changing what the ink says.
+        static let androidMark: CGFloat = 17
         /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
         /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
         /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into

@@ -139,10 +139,9 @@ struct CodeSidebarColumn: View {
     /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,
     /// never over the terminal). Tab plates lead, actions trail (the otty strip layout); the row
     /// is CENTERED in the strip band (user-directed 2026-08-03, overriding the earlier
-    /// titlebar-row top-anchor). Every tab shows its NAME, all the time, and no tab shows a mark —
-    /// see ``PanelTabPlate`` for why the glyphs were retired (two rounds of the strip reading as
-    /// four unrelated things, which no size fixed because optical mass, not ink height, is what a
-    /// strip is compared on). The reload plate rides only the Code surface (Desktop has nothing to
+    /// titlebar-row top-anchor). Every tab shows its MARK AND ITS NAME while the panel is wide
+    /// enough for that, and gives up the names a rung at a time when it is not — see `tabs(labelling:)`
+    /// and ``PanelTabPlate``. The reload plate rides only the Code surface (Desktop has nothing to
     /// reload); the far trailing corner is the panel's HIDE toggle (user-directed 2026-08-03 —
     /// moved here from the terminal's titlebar, which now carries only the collapsed-state reopen).
     /// A tab click animates through ONE `withAnimation(standard)` transaction around the state
@@ -156,29 +155,16 @@ struct CodeSidebarColumn: View {
 
     private var strip: some View {
         HStack(spacing: 2) {
-            // The tabs are their own GROUP, on a wider gap than the action plates that trail them.
-            // Two lit plates side by side (the selected tab and the one under the pointer) touched at
-            // the strip's 2pt spacing and read as one long fill; `space1` opens a channel between
-            // them while still holding the four words closer to each other than to anything else.
-            HStack(spacing: Slate.Metric.space1) {
-                PanelTabPlate(label: "Files", selected: surfaceTab == .code) {
-                    selectSurface(.code)
-                }
-                .help("Files — the project's embedded editor")
-                // Simulators sits beside Files because it is the other REAL surface — a live host
-                // resource, not the announced-but-empty Desktop.
-                PanelTabPlate(label: "Simulators", selected: surfaceTab == .simulators) {
-                    selectSurface(.simulators)
-                }
-                .help("Simulators — the host's iOS Simulator devices")
-                PanelTabPlate(label: "Android", selected: surfaceTab == .android) {
-                    selectSurface(.android)
-                }
-                .help("Android — the host's emulators and attached devices")
-                PanelTabPlate(label: "Desktop", selected: surfaceTab == .desktop) {
-                    selectSurface(.desktop)
-                }
-                .help("Desktop — the host's window surface")
+            // THE WIDTH LADDER. Four tabs carrying a mark and a word want ~330pt, and the panel's
+            // minimum (`codeSidebarMinWidth`, 380) leaves the tabs about 310 once the action plates
+            // are paid for — so a panel dragged narrow has to give something up. `ViewThatFits` picks
+            // the first rung that fits: every tab named, then only the selected one, then none. It
+            // degrades a rung at a time rather than truncating, because a tab reading "Simulat…" has
+            // stopped saying what it switches to, while a mark alone still does.
+            ViewThatFits(in: .horizontal) {
+                tabs(labelling: .all)
+                tabs(labelling: .selectedOnly)
+                tabs(labelling: .none)
             }
             Spacer(minLength: 0)
             if surfaceTab == .code { activeEditorReadout }
@@ -209,6 +195,63 @@ struct CodeSidebarColumn: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.titlebarHeight)
+    }
+
+    /// One rung of the strip's width ladder — how many tabs get to say their name.
+    private enum TabLabelling {
+        case all
+        case selectedOnly
+        case none
+    }
+
+    /// The four surface tabs, as their own GROUP on a wider gap than the action plates trailing
+    /// them: two lit plates side by side (the selected tab and the one under the pointer) touched at
+    /// the strip's 2pt spacing and read as one long fill, where `space1` opens a channel between them
+    /// while still holding the tabs closer to each other than to anything else.
+    ///
+    /// The marks are the app's ordinary vocabulary except for Android's, which is a drawn path
+    /// because no icon set ships one (``AndroidRobotMark``). Since the two platform tabs are now
+    /// named "Simulators" and "Emulators" — one letter apart, and both true of the other platform —
+    /// the logo is the only thing in the tab that says WHICH platform, so it is load-bearing rather
+    /// than decorative. Desktop's glyph is `display`, the app's existing GUI-surface vocabulary
+    /// (`macwindow` read as a blob at strip size — user-rejected).
+    private func tabs(labelling: TabLabelling) -> some View {
+        func names(_ tab: SurfaceTab) -> Bool {
+            switch labelling {
+            case .all: true
+            case .selectedOnly: surfaceTab == tab
+            case .none: false
+            }
+        }
+        return HStack(spacing: Slate.Metric.space1) {
+            PanelTabPlate(
+                // The folder register (user-directed 2026-08-03), not a lone document — the tab
+                // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
+                // family (SF6 renamed it wholesale; the new constants outrun the package floor).
+                symbol: .folder, label: "Files", selected: surfaceTab == .code,
+                showsLabel: names(.code),
+            ) { selectSurface(.code) }
+                .help("Files — the project's embedded editor")
+            // Simulators sits beside Files because it is the other REAL surface — a live host
+            // resource, not the announced-but-empty Desktop.
+            PanelTabPlate(
+                symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
+                showsLabel: names(.simulators),
+            ) { selectSurface(.simulators) }
+                .help("Simulators — the host's iOS Simulator devices")
+            // "Emulators" names the tab (user-directed 2026-08-05) and the help text carries the
+            // rest: the surface also lists attached hardware, which no emulator is.
+            PanelTabPlate(
+                mark: .android, label: "Emulators", selected: surfaceTab == .android,
+                showsLabel: names(.android),
+            ) { selectSurface(.android) }
+                .help("Emulators — the host's Android emulators and attached devices")
+            PanelTabPlate(
+                symbol: .display, label: "Desktop", selected: surfaceTab == .desktop,
+                showsLabel: names(.desktop),
+            ) { selectSurface(.desktop) }
+                .help("Desktop — the host's window surface")
+        }
     }
 
     /// The active editor's name (plus an unsaved-changes dot) read straight off the workbench's
