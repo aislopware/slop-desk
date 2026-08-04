@@ -41,18 +41,27 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     /// dropped rather than queued against a device that may not be the one finally selected.
     var send: ((Data) -> Void)?
 
-    /// Reports the framebuffer size upward the moment the decoder works it out. The header prints it,
-    /// and this is the only place in the app that knows: the size is in the SPS, and the layer has
-    /// already parsed it to build a format description.
-    var onContentSize: ((CGSize) -> Void)?
-
     /// The stream's pixel size, learned from the format description. `.zero` until the first
     /// parameter sets arrive, which is what makes the fitted rect empty and every click a miss —
     /// correct, since there is nothing on screen to click yet.
-    private(set) var contentSize: CGSize = .zero {
+    ///
+    /// It is DRAWING geometry and nothing else. It used to be reported upward as the panel's idea of
+    /// the stream size too, which quietly gave the model two sources for one number; the session
+    /// packet is the authority now (``videoSize``).
+    private(set) var contentSize: CGSize = .zero
+
+    /// The size the SERVER says it is encoding, straight from the session packet, and the only size a
+    /// positional message may be paired with — the device drops any other (``AndroidScreenLayout``).
+    ///
+    /// Kept apart from ``contentSize`` rather than folded into it, because the two are not reliably
+    /// the same number: `contentSize` comes from the SPS by way of `CMVideoFormatDescription`, which
+    /// is a decoder's reading of the bitstream, and a codec is free to round a coded height up to its
+    /// macroblock grid and carry the real one in a cropping rectangle. The session packet is the
+    /// server's own arithmetic — literally the value it compares against — so it is the one to trust.
+    var videoSize: CGSize = .zero {
         didSet {
-            guard contentSize != oldValue, contentSize != .zero else { return }
-            onContentSize?(contentSize)
+            guard videoSize != oldValue else { return }
+            needsLayout = true
         }
     }
 
@@ -83,6 +92,19 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
 
     var fitted: CGRect {
         AndroidScreenLayout.fittedRect(content: contentSize, in: bounds.size)
+    }
+
+    /// The pair every positional message is built from.
+    ///
+    /// Falls back to the decoded size when no session packet has landed. That is a worse number, for
+    /// the reason on ``videoSize`` — but a mirror whose touches might be off by a crop is worth more
+    /// than one that provably cannot be touched at all, and the fallback is unreachable in practice:
+    /// `scrcpy` sends the session packet at the head of the stream, ahead of the parameter sets that
+    /// give `contentSize` a value in the first place.
+    private var surface: AndroidScreenLayout.Surface {
+        AndroidScreenLayout.Surface(
+            fitted: fitted, video: videoSize == .zero ? contentSize : videoSize,
+        )
     }
 
     // MARK: Frames
@@ -168,12 +190,13 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     private func sendTouch(
         _ action: AndroidMotionAction, at point: CGPoint, buttons: AndroidButtons,
     ) {
-        let surface = AndroidScreenLayout.surface(fitted: fitted)
-        guard surface.width > 0, surface.height > 0 else { return }
+        let surface = surface
+        guard surface.isUsable else { return }
+        let pixel = surface.pixels(point)
         send?(AndroidControlMessage.touch(
             action: action,
-            x: AndroidScreenLayout.clampToInt32(point.x),
-            y: AndroidScreenLayout.clampToInt32(point.y),
+            x: AndroidScreenLayout.clampToInt32(pixel.x),
+            y: AndroidScreenLayout.clampToInt32(pixel.y),
             width: surface.width, height: surface.height,
             buttons: buttons,
         ))
@@ -210,7 +233,7 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
         for message in scroll.accept(
             delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY),
             isPrecise: event.hasPreciseScrollingDeltas,
-            phase: phase, pointer: origin, fitted: fitted,
+            phase: phase, pointer: origin, surface: surface,
         ) { send?(message) }
 
         wheelIdle?.invalidate()
@@ -228,7 +251,7 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     private func endScroll() {
         wheelIdle?.invalidate()
         wheelIdle = nil
-        for message in scroll.lift(in: fitted) { send?(message) }
+        for message in scroll.lift(in: surface) { send?(message) }
     }
 
     /// The view is going away — a device switch, or the panel closing. The contact is forgotten
@@ -292,8 +315,8 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     /// unrelated single-finger drags.
     private func sendPinch(_ action: AndroidMotionAction) {
         guard let pinchCentre, let send else { return }
-        let surface = AndroidScreenLayout.surface(fitted: fitted)
-        guard surface.width > 0, surface.height > 0 else { return }
+        let surface = surface
+        guard surface.isUsable else { return }
         let (first, second) = AndroidScreenLayout.pinchFingers(
             centre: pinchCentre, spread: pinchSpread, fitted: fitted,
         )
@@ -341,12 +364,13 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
 
     private func pinchMessage(
         _ action: AndroidMotionAction, at point: CGPoint, id: UInt64,
-        surface: (width: UInt16, height: UInt16), buttons: AndroidButtons,
+        surface: AndroidScreenLayout.Surface, buttons: AndroidButtons,
     ) -> Data {
-        AndroidControlMessage.touch(
+        let pixel = surface.pixels(point)
+        return AndroidControlMessage.touch(
             action: action, pointerID: id,
-            x: AndroidScreenLayout.clampToInt32(point.x),
-            y: AndroidScreenLayout.clampToInt32(point.y),
+            x: AndroidScreenLayout.clampToInt32(pixel.x),
+            y: AndroidScreenLayout.clampToInt32(pixel.y),
             width: surface.width, height: surface.height, buttons: buttons,
         )
     }
@@ -394,27 +418,26 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
 struct AndroidScreenView: NSViewRepresentable {
     var frames: AndroidFrameSink
     var send: (Data) -> Void
-    /// Optional so a bare fallback can mount this view while only the stage that owns the header
-    /// cares what size the device turned out to be.
-    var onContentSize: ((CGSize) -> Void)?
+    /// The session packet's size. `nil` before the stream has named one — every touch is then
+    /// measured against the decoder's reading of the bitstream instead (``AndroidScreenNSView/surface``).
+    var videoSize: CGSize?
 
     func makeNSView(context _: Context) -> AndroidScreenNSView {
         let view = AndroidScreenNSView(frame: .zero)
         view.send = send
-        view.onContentSize = onContentSize
+        view.videoSize = videoSize ?? .zero
         frames.attach(view)
         return view
     }
 
     func updateNSView(_ view: AndroidScreenNSView, context _: Context) {
         view.send = send
-        view.onContentSize = onContentSize
+        view.videoSize = videoSize ?? .zero
     }
 
     static func dismantleNSView(_ view: AndroidScreenNSView, coordinator _: ()) {
         view.abandonGestures()
         view.send = nil
-        view.onContentSize = nil
     }
 }
 #endif

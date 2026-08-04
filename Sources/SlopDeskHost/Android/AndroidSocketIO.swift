@@ -36,6 +36,18 @@ final class AndroidSocket: @unchecked Sendable {
 
     init(descriptor: Int32) {
         self.descriptor = descriptor
+        // SO_NOSIGPIPE ON EVERY DESCRIPTOR, at the one place they all pass through. A pump writes to
+        // its peer long after that peer may have gone — a client that quit, a mesh link that dropped,
+        // a device unplugged mid-frame — and the default disposition of SIGPIPE is to KILL THE
+        // PROCESS. Without this, closing the panel while a mirror is running takes hostd down with
+        // it: every terminal pane on the machine dies, and it leaves no crash report, because a
+        // signal death is not a crash. `CodeBridgeServer` learned the same lesson on its own accept
+        // loop; this is that fix applied where a socket is born rather than where one is accepted, so
+        // the dialled leg is covered too.
+        var enabled: Int32 = 1
+        setsockopt(
+            descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size),
+        )
     }
 
     deinit {

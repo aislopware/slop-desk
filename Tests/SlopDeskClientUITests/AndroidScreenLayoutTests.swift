@@ -70,13 +70,42 @@ final class AndroidScreenLayoutTests: XCTestCase {
     // MARK: The fields that ride on every positional message
 
     func testTheSurfaceSizeSaturatesRatherThanWrapping() {
-        // The field is 16 bits; a panel dragged past 65535 points would otherwise wrap and place
-        // every touch in the top-left corner.
-        let huge = CGRect(x: 0, y: 0, width: 70000, height: 10)
-        XCTAssertEqual(AndroidScreenLayout.surface(fitted: huge).width, .max)
-        XCTAssertEqual(AndroidScreenLayout.surface(fitted: huge).height, 10)
+        // The field is 16 bits; a video past 65535 pixels would otherwise wrap and place every touch
+        // in the top-left corner.
+        let huge = AndroidScreenLayout.Surface(
+            fitted: fitted, video: CGSize(width: 70000, height: 10),
+        )
+        XCTAssertEqual(huge.width, .max)
+        XCTAssertEqual(huge.height, 10)
         XCTAssertEqual(AndroidScreenLayout.clampToUInt16(-1), 0)
         XCTAssertEqual(AndroidScreenLayout.clampToUInt16(.nan), 0)
+    }
+
+    /// The pair on the wire names the VIDEO, never the panel. `scrcpy`'s `PositionMapper` compares it
+    /// against the size it is encoding and discards the event on any difference — see
+    /// ``AndroidScreenLayout``. Sending the panel's own size is what made every touch a no-op while
+    /// the toolbar's keycodes still worked.
+    func testTheSurfaceReportsTheVideoRatherThanThePanel() {
+        let surface = AndroidScreenLayout.Surface(
+            fitted: CGRect(x: 12, y: 30, width: 200, height: 400),
+            video: CGSize(width: 460, height: 1024),
+        )
+        XCTAssertEqual(surface.width, 460)
+        XCTAssertEqual(surface.height, 1024)
+        // The fitted rect's ORIGIN is not in the conversion: a point handed to `pixels` has already
+        // been rebased by `devicePoint`, and subtracting the origin twice would drag every touch up
+        // and to the left by however far the frame is inset.
+        XCTAssertEqual(surface.pixels(.zero), .zero)
+        XCTAssertEqual(surface.pixels(CGPoint(x: 100, y: 200)), CGPoint(x: 230, y: 512))
+    }
+
+    func testAnUnusableSurfaceConvertsToTheOriginRatherThanDividingByZero() {
+        let blank = AndroidScreenLayout.Surface(fitted: .zero, video: .zero)
+        XCTAssertFalse(blank.isUsable)
+        XCTAssertEqual(blank.pixels(CGPoint(x: 10, y: 10)), .zero)
+        // A frame drawn but not yet named by a session packet is just as unusable.
+        let unnamed = AndroidScreenLayout.Surface(fitted: fitted, video: .zero)
+        XCTAssertFalse(unnamed.isUsable)
     }
 
     func testCoordinatesSaturateAtInt32AndSurviveNaN() {

@@ -91,7 +91,7 @@ struct AndroidStageView: View {
         AndroidScreenView(
             frames: model.frames,
             send: { model.send($0) },
-            onContentSize: { model.observed(streamSize: $0) },
+            videoSize: model.streamSize,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Slate.Metric.space3)

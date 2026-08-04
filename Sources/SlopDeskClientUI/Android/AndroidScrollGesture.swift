@@ -58,10 +58,11 @@ struct AndroidScrollGesture {
     /// `pointer` is where the cursor is, in the fitted rect's space — the contact is planted there,
     /// so a scroll acts on whatever is under the cursor, exactly as it does on a Mac.
     mutating func accept(
-        delta: CGSize, isPrecise: Bool, phase: Phase, pointer: CGPoint, fitted: CGRect,
+        delta: CGSize, isPrecise: Bool, phase: Phase, pointer: CGPoint,
+        surface: AndroidScreenLayout.Surface,
     ) -> [Data] {
-        guard fitted.width > 0, fitted.height > 0 else { return [] }
-        let surface = AndroidScreenLayout.surface(fitted: fitted)
+        guard surface.isUsable else { return [] }
+        let fitted = surface.fitted
 
         if phase == .ended {
             guard let finger else { return [] }
@@ -97,10 +98,10 @@ struct AndroidScrollGesture {
     }
 
     /// Close a wheel gesture the caller's idle timer has decided is over. No-op with no contact down.
-    mutating func lift(in fitted: CGRect) -> [Data] {
+    mutating func lift(in surface: AndroidScreenLayout.Surface) -> [Data] {
         guard let finger else { return [] }
         self.finger = nil
-        return [Self.message(.up, at: finger, surface: AndroidScreenLayout.surface(fitted: fitted))]
+        return [Self.message(.up, at: finger, surface: surface)]
     }
 
     /// Forget the contact without sending anything — the socket went away, so an `up` has nowhere to
@@ -109,13 +110,17 @@ struct AndroidScrollGesture {
         finger = nil
     }
 
+    /// One contact, converted from the fitted rect the gesture is tracked in to the video pixels the
+    /// device will accept.
     static func message(
-        _ action: AndroidMotionAction, at point: CGPoint, surface: (width: UInt16, height: UInt16),
+        _ action: AndroidMotionAction, at point: CGPoint,
+        surface: AndroidScreenLayout.Surface,
     ) -> Data {
-        AndroidControlMessage.touch(
+        let pixel = surface.pixels(point)
+        return AndroidControlMessage.touch(
             action: action,
-            x: AndroidScreenLayout.clampToInt32(point.x),
-            y: AndroidScreenLayout.clampToInt32(point.y),
+            x: AndroidScreenLayout.clampToInt32(pixel.x),
+            y: AndroidScreenLayout.clampToInt32(pixel.y),
             width: surface.width, height: surface.height,
             // A scroll's contact reports the primary button held for the same reason a drag does:
             // Android's `MotionEvent` carries the button state, and a move with none set reads as a

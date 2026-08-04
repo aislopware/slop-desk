@@ -95,16 +95,33 @@ struct SlatePlateStyle: ButtonStyle {
 /// plate relayout and the surface swap in a single coherent beat. Do not re-add per-view
 /// animations here.
 struct PanelTabPlate: View {
-    let symbol: SFSymbol
+    /// What a tab draws before its label. Almost always a symbol — ``PanelTabMark/android`` is the one
+    /// mark no icon set ships, and it exists for the reason ``AndroidRobotMark`` documents.
+    enum Mark {
+        case symbol(SFSymbol)
+        case android
+    }
+
+    let mark: Mark
     let label: String
     let selected: Bool
     var action: () -> Void = {}
 
+    init(mark: Mark, label: String, selected: Bool, action: @escaping () -> Void = {}) {
+        self.mark = mark
+        self.label = label
+        self.selected = selected
+        self.action = action
+    }
+
+    init(symbol: SFSymbol, label: String, selected: Bool, action: @escaping () -> Void = {}) {
+        self.init(mark: .symbol(symbol), label: label, selected: selected, action: action)
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemSymbol: symbol)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                glyph
                 if selected {
                     Text(label)
                         .font(.system(size: Slate.Typeface.footnote, weight: .medium))
@@ -120,6 +137,19 @@ struct PanelTabPlate: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+    }
+
+    /// The drawn mark takes the same measure the text style gives a symbol, so the two device tabs
+    /// sit at one optical size rather than one being a hair larger for having been hand-built.
+    @ViewBuilder
+    private var glyph: some View {
+        switch mark {
+        case let .symbol(symbol):
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+        case .android:
+            AndroidRobotMark(side: Slate.Typeface.footnote)
+        }
     }
 }
 

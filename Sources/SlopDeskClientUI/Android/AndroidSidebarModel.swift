@@ -63,12 +63,17 @@ final class AndroidSidebarModel {
     /// a success cannot look like an error, and self-clearing.
     private(set) var notice: String?
 
-    /// The device's framebuffer size, learned from the stream rather than assumed. `nil` until the
-    /// first parameter sets arrive.
+    /// The size the server is encoding, from the SESSION PACKET and from nowhere else. `nil` until the
+    /// stream names one.
     ///
     /// Note this is the STREAM's size, which is not the device's: the panel asks for a mirror capped
     /// at ``streamMaxSize``, and the server scales to fit. The header prints the device's real
-    /// metrics — which Android, unlike iOS, states outright — and this drives the layout only.
+    /// metrics — which Android, unlike iOS, states outright.
+    ///
+    /// ⚠️ It is not decoration. Every touch, drag, scroll and pinch is paired with this number on the
+    /// wire, and the device DISCARDS a positional message carrying any other — so a second writer
+    /// here, however plausible its number looks, is a mirror that silently stops responding to
+    /// fingers. `AndroidScreenLayout` has the whole account.
     private(set) var streamSize: CGSize?
 
     /// True from the moment a device is selected until its first decodable video arrives — or until
@@ -488,7 +493,7 @@ final class AndroidSidebarModel {
         }
     }
 
-    /// The stream's pixel size, reported by the view that decoded it.
+    /// The size the session packet named. The stream's only writer — see ``streamSize``.
     func observed(streamSize size: CGSize) {
         guard size.width > 0, size.height > 0, streamSize != size else { return }
         streamSize = size

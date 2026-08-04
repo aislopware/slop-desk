@@ -58,6 +58,23 @@ it carries an address, not frames.
 **No auth, by invariant** — the bridge binds `0.0.0.0` with no credential; security is the WireGuard
 mesh (`docs/DECISIONS.md`).
 
+### ⚠️⚠️ Every descriptor here needs `SO_NOSIGPIPE`
+
+The bridge is the one part of hostd written on blocking BSD sockets rather than Network.framework
+(`AndroidSocketIO` explains why), which means it is the one part that can be killed by a signal. A
+pump writes to its peer long after that peer may have gone — a client that quit, a mesh link that
+dropped, a device unplugged mid-frame — and the default disposition of `SIGPIPE` **terminates the
+process**. hostd ignores `SIGINT` and `SIGTERM`; it does not ignore this one.
+
+The failure is total and gives nothing to read: hostd vanishes, every terminal pane on the machine
+dies with it, and there is **no crash report**, because a signal death is not a crash. It presents as
+"the Android panel stopped working, and so did everything else". Demonstrated 2026-08-04 on a bare
+socket pair — a one-byte write to a closed peer exits `141` (`128 + SIGPIPE`) before it can print,
+and with the option set returns `-1`/`EPIPE` and the pump ends cleanly.
+
+`AndroidSocket.init(descriptor:)` sets it, which covers the dialled leg and the accepted one at the
+single point they share. `CodeBridgeServer` learned this on its own accept loop first.
+
 ---
 
 ## The bridge's own dialect
@@ -153,6 +170,42 @@ decode as corruption rather than failing.
 its encoder and starts a new session with the axes swapped. There is no `rotationEffect` and therefore
 no un-rotation of scroll deltas — the whole class of bug `SimulatorScreenLayout` has to defend against
 does not exist here.
+
+### ⚠️⚠️ A positional message is DROPPED on a size mismatch, never rescaled
+
+The panel shipped believing the opposite — that a touch could be sent in the fitted rect's own space
+paired with that rect's size, and the server would scale it — and the result was a mirror whose
+toolbar worked and whose screen did not respond to anything. Nothing reports it: `PositionMapper` in
+the 4.1 jar compares the pair on the wire against the size it is encoding, and on any difference logs
+one **`VERBOSE`** line and returns null. The client never hears about it, and keycodes carry no
+geometry, so the failure presents as "touch is broken" with a control path that is provably alive.
+
+Measured against this host's emulator, 2026-08-04, driving the server by hand:
+
+```
+→ touch paired with 300x667 (panel points)
+   [server] VERBOSE: Ignore positional event generated for size 300x667 (current size is 460x1024)
+→ touch paired with 460x1024 (video pixels)
+   (accepted, no line)
+```
+
+So **every** positional message — touch, drag, the scroll gesture's synthetic contacts, both pinch
+contacts, and `INJECT_SCROLL_EVENT` if it is ever used — must be in the video's own pixel grid, paired
+with the video's exact size. `AndroidScreenLayout.Surface` is the only way to build one, and it holds
+the fitted rect and the video size together so the two cannot be paired by accident.
+
+**And the size must come from the SESSION PACKET**, not from the decoder. Two other numbers are within
+easy reach and both are wrong:
+
+- the DEVICE's screen (`1080×2400` here) — `max_size` scales the encode down, so it is never the video
+  size on a device larger than the cap;
+- the SPS dimensions off `CMVideoFormatDescription` — a decoder's reading of the bitstream, which a
+  codec may round up to its macroblock grid and carry the true size in a cropping rectangle.
+
+The session packet is the server's own arithmetic, literally the value `PositionMapper` compares
+against, and it arrives at the head of the stream — before the parameter sets. `AndroidSidebarModel`
+therefore has exactly one writer for `streamSize`; a second one is a mirror that silently stops
+accepting fingers.
 
 ### Measured numbers (this host's emulator, 2026-08-04)
 

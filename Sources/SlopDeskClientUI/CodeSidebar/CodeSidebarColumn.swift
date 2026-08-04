@@ -167,16 +167,19 @@ struct CodeSidebarColumn: View {
                 .help("Files — the project's embedded editor")
             // Simulators sits beside Files because it is the other REAL surface — a live host
             // resource, not the announced-but-empty Desktop.
+            //
+            // THE PLATFORM MARKS, not device outlines (user-directed 2026-08-04). These two tabs are
+            // the only pair in the strip that name a platform rather than a kind of thing, and drawn
+            // as handsets they were `iphone` beside `candybarphone` — two rounded rectangles a corner
+            // radius apart, which at plate height is not a difference the eye can use. Everywhere
+            // else in the panel the marks stay shapes (`AndroidDeviceKind`); this is the one place
+            // where the brand IS the distinction being drawn.
             PanelTabPlate(
-                symbol: .iphone, label: "Simulators", selected: surfaceTab == .simulators,
+                symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
             ) { selectSurface(.simulators) }
                 .help("Simulators — the host's iOS Simulator devices")
-            // Beside Simulators because it is the same KIND of surface — a live host device set —
-            // and its glyph is the one SF Symbols has for a non-Apple handset. `iphone` is already
-            // spoken for by the tab to its left, and reusing it would make the two tabs
-            // indistinguishable at strip size, which is precisely where a tab has to be read.
             PanelTabPlate(
-                symbol: .candybarphone, label: "Android", selected: surfaceTab == .android,
+                mark: .android, label: "Android", selected: surfaceTab == .android,
             ) { selectSurface(.android) }
                 .help("Android — the host's emulators and attached devices")
             PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {

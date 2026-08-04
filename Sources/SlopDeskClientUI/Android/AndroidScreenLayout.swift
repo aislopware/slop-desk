@@ -15,9 +15,21 @@
 // frame arriving here is therefore always already the right way up, the view never rotates, and there
 // is no angle for a vector to be out of step with. Rotation is a size change and nothing more.
 //
-// Coordinates sent upstream are in the FITTED RECT's own space, paired with that rect's size: every
-// positional control message carries the `width`/`height` it was measured against and the server
-// rescales. So nothing here needs the device's pixel dimensions either — only the ratio.
+// ## ⚠️ The server does NOT rescale a positional message. It DROPS it.
+//
+// This panel first shipped believing the opposite — that a touch could be sent in the fitted rect's
+// own space paired with that rect's size, and `scrcpy` would scale it — and the result was a mirror
+// where the toolbar buttons worked and nothing on the frame did. `PositionMapper` in the 4.1 jar
+// compares the pair on the wire against the size it is CURRENTLY encoding and, on any difference,
+// logs `Ignore positional event generated for size … (current size is …)` and returns null. It reads
+// a mismatch as an event generated against a stale geometry — a touch made just before the device
+// rotated — and discarding those is the point of the check.
+//
+// So every positional message must be in the DEVICE's own pixel grid, paired with the exact size of
+// the video being encoded. That size is not something this file can derive from the panel: it comes
+// off the wire in the session packet (``AndroidStreamMessage/session(width:height:)``), and it is not
+// the device's screen either — `max_size` scales the encode down. ``Surface`` carries the pair, and
+// nothing may send a positional message without one.
 
 #if os(macOS)
 import CoreGraphics
@@ -64,12 +76,42 @@ enum AndroidScreenLayout {
         )
     }
 
-    /// The device-space size that rides on every positional message, as the protocol's `u16`.
+    /// The two geometries a positional message needs at once: where the frame is drawn, and what the
+    /// device is actually encoding.
     ///
-    /// Clamped rather than truncated: the field is 16 bits, and a panel dragged past 65535 points
-    /// would otherwise wrap and place every touch at the top-left corner.
-    static func surface(fitted: CGRect) -> (width: UInt16, height: UInt16) {
-        (clampToUInt16(fitted.width), clampToUInt16(fitted.height))
+    /// Gestures are measured in the FITTED rect, because that is where the pointer is. They are SENT
+    /// in the video's own pixels, because that is the only grid the server will accept (see the file
+    /// comment). Keeping both in one value is what stops the two from being paired by accident: there
+    /// is no way to reach the size on the wire without also having the rect it must be converted from.
+    struct Surface: Equatable {
+        /// Where the frame sits in the panel, in points.
+        let fitted: CGRect
+        /// The size the server is encoding right now, in its own pixels — the session packet's
+        /// numbers, NOT the device's screen size, which `max_size` scales down from.
+        let video: CGSize
+
+        /// False while the stream has not yet named a size, or the panel is too small to draw in. A
+        /// message built from an unusable surface would be discarded by the device anyway.
+        var isUsable: Bool {
+            fitted.width > 0 && fitted.height > 0 && video.width > 0 && video.height > 0
+        }
+
+        /// The pair that rides on the wire, as the protocol's `u16`. Clamped rather than truncated:
+        /// the field is 16 bits, and a size past 65535 would wrap and place every touch at the origin.
+        var width: UInt16 { clampToUInt16(video.width) }
+        var height: UInt16 { clampToUInt16(video.height) }
+
+        /// A point in the fitted rect's own space → the video's pixel grid.
+        ///
+        /// Clamped to the last addressable pixel rather than the size itself: a touch at exactly
+        /// `video.height` is off the bottom edge of a frame whose rows are `0..<height`.
+        func pixels(_ point: CGPoint) -> CGPoint {
+            guard isUsable else { return .zero }
+            return CGPoint(
+                x: min(max(point.x * video.width / fitted.width, 0), video.width - 1),
+                y: min(max(point.y * video.height / fitted.height, 0), video.height - 1),
+            )
+        }
     }
 
     static func clampToUInt16(_ value: CGFloat) -> UInt16 {
