@@ -3553,6 +3553,16 @@ final class MuxChannelSession: @unchecked Sendable {
                 sendControl([response], to: id)
                 return
             }
+            // ensureSimulatorServer = 21 lazily spawns / reports the host's simulator server (the
+            // right panel's Simulators surface) via the process-wide `SimulatorServerManager`.
+            // Side-effecting, so handled HERE for the same reason as 18 — and with the same
+            // never-wait contract.
+            if let response = HostSimulatorPerformer.response(
+                requestID: requestID, verb: verb, payload: payload,
+            ) {
+                sendControl([response], to: id)
+                return
+            }
             let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
             let response = MetadataResponseBuilder(query: probe)
                 .response(requestID: requestID, verb: verb, payload: payload)

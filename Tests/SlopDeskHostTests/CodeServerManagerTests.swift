@@ -54,7 +54,7 @@ private final class FakeBridge: CodeBridgeRouting, @unchecked Sendable {
 /// spawner/locator/probe are all injected fakes; only `canonicalRoot` touches the real filesystem
 /// (temp directories).
 final class CodeServerManagerTests: XCTestCase {
-    private final class FakeHandle: CodeServerProcessHandle, @unchecked Sendable {
+    private final class FakeHandle: HostServiceProcessHandle, @unchecked Sendable {
         private let lock = NSLock()
         private var running = true
         private(set) var terminated = false
@@ -158,7 +158,7 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(spawner: spawner)
 
         let first = manager.ensure(projectRoot: root)
-        XCTAssertEqual(first, MetadataCodec.CodeServerEndpoint(state: .starting, port: 0))
+        XCTAssertEqual(first, MetadataCodec.ServiceEndpoint(state: .starting, port: 0))
         XCTAssertEqual(spawner.spawnCount, 1)
 
         // Still starting (port unknown) — and no second spawn for the same root.
@@ -175,7 +175,7 @@ final class CodeServerManagerTests: XCTestCase {
         spawner.announcePort(62636)
         XCTAssertEqual(
             manager.ensure(projectRoot: root),
-            MetadataCodec.CodeServerEndpoint(state: .ready, port: 62636),
+            MetadataCodec.ServiceEndpoint(state: .ready, port: 62636),
         )
     }
 
@@ -187,7 +187,7 @@ final class CodeServerManagerTests: XCTestCase {
 
         XCTAssertEqual(
             manager.ensure(projectRoot: root),
-            MetadataCodec.CodeServerEndpoint(state: .starting, port: 4444),
+            MetadataCodec.ServiceEndpoint(state: .starting, port: 4444),
         )
     }
 
@@ -201,7 +201,7 @@ final class CodeServerManagerTests: XCTestCase {
         // The child self-reaped (idle timeout) — the next ensure respawns fresh.
         spawner.handles[0].exitSilently()
         let respawned = manager.ensure(projectRoot: root)
-        XCTAssertEqual(respawned, MetadataCodec.CodeServerEndpoint(state: .starting, port: 0))
+        XCTAssertEqual(respawned, MetadataCodec.ServiceEndpoint(state: .starting, port: 0))
         XCTAssertEqual(spawner.spawnCount, 2)
     }
 
@@ -245,7 +245,7 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(spawner: spawner, binary: nil)
         XCTAssertEqual(
             manager.ensure(projectRoot: root),
-            MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0),
+            MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0),
         )
         XCTAssertEqual(spawner.spawnCount, 0)
     }
@@ -614,7 +614,7 @@ final class CodeServerManagerTests: XCTestCase {
         // its never-wait contract via `.starting`.
         XCTAssertEqual(
             manager.ensure(projectRoot: root),
-            MetadataCodec.CodeServerEndpoint(state: .starting, port: 0),
+            MetadataCodec.ServiceEndpoint(state: .starting, port: 0),
         )
         XCTAssertEqual(spawner.spawnCount, 0, "no child boots while the install CLI runs")
 
@@ -1378,7 +1378,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
         }
     }
 
-    private final class NeverExitingHandle: CodeServerProcessHandle, @unchecked Sendable {
+    private final class NeverExitingHandle: HostServiceProcessHandle, @unchecked Sendable {
         var isRunning: Bool { true }
         func terminate() {}
     }
@@ -1502,7 +1502,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
         }
         XCTAssertEqual(requestID, 3)
         XCTAssertEqual(status, MetadataStatus.ok.rawValue)
-        let endpoint = try MetadataCodec.decodeCodeServerEndpoint(payload)
+        let endpoint = try MetadataCodec.decodeServiceEndpoint(payload)
         XCTAssertEqual(endpoint.state, .starting)
     }
 

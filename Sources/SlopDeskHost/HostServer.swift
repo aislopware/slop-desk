@@ -562,6 +562,10 @@ public final class HostServer: @unchecked Sendable {
         // Terminate the shared code-server child (the right sidebar's embedded VS Code). It
         // self-reaps on idle, but a daemon stop must not strand a Node process.
         HostCodeServerPerformer.sharedManager.shutdown()
+        // Same for the shared simulator server (the right panel's Simulators surface). It has no
+        // idle reaper of its own, so this is the ONLY thing that stops it — the simulated devices
+        // it booted are left running on purpose (machine state, not session state).
+        HostSimulatorPerformer.sharedManager.shutdown()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
         // refcounts above; this is the belt-and-braces daemon-stop sweep).
         repoWatcher.shutdown()

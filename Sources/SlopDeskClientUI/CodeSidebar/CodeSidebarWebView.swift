@@ -485,7 +485,8 @@ final class CodeSidebarWebViewPool {
 
     /// The (created-on-first-use) webview for `projectRoot`, pointed at `url`. An existing entry is
     /// re-loaded ONLY when the endpoint moved (`CodeSidebarModel.endpointMoved` — a respawned
-    /// code-server on a fresh port); the workbench otherwise owns its own navigation.
+    /// service on a fresh port); the page otherwise owns its own navigation.
+    ///
     func webView(for projectRoot: String, url: URL) -> WKWebView {
         touch(projectRoot)
         if let existing = webViews[projectRoot] {
@@ -503,46 +504,7 @@ final class CodeSidebarWebViewPool {
         configuration.setURLSchemeHandler(
             Self.fontSchemeHandler, forURLScheme: CodeSidebarFontScheme.scheme,
         )
-        // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
-        // letterpress) rides every navigation — user scripts persist on the controller, so a
-        // reload/respawn re-dresses itself.
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: Self.dressingScriptSource,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true,
-        ))
-        // The recommendation-tips GRAFT: code-server's boot configuration never carries the
-        // recommendation catalogue (its server forwards only the gallery), leaving the Extensions
-        // view's RECOMMENDED section empty. The script rewrites the configuration meta tag with
-        // the bundled catalogue before the workbench boots — document START (the rewrite must
-        // precede the workbench's read), MAIN frame only (the meta lives on the top document).
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.recommendationTipsScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-        ))
-        // The focus-truth corrector: replay the blur a never-focused page misses, so only the
-        // real keyboard owner renders a caret (see `focusTruthScript`). Document START (the
-        // timers must span the workbench's whole boot), MAIN frame (the workbench top frame
-        // owns the editor).
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.focusTruthScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-        ))
-        // The clipboard BRIDGE: WebKit's async clipboard API drops the workbench's copy (the
-        // transient user activation is spent by the time VS Code's async path calls `writeText`),
-        // so ⌘C in the editor never reached NSPasteboard. The wrap posts the text to the native
-        // handler, which writes the pasteboard directly — document START (before the workbench
-        // captures the API) and ALL frames (extension webviews copy too).
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.clipboardBridgeScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false,
-        ))
-        configuration.userContentController.add(
-            Self.clipboardBridge, name: CodeSidebarPageDressing.clipboardHandlerName,
-        )
+        installWorkbenchDressing(on: configuration.userContentController)
         let webView = CodeSidebarWKWebView(
             projectRoot: projectRoot, frame: .zero, configuration: configuration,
         )
@@ -570,6 +532,49 @@ final class CodeSidebarWebViewPool {
         webViews[projectRoot] = webView
         evictColdestIfOverCap()
         return webView
+    }
+
+    /// The workbench's four user scripts, in the order their injection times require. Split out so
+    /// the mint reads as "pick a dressing" rather than sixty lines of one branch.
+    private func installWorkbenchDressing(on controller: WKUserContentController) {
+        // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
+        // letterpress) rides every navigation — user scripts persist on the controller, so a
+        // reload/respawn re-dresses itself.
+        controller.addUserScript(WKUserScript(
+            source: Self.dressingScriptSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true,
+        ))
+        // The recommendation-tips GRAFT: code-server's boot configuration never carries the
+        // recommendation catalogue (its server forwards only the gallery), leaving the Extensions
+        // view's RECOMMENDED section empty. The script rewrites the configuration meta tag with
+        // the bundled catalogue before the workbench boots — document START (the rewrite must
+        // precede the workbench's read), MAIN frame only (the meta lives on the top document).
+        controller.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.recommendationTipsScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
+        // The focus-truth corrector: replay the blur a never-focused page misses, so only the
+        // real keyboard owner renders a caret (see `focusTruthScript`). Document START (the
+        // timers must span the workbench's whole boot), MAIN frame (the workbench top frame
+        // owns the editor).
+        controller.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.focusTruthScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
+        // The clipboard BRIDGE: WebKit's async clipboard API drops the workbench's copy (the
+        // transient user activation is spent by the time VS Code's async path calls `writeText`),
+        // so ⌘C in the editor never reached NSPasteboard. The wrap posts the text to the native
+        // handler, which writes the pasteboard directly — document START (before the workbench
+        // captures the API) and ALL frames (extension webviews copy too).
+        controller.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.clipboardBridgeScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+        ))
+        controller.add(Self.clipboardBridge, name: CodeSidebarPageDressing.clipboardHandlerName)
     }
 
     // MARK: LRU
@@ -796,6 +801,8 @@ struct CodeSidebarWebView: NSViewRepresentable {
     /// a seed that stops forcing the title bar should retire this to 0.
     static let clippedTitleBarHeight: CGFloat = 35
 
+    private var topOverhang: CGFloat { Self.clippedTitleBarHeight }
+
     func makeNSView(context _: Context) -> NSView {
         let container = CodeSidebarClippedContainer()
         container.wantsLayer = true
@@ -812,9 +819,7 @@ struct CodeSidebarWebView: NSViewRepresentable {
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.topAnchor.constraint(
-                equalTo: container.topAnchor, constant: -Self.clippedTitleBarHeight,
-            ),
+            webView.topAnchor.constraint(equalTo: container.topAnchor, constant: -topOverhang),
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         // A (re)mount may owe the keyboard back — the warm-swap focus restore (a first-ever mount

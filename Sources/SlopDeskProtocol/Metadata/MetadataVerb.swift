@@ -132,7 +132,7 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// its folder from the client URL's `?folder=` query). The host lazily spawns it
     /// (`CodeServerManager`) and replies IMMEDIATELY — it never waits out the multi-second cold
     /// start (the client registry's 5 s timeout must not race a boot):
-    /// status `.ok` + ``MetadataCodec/CodeServerEndpoint`` (`[UInt8 state][UInt16 BE port]`,
+    /// status `.ok` + ``MetadataCodec/ServiceEndpoint`` (`[UInt8 state][UInt16 BE port]`,
     /// state `0` starting / `1` ready / `2` unavailable — no code-server binary on the host).
     /// The client polls this same verb until `ready`, then points its WKWebView at
     /// `http://<target-host>:<port>/?folder=<root>`. `.notFound` = the root is not a directory on
@@ -172,6 +172,27 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// the same last-writer-wins the workspace document already established. An OLD host answers
     /// `.unsupportedVerb`; the client sends this best-effort and ignores the reply.
     case syncCodeFont = 20
+    /// **Side-effecting.** Ensure the host's SIMULATOR server — the backend of the right panel's
+    /// Simulators surface, a `baguette serve` child that streams Apple's iOS Simulator framebuffer
+    /// over HTTP/WebSocket and injects HID input back into the simulated device. Request payload:
+    /// EMPTY. Unlike verb 18 this carries no root: simulators are a MACHINE resource, not a
+    /// project-scoped one — one host has one set of devices, and every pane, project and client
+    /// sees the same set.
+    ///
+    /// Response payload: ``MetadataCodec/ServiceEndpoint`` (`[UInt8 state][UInt16 BE port]`) — the
+    /// same shape verb 18 answers, and the same never-wait contract: the host spawns as a SIDE
+    /// EFFECT and replies with the CURRENT state immediately (`0` starting / `1` ready / `2`
+    /// unavailable — no `baguette` binary on the host), because a cold start outruns the client
+    /// registry's 5 s timeout. The client polls until `ready`, then loads
+    /// `http://<target-host>:<port>/simulators` in its panel webview (through the loopback relay,
+    /// for the same secure-context reasons as the workbench). NO auth token rides the URL:
+    /// security = the WireGuard mesh (docs/DECISIONS — no app-layer auth). An OLD host answers
+    /// `.unsupportedVerb` and the panel shows its offline surface.
+    ///
+    /// The child is HOST-GLOBAL and driving it is genuinely shared state: two clients pointed at
+    /// one host tap the same device. That is the same last-writer-wins the workspace document and
+    /// verb 20's settings file already established, not a new class of sharing.
+    case ensureSimulatorServer = 21
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

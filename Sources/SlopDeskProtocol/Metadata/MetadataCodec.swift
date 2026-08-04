@@ -650,18 +650,21 @@ public enum MetadataCodec {
         )
     }
 
-    // MARK: - Code-server endpoint  (ensureCodeServer = 18)
+    // MARK: - Host service endpoint  (ensureCodeServer = 18, ensureSimulatorServer = 21)
 
-    /// The host's answer to ``MetadataVerb/ensureCodeServer``: where (and whether) the project's
-    /// code-server instance is. The `port` is meaningful ONLY when ``state`` is
-    /// ``CodeServerState/ready`` — a starting instance may not have bound its socket yet (the host
-    /// spawns with port `0` and learns the real port from the child's own log line), and an
-    /// unavailable one has no port at all; both carry `0`.
-    public struct CodeServerEndpoint: Equatable, Sendable {
+    /// The host's answer to an ENSURE verb: where (and whether) a lazily-spawned host-side HTTP
+    /// service is listening. Two verbs share the shape because they share the lifecycle exactly —
+    /// the right panel's surfaces are each a web UI the host supervises for them (verb 18's
+    /// code-server, verb 21's simulator server), reached through the client's loopback relay.
+    ///
+    /// The `port` is meaningful ONLY when ``state`` is ``ServiceState/ready`` — a starting instance
+    /// may not have bound its socket yet (the host spawns with port `0` and learns the real port
+    /// from the child's own log line), and an unavailable one has no port at all; both carry `0`.
+    public struct ServiceEndpoint: Equatable, Sendable {
         /// The lifecycle state as a RAW byte (forward-tolerant carry, like
         /// ``HostVitals/pressureByte``); see ``state``.
         public var stateByte: UInt8
-        /// The TCP port the instance listens on — `0` unless ``state`` is ``CodeServerState/ready``.
+        /// The TCP port the instance listens on — `0` unless ``state`` is ``ServiceState/ready``.
         public var port: UInt16
 
         public init(stateByte: UInt8, port: UInt16) {
@@ -669,43 +672,44 @@ public enum MetadataCodec {
             self.port = port
         }
 
-        public init(state: CodeServerState, port: UInt16) {
+        public init(state: ServiceState, port: UInt16) {
             self.init(stateByte: state.rawValue, port: port)
         }
 
-        /// The typed state. An unknown future byte reads ``CodeServerState/starting`` — "keep
+        /// The typed state. An unknown future byte reads ``ServiceState/starting`` — "keep
         /// polling" is the benign fallback; a state this build cannot interpret must never render
         /// the install-hint error surface it cannot justify.
-        public var state: CodeServerState {
-            CodeServerState(rawValue: stateByte) ?? .starting
+        public var state: ServiceState {
+            ServiceState(rawValue: stateByte) ?? .starting
         }
     }
 
-    /// The meaning of ``CodeServerEndpoint/stateByte``.
-    public enum CodeServerState: UInt8, Sendable, Equatable, CaseIterable {
+    /// The meaning of ``ServiceEndpoint/stateByte``.
+    public enum ServiceState: UInt8, Sendable, Equatable, CaseIterable {
         /// Spawned but not confirmed listening — the client polls the verb again.
         case starting = 0
-        /// Listening; ``CodeServerEndpoint/port`` is live and the WKWebView can load.
+        /// Listening; ``ServiceEndpoint/port`` is live and the WKWebView can load.
         case ready = 1
-        /// No code-server binary on the host — the sidebar shows the install hint.
+        /// The service's binary is not installed on the host — the panel shows the install hint
+        /// for whichever verb asked (`code-server` for 18, `baguette` for 21).
         case unavailable = 2
     }
 
-    /// Encodes a ``MetadataVerb/ensureCodeServer`` response payload: `[UInt8 state][UInt16 BE port]`.
-    public static func encodeCodeServerEndpoint(_ endpoint: CodeServerEndpoint) -> Data {
+    /// Encodes an ensure-verb response payload: `[UInt8 state][UInt16 BE port]`.
+    public static func encodeServiceEndpoint(_ endpoint: ServiceEndpoint) -> Data {
         var data = Data([endpoint.stateByte])
         data.appendBE(endpoint.port)
         return data
     }
 
-    /// Decodes a ``MetadataVerb/ensureCodeServer`` response payload (validate-then-drop): a body
+    /// Decodes an ensure-verb response payload (validate-then-drop): a body
     /// shorter than 3 bytes throws ``SlopDeskError/truncated``; a longer body is tolerated, its
     /// trailer ignored, so a future field can be appended without breaking this reader.
-    public static func decodeCodeServerEndpoint(_ data: Data) throws -> CodeServerEndpoint {
+    public static func decodeServiceEndpoint(_ data: Data) throws -> ServiceEndpoint {
         var reader = BigEndianReader(data)
         let state = try reader.readUInt8()
         let port = try reader.readUInt16()
-        return CodeServerEndpoint(stateByte: state, port: port)
+        return ServiceEndpoint(stateByte: state, port: port)
     }
 
     // MARK: - Code-open disposition  (openInCodeServer = 19)

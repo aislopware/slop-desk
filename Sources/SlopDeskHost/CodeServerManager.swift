@@ -1,17 +1,6 @@
 import Foundation
 import SlopDeskProtocol
 
-/// One live (or launching) code-server child, held by ``CodeServerManager``. A protocol seam so unit
-/// tests drive the manager with a fake — the hang-safety rule extends here: a unit test must NEVER
-/// spawn a real code-server (a multi-second Node boot, a network listener, a Homebrew dependency).
-protocol CodeServerProcessHandle: AnyObject, Sendable {
-    /// Whether the child is still alive. `false` (crash, idle-timeout self-exit) makes the next
-    /// ``CodeServerManager/ensure(projectRoot:)`` respawn.
-    var isRunning: Bool { get }
-    /// Asks the child to exit (SIGTERM). Idempotent.
-    func terminate()
-}
-
 /// Supervises the HOST's code-server (VS Code web workbench) — the backend of the client's
 /// right-sidebar embedded editor (``MetadataVerb/ensureCodeServer``).
 ///
@@ -46,7 +35,7 @@ final class CodeServerManager: @unchecked Sendable {
     /// parse). Throws when the exec itself fails (missing/broken binary → `.unavailable`).
     typealias Spawner = @Sendable (
         _ binary: String, _ arguments: [String], _ onLogLine: @escaping @Sendable (String) -> Void,
-    ) throws -> any CodeServerProcessHandle
+    ) throws -> any HostServiceProcessHandle
     /// Whether a TCP connect to `127.0.0.1:port` succeeds (bounded, never hangs).
     typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
     /// Seeds the code-server user settings before the FIRST spawn (see ``seedUserSettings(at:)``).
@@ -65,7 +54,7 @@ final class CodeServerManager: @unchecked Sendable {
     static let idleTimeoutSeconds = 7200
 
     private struct Instance {
-        var handle: any CodeServerProcessHandle
+        var handle: any HostServiceProcessHandle
         /// Learned from the child's log line; `nil` until it prints one.
         var port: UInt16?
         /// Latched on the first successful probe — a listening server is never un-probed.
@@ -137,7 +126,7 @@ final class CodeServerManager: @unchecked Sendable {
     /// Ensures the shared code-server and reports where it stands RIGHT NOW (never waits). `nil`
     /// when `projectRoot` is not an absolute path to an existing host directory (→ `.notFound` on
     /// the wire — never hand out an endpoint for a path the host cannot see).
-    func ensure(projectRoot: String) -> MetadataCodec.CodeServerEndpoint? {
+    func ensure(projectRoot: String) -> MetadataCodec.ServiceEndpoint? {
         guard Self.canonicalRoot(projectRoot) != nil else { return nil }
         lock.lock()
         defer { lock.unlock() }
@@ -150,7 +139,7 @@ final class CodeServerManager: @unchecked Sendable {
         }
 
         guard let binary = locateBinary() else {
-            return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
+            return MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
         }
         // Seed the workbench defaults before the FIRST child ever boots — after it has read an
         // absent settings file once, a seed would need a reload to take. One `stat` + at most one
@@ -176,10 +165,10 @@ final class CodeServerManager: @unchecked Sendable {
             } else {
                 bundledExtensionInstall = .installing
                 installBundledExtensions(missing, binary: binary)
-                return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+                return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
             }
         case .installing:
-            return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+            return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
         case .done:
             break
         }
@@ -190,10 +179,10 @@ final class CodeServerManager: @unchecked Sendable {
             self?.recordPort(port, spawnedAs: generation)
         }
         guard let handle = try? spawn(binary, Self.launchArguments(), onLine) else {
-            return MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
+            return MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
         }
         instance = Instance(handle: handle)
-        return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+        return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
     }
 
     /// Opens `target` (a host file path, optionally `:line[:col]`-suffixed) in the running
@@ -269,12 +258,12 @@ final class CodeServerManager: @unchecked Sendable {
 
     /// Computes the endpoint for the LIVE instance, probing readiness at most once per
     /// ``probeInterval``. Caller holds `lock`.
-    private func endpointLocked(for live: Instance) -> MetadataCodec.CodeServerEndpoint {
+    private func endpointLocked(for live: Instance) -> MetadataCodec.ServiceEndpoint {
         guard let port = live.port else {
-            return MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
+            return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
         }
         if live.ready {
-            return MetadataCodec.CodeServerEndpoint(state: .ready, port: port)
+            return MetadataCodec.ServiceEndpoint(state: .ready, port: port)
         }
         var updated = live
         let now = clock.now
@@ -284,7 +273,7 @@ final class CodeServerManager: @unchecked Sendable {
             updated.ready = probe(port)
             instance = updated
         }
-        return MetadataCodec.CodeServerEndpoint(state: updated.ready ? .ready : .starting, port: port)
+        return MetadataCodec.ServiceEndpoint(state: updated.ready ? .ready : .starting, port: port)
     }
 
     private func recordPort(_ port: UInt16, spawnedAs generation: Int) {
@@ -1528,17 +1517,7 @@ final class CodeServerManager: @unchecked Sendable {
     /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`
     /// misses when hostd is launched outside a login shell.
     static let defaultBinaryLocator: BinaryLocator = {
-        let env = ProcessInfo.processInfo.environment
-        if let override = env["SLOPDESK_CODE_SERVER_BIN"], !override.isEmpty {
-            return FileManager.default.isExecutableFile(atPath: override) ? override : nil
-        }
-        var directories = (env["PATH"] ?? "").split(separator: ":").map(String.init)
-        directories.append(contentsOf: ["/opt/homebrew/bin", "/usr/local/bin"])
-        for directory in directories {
-            let candidate = directory + "/code-server"
-            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-        }
-        return nil
+        HostServiceProcess.locate("code-server", overrideVariable: "SLOPDESK_CODE_SERVER_BIN")
     }
 
     /// The production ``CLIRunner``: run to completion, answer the exit status. Output is discarded
@@ -1565,94 +1544,17 @@ final class CodeServerManager: @unchecked Sendable {
         }
     }
 
-    /// Foundation `Process` + a line-splitting pipe drain on a utility queue. stdout and stderr are
-    /// MERGED into one pipe — code-server logs the listening line to stdout, but merging means a
-    /// future build moving it cannot silently break the port parse.
+    /// The production ``Spawner`` — ``HostServiceProcess/spawn(binary:arguments:environment:onLogLine:)``
+    /// with the code-server child environment (marketplace gallery + the bridge socket path).
     static let defaultSpawner: Spawner = { binary, arguments, onLogLine in
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = arguments
-        process.environment = childEnvironment()
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        let lines = LineSplitter()
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-                return
-            }
-            for line in lines.append(chunk) {
-                onLogLine(line)
-            }
-        }
-        try process.run()
-        return ProcessHandleAdapter(process: process)
+        try HostServiceProcess.spawn(
+            binary: binary, arguments: arguments, environment: childEnvironment(),
+            onLogLine: onLogLine,
+        )
     }
 
-    /// Accumulates pipe chunks and yields complete lines (lock-guarded — the readability handler
-    /// runs on a FileHandle-owned queue, and Sendable closures may not mutate captured vars).
-    private final class LineSplitter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var buffer = Data()
-
-        func append(_ chunk: Data) -> [String] {
-            lock.lock()
-            defer { lock.unlock() }
-            buffer.append(chunk)
-            var complete: [String] = []
-            while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-                let lineBytes = buffer[buffer.startIndex..<newline]
-                buffer.removeSubrange(buffer.startIndex...newline)
-                if let line = String(bytes: lineBytes, encoding: .utf8) {
-                    complete.append(line)
-                }
-            }
-            return complete
-        }
-    }
-
-    /// Bounded TCP connect to `127.0.0.1:port` (~250 ms): listening ⇒ `true`. Non-blocking socket +
-    /// `poll(2)` — a filtered/blackholed port times out instead of hanging the metadata queue.
+    /// The production ``ReadinessProbe``.
     static let defaultReadinessProbe: ReadinessProbe = { port in
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = port.bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let connectResult = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        if connectResult == 0 { return true }
-        guard errno == EINPROGRESS else { return false }
-        var pollFD = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-        guard poll(&pollFD, 1, 250) == 1 else { return false }
-        var soError: Int32 = 0
-        var length = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &length) == 0 else { return false }
-        return soError == 0
-    }
-
-    /// The production ``CodeServerProcessHandle``.
-    private final class ProcessHandleAdapter: CodeServerProcessHandle, @unchecked Sendable {
-        private let process: Process
-
-        init(process: Process) {
-            self.process = process
-        }
-
-        var isRunning: Bool { process.isRunning }
-
-        func terminate() {
-            guard process.isRunning else { return }
-            process.terminate()
-        }
+        HostServiceProcess.isListening(onLoopbackPort: port)
     }
 }

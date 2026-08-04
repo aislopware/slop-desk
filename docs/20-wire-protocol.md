@@ -194,10 +194,13 @@ never offers or falls back to another version.
     **embedded-VS Code** verbs `18` ensureCodeServer (**side-effecting** — lazily spawns/reports the
     shared code-server instance) / `19` openInCodeServer (**side-effecting** — opens a host file in
     the running workbench) / `20` syncCodeFont (**side-effecting** — folds the client's terminal
-    font prefs into the shared workbench settings). `payload` is the
+    font prefs into the shared workbench settings), plus `21` ensureSimulatorServer
+    (**side-effecting** — lazily spawns/reports the shared simulator server behind the right
+    panel's Simulators tab). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
-    (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
+    (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`/
+    `ensureSimulatorServer`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`/`ensureCodeServer` (`openInCodeServer` additionally allows
@@ -358,6 +361,29 @@ never offers or falls back to another version.
     seeded terminal-parity defaults. The seed-upgrade rule stays compatible: a former seed whose
     only divergence is this synced trio still upgrades (format-blind + font-blind canonical
     compare), so the sync never strands a pristine host on an old seed.
+  - **`ensureSimulatorServer` (21) is the embedded-simulators verb** (2026-08-04 — the client's
+    right-panel **Simulators** tab): the host lazily spawns its ONE shared `baguette serve` child
+    via `SimulatorServerManager` and replies **immediately** with the current state, the same
+    never-wait contract as 18 and for the same reason (the child's first boot enumerates
+    CoreSimulator device sets; the client registry's 5 s timeout must not starve). Request payload:
+    **empty** — simulators are a MACHINE resource, not a project one, so unlike 18 there is nothing
+    to scope; a NON-empty payload answers `error` on purpose, so a future field can never be
+    silently dropped by an old host. Response: status `ok` + the SAME **3-byte**
+    `[UInt8 state][UInt16 BE port]` `ServiceEndpoint` payload as verb 18 (one encoding, two verbs —
+    the lifecycles are identical) — state `0` starting (poll again), `1` ready (the panel then talks
+    to the server DIRECTLY at that mesh address — device list over HTTP, frames + gestures over one
+    websocket; the whole foreign dialect is `docs/47-simulator-panel.md`), `2` unavailable (no
+    `baguette` binary on the host → the tab shows the `brew install baguette` hint). `port` is meaningful ONLY when ready (the child
+    is spawned with `--port 0` and the real port is learned from its own listening line); an unknown
+    future state byte reads *starting* client-side and a trailing payload byte is tolerated, exactly
+    as for 18. **Host-global** (the one child serves every pane, project and client; a child that
+    exited is respawned on the next ensure, and hostd stop terminates it — BOOTED DEVICES are left
+    alone, they are the user's machine state). **No auth token**: the child binds `0.0.0.0` with no
+    credential — security = the WireGuard mesh (docs/DECISIONS — no app-layer auth). The child is a
+    SEPARATE PROCESS on purpose: CoreSimulator's framebuffer/HID route is a private-API path Apple
+    moves between Xcode majors, so a break surfaces as `unavailable` instead of taking hostd with
+    it. The host routes 21 to `HostSimulatorPerformer` BEFORE the read-only responder; an OLD host
+    answers `unsupportedVerb` and the tab stays on its offline surface.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

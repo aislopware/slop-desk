@@ -61,7 +61,7 @@ final class CodeSidebarModel {
     func poll(
         projectRoot: String,
         host: @MainActor () -> String?,
-        ensure: (String) async -> MetadataCodec.CodeServerEndpoint?,
+        ensure: (String) async -> MetadataCodec.ServiceEndpoint?,
         localize: ((_ host: String, _ port: UInt16) async -> (host: String, port: UInt16))? = nil,
         interval: Duration = .milliseconds(900),
     ) async {
@@ -89,7 +89,7 @@ final class CodeSidebarModel {
     /// One ensure round's endpoint → the phase to render. Pure — pinned by `CodeSidebarModelTests`.
     /// A `ready` endpoint that cannot form a URL (empty host) degrades to `.offline`, never a trap.
     static func phase(
-        for endpoint: MetadataCodec.CodeServerEndpoint?, host: String?, projectRoot: String,
+        for endpoint: MetadataCodec.ServiceEndpoint?, host: String?, projectRoot: String,
     ) -> CodeSidebarPhase {
         guard let endpoint else { return .offline }
         switch endpoint.state {

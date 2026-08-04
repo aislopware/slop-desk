@@ -45,10 +45,12 @@ struct CodeSidebarColumn: View {
     /// hide — but not a relaunch; the panel always comes back on Code, the primary surface).
     enum SurfaceTab {
         case code
+        case simulators
         case desktop
     }
 
     @State private var surfaceTab: SurfaceTab = .code
+    @State private var simulatorModel = SimulatorSidebarModel()
 
     private var activePane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
@@ -92,6 +94,8 @@ struct CodeSidebarColumn: View {
             switch surfaceTab {
             case .code:
                 surface
+            case .simulators:
+                simulatorSurface
             case .desktop:
                 // The announced window-OS surface — content still a placeholder; the TAB is real
                 // (selecting it parks the Code surface, whose pooled webview survives unmounted
@@ -144,19 +148,35 @@ struct CodeSidebarColumn: View {
                 selected: surfaceTab == .code,
             ) { selectSurface(.code) }
                 .help("Files — the project's embedded editor")
+            // Simulators sits beside Files because it is the other REAL surface — a live host
+            // resource, not the announced-but-empty Desktop.
+            PanelTabPlate(
+                symbol: .iphone, label: "Simulators", selected: surfaceTab == .simulators,
+            ) { selectSurface(.simulators) }
+                .help("Simulators — the host's iOS Simulator devices")
             PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {
                 selectSurface(.desktop)
             }
             .help("Desktop — the host's window surface")
             Spacer(minLength: 0)
             if surfaceTab == .code { activeEditorReadout }
-            if surfaceTab == .code {
+            switch surfaceTab {
+            case .code:
                 PlateIconButton(symbol: .arrowClockwise) {
                     guard let root = activeProjectRoot else { return }
                     CodeSidebarWebViewPool.shared.reload(projectRoot: root)
                     model.requestReload()
                 }
                 .help("Reload the workbench")
+            case .simulators:
+                if simulatorModel.selection != nil {
+                    PlateIconButton(symbol: .chevronBackward) { simulatorModel.select(nil) }
+                        .help("Back to the device list")
+                }
+                PlateIconButton(symbol: .arrowClockwise) { simulatorModel.requestReload() }
+                    .help("Reload the simulator list")
+            case .desktop:
+                EmptyView()
             }
             PlateIconButton(symbol: .sidebarRight) {
                 chrome.toggleCodeSidebar()
@@ -280,6 +300,89 @@ struct CodeSidebarColumn: View {
             .animation(Slate.Anim.smallFade, value: veiled)
     }
 
+    /// The Simulators surface. Machine-scoped, so unlike the workbench it has no project to key on
+    /// and no waiting-for-projectKey state: one ensure loop, one device list, one live stream.
+    ///
+    /// The two `.task`s live on the surface rather than the column, which is what makes both LAZY:
+    /// selecting another tab (or collapsing the panel) unmounts this and SwiftUI cancels them, so a
+    /// user who never opens this tab never causes the host to spawn a simulator server at all — and
+    /// leaving the tab drops the device poll and the live stream rather than paying for them
+    /// off-screen.
+    private var simulatorSurface: some View {
+        Group {
+            switch simulatorModel.phase {
+            case .ready:
+                simulatorReadyContent
+            case .starting:
+                waiting("Starting simulator server…")
+            case .unavailable:
+                placeholder(
+                    symbol: .iphoneSlash,
+                    title: "baguette not found on host",
+                    detail: "brew install baguette",
+                    detailIsCommand: true,
+                )
+            case .offline:
+                placeholder(
+                    symbol: .boltSlash,
+                    title: "Host unreachable",
+                    detail: "Simulators appear once a pane is connected.",
+                )
+            }
+        }
+        .task(id: simulatorModel.generation) {
+            await simulatorModel.poll(
+                host: { [connection] in connection.target.host },
+                ensure: { [store] in
+                    await Self.firstConnectedMetadataClient(store)?.ensureSimulatorServer()
+                },
+            )
+        }
+        // A SECOND task, keyed on readiness: the device poll starts only once there is a server to
+        // ask, and restarts if the endpoint moves. Folding it into the ensure loop would tie the
+        // list's refresh rate to the server-boot retry rate, and those want opposite cadences.
+        .task(id: simulatorReadyKey) {
+            guard case .ready = simulatorModel.phase else { return }
+            await simulatorModel.watchDevices()
+        }
+    }
+
+    /// Changes when the server's ADDRESS does, not merely when the phase object is rebuilt — so a
+    /// respawn on a new port restarts the device poll and an identical re-render does not.
+    private var simulatorReadyKey: String {
+        guard case let .ready(host, port) = simulatorModel.phase else { return "" }
+        return "\(host):\(port)"
+    }
+
+    @ViewBuilder
+    private var simulatorReadyContent: some View {
+        if let selection = simulatorModel.selection {
+            SimulatorScreenView(frame: simulatorModel.frame) { simulatorModel.send($0) }
+                // The darkest rung under the frame: the fitted rect rarely fills a sidebar's aspect,
+                // and letterbox that reads as chrome is better than letterbox that reads as content.
+                .background(Slate.Surface.ground)
+                .overlay(alignment: .bottom) { simulatorHardwareBar }
+                // Identity by DEVICE: switching devices must build a fresh view rather than feed a
+                // second stream's frames into a layer configured for the first one's parameter sets.
+                .id(selection)
+        } else {
+            SimulatorDeviceList(model: simulatorModel)
+        }
+    }
+
+    /// The hardware buttons the frame itself cannot offer — there is no bezel in the panel to click.
+    /// Home and lock only: the pair that unsticks a device someone has navigated into a corner, which
+    /// is the whole job of this bar. A full bezel replica belongs in a bigger surface than a sidebar.
+    private var simulatorHardwareBar: some View {
+        HStack(spacing: Slate.Metric.space2) {
+            PlateIconButton(symbol: .house) { simulatorModel.send(.button("home")) }
+                .help("Home")
+            PlateIconButton(symbol: .lock) { simulatorModel.send(.button("lock")) }
+                .help("Lock")
+        }
+        .padding(Slate.Metric.space2)
+    }
+
     /// The centered spinner surface — the code-server boot and the pre-push projectKey wait share
     /// it (both are short-lived, both resolve on their own).
     private func waiting(_ label: String) -> some View {
@@ -334,7 +437,7 @@ struct CodeSidebarColumn: View {
     /// round-trip itself still occupies the metadata queue behind real work.
     private static func ensureEndpoint(
         projectRoot: String, store: WorkspaceStore, preferences: PreferencesStore?,
-    ) async -> MetadataCodec.CodeServerEndpoint? {
+    ) async -> MetadataCodec.ServiceEndpoint? {
         guard let client = firstConnectedMetadataClient(store) else { return nil }
         let endpoint = await client.ensureCodeServer(projectRoot: projectRoot)
         if let terminal = preferences?.terminal {

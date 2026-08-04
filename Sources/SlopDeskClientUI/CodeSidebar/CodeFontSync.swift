@@ -65,7 +65,7 @@ enum CodeFontSync {
     /// work. `.starting` DOES push: the seed has to land before the booting workbench reads its
     /// settings, so waiting for `.ready` would be a reload late.
     static func shouldPush(
-        endpoint: MetadataCodec.CodeServerEndpoint?,
+        endpoint: MetadataCodec.ServiceEndpoint?,
         spec: MetadataCodec.CodeFontSpec,
         lastSent: MetadataCodec.CodeFontSpec?,
     ) -> Bool {

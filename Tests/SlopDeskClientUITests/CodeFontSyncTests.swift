@@ -78,14 +78,14 @@ final class CodeFontSyncTests: XCTestCase {
 
     private static let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 13, lineHeight: 1.32)
 
-    private func endpoint(_ state: MetadataCodec.CodeServerState) -> MetadataCodec.CodeServerEndpoint {
-        MetadataCodec.CodeServerEndpoint(state: state, port: state == .ready ? 1234 : 0)
+    private func endpoint(_ state: MetadataCodec.ServiceState) -> MetadataCodec.ServiceEndpoint {
+        MetadataCodec.ServiceEndpoint(state: state, port: state == .ready ? 1234 : 0)
     }
 
     /// The seed has to land BEFORE the booting workbench reads its settings, so a `.starting`
     /// round pushes — waiting for `.ready` would be a reload late.
     func testPushRidesTheStartingAndReadyRounds() {
-        for state in [MetadataCodec.CodeServerState.starting, .ready] {
+        for state in [MetadataCodec.ServiceState.starting, .ready] {
             XCTAssertTrue(
                 CodeFontSync.shouldPush(endpoint: endpoint(state), spec: Self.spec, lastSent: nil),
                 "\(state) pushes",

@@ -199,13 +199,14 @@ struct MetadataResponseBuilder {
             return reply(requestID, .error, Data())
 
         case .ensureCodeServer,
+             .ensureSimulatorServer,
              .openInCodeServer,
              .syncCodeFont:
-            // The embedded-editor verbs are likewise NOT this READ-ONLY builder's job —
-            // `MuxChannelSession.serveMetadata` routes them to `HostCodeServerPerformer` BEFORE the
-            // builder (they spawn / drive a code-server child), so they never reach here in
-            // production. Reaching this case is a routing bug; answer `.error` defensively (this
-            // pure reducer must NEVER perform a host side effect).
+            // The right-panel service verbs are likewise NOT this READ-ONLY builder's job —
+            // `MuxChannelSession.serveMetadata` routes them to `HostCodeServerPerformer` /
+            // `HostSimulatorPerformer` BEFORE the builder (they spawn / drive a child process), so
+            // they never reach here in production. Reaching this case is a routing bug; answer
+            // `.error` defensively (this pure reducer must NEVER perform a host side effect).
             return reply(requestID, .error, Data())
         }
     }

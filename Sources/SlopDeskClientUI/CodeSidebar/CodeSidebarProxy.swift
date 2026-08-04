@@ -30,8 +30,11 @@ enum CodeSidebarProxyPorts {
     static let rangeBase: UInt16 = 49152
     static let rangeSize: UInt64 = 16000
 
-    /// The one relay's identity — hashed, not hardcoded, so the derivation stays generic and the
-    /// stride fallback has somewhere sensible to walk from.
+    /// The relay's identity — hashed, not hardcoded, so the derivation stays generic and the stride
+    /// fallback has somewhere sensible to walk from. ONE key: the workbench is the only host service
+    /// the panel fronts with a web view. The Simulators surface used to have a second relay of its
+    /// own; it is drawn natively now and dials the host's simulator server directly, so there is no
+    /// second origin to keep apart.
     static let sharedProxyKey = "slopdesk-code-sidebar"
 
     /// The `attempt`-th candidate port for `key`. Attempt 0 is THE stable port; later attempts
@@ -195,30 +198,32 @@ final class CodeSidebarLoopbackProxy: @unchecked Sendable {
     }
 }
 
-/// The app-lifetime holder of the ONE relay — the host runs one shared code-server, so every
-/// project's webview rides the same loopback origin (differing only in `?folder=`).
+/// The app-lifetime holder of the relays — ONE per host service the right panel fronts. The host
+/// runs one shared code-server, so every project's webview rides that service's single loopback
+/// origin (differing only in `?folder=`); the simulator server gets its own.
 @MainActor
 final class CodeSidebarProxyPool {
     static let shared = CodeSidebarProxyPool()
-    private var proxy: CodeSidebarLoopbackProxy?
+    private var proxies: [String: CodeSidebarLoopbackProxy] = [:]
 
-    /// The loopback endpoint fronting `host:port` — binding on first use, then retargeting the
-    /// existing listener (respawn/reconnect). `nil` when no candidate port binds; the caller falls
-    /// back to the direct remote address (ATS's arbitrary-loads exception keeps that path alive,
+    /// The loopback endpoint fronting `host:port` for the relay named `key` (a
+    /// ``CodeSidebarProxyPorts`` identity) — binding on first use, then retargeting the existing
+    /// listener (respawn/reconnect). `nil` when no candidate port binds; the caller falls back to
+    /// the direct remote address (ATS's arbitrary-loads exception keeps that path alive,
     /// insecure-context toast and all).
-    func endpoint(host: String, port: UInt16) async -> (host: String, port: UInt16)? {
-        if let existing = proxy {
+    func endpoint(
+        host: String, port: UInt16, key: String = CodeSidebarProxyPorts.sharedProxyKey,
+    ) async -> (host: String, port: UInt16)? {
+        if let existing = proxies[key] {
             existing.retarget(host: host, port: port)
             return ("127.0.0.1", existing.localPort)
         }
         for attempt in 0..<8 {
-            let candidate = CodeSidebarProxyPorts.candidate(
-                for: CodeSidebarProxyPorts.sharedProxyKey, attempt: attempt,
-            )
+            let candidate = CodeSidebarProxyPorts.candidate(for: key, attempt: attempt)
             if let bound = await CodeSidebarLoopbackProxy.listening(
                 onLocalPort: candidate, targetHost: host, targetPort: port,
             ) {
-                proxy = bound
+                proxies[key] = bound
                 return ("127.0.0.1", candidate)
             }
         }

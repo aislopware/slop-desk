@@ -34,6 +34,8 @@ Separate transport, message set, version (`1` only — no negotiation).
 | GUI video (UDP) | Media socket (1-byte channel tags; recovery has its own tag) + dedicated cursor socket. FEC via `FECScheme` (RS GF(2⁸)). |
 | Inspector (TCP) | Read-only; client→host is only `subscribe(fromSeq:)`. |
 
+**Not a fourth path:** the Simulators panel speaks a FOREIGN wire (`baguette serve` — HTTP + one websocket, H.264 down / JSON up) to a third-party process, sharing no socket, message set or codec with the three above; `SlopDeskProtocol` never sees a byte of it. Only discovery (metadata verb 21) rides a SlopDesk wire, and it carries an address, not frames. Dialect, traps and fixtures: **`docs/47-simulator-panel.md`** — read it before touching anything under `Sources/SlopDeskClientUI/Simulator`. Gate: `make test-touched` (the whole panel is unit-testable — both runtime seams are injectable, so no test opens a socket or builds a display layer).
+
 ## Env (`SLOPDESK_*`)
 
 Not exhaustive — grep `SLOPDESK_`. **Default idiom:** `!= "0"` → default-ON; `== "1"` → default-OFF; check the call site.

@@ -14,7 +14,7 @@ import SlopDeskProtocol
 ///
 /// **Validate-then-drop.** A non-UTF-8 / empty / relative payload maps to ``MetadataStatus/error``;
 /// a path that does not exist on the host maps to ``MetadataStatus/notFound``; a valid ensure
-/// ALWAYS answers `.ok` with a ``MetadataCodec/CodeServerEndpoint`` (whose state may be
+/// ALWAYS answers `.ok` with a ``MetadataCodec/ServiceEndpoint`` (whose state may be
 /// `unavailable` — "no binary" is an answer, not a failure). Never a trap; the host always replies.
 enum HostCodeServerPerformer {
     /// The production manager singleton (one host → one shared instance).
@@ -86,7 +86,7 @@ enum HostCodeServerPerformer {
         }
         return .metadataResponse(
             requestID: requestID, status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeCodeServerEndpoint(endpoint),
+            payload: MetadataCodec.encodeServiceEndpoint(endpoint),
         )
     }
 

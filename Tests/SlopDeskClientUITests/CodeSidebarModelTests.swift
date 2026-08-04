@@ -83,7 +83,7 @@ final class CodeSidebarModelTests: XCTestCase {
     func testPollStopsOnReady() async throws {
         let model = CodeSidebarModel()
         // starting → starting → ready: the loop must run exactly three ensure rounds and settle.
-        let states: [MetadataCodec.CodeServerEndpoint?] = [
+        let states: [MetadataCodec.ServiceEndpoint?] = [
             .init(state: .starting, port: 0),
             .init(state: .starting, port: 6000),
             .init(state: .ready, port: 6000),
@@ -111,8 +111,8 @@ final class CodeSidebarModelTests: XCTestCase {
             host: { "h" },
             ensure: { _ in
                 round.next() == 0
-                    ? MetadataCodec.CodeServerEndpoint(state: .unavailable, port: 0)
-                    : MetadataCodec.CodeServerEndpoint(state: .ready, port: 7000)
+                    ? MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
+                    : MetadataCodec.ServiceEndpoint(state: .ready, port: 7000)
             },
             interval: .zero,
         )
@@ -133,8 +133,8 @@ final class CodeSidebarModelTests: XCTestCase {
             host: { "mesh-host" },
             ensure: { _ in
                 round.next() == 0
-                    ? MetadataCodec.CodeServerEndpoint(state: .starting, port: 0)
-                    : MetadataCodec.CodeServerEndpoint(state: .ready, port: 6000)
+                    ? MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
+                    : MetadataCodec.ServiceEndpoint(state: .ready, port: 6000)
             },
             localize: { host, port in
                 XCTAssertEqual(host, "mesh-host")

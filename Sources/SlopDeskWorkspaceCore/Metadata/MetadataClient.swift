@@ -242,14 +242,14 @@ public final class MetadataClient {
     /// (``MetadataVerb/ensureCodeServer``; the right sidebar's embedded VS Code). `projectRoot` is
     /// the pane's `projectKey` — the absolute host path of the project. The host replies
     /// immediately with the CURRENT state (it never waits out a cold boot); the caller polls until
-    /// ``MetadataCodec/CodeServerState/ready``, then loads
+    /// ``MetadataCodec/ServiceState/ready``, then loads
     /// `http://<target-host>:<port>/?folder=<root>`. `nil` on any failure — a malformed reply, the
     /// root vanishing host-side (`.notFound`), an OLD host answering `.unsupportedVerb` (the
     /// sidebar shows its update hint), or a dropped reply (the registry timeout → `.error`).
-    public func ensureCodeServer(projectRoot: String) async -> MetadataCodec.CodeServerEndpoint? {
+    public func ensureCodeServer(projectRoot: String) async -> MetadataCodec.ServiceEndpoint? {
         let (status, payload) = await request(.ensureCodeServer, payload: Data(projectRoot.utf8))
         guard status == .ok else { return nil }
-        return try? MetadataCodec.decodeCodeServerEndpoint(payload)
+        return try? MetadataCodec.decodeServiceEndpoint(payload)
     }
 
     /// Opens one host FILE in the embedded VS Code workbench (``MetadataVerb/openInCodeServer``;
@@ -262,6 +262,19 @@ public final class MetadataClient {
         let (status, payload) = await request(.openInCodeServer, payload: Data(target.utf8))
         guard status == .ok else { return nil }
         return try? MetadataCodec.decodeCodeOpenDisposition(payload)
+    }
+
+    /// Ensures the HOST runs its simulator server and reports where it stands
+    /// (``MetadataVerb/ensureSimulatorServer``; the right panel's Simulators surface). Takes no
+    /// root — simulators are a machine resource, one set per host. Same never-wait contract as
+    /// ``ensureCodeServer(projectRoot:)``: the caller polls until
+    /// ``MetadataCodec/ServiceState/ready``, then loads `http://<target-host>:<port>/simulators`.
+    /// `nil` on any failure — a malformed reply, an OLD host answering `.unsupportedVerb`, or a
+    /// dropped reply (the registry timeout → `.error`).
+    public func ensureSimulatorServer() async -> MetadataCodec.ServiceEndpoint? {
+        let (status, payload) = await request(.ensureSimulatorServer, payload: Data())
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeServiceEndpoint(payload)
     }
 
     /// Pushes the CLIENT's terminal-font truth into the shared workbench settings
