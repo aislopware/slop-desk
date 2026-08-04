@@ -10,6 +10,14 @@
 // bands are about, so it goes above them; the console is what the device just said, so it goes below
 // the device rather than beside it, and the tap-watch-read loop stays one column.
 //
+// TWO SURFACES, NOT FOUR (MERIDIAN L5, depth by light). The first cut painted every band the chrome
+// tone, which left the one lit, live thing in the panel sitting on exactly the same grey as the
+// buttons around it — a flat sheet with hairlines ruled across it. The device and its output are
+// CONTENT and take the lit `face`; the header is HOUSING and stays on `ground`. The toolbar is what
+// forced the decision: given a band of its own it would stripe the column (dim, lit, dim, lit), so
+// it lost its background entirely and became a rail of trays floating ON the stage — which is also
+// where a device's buttons belong, beside the device rather than in a separate strip about it.
+//
 // THE BODY OR A BARE RECT. With chrome loaded the stream is seated in the real device, side buttons
 // and all. Without it — still loading, or a model the server cannot describe — it falls back to the
 // plain rectangle, because a working screen with no bezel is a working screen, and refusing to draw
@@ -39,11 +47,16 @@ struct SimulatorStageView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            device
-            toolbar
+            // The STAGE: the device and the rail that drives it, on one lit surface. Grouped rather
+            // than stacked loose so the toolbar can sit on the same tone as the device it acts on —
+            // the thing that stops the column reading as four ruled bands.
+            VStack(spacing: 0) {
+                device
+                toolbar
+            }
+            .background(Slate.Surface.face)
             console
         }
-        .background(Slate.Surface.ground)
         .overlay(alignment: .top) { banner }
         .overlay { dropHighlight }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted.animation(Slate.Anim.smallFade)) { providers in
@@ -75,9 +88,10 @@ struct SimulatorStageView: View {
         return model.devices.first { $0.udid == udid }
     }
 
-    /// Live means DECODABLE VIDEO is arriving, which is why the seed does not count: the JPEG seed is
-    /// what the panel shows while the encoder is still starting, and calling that "Live" would light
-    /// the dot green over a picture that is already several seconds old and never changes.
+    /// Streaming means DECODABLE VIDEO is arriving, which is why the seed does not count: the JPEG
+    /// seed is what the panel shows while the encoder is still starting, so treating it as streaming
+    /// would drop the header's "Connecting…" over a picture that is already several seconds old and
+    /// will never change.
     private var isStreaming: Bool {
         switch model.frame.latest {
         case .accessUnit,
@@ -112,37 +126,52 @@ struct SimulatorStageView: View {
 
     // MARK: The toolbar
 
-    /// Four groups: turn it, drive it, capture it, inspect it. Ten plates at 24pt plus the gaps fit a
-    /// 220pt sidebar with room to spare, and the `Spacer` before the inspect pair is what makes the
-    /// strip degrade by widening a gutter rather than by clipping a button off the end.
+    /// Three trays and a trailing pair: turn it, drive it, capture it — then look at it. Ten loose
+    /// plates in a row read as texture rather than as verbs, so each job takes a ``SlatePlateGroup``
+    /// and the rail becomes four objects instead of twelve. The `Spacer` before the inspect pair is
+    /// what makes the rail degrade by widening a gutter rather than by clipping a button off the end.
+    ///
+    /// The inspect pair stays OFF the trays on purpose. Both are latching — a pinned position and an
+    /// open console outlive the click — and a latched plate is drawn as a lit key, which reads as lit
+    /// only against the panel's own tone. Sitting them on a tray would put a lit key inside a lit
+    /// tray and cost exactly the signal they exist to carry.
     private var toolbar: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            PlateIconButton(symbol: .rotateLeft) { Task { await model.rotate(.left) } }
-                .help("Rotate Left")
-            PlateIconButton(symbol: .rotateRight) { Task { await model.rotate(.right) } }
-                .help("Rotate Right")
-            separator
-            PlateIconButton(symbol: .house) { model.send(.button("home")) }
-                .help("Home")
-            PlateIconButton(symbol: .squareOnSquare) { model.send(.button("app-switcher")) }
-                .help("App Switcher")
-            // The shade, which a device only has as an edge swipe and a mouse therefore cannot reach:
-            // the drag has to START outside the frame and end inside it, and a press that begins off
-            // the screen is a press this panel never sees. Control Centre has no counterpart here on
-            // purpose — the server's button set is home, lock, power, the volume pair, action, the
-            // crown, the side buttons, the app switcher, the two swipe-to gestures, the lock-screen
-            // pull and this one. There is no control-centre token to send.
-            PlateIconButton(symbol: .bell) { model.send(.button("pull-down-to-notification-center")) }
-                .help("Notification Centre")
-            PlateIconButton(symbol: .lock) { model.send(.button("lock")) }
-                .help("Lock")
-            separator
-            PlateIconButton(symbol: .cameraViewfinder) { Task { await model.copyScreenshot() } }
-                .help("Copy Screenshot")
-            PlateIconButton(symbol: .clock, active: model.isStatusBarOverridden) {
-                Task { await model.toggleStatusBarOverride() }
+        HStack(spacing: Slate.Metric.space2) {
+            SlatePlateGroup {
+                PlateIconButton(symbol: .rotateLeft) { Task { await model.rotate(.left) } }
+                    .help("Rotate Left")
+                PlateIconButton(symbol: .rotateRight) { Task { await model.rotate(.right) } }
+                    .help("Rotate Right")
             }
-            .help(model.isStatusBarOverridden ? "Restore the real status bar" : "Demo status bar (9:41)")
+            SlatePlateGroup {
+                PlateIconButton(symbol: .house) { model.send(.button("home")) }
+                    .help("Home")
+                PlateIconButton(symbol: .squareOnSquare) { model.send(.button("app-switcher")) }
+                    .help("App Switcher")
+                // The shade, which a device only has as an edge swipe and a mouse therefore cannot
+                // reach: the drag has to START outside the frame and end inside it, and a press that
+                // begins off the screen is a press this panel never sees. Control Centre has no
+                // counterpart here on purpose — the server's button set is home, lock, power, the
+                // volume pair, action, the crown, the side buttons, the app switcher, the two
+                // swipe-to gestures, the lock-screen pull and this one. There is no control-centre
+                // token to send.
+                PlateIconButton(symbol: .bell) {
+                    model.send(.button("pull-down-to-notification-center"))
+                }
+                .help("Notification Centre")
+                PlateIconButton(symbol: .lock) { model.send(.button("lock")) }
+                    .help("Lock")
+            }
+            SlatePlateGroup {
+                PlateIconButton(symbol: .cameraViewfinder) { Task { await model.copyScreenshot() } }
+                    .help("Copy Screenshot")
+                PlateIconButton(symbol: .clock, active: model.isStatusBarOverridden) {
+                    Task { await model.toggleStatusBarOverride() }
+                }
+                .help(model.isStatusBarOverridden
+                    ? "Restore the real status bar"
+                    : "Demo status bar (9:41)")
+            }
             Spacer(minLength: 0)
             if model.isSendingFile { WorkingSpinner() }
             location
@@ -155,7 +184,7 @@ struct SimulatorStageView: View {
             .help(model.isConsoleOpen ? "Hide the device log" : "Show the device log")
         }
         .padding(.horizontal, Slate.Metric.space2)
-        .frame(height: Slate.Metric.heightBar)
+        .padding(.bottom, Slate.Metric.space2)
     }
 
     /// Latched while a position is pinned, so the toolbar says the device is somewhere else without
@@ -171,16 +200,6 @@ struct SimulatorStageView: View {
                 Task { await model.pin(coordinate) }
             }
         }
-    }
-
-    /// A hairline between the toolbar's jobs — turning the device, driving its gestures, and
-    /// capturing it. Cheaper than three labelled groups in a sidebar's width, and enough to stop a
-    /// row of plates reading as one undifferentiated strip.
-    private var separator: some View {
-        Rectangle()
-            .fill(Slate.Line.divider)
-            .frame(width: Slate.Metric.hairline, height: Slate.Metric.iconSize)
-            .padding(.horizontal, Slate.Metric.space1)
     }
 
     // MARK: Output
@@ -203,12 +222,17 @@ struct SimulatorStageView: View {
     /// One slot, failure winning. Both cannot be true — a failure clears the notice and a notice
     /// clears the failure — but stating the precedence here means a future third source cannot
     /// silently outrank an error.
+    ///
+    /// ONLY THE FAILURE IS COLOURED (user-directed 2026-08-04). A notice says a thing the reader just
+    /// asked for worked, and a banner appearing at all already says that; ringing it in green made
+    /// the panel's alarm colour the thing it shows most often, which is how an interface teaches
+    /// people to stop reading its colours. Across this whole panel a hue now means one thing.
     @ViewBuilder
     private var banner: some View {
         if let failure = model.failure {
             capsule(failure, tint: Slate.Status.err)
         } else if let notice = model.notice {
-            capsule(notice, tint: Slate.Status.ok)
+            capsule(notice, tint: Slate.Line.active)
         }
     }
 

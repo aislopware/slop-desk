@@ -188,22 +188,32 @@ Rebuilt 2026-08-04 (user-directed: the list and the control surface were too spa
 **The list.** Running devices come first as one un-split group — a device that just booted must not
 slide under the cursor into a family heading. Everything else is grouped by family (iPhone, iPad,
 Watch, TV, Vision) in a fixed rank, so the order cannot reshuffle between polls. Each row carries its
-family glyph tinted by state as the leading mark, the live state as a subtitle while it is in
-transition, and an **always-visible** trailing action (spinner while pending, stop when booted, play
-when not) — a hover-only control in a list you are scanning is a control you cannot find. Clicking a
-row boots a shut-down device and opens a booted one. The context menu carries Open / Boot / Shut Down
-plus Copy UDID and Copy Name.
+family glyph as the leading mark, the live state as a subtitle while it is in transition, and an
+**always-visible** trailing action (spinner while pending, stop when booted, play when not) — a
+hover-only control in a list you are scanning is a control you cannot find. Clicking a row boots a
+shut-down device and opens a booted one. The context menu carries Open / Boot / Shut Down plus Copy
+UDID and Copy Name.
 
-**The stage.** Four bands, top to bottom: identity, device, verbs, output.
+*The runtime is said once per group.* `SimulatorListEntry.group` computes the runtime every member of
+a heading shares and hangs it on the **heading**; a row whose runtime differs is the only one that
+still prints its own. An empty runtime counts as a disagreement rather than as a shared value, so a
+server that omits the field cannot make a heading claim a runtime nobody has. Without this, a
+thirty-device list repeated `iOS 26.5` thirty times in the one column the eye scans for difference.
+
+**The stage.** Two lit surfaces, not four ruled bands: the header sits on `ground`, the device and
+the toolbar that drives it share one `face`, and the console drawer opens as a third with its own
+raised head. Four bands of equal tone read as a stack of unrelated strips; grouping the toolbar with
+the device says at a glance that the verbs act on the thing above them (MERIDIAN L5).
 
 *Identity* — `SimulatorDeviceHeader`: the back control (navigation belongs beside the device's name,
-not in the surface strip), the device name, a live/connecting dot, and a facts line of runtime,
-measured resolution, orientation when it is not portrait, the pinned position when there is one, and
-the short UDID — each with its own Copy. **Every figure is measured**: the resolution comes from the
-decoder's own format description via `SimulatorScreenView.onContentSize`, not from a table. The one
-figure the reference designs show that is deliberately absent is **uptime** — `/simulators.json`
-carries `name`, `runtime`, `state`, `udid` and nothing else, so a "booted 3m ago" would be the panel
-timing its own first sighting and printing it as the device's age.
+not in the surface strip), the device name at the `title` rung — the one size in the panel that
+outranks the content under it — and a `SlateFactLine` of runtime, measured resolution, orientation
+when it is not portrait, the pinned position when there is one, and the short UDID, each with its own
+Copy. **Every figure is measured**: the resolution comes from the decoder's own format description via
+`SimulatorScreenView.onContentSize`, not from a table. The one figure the reference designs show that
+is deliberately absent is **uptime** — `/simulators.json` carries `name`, `runtime`, `state`, `udid`
+and nothing else, so a "booted 3m ago" would be the panel timing its own first sighting and printing
+it as the device's age.
 
 *Device* — the stream seated in the real body, side buttons and all. Buttons swap to their pressed
 artwork on touch-down and fire the envelope on **release**, which is what makes a long-press on Power
@@ -230,6 +240,33 @@ readout.
 Without chrome — still loading, or a model the server cannot describe — the stage falls back to the
 plain rectangle. A working screen with no bezel is a working screen; refusing to draw until the
 artwork arrives makes a slow fetch look like a dead stream.
+
+### A hue means something is wrong
+
+Panel-wide, user-directed 2026-08-04, after four surfaces broke it independently. Healthy states ride
+**luminance and weight**; colour is reserved for a fault. What this removed:
+
+| Was | Now |
+| --- | --- |
+| Header: green dot captioned `Live` while streaming | nothing while streaming, a plain grey `Connecting…` when not |
+| List: booted device's family glyph in the accent | booted = primary ink at medium weight, shut down = tertiary |
+| Console: `info` process names in green | grey; only `error`/`fault` are inked |
+| Stage: success banner ringed in green | ringed in the neutral active border; only a failure is red |
+
+The rule follows the 07-30 round that reversed hue-as-status across the workspace, and the two before
+it that deleted `ConnectionStatusPill` and rejected outcome dots. A live mirror is its own evidence —
+the picture is moving. What deserves a caption is the moment it is *not* there, because a stalled
+rectangle and a black screenshot look identical. Colour spent on the ordinary case teaches people to
+stop reading the panel's colours at all, which is what made the handful of red lines the console
+exists to surface no easier to find than the hundreds of green ones around them.
+
+The one colour left at rest is the accent on a **latched plate** (Follow, console open, location
+pinned) — that is the app-wide "this control is on", not a status. The header's pinned-position fact
+is deliberately NOT accented for the same reason: it appears only when a position is pinned, so its
+presence already carries the state, and the plate that pinned it is lit six points below.
+
+Pinned by `SimulatorDeviceTests` — the console and the test read the same `tint(for:)`, so the
+rendered ink cannot drift from the rule.
 
 ---
 
@@ -288,8 +325,8 @@ artwork arrives makes a slow fetch look like a dead stream.
 - **A device row's identity has to carry its SECTION, not just its UDID.** The device list was first
   drawn as a heading plus a nested `ForEach` per group. Two sibling `ForEach`es inside one
   `LazyVStack` whose elements share an id let the stack reuse the row it already built: measured
-  2026-08-04, a device that booted moved up into Running still drawing the grey family glyph and the
-  Boot button from its family group, and one that shut down moved down still drawing the accent glyph
+  2026-08-04, a device that booted moved up into Running still drawing the receded family glyph and
+  the Boot button from its family group, and one that shut down moved down still drawing the lit glyph
   and Shut Down — position followed the state, content did not, from a single `isBooted` read.
   `SimulatorDeviceList.entries` flattens headings and rows into ONE `ForEach` over
   `SimulatorListEntry`, whose id is `section/udid`, so changing group is a remove and an insert.
@@ -329,7 +366,7 @@ artwork arrives makes a slow fetch look like a dead stream.
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/key mapping |
 | `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
 | `Simulator/SimulatorStageView.swift` | the streaming surface: header + device + toolbar + drawer + banner + drop target |
-| `Simulator/SimulatorDeviceHeader.swift` | what device this is: name, live dot, measured facts, back |
+| `Simulator/SimulatorDeviceHeader.swift` | what device this is: name, measured facts, back |
 | `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
 | `Simulator/SimulatorLogLine.swift` | pure: compact-line parse, log envelope decode, the level set |
 | `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
@@ -337,6 +374,17 @@ artwork arrives makes a slow fetch look like a dead stream.
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
 | `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console |
+
+Two `Slate` components were added for this panel and belong to the whole system, not to it:
+
+| File | Role |
+| --- | --- |
+| `DesignSystem/SlatePlateGroup.swift` | the tray that groups related plates into one instrument — a shared fill, which is a stronger grouping signal than a hairline. Sets `slateOnPlateTray`, which lifts a member plate's hover and latched fills a rung so they stay visible against it |
+| `DesignSystem/SlateFactLine.swift` | a run of measured facts: figures in the instrument voice, named values in the system face, a middle dot between, and each fact separately hoverable and copyable |
+
+`PlateIconButton` also gained the `.medium` glyph weight `SlatePlateButton` already used — the two
+plate idioms were drawing the same symbols at two weights, and at 13pt a regular-weight SF Symbol goes
+wispy on a light theme's paper.
 
 All three runtime seams are injectable (`SimulatorControlling`, `SimulatorStreaming`,
 `SimulatorLogStreaming`) so the model is tested end to end **without a socket** — the hang-safety

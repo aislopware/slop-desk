@@ -33,13 +33,16 @@ import SwiftUI
 /// one of them at its old value. Qualifying by section makes a device that changes group a REMOVE
 /// and an INSERT, so it is rebuilt from the device it now is.
 enum SimulatorListEntry: Identifiable {
-    case heading(String)
-    case device(SimulatorDevice, section: String)
+    /// A group's title, plus the runtime its members SHARE — `nil` when they do not all agree.
+    case heading(String, runtime: String?)
+    /// A device under one heading. `showsRuntime` is false when the heading above it already says
+    /// the same thing.
+    case device(SimulatorDevice, section: String, showsRuntime: Bool)
 
     var id: String {
         switch self {
-        case let .heading(title): "heading/\(title)"
-        case let .device(device, section): "\(section)/\(device.udid)"
+        case let .heading(title, _): "heading/\(title)"
+        case let .device(device, section, _): "\(section)/\(device.udid)"
         }
     }
 }
@@ -70,17 +73,38 @@ struct SimulatorDeviceList: View {
         // Running comes first and is NOT split by family: what is up is one short list, and cutting
         // three booted devices into three headed groups is ceremony over content.
         if !booted.isEmpty {
-            entries.append(.heading(Self.runningTitle))
-            entries += booted.map { .device($0, section: Self.runningTitle) }
+            entries += group(Self.runningTitle, booted)
         }
         let families = Dictionary(grouping: devices.filter { !$0.isBooted }) {
             SimulatorDeviceKind.infer(from: $0.name)
         }
         for (kind, members) in families.sorted(by: { $0.key.rank < $1.key.rank }) {
-            entries.append(.heading(kind.groupTitle))
-            entries += members.map { .device($0, section: kind.groupTitle) }
+            entries += group(kind.groupTitle, members)
         }
         return entries
+    }
+
+    /// One heading and its rows, with the runtime LIFTED into the heading when every member shares
+    /// it. A device set is a dozen devices on one installed runtime, so the per-row runtime was the
+    /// same eight characters printed down the whole column — weight with no information in it, and
+    /// the single loudest reason the list read as a spreadsheet. Said once at the top it is still
+    /// answered at a glance; a row whose runtime differs from its neighbours keeps its own and is now
+    /// the ONLY row carrying one, which is exactly the row worth noticing.
+    static func group(_ title: String, _ members: [SimulatorDevice]) -> [SimulatorListEntry] {
+        let shared = sharedRuntime(of: members)
+        return [.heading(title, runtime: shared)]
+            + members.map {
+                .device($0, section: title, showsRuntime: $0.runtime != shared)
+            }
+    }
+
+    /// The runtime every member reports, or `nil` if they disagree. An EMPTY runtime string counts as
+    /// a disagreement rather than as a shared value — a heading reading `IPHONE ·` would be the panel
+    /// lifting the absence of a fact into the place it prints facts.
+    static func sharedRuntime(of members: [SimulatorDevice]) -> String? {
+        guard let first = members.first?.runtime, !first.isEmpty,
+              members.allSatisfy({ $0.runtime == first }) else { return nil }
+        return first
     }
 
     static let runningTitle = "Running"
@@ -144,8 +168,8 @@ struct SimulatorDeviceList: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Self.entries(for: matches)) { entry in
                     switch entry {
-                    case let .heading(title): SlateSectionHeader(title)
-                    case let .device(device, _): row(device)
+                    case let .heading(title, runtime): heading(title, runtime: runtime)
+                    case let .device(device, _, showsRuntime): row(device, showsRuntime: showsRuntime)
                     }
                 }
             }
@@ -154,7 +178,21 @@ struct SimulatorDeviceList: View {
         }
     }
 
-    private func row(_ device: SimulatorDevice) -> some View {
+    /// The group's title, with its shared runtime trailing in the same engraved register. One caps
+    /// label and one figure, not a label and a sentence: the heading is taxonomy, so the runtime
+    /// joins it as taxonomy rather than arriving in the prose face the rows below use.
+    private func heading(_ title: String, runtime: String?) -> some View {
+        SlateSectionHeader(title) {
+            if let runtime {
+                Text(runtime)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular))
+                    .foregroundStyle(Slate.Text.tertiary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private func row(_ device: SimulatorDevice, showsRuntime: Bool) -> some View {
         SlateListRow(
             active: model.selection == device.udid,
             // Opening the screen is the row's gesture; boot and shutdown are the explicit control. A
@@ -175,11 +213,13 @@ struct SimulatorDeviceList: View {
             // the button over the runtime and drew a play glyph through the word "iOS".
             titleTrailing: { _ in
                 HStack(spacing: Slate.Metric.space1) {
-                    Text(subtitle(for: device))
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .lineLimit(1)
-                        .layoutPriority(-1)
+                    if let subtitle = subtitle(for: device, showsRuntime: showsRuntime) {
+                        Text(subtitle)
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(Slate.Text.tertiary)
+                            .lineLimit(1)
+                            .layoutPriority(-1)
+                    }
                     action(for: device)
                 }
             },
@@ -188,23 +228,31 @@ struct SimulatorDeviceList: View {
         .contextMenu { menu(for: device) }
     }
 
-    /// The trailing text: the runtime normally, the live state while it is changing. A device spends
-    /// seconds in `Booting`, and showing its runtime through that is the panel claiming nothing is
-    /// happening while something is.
-    private func subtitle(for device: SimulatorDevice) -> String {
+    /// The trailing text: the live state while the device is CHANGING, the runtime when it is not and
+    /// the heading has not already said it, and nothing at all otherwise. A device spends seconds in
+    /// `Booting`, and showing its runtime through that is the panel claiming nothing is happening
+    /// while something is — so a transition always outranks the suppression above it.
+    private func subtitle(for device: SimulatorDevice, showsRuntime: Bool) -> String? {
         let settled = device.state.isEmpty
             || device.isBooted
             || device.state.caseInsensitiveCompare("Shutdown") == .orderedSame
-        return settled ? device.runtime : device.state
+        if !settled { return device.state }
+        return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
     }
 
-    /// The device family as the row's leading glyph, tinted by boot state. Two channels, one mark:
-    /// the SHAPE says iPhone or iPad, the TINT says running or not — which is what makes a set of
-    /// thirty near-identical names scannable at all.
+    /// The device family as the row's leading glyph. The SHAPE says iPhone or iPad; running-or-not
+    /// rides LUMINANCE — a booted device's glyph is inked and weighted up, a shut-down one recedes to
+    /// the tertiary grey the rest of its row already uses.
+    ///
+    /// It used to say it in the accent, and that is the hue-as-state pattern this repo reversed on
+    /// 07-30: brighter and bolder, never a colour (user-directed 2026-08-04). Colour was also the
+    /// weakest of the three channels already carrying this — the RUNNING heading these rows sort
+    /// under, and the stop-versus-play control at the end of each one, both say it unambiguously,
+    /// while a tinted glyph at 13pt says it only to someone who knows what the tint means.
     private func mark(_ device: SimulatorDevice) -> some View {
         Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(device.isBooted ? Slate.State.accent : Slate.Text.tertiary)
+            .font(.system(size: Slate.Typeface.body, weight: device.isBooted ? .medium : .regular))
+            .foregroundStyle(device.isBooted ? Slate.Text.primary : Slate.Text.tertiary)
             .frame(width: Slate.Metric.iconSize)
     }
 

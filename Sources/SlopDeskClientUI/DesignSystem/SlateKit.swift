@@ -19,11 +19,17 @@ struct PlateIconButton: View {
     var action: () -> Void = {}
 
     @State private var hovering = false
+    /// Set by ``SlatePlateGroup`` — a plate sitting on a tray shares the tray's fill, so both of its
+    /// states step up a rung to stay visible against it.
+    @Environment(\.slateOnPlateTray) private var onTray
 
     var body: some View {
         Button(action: action) {
+            // MEDIUM, matching ``SlatePlateButton`` — the two plate idioms drew the same glyphs at
+            // two weights, and at 13pt an SF Symbol in the regular weight goes wispy against a light
+            // theme's paper. One weight, so a plate is a plate wherever it is mounted.
             Image(systemSymbol: symbol)
-                .font(.system(size: size))
+                .font(.system(size: size, weight: .medium))
                 .foregroundStyle(active ? Slate.State.accent : Slate.Text.icon)
                 .frame(width: plate, height: plate)
                 .background(background, in: .rect(cornerRadius: Slate.Metric.radiusControl))
@@ -34,9 +40,13 @@ struct PlateIconButton: View {
         .animation(Slate.Anim.smallFade, value: hovering)
     }
 
+    /// Loose: hover fills faintly, latched sits on the selection tint. On a tray both move up —
+    /// latched becomes a REAL raised surface, which is the only fill that still reads as "this one is
+    /// on" when its neighbours are already carrying the tray's own tint.
     private var background: Color {
-        if active { return Slate.State.selected }
-        return hovering ? Slate.State.hover : .clear
+        if active { return onTray ? Slate.Surface.raised : Slate.State.selected }
+        if !hovering { return .clear }
+        return onTray ? Slate.State.selected : Slate.State.hover
     }
 }
 

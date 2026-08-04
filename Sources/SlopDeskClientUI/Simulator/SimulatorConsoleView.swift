@@ -44,8 +44,14 @@ struct SimulatorConsoleView: View {
 
     // MARK: Controls
 
+    /// The drawer's own head, one rung ABOVE the rows it sits on. A drawer sharing its body's tone
+    /// with the surface above it has no top edge of its own, so the rows read as a continuation of
+    /// the stage rather than as a second thing that opened. Clear and Hide ride one tray — both
+    /// destroy what is on screen (one the history, one the drawer), which is the pairing worth
+    /// making at a glance; Follow stays loose beside them because it LATCHES, and a lit key only
+    /// reads as lit against the panel's own tone.
     private var strip: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: Slate.Metric.space2) {
             Text("Console")
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.instrumentTracking)
@@ -57,13 +63,16 @@ struct SimulatorConsoleView: View {
                 isFollowing.toggle()
             }
             .help(isFollowing ? "Following new output" : "Follow new output")
-            PlateIconButton(symbol: .trash) { model.clearLog() }
-                .help("Clear Console")
-            PlateIconButton(symbol: .xmark) { model.toggleConsole() }
-                .help("Hide Console")
+            SlatePlateGroup {
+                PlateIconButton(symbol: .trash) { model.clearLog() }
+                    .help("Clear Console")
+                PlateIconButton(symbol: .xmark) { model.toggleConsole() }
+                    .help("Hide Console")
+            }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightBar)
+        .background(Slate.Surface.raised)
     }
 
     /// A menu rather than a segmented control: five levels do not fit a sidebar's width as segments,
@@ -198,13 +207,21 @@ struct SimulatorConsoleView: View {
             .joined(separator: " ")
     }
 
+    /// The process name's ink. COLOUR ONLY FOR A FAULT — everything healthy is a grey, and the only
+    /// difference between the greys is how far back they sit.
+    ///
+    /// Info used to be green (user-directed 2026-08-04). Info is the ordinary case: a busy device
+    /// emits hundreds of info lines a second, so the rule spent the console's one alarm colour on the
+    /// state of nothing being wrong, and a wall half-green made the handful of red lines it exists to
+    /// surface no easier to find. Debug still recedes, because a debug line IS lower-value than the
+    /// default and luminance is the channel for that.
     static func tint(for severity: SimulatorLogLine.Severity) -> Color {
         switch severity {
         case .fault,
              .error: Slate.Status.err
-        case .info: Slate.Status.ok
         case .debug: Slate.Text.tertiary
-        case .plain: Slate.Text.secondary
+        case .info,
+             .plain: Slate.Text.secondary
         }
     }
 

@@ -12,12 +12,24 @@
 // "booted 3m ago" would be this panel timing its own first sighting and calling it the device's age.
 // It would read as fact and be wrong after every client restart.
 //
+// IT IS A TITLE, not another row. The first cut set the device name at the same 12pt every list row
+// uses and its facts at 10 — two greys a point apart, so the band read as a row that happened to
+// wrap rather than as the caption for everything below it. The name now takes the `title` rung, the
+// one size in the system whose job is to outrank the content it names, and the facts sit under it on
+// the name's own left rail. Nothing else in the panel is allowed that size, which is what makes it
+// mean "this is the subject".
+//
 // THE BACK CONTROL LIVES HERE rather than in the toolbar. The toolbar is verbs that act on the
 // device; leaving the device is navigation, and putting it beside the device's own name is where
 // every split view in the app already puts it.
+//
+// NO COLOURED STATUS INDICATOR, here or anywhere else in the panel (user-directed 2026-08-04). See
+// `state` below for the argument; the rule it leaves behind is worth stating once for the whole
+// panel, because three surfaces used to break it independently: a hue means SOMETHING IS WRONG, and
+// nothing else. Healthy states ride luminance and weight — which is the same conclusion the 07-30
+// round reached when it reversed hue as a status channel across the workspace.
 
 #if os(macOS)
-import AppKit
 import SFSafeSymbols
 import SwiftUI
 
@@ -30,20 +42,23 @@ struct SimulatorDeviceHeader: View {
     var onBack: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            HStack(spacing: Slate.Metric.space1) {
-                PlateIconButton(symbol: .chevronLeft) { onBack() }
-                    .help("All Devices")
-                Text(device.name)
-                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: Slate.Metric.space1)
-                status
+        HStack(spacing: Slate.Metric.space2) {
+            PlateIconButton(symbol: .chevronLeft) { onBack() }
+                .help("All Devices")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: Slate.Metric.space2) {
+                    Text(device.name)
+                        .font(.system(size: Slate.Typeface.title, weight: .semibold))
+                        .foregroundStyle(Slate.Text.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 0)
+                    state
+                }
+                SlateFactLine(facts: facts)
             }
-            facts
         }
+        .animation(Slate.Anim.smallFade, value: isStreaming)
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
         .background(Slate.Surface.ground)
@@ -54,101 +69,61 @@ struct SimulatorDeviceHeader: View {
         }
     }
 
-    /// A dot and a word, not a spinner. The question is whether pixels are arriving, which is a
-    /// STATE — a spinner claims progress toward something finishing, and a live mirror never
-    /// finishes.
-    private var status: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Circle()
-                .fill(isStreaming ? Slate.Status.ok : Slate.Text.tertiary)
-                .frame(width: Slate.Metric.dot, height: Slate.Metric.dot)
-            Text(isStreaming ? "Live" : "Connecting")
-                .font(.system(size: Slate.Typeface.small))
+    /// ONLY THE ABNORMAL STATE, and without hue (user-directed 2026-08-04). The first cut lit a green
+    /// dot captioned "Live" whenever frames were arriving, which is the ornament this app has already
+    /// removed twice: `ConnectionStatusPill` was deleted for it, and the 07-30 round reversed hue as a
+    /// state channel outright. A live mirror is its own evidence — the picture six points below this
+    /// line is moving, and a badge asserting that it is moving adds no fact while spending the eye's
+    /// one colour budget on the ordinary case. What DOES deserve a caption is the moment the picture
+    /// is not there yet, because a stalled rectangle and a black screenshot look identical. So the
+    /// slot is empty while streaming and carries a plain grey word while it is not, in the same
+    /// instrument voice the facts below it use.
+    @ViewBuilder private var state: some View {
+        if !isStreaming {
+            Text("Connecting…")
+                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .regular))
                 .foregroundStyle(Slate.Text.tertiary)
+                .fixedSize()
+                .transition(.opacity)
         }
-        .animation(Slate.Anim.smallFade, value: isStreaming)
-    }
-
-    /// The facts line. Wrapping rather than truncating: at a sidebar's width the runtime and the
-    /// resolution do not both fit beside a long device name, and eliding the one that happens to be
-    /// last is how a panel ends up never showing the resolution on exactly the models with long
-    /// names.
-    private var facts: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                if index > 0 { separator }
-                fact(item)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, Slate.Metric.plate + Slate.Metric.space1)
-    }
-
-    private var separator: some View {
-        Text("·")
-            .font(.system(size: Slate.Typeface.small))
-            .foregroundStyle(Slate.Text.tertiary)
-    }
-
-    private func fact(_ item: Item) -> some View {
-        Text(item.text)
-            .font(item.isMono
-                ? Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular)
-                : .system(size: Slate.Typeface.small))
-            .foregroundStyle(item.tint)
-            .lineLimit(1)
-            .help(item.help)
-            .contextMenu {
-                Button("Copy \(item.help)") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(item.copies, forType: .string)
-                }
-            }
-    }
-
-    private struct Item {
-        var text: String
-        var help: String
-        var copies: String
-        var tint: Color
-        var isMono = false
     }
 
     /// Ordered by how often it is the thing being checked. The runtime first — the usual reason two
     /// rows look identical — then the pixel size, then the short UDID, which is what every other
-    /// tool wants pasted into it.
-    private var items: [Item] {
-        var items: [Item] = [
-            Item(
-                text: device.runtime, help: "Runtime", copies: device.runtime,
-                tint: Slate.Text.secondary,
-            ),
-        ]
+    /// tool wants pasted into it. Orientation and position appear only when they have something to
+    /// say: a portrait device and a device using live GPS are the ordinary case, and printing them
+    /// would spend the line's width on the absence of news.
+    private var facts: [SlateFact] {
+        var facts = [SlateFact("Runtime", device.runtime, tint: Slate.Text.secondary)]
         if let resolution {
-            items.append(Item(
-                text: Self.pixels(resolution), help: "Resolution",
-                copies: Self.pixels(resolution), tint: Slate.Text.tertiary, isMono: true,
+            facts.append(SlateFact(
+                "Resolution", Self.pixels(resolution),
+                tint: Slate.Text.tertiary, isMeasured: true,
             ))
         }
         if orientation != .portrait {
-            items.append(Item(
-                text: Self.title(for: orientation), help: "Orientation",
-                copies: orientation.wireValue, tint: Slate.Text.tertiary,
+            facts.append(SlateFact(
+                "Orientation", Self.title(for: orientation), copies: orientation.wireValue,
+                tint: Slate.Text.tertiary,
             ))
         }
         if let pinnedLocation {
-            items.append(Item(
-                text: pinnedLocation.readout, help: "Simulated Location",
-                copies: pinnedLocation.readout, tint: Slate.State.accent, isMono: true,
+            // NOT accented. It appears only when a position is pinned, so its presence already says
+            // the device is lying about where it is, and the toolbar plate that pinned it is latched
+            // in the accent six points below — two accents for one state inside one band is the
+            // colour noise this header just lost its status dot over.
+            facts.append(SlateFact(
+                "Simulated Location", pinnedLocation.readout,
+                tint: Slate.Text.secondary, isMeasured: true,
             ))
         }
         // The UDID last and SHORT: the full value is 36 characters and would own the line, but the
         // leading block is enough to tell two devices apart, and Copy hands over the whole thing.
-        items.append(Item(
-            text: Self.shortened(device.udid), help: "UDID", copies: device.udid,
-            tint: Slate.Text.tertiary, isMono: true,
+        facts.append(SlateFact(
+            "UDID", Self.shortened(device.udid), copies: device.udid,
+            tint: Slate.Text.tertiary, isMeasured: true,
         ))
-        return items
+        return facts
     }
 
     /// `1206 × 2622`. The MULTIPLICATION SIGN, not a lowercase x — this sits in a row of measured

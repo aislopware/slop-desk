@@ -69,9 +69,11 @@ final class SimulatorDeviceTests: XCTestCase {
 
     // MARK: The rendered list
 
-    private func device(_ name: String, booted: Bool) -> SimulatorDevice {
+    private func device(
+        _ name: String, booted: Bool, runtime: String = "iOS 26.5",
+    ) -> SimulatorDevice {
         SimulatorDevice(
-            udid: "udid-\(name)", name: name, runtime: "iOS 26.5",
+            udid: "udid-\(name)", name: name, runtime: runtime,
             state: booted ? "Booted" : "Shutdown", isBooted: booted,
         )
     }
@@ -107,6 +109,95 @@ final class SimulatorDeviceTests: XCTestCase {
         let running = SimulatorDeviceList.entries(for: [device("iPhone 17", booted: true)])
         XCTAssertNotEqual(idle.last?.id, running.last?.id)
         XCTAssertEqual(running.last?.id, "Running/udid-iPhone 17")
+    }
+
+    // MARK: The runtime the whole group shares
+
+    func testAGroupOnOneRuntimeSaysItOnceInTheHeadingAndNotOnEveryRow() {
+        // The noise this removes: a dozen devices on one installed runtime printed the same eight
+        // characters down the entire column, which is what made the list read as a spreadsheet.
+        let entries = SimulatorDeviceList.entries(for: [
+            device("iPhone Air", booted: false),
+            device("iPhone 17", booted: false),
+        ])
+        XCTAssertEqual(runtime(ofHeadingIn: entries), "iOS 26.5")
+        XCTAssertEqual(entries.compactMap(showsRuntime), [false, false])
+    }
+
+    func testTheODDROWKeepsItsOwnRuntimeAndIsTheOnlyOneCarryingOne() {
+        // A mixed group cannot lift anything, so nothing is suppressed — but the moment a group DOES
+        // agree, the row that differs is the single row printing a runtime, which is exactly the row
+        // worth noticing.
+        let mixed = SimulatorDeviceList.entries(for: [
+            device("iPhone Air", booted: false),
+            device("iPhone 17", booted: false, runtime: "iOS 18.5"),
+        ])
+        XCTAssertNil(runtime(ofHeadingIn: mixed))
+        XCTAssertEqual(mixed.compactMap(showsRuntime), [true, true])
+    }
+
+    func testAnEmptyRuntimeIsNotAFactWorthLifting() {
+        // `/simulators.json` can carry an empty runtime string. Lifted, it would print a heading
+        // ending in a dangling separator — the panel promoting the ABSENCE of a fact into the place
+        // it prints facts.
+        let entries = SimulatorDeviceList.entries(for: [
+            device("iPhone Air", booted: false, runtime: ""),
+            device("iPhone 17", booted: false, runtime: ""),
+        ])
+        XCTAssertNil(runtime(ofHeadingIn: entries))
+    }
+
+    func testEachGroupDecidesForItselfRatherThanForTheWholeList() {
+        // Running is its own group and is NOT split by family, so a booted device on another runtime
+        // must not suppress the iPhone group's heading — or vice versa.
+        let entries = SimulatorDeviceList.entries(for: [
+            device("iPhone 17 Pro", booted: true, runtime: "iOS 18.5"),
+            device("iPhone Air", booted: false),
+            device("iPhone 17", booted: false),
+        ])
+        let headings = entries.compactMap { entry -> String? in
+            guard case let .heading(_, runtime) = entry else { return nil }
+            return runtime
+        }
+        XCTAssertEqual(headings, ["iOS 18.5", "iOS 26.5"])
+    }
+
+    private func runtime(ofHeadingIn entries: [SimulatorListEntry]) -> String? {
+        for entry in entries {
+            if case let .heading(_, runtime) = entry { return runtime }
+        }
+        return nil
+    }
+
+    private func showsRuntime(_ entry: SimulatorListEntry) -> Bool? {
+        guard case let .device(_, _, showsRuntime) = entry else { return nil }
+        return showsRuntime
+    }
+
+    // MARK: Colour means something is wrong
+
+    /// The console and this test read the SAME `tint(for:)`, so the rendered ink cannot drift from
+    /// the pin. Info used to be green; a busy device emits it hundreds of times a second, which spent
+    /// the console's alarm colour on the ordinary case (user-directed 2026-08-04).
+    @MainActor
+    func testOnlyAFaultIsInkedInColourAndEveryHealthyLevelIsAGrey() {
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .error), Slate.Status.err)
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .fault), Slate.Status.err)
+        for healthy in [SimulatorLogLine.Severity.info, .plain, .debug] {
+            XCTAssertNotEqual(
+                SimulatorConsoleView.tint(for: healthy), Slate.Status.err,
+                "\(healthy) is not a problem and must not borrow the problem colour",
+            )
+        }
+    }
+
+    /// Debug still recedes and info does not — the two greys are a LUMINANCE ordering, which is the
+    /// channel that survived the colour removal. Collapsing them would lose that.
+    @MainActor
+    func testADebugLineSitsFurtherBackThanAnOrdinaryOne() {
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .debug), Slate.Text.tertiary)
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .info), Slate.Text.secondary)
+        XCTAssertNotEqual(SimulatorConsoleView.tint(for: .debug), SimulatorConsoleView.tint(for: .info))
     }
 
     // MARK: Endpoints
