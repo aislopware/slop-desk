@@ -566,6 +566,11 @@ public final class HostServer: @unchecked Sendable {
         // idle reaper of its own, so this is the ONLY thing that stops it — the simulated devices
         // it booted are left running on purpose (machine state, not session state).
         HostSimulatorPerformer.sharedManager.shutdown()
+        // Same again for the Android bridge (the right panel's Android surface): close its listener
+        // and every live mirror session, which is what stops the `scrcpy-server` processes on the
+        // devices. The devices themselves — including emulators this host booted — are left running,
+        // for the same reason.
+        HostAndroidPerformer.sharedManager.shutdown()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
         // refcounts above; this is the belt-and-braces daemon-stop sweep).
         repoWatcher.shutdown()

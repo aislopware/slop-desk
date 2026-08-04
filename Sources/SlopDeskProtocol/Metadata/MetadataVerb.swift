@@ -193,6 +193,20 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// one host tap the same device. That is the same last-writer-wins the workspace document and
     /// verb 20's settings file already established, not a new class of sharing.
     case ensureSimulatorServer = 21
+    /// **Side-effecting.** Ensure the host's ANDROID bridge — the backend of the right panel's
+    /// Android surface. Request payload: EMPTY, for verb 21's reason: Android devices are a MACHINE
+    /// resource (one `adb` server, one set of AVDs), not a project-scoped one.
+    ///
+    /// Response payload: ``MetadataCodec/ServiceEndpoint``, the same shape and the same never-wait
+    /// contract as verbs 18 and 21. `unavailable` here means the host is missing `adb` or the
+    /// `scrcpy-server` jar (`brew install scrcpy`), and the panel shows that install hint.
+    ///
+    /// Unlike 18 and 21 the bridge is NOT a child process serving a web UI — it is an `NWListener`
+    /// inside hostd that speaks a line-delimited JSON handshake and then pumps a `scrcpy-server`
+    /// session's bytes verbatim. The endpoint shape is reused anyway because the LIFECYCLE is
+    /// identical (lazy, host-global, never-wait, poll-until-ready) and that is what this payload
+    /// describes; nothing in it claims the far side is HTTP.
+    case ensureAndroidBridge = 22
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

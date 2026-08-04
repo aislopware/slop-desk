@@ -3563,6 +3563,16 @@ final class MuxChannelSession: @unchecked Sendable {
                 sendControl([response], to: id)
                 return
             }
+            // ensureAndroidBridge = 22 does the same for the right panel's Android surface. Unlike
+            // 18 and 21 the bridge is an in-process listener rather than a child, so it answers
+            // `ready` on the first call — but it is routed here for the same reason: it binds a
+            // socket, which is a side effect the pure builder must never perform.
+            if let response = HostAndroidPerformer.response(
+                requestID: requestID, verb: verb, payload: payload,
+            ) {
+                sendControl([response], to: id)
+                return
+            }
             let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
             let response = MetadataResponseBuilder(query: probe)
                 .response(requestID: requestID, verb: verb, payload: payload)

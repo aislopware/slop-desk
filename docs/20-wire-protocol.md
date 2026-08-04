@@ -196,11 +196,12 @@ never offers or falls back to another version.
     the running workbench) / `20` syncCodeFont (**side-effecting** — folds the client's terminal
     font prefs into the shared workbench settings), plus `21` ensureSimulatorServer
     (**side-effecting** — lazily spawns/reports the shared simulator server behind the right
-    panel's Simulators tab). `payload` is the
+    panel's Simulators tab) and `22` ensureAndroidBridge (**side-effecting** — lazily starts/reports
+    the shared Android bridge behind the right panel's Android tab). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`/
-    `ensureSimulatorServer`),
+    `ensureSimulatorServer`/`ensureAndroidBridge`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`/`ensureCodeServer` (`openInCodeServer` additionally allows
@@ -384,6 +385,23 @@ never offers or falls back to another version.
     moves between Xcode majors, so a break surfaces as `unavailable` instead of taking hostd with
     it. The host routes 21 to `HostSimulatorPerformer` BEFORE the read-only responder; an OLD host
     answers `unsupportedVerb` and the tab stays on its offline surface.
+  - **`ensureAndroidBridge` (22) is the embedded-Android verb** (2026-08-04 — the client's
+    right-panel **Android** tab): the host lazily starts its ONE shared in-process
+    `AndroidBridgeServer` via `AndroidBridgeManager` and replies **immediately** with the current
+    state — the same never-wait contract as 18 and 21. Request payload: **empty** (devices are a
+    MACHINE resource; a NON-empty payload answers `error`, so a future field can never be silently
+    dropped by an old host). Response: status `ok` + the SAME 3-byte
+    `[UInt8 state][UInt16 BE port]` `ServiceEndpoint` payload as 18 and 21 — `0` starting, `1` ready
+    (the panel then talks to the bridge DIRECTLY at that mesh address: device list, boot/shutdown,
+    logcat and mirror frames, all over ITS OWN line-JSON-then-bytes dialect, `docs/48-android-panel.md`),
+    `2` unavailable (no `adb` on the host → the tab shows the
+    `brew install --cask android-platform-tools` hint). Unlike 21 the bridge is **in hostd**, not a
+    child process: there is no third-party server to spawn, because the panel speaks
+    `scrcpy-server`'s protocol itself and the bridge exists only to RELAY (`adb forward` binds
+    127.0.0.1 only, so a mesh client cannot reach the device socket without it). **No auth token** —
+    the listener binds `0.0.0.0` with no credential; security = the WireGuard mesh. The host routes
+    22 to `HostAndroidPerformer` BEFORE the read-only responder; an OLD host answers
+    `unsupportedVerb` and the tab stays on its offline surface.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

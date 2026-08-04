@@ -277,6 +277,23 @@ public final class MetadataClient {
         return try? MetadataCodec.decodeServiceEndpoint(payload)
     }
 
+    /// Ensures the HOST runs its Android bridge and reports where it stands
+    /// (``MetadataVerb/ensureAndroidBridge``; the right panel's Android surface). Takes no root —
+    /// `adb` is a machine resource, one daemon per host.
+    ///
+    /// The reply shape is ``MetadataCodec/ServiceEndpoint`` and the LIFECYCLE contract is the same
+    /// as the two above, but the far side is not HTTP: the port answers a line-oriented handshake
+    /// and then either JSON or a raw `scrcpy` byte stream. Reaching it with a URL loader would get a
+    /// closed socket. Differs from its neighbours in one measured way — the bridge listens
+    /// in-process, so it never returns `.starting`; a caller that polls anyway is correct and simply
+    /// finishes on the first round. `nil` on a malformed reply, an OLD host answering
+    /// `.unsupportedVerb`, or a dropped reply (the registry timeout → `.error`).
+    public func ensureAndroidBridge() async -> MetadataCodec.ServiceEndpoint? {
+        let (status, payload) = await request(.ensureAndroidBridge, payload: Data())
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeServiceEndpoint(payload)
+    }
+
     /// Pushes the CLIENT's terminal-font truth into the shared workbench settings
     /// (``MetadataVerb/syncCodeFont``; the embedded editor must read like the terminal beside it).
     /// Best-effort by design — the caller fires it after an ensure round or a live prefs change and

@@ -46,11 +46,18 @@ struct CodeSidebarColumn: View {
     enum SurfaceTab {
         case code
         case simulators
+        case android
         case desktop
     }
 
     @State private var surfaceTab: SurfaceTab = .code
     @State private var simulatorModel = SimulatorSidebarModel()
+    /// The Android surface's own model. A FOURTH tab rather than a second half of Simulators: the two
+    /// share not one byte of protocol — `baguette`'s websocket against `scrcpy` over `adb`, AVC
+    /// against Annex-B, JSON envelopes against packed control messages — and folding them into one
+    /// surface would mean a list whose rows dispatch on platform and a stage whose every control has
+    /// two implementations. They are two device sets that happen to look alike in a sidebar.
+    @State private var androidModel = AndroidSidebarModel()
     /// Where the Simulators surface's reports go — the window's own notification stack, so this panel
     /// speaks in the same card as everything else that has something to say. See ``announce(_:isFailure:)``.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
@@ -104,6 +111,8 @@ struct CodeSidebarColumn: View {
                 surface
             case .simulators:
                 simulatorSurface
+            case .android:
+                androidSurface
             case .desktop:
                 // The announced window-OS surface — content still a placeholder; the TAB is real
                 // (selecting it parks the Code surface, whose pooled webview survives unmounted
@@ -162,6 +171,14 @@ struct CodeSidebarColumn: View {
                 symbol: .iphone, label: "Simulators", selected: surfaceTab == .simulators,
             ) { selectSurface(.simulators) }
                 .help("Simulators — the host's iOS Simulator devices")
+            // Beside Simulators because it is the same KIND of surface — a live host device set —
+            // and its glyph is the one SF Symbols has for a non-Apple handset. `iphone` is already
+            // spoken for by the tab to its left, and reusing it would make the two tabs
+            // indistinguishable at strip size, which is precisely where a tab has to be read.
+            PanelTabPlate(
+                symbol: .candybarphone, label: "Android", selected: surfaceTab == .android,
+            ) { selectSurface(.android) }
+                .help("Android — the host's emulators and attached devices")
             PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {
                 selectSurface(.desktop)
             }
@@ -182,6 +199,9 @@ struct CodeSidebarColumn: View {
                 // other split view in the app puts it. This strip stays surface-level verbs only.
                 PlateIconButton(symbol: .arrowClockwise) { simulatorModel.requestReload() }
                     .help("Reload the simulator list")
+            case .android:
+                PlateIconButton(symbol: .arrowClockwise) { androidModel.requestReload() }
+                    .help("Reload the device list")
             case .desktop:
                 EmptyView()
             }
@@ -445,6 +465,110 @@ struct CodeSidebarColumn: View {
                 SimulatorDeviceList(model: simulatorModel)
                     .transition(Self.drill(from: -Slate.Metric.space4))
             }
+        }
+    }
+
+    // MARK: The Android surface
+
+    /// The Android surface. Machine-scoped like Simulators — one `adb` server, one device set, no
+    /// project to key on — and lazy for the same reason: the two `.task`s live here rather than on
+    /// the column, so a user who never opens this tab never makes the host open its bridge at all.
+    private var androidSurface: some View {
+        ZStack {
+            switch androidModel.phase {
+            case .ready:
+                androidReadyContent
+            case .starting:
+                waiting("Opening the Android bridge…")
+            case .unavailable:
+                placeholder(
+                    symbol: .cableConnectorSlash,
+                    title: "adb not found on host",
+                    // The platform tools, not `scrcpy`: `adb` is the one piece without which there is
+                    // nothing to list. A missing `scrcpy-server` still lists and boots devices and
+                    // reports itself when a mirror is asked for, which is where it can name itself
+                    // against the action that wanted it.
+                    detail: "brew install --cask android-platform-tools",
+                    detailIsCommand: true,
+                )
+            case .offline:
+                placeholder(
+                    symbol: .boltSlash,
+                    title: "Host unreachable",
+                    detail: "Devices appear once a pane is connected.",
+                )
+            }
+        }
+        // Keyed on WHICH phase, not on the phase value: a bridge that rebinds on a new port is the
+        // same surface and must not blink.
+        .animation(Slate.Anim.standard, value: androidPhaseKey)
+        .task(id: androidModel.generation) {
+            await androidModel.poll(
+                host: { [connection] in connection.target.host },
+                ensure: { [store] in
+                    await Self.firstConnectedMetadataClient(store)?.ensureAndroidBridge()
+                },
+            )
+        }
+        .task(id: androidReadyKey) {
+            guard case .ready = androidModel.phase else { return }
+            await androidModel.watchDevices()
+        }
+        // The tasks above stop themselves when this surface goes away; the MIRROR does not, because
+        // the model holding it is `@State` on the column. Left alone it would keep the DEVICE's
+        // hardware encoder running for a panel nobody can see — see ``AndroidSidebarModel/park()``.
+        .onAppear { androidModel.resume() }
+        .onDisappear { androidModel.park() }
+        // Every report leaves through the app's own notification, for the reason the simulator
+        // surface records: the surfaces come and go under the message, so a listener on the stage
+        // would be torn down in the same transaction that fired it.
+        .onChange(of: androidModel.failure) { _, text in announceAndroid(text, isFailure: true) }
+        .onChange(of: androidModel.notice) { _, text in announceAndroid(text, isFailure: false) }
+    }
+
+    private var androidReadyContent: some View {
+        ZStack {
+            if androidModel.selection != nil {
+                AndroidStageView(model: androidModel)
+                    .transition(Self.drill(from: Slate.Metric.space4))
+            } else {
+                AndroidDeviceList(model: androidModel)
+                    .transition(Self.drill(from: -Slate.Metric.space4))
+            }
+        }
+    }
+
+    /// Its own toast id, not the simulator panel's: the two surfaces can both have something to say
+    /// about different devices, and sharing an id would have one panel's report replace the other's.
+    private func announceAndroid(_ text: String?, isFailure: Bool) {
+        guard let text, !text.isEmpty else { return }
+        overlayCoordinator?.pushToast(Toast(
+            id: "android",
+            flavor: isFailure ? .error : .success,
+            source: .command,
+            title: androidSubject,
+            body: text,
+            headline: androidSubject,
+        ))
+    }
+
+    /// The device the report is about, or the panel itself when there is none — a report that arrives
+    /// after the selection is cleared still has to say where it came from.
+    private var androidSubject: String {
+        androidModel.selectedDevice?.name ?? "Android"
+    }
+
+    private var androidReadyKey: String {
+        guard case let .ready(host, port) = androidModel.phase else { return "" }
+        return "\(host):\(port)"
+    }
+
+    private var androidPhaseKey: String {
+        switch androidModel.phase {
+        case .ready: "ready"
+        case .starting: "starting"
+        case .unavailable: "unavailable"
+        case .offline: "offline"
         }
     }
 
