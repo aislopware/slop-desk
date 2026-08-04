@@ -85,93 +85,69 @@ struct SlatePlateStyle: ButtonStyle {
     }
 }
 
-/// One right-panel TAB plate — the pre-removal inspector's Details-bar tab, resurrected VERBATIM
-/// (`InspectorColumn.tabButton`, deleted in `6de70aa`, dug back up user-directed 2026-08-03 after
-/// two animation redesigns of the interim plate were both rejected — round 1's opacity fades read
-/// as cheap, round 2's pure width morph read as stuttery; the user named THIS form as the good
-/// one). Its shape: active = icon + label pill on the HOVER tint, inactive = icon only, NO hover
-/// state of its own, and NO `.animation` modifiers — the ONE animation is the caller's
-/// `withAnimation(Slate.Anim.standard)` transaction around the selection write, which carries the
-/// plate relayout and the surface swap in a single coherent beat. Do not re-add per-view
-/// animations here.
+/// One right-panel TAB — a WORD on a plate, and deliberately no glyph.
+///
+/// THE MARKS ARE GONE (user-reported 2026-08-04, twice: the tabs read as four unrelated things, and
+/// still did after the sizes were measured and corrected). The strip's four surfaces are a folder, an
+/// Apple logo, a hand-drawn Android head and a screen — an outline, a tall narrow brand, a wide dome
+/// and a wide rectangle. What the eye compares across a strip is optical MASS, and no size makes
+/// those four agree on it: the second attempt equalised their ink to a 2.5pt band (`18527962`) and
+/// the row still read ragged, because the band was never the problem. Words have no such spread —
+/// four labels in one face at one size are the same height by construction — so the fix was to stop
+/// asking the marks to line up and stop drawing them.
+///
+/// The glyphs cost nothing to lose. They were identifying four surfaces that also carry names, in a
+/// panel where only one tab was ever expanded far enough to show its name; the labels now do the
+/// identifying full time. This is the ordinary idiom for a panel's own tab strip (a browser's
+/// inspector, a design tool's right rail) rather than an app-wide navigation rail, where icons earn
+/// their place by surviving a collapse to a 24pt column. Nothing about this strip collapses.
+///
+/// What survives from the resurrected inspector tab (`InspectorColumn.tabButton`, deleted in
+/// `6de70aa`, dug back up user-directed 2026-08-03 after two animation redesigns were rejected —
+/// round 1's opacity fades read as cheap, round 2's width morph as stuttery) is the shape the user
+/// named as the good one: a pill, filled when selected, flat when not. It no longer changes SIZE
+/// between the two states, which is what those animation rounds were fighting over — every tab now
+/// holds its own width and only the fill moves.
+///
+/// There are NO `.animation` modifiers on the selection path. The ONE animation there is the
+/// caller's `withAnimation(Slate.Anim.standard)` transaction around the selection write, which
+/// carries the fill and the surface swap in a single beat; do not re-add per-view animations. Hover
+/// is a separate channel — it answers the pointer, not the selection — and fades on its own.
 struct PanelTabPlate: View {
-    /// What a tab draws before its label.
-    ///
-    /// The split is NOT between a shape and a brand. `apple.logo` is a brand and takes the same em as
-    /// `folder`, because Apple's optical grid already makes them agree — see
-    /// ``Slate/Metric/androidMark`` for the measurements that retired the earlier brand case. The
-    /// split is between a symbol on that grid and the one mark no icon set ships, which is a drawn
-    /// path with no grid behind it and therefore the only one carrying its own size.
-    enum Mark {
-        case symbol(SFSymbol)
-        case android
-    }
-
-    let mark: Mark
     let label: String
     let selected: Bool
     var action: () -> Void = {}
 
-    init(mark: Mark, label: String, selected: Bool, action: @escaping () -> Void = {}) {
-        self.mark = mark
-        self.label = label
-        self.selected = selected
-        self.action = action
-    }
-
-    init(symbol: SFSymbol, label: String, selected: Bool, action: @escaping () -> Void = {}) {
-        self.init(mark: .symbol(symbol), label: label, selected: selected, action: action)
-    }
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            plate
+            // MEDIUM when selected, REGULAR when not. Weight and ink carry the state together, which
+            // is the same pair every other latched control in the app uses (``PlateIconButton``), and
+            // the reason the plate can stay as faint as it is: three channels saying one thing.
+            Text(label)
+                .font(.system(
+                    size: Slate.Typeface.footnote, weight: selected ? .medium : .regular,
+                ))
                 .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-                .background(
-                    selected ? Slate.State.hover : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
-                )
+                .padding(.horizontal, Slate.Metric.space2)
+                .frame(height: Slate.Metric.plate)
+                .background(fill, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
     }
 
-    /// A collapsed tab is a SQUARE CELL, not a plate hugging its glyph.
-    ///
-    /// Hugging gave every tab a different width, because the marks are 10 to 17 points across: the
-    /// gaps between them came out ragged and the row read as four unrelated things rather than one
-    /// control (user-reported 2026-08-04). A square on ``Slate/Metric/plate`` is also exactly the cell
-    /// ``PlateIconButton`` occupies, and that button is what the TRAILING end of this same strip is
-    /// built from — so one grid now runs from the first tab to the last action instead of two.
-    ///
-    /// The selected tab keeps hugging. It carries a label, so its width is meant to be its own.
-    @ViewBuilder
-    private var plate: some View {
-        if selected {
-            HStack(spacing: 4) {
-                glyph
-                Text(label).font(.system(size: Slate.Typeface.footnote, weight: .medium))
-            }
-            .padding(.horizontal, 8)
-            .frame(height: Slate.Metric.plate)
-        } else {
-            glyph.frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
-        }
-    }
-
-    /// Symbols take the strip's ICON measure (``Slate/Metric/iconSize``) — the one the action plates
-    /// at the other end of the strip already use, and not the label's type size. A glyph and a word
-    /// are not the same kind of thing, and sizing both from `footnote` had the tabs drawing at 11
-    /// while the reload button beside them drew at 13.
-    @ViewBuilder
-    private var glyph: some View {
-        switch mark {
-        case let .symbol(symbol):
-            Image(systemSymbol: symbol)
-                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
-        case .android:
-            AndroidRobotMark(side: Slate.Metric.androidMark)
-        }
+    /// The plate rungs a latched control uses everywhere else: ``Slate/State/selected`` for on,
+    /// ``Slate/State/hover`` for the pointer. The old tab sat its selected state on the HOVER tint,
+    /// which is a rung too faint to be seen at true size once the glyph beside it stopped shouting —
+    /// and it left the unselected tabs with no pointer feedback at all, which a word without a glyph
+    /// cannot afford: a plate that never moves under the pointer does not read as a control.
+    private var fill: Color {
+        if selected { return Slate.State.selected }
+        return hovering ? Slate.State.hover : .clear
     }
 }
 

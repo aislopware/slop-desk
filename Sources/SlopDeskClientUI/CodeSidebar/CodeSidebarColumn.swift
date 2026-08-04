@@ -139,16 +139,15 @@ struct CodeSidebarColumn: View {
     /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,
     /// never over the terminal). Tab plates lead, actions trail (the otty strip layout); the row
     /// is CENTERED in the strip band (user-directed 2026-08-03, overriding the earlier
-    /// titlebar-row top-anchor). Tab vocabulary is otty's: the SELECTED surface expands to
-    /// icon + label, every other tab collapses to its icon; both tabs are REAL (click = switch
-    /// the surface below). Desktop's glyph is `display`, the app's existing GUI-surface
-    /// vocabulary (`macwindow` read as a blob at strip size — user-rejected). The reload plate
-    /// rides only the Code surface (Desktop has nothing to reload); the far trailing corner is
-    /// the panel's HIDE toggle (user-directed 2026-08-03 — moved here from the terminal's
-    /// titlebar, which now carries only the collapsed-state reopen).
+    /// titlebar-row top-anchor). Every tab shows its NAME, all the time, and no tab shows a mark —
+    /// see ``PanelTabPlate`` for why the glyphs were retired (two rounds of the strip reading as
+    /// four unrelated things, which no size fixed because optical mass, not ink height, is what a
+    /// strip is compared on). The reload plate rides only the Code surface (Desktop has nothing to
+    /// reload); the far trailing corner is the panel's HIDE toggle (user-directed 2026-08-03 —
+    /// moved here from the terminal's titlebar, which now carries only the collapsed-state reopen).
     /// A tab click animates through ONE `withAnimation(standard)` transaction around the state
     /// write — the pre-removal inspector's choreography (`InspectorColumn.tabButton`, resurrected
-    /// user-directed 2026-08-03). The transaction carries the plate relayout, the reload plate's
+    /// user-directed 2026-08-03). The transaction carries the plate fill, the reload plate's
     /// arrival, and the surface swap together; there are NO per-view `.animation` modifiers on
     /// this path (two redesigns that added them were both rejected).
     private func selectSurface(_ tab: SurfaceTab) {
@@ -157,35 +156,30 @@ struct CodeSidebarColumn: View {
 
     private var strip: some View {
         HStack(spacing: 2) {
-            PanelTabPlate(
-                // The folder register (user-directed 2026-08-03), not a lone document — the tab
-                // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
-                // family (SF6 renamed it wholesale; the new constants outrun the package floor).
-                symbol: .folder, label: "Files",
-                selected: surfaceTab == .code,
-            ) { selectSurface(.code) }
+            // The tabs are their own GROUP, on a wider gap than the action plates that trail them.
+            // Two lit plates side by side (the selected tab and the one under the pointer) touched at
+            // the strip's 2pt spacing and read as one long fill; `space1` opens a channel between
+            // them while still holding the four words closer to each other than to anything else.
+            HStack(spacing: Slate.Metric.space1) {
+                PanelTabPlate(label: "Files", selected: surfaceTab == .code) {
+                    selectSurface(.code)
+                }
                 .help("Files — the project's embedded editor")
-            // Simulators sits beside Files because it is the other REAL surface — a live host
-            // resource, not the announced-but-empty Desktop.
-            //
-            // THE PLATFORM MARKS, not device outlines (user-directed 2026-08-04). These two tabs are
-            // the only pair in the strip that name a platform rather than a kind of thing, and drawn
-            // as handsets they were `iphone` beside `candybarphone` — two rounded rectangles a corner
-            // radius apart, which at plate height is not a difference the eye can use. Everywhere
-            // else in the panel the marks stay shapes (`AndroidDeviceKind`); this is the one place
-            // where the brand IS the distinction being drawn.
-            PanelTabPlate(
-                symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
-            ) { selectSurface(.simulators) }
+                // Simulators sits beside Files because it is the other REAL surface — a live host
+                // resource, not the announced-but-empty Desktop.
+                PanelTabPlate(label: "Simulators", selected: surfaceTab == .simulators) {
+                    selectSurface(.simulators)
+                }
                 .help("Simulators — the host's iOS Simulator devices")
-            PanelTabPlate(
-                mark: .android, label: "Android", selected: surfaceTab == .android,
-            ) { selectSurface(.android) }
+                PanelTabPlate(label: "Android", selected: surfaceTab == .android) {
+                    selectSurface(.android)
+                }
                 .help("Android — the host's emulators and attached devices")
-            PanelTabPlate(symbol: .display, label: "Desktop", selected: surfaceTab == .desktop) {
-                selectSurface(.desktop)
+                PanelTabPlate(label: "Desktop", selected: surfaceTab == .desktop) {
+                    selectSurface(.desktop)
+                }
+                .help("Desktop — the host's window surface")
             }
-            .help("Desktop — the host's window surface")
             Spacer(minLength: 0)
             if surfaceTab == .code { activeEditorReadout }
             switch surfaceTab {
@@ -222,6 +216,12 @@ struct CodeSidebarColumn: View {
     /// actions, in the secondary register: this is a glance-readout, not a control. The workbench
     /// renders the same fact in its own tab, so when nothing is open the readout says nothing
     /// rather than reserving space for an em-dash.
+    ///
+    /// It YIELDS the width (negative layout priority): now that the tabs carry words rather than
+    /// glyphs they need about 250pt of the panel's 380pt minimum, and something in the strip has to
+    /// give first. A truncated filename is still a readout — the name is middle-truncated and the
+    /// full one is in the tooltip — whereas a truncated tab is a control that stopped saying what
+    /// it switches to.
     @ViewBuilder
     private var activeEditorReadout: some View {
         if let root = activeProjectRoot,
@@ -241,6 +241,7 @@ struct CodeSidebarColumn: View {
             }
             .help(editor.dirty ? "\(editor.name) — unsaved changes" : editor.name)
             .padding(.trailing, Slate.Metric.space1)
+            .layoutPriority(-1)
         }
     }
 

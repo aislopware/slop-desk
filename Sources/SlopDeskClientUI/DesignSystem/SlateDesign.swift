@@ -477,30 +477,6 @@ enum Slate {
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
         static let deviceCardWidth: CGFloat = 180
-        /// ``AndroidRobotMark``'s box in a tab plate — the ONE mark in the app that is a drawn path
-        /// rather than an SF Symbol, and therefore the one that needs a number of its own.
-        ///
-        /// A tab strip is read across, so what has to agree between its marks is the height of the
-        /// INK, not the point size that produced it. Those are different quantities, and an earlier
-        /// pass sized the two platform tabs by em (14 against the shapes' 11) on the theory that a
-        /// brand needs more room than a symbol. Measured on the drawn pixels, that made the strip
-        /// worse rather than better: `apple.logo` at 14 stood 13.50 tall and the robot at 14 only
-        /// 8.75, so the pair that reads as a pair had become the two extremes of a 4.75pt spread
-        /// (user-reported 2026-08-04 — the unselected tabs did not line up).
-        ///
-        /// At ONE em the SF Symbols already agree, because agreeing is what Apple's optical grid is
-        /// for: at 13 the strip's four symbols measure `folder` 11.88, `apple.logo` 12.50, `display`
-        /// 13.12 and `arrow.clockwise` 13.88 — a 2pt band nobody reads as ragged. `apple.logo` needs
-        /// no exception at all; it is merely narrow, which is the shape of the logo.
-        ///
-        /// The robot is the only real outlier, and by geometry rather than by choice: a dome under
-        /// splayed antennae is 1.57 times as wide as it is tall at any size, so it cannot match the
-        /// band on both axes. This is the size where it misses each by about the same amount —
-        /// 16.75 × 10.62, a point and a quarter wider than the widest symbol and a point and a
-        /// quarter shorter than the shortest. Bigger was tried: 19 makes the ink heights equal and
-        /// the robot then outweighs everything beside it. Making the antennae longer and more
-        /// upright fixes the ratio arithmetically and was rejected on sight — it reads as ears.
-        static let androidMark: CGFloat = 17
         /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
         /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
         /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into
