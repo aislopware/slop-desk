@@ -23,11 +23,19 @@
 // device; leaving the device is navigation, and putting it beside the device's own name is where
 // every split view in the app already puts it.
 //
-// NO COLOURED STATUS INDICATOR, here or anywhere else in the panel (user-directed 2026-08-04). See
-// `state` below for the argument; the rule it leaves behind is worth stating once for the whole
+// NO COLOURED STATUS INDICATOR, here or anywhere else in the panel (user-directed 2026-08-04). A
+// green dot captioned "Live" used to sit at the end of the title line, which is the ornament this app
+// has already removed twice: `ConnectionStatusPill` was deleted for it, and the 07-30 round reversed
+// hue as a state channel outright. The rule it leaves behind is worth stating once for the whole
 // panel, because three surfaces used to break it independently: a hue means SOMETHING IS WRONG, and
-// nothing else. Healthy states ride luminance and weight — which is the same conclusion the 07-30
-// round reached when it reversed hue as a status channel across the workspace.
+// nothing else. Healthy states ride luminance and weight.
+//
+// NO CONNECTING CAPTION EITHER (user-directed 2026-08-04). The dot's replacement was a grey
+// "Connecting…" in the same slot, and it was wrong in two ways at once. It captioned the state from
+// OUTSIDE the thing it was about — the ambiguous object is the empty rectangle below, so the word
+// belongs on the rectangle, where `SimulatorStageView` now puts a proper indicator. And it had no
+// end: it was drawn from "no frames yet", a condition that never expires, so a stream that would
+// never start left the word up forever. Both are fixed at the source; this header is facts again.
 
 #if os(macOS)
 import SFSafeSymbols
@@ -38,7 +46,6 @@ struct SimulatorDeviceHeader: View {
     var resolution: CGSize?
     var orientation: SimulatorOrientation
     var pinnedLocation: SimulatorCoordinate?
-    var isStreaming: Bool
     var onBack: () -> Void
 
     var body: some View {
@@ -63,12 +70,14 @@ struct SimulatorDeviceHeader: View {
                         .lineLimit(1)
                         .layoutPriority(1)
                     Spacer(minLength: 0)
-                    state
                 }
                 SlateFactLine(facts: facts)
             }
         }
-        .animation(Slate.Anim.smallFade, value: isStreaming)
+        // Keyed on WHICH facts are present, not on their values: a resolution arriving with the first
+        // decoded frame, or a position being pinned, adds a fact mid-sentence, and the line should
+        // grow into it rather than snap.
+        .animation(Slate.Anim.smallFade, value: facts.map(\.id))
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
         // NO RULE UNDER IT (user-directed 2026-08-04). The stage below opens on `face`, one step up
@@ -76,25 +85,6 @@ struct SimulatorDeviceHeader: View {
         // landing a few points under the tab strip's, which is what made the top of the panel read
         // as a stack of bands rather than as a caption over a device.
         .background(Slate.Surface.ground)
-    }
-
-    /// ONLY THE ABNORMAL STATE, and without hue (user-directed 2026-08-04). The first cut lit a green
-    /// dot captioned "Live" whenever frames were arriving, which is the ornament this app has already
-    /// removed twice: `ConnectionStatusPill` was deleted for it, and the 07-30 round reversed hue as a
-    /// state channel outright. A live mirror is its own evidence — the picture six points below this
-    /// line is moving, and a badge asserting that it is moving adds no fact while spending the eye's
-    /// one colour budget on the ordinary case. What DOES deserve a caption is the moment the picture
-    /// is not there yet, because a stalled rectangle and a black screenshot look identical. So the
-    /// slot is empty while streaming and carries a plain grey word while it is not, in the same
-    /// instrument voice the facts below it use.
-    @ViewBuilder private var state: some View {
-        if !isStreaming {
-            Text("Connecting…")
-                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .regular))
-                .foregroundStyle(Slate.Text.tertiary)
-                .fixedSize()
-                .transition(.opacity)
-        }
     }
 
     /// Ordered by how often it is the thing being checked: the pixel size, then the short UDID,

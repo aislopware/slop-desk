@@ -43,6 +43,8 @@ struct SimulatorStageView: View {
 
     @State private var isTargeted = false
     @State private var isLocationOpen = false
+    /// The veil's own state, which is the model's loading state DELAYED — see ``veilDelay``.
+    @State private var showsLoading = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,6 +57,10 @@ struct SimulatorStageView: View {
                 toolbar
             }
             .background(Slate.Surface.face)
+            .overlay { stageState }
+            .animation(Slate.Anim.smallFade, value: showsLoading)
+            .animation(Slate.Anim.smallFade, value: isStalled)
+            .task(id: model.isAwaitingStream) { await followLoading() }
             console
         }
         .overlay(alignment: .top) { banner }
@@ -77,7 +83,6 @@ struct SimulatorStageView: View {
                 resolution: model.resolution,
                 orientation: model.orientation,
                 pinnedLocation: model.pinnedLocation,
-                isStreaming: isStreaming,
                 onBack: { model.select(nil) },
             )
         }
@@ -89,9 +94,8 @@ struct SimulatorStageView: View {
     }
 
     /// Streaming means DECODABLE VIDEO is arriving, which is why the seed does not count: the JPEG
-    /// seed is what the panel shows while the encoder is still starting, so treating it as streaming
-    /// would drop the header's "Connecting…" over a picture that is already several seconds old and
-    /// will never change.
+    /// seed is what the server sends while its encoder starts, so a seed-only stream is a still
+    /// photograph of a device nobody is driving — the exact thing that must not pass for live.
     private var isStreaming: Bool {
         switch model.frame.latest {
         case .accessUnit,
@@ -99,6 +103,13 @@ struct SimulatorStageView: View {
         case .none,
              .seed: false
         }
+    }
+
+    /// The stream is over waiting and there is still no video. Distinct from "loading" by the model's
+    /// deadline and from "streaming" by the frames themselves, so the stage always resolves into one
+    /// of three definite things rather than into an indicator with no end.
+    private var isStalled: Bool {
+        model.selection != nil && !model.isAwaitingStream && !isStreaming
     }
 
     // MARK: The device
@@ -215,6 +226,75 @@ struct SimulatorStageView: View {
                 .frame(height: Slate.Metric.heightDrawer)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    // MARK: The stage's other two states
+
+    /// A stage with no picture on it says which of the two reasons that is. Covering the whole stage
+    /// rather than captioning it from the header is the point: the ambiguous object IS the empty
+    /// rectangle, and an empty rectangle, a black screenshot and a dead stream are pixel-identical.
+    /// It stops at the header, which keeps the way out reachable while it is up (user-directed
+    /// 2026-08-04 — a load with no end and no exit was the reported bug).
+    @ViewBuilder
+    private var stageState: some View {
+        if showsLoading {
+            veil {
+                WorkingSpinner()
+                caption("Starting the stream…")
+            }
+        } else if isStalled {
+            veil {
+                caption("No video from this device.")
+                // A stalled stream is the one failure here that a second attempt genuinely fixes —
+                // the socket is fine, the encoder never started — so the stage offers the retry
+                // rather than making someone go back to the list and pick the same row again.
+                Button { model.retry() } label: {
+                    Text("Try Again")
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                        .foregroundStyle(Slate.Text.primary)
+                        .padding(.horizontal, Slate.Metric.space3)
+                        .padding(.vertical, Slate.Metric.space1)
+                        .background(
+                            Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// OPAQUE, on the stage's own tone rather than a dimming scrim. A scrim says "something is on top
+    /// of the picture"; there is no picture, and the truthful drawing is the stage itself, empty.
+    private func veil(@ViewBuilder content: () -> some View) -> some View {
+        VStack(spacing: Slate.Metric.space2) { content() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Slate.Surface.face)
+            .transition(.opacity)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Slate.Typeface.footnote))
+            .foregroundStyle(Slate.Text.secondary)
+    }
+
+    /// How long the model may be loading before the veil admits it. MEASURED: a booted device's first
+    /// keyframe lands 0.09 s after the socket opens, so a veil with no delay would flash grey over the
+    /// bezel on every single selection — the whole failure being drawn onto the ordinary case. This
+    /// delay is the entire reason the view keeps its own copy of the loading state.
+    private static let veilDelay: Duration = .milliseconds(400)
+
+    /// Mirror the model's loading state into ``showsLoading``, late on the way up and immediate on the
+    /// way down. `.task(id:)` cancels this when the model's state flips, which is what makes the
+    /// pending veil for a stream that arrived in time never appear at all.
+    private func followLoading() async {
+        guard model.isAwaitingStream else {
+            showsLoading = false
+            return
+        }
+        try? await Task.sleep(for: Self.veilDelay)
+        guard !Task.isCancelled else { return }
+        showsLoading = true
     }
 
     // MARK: Feedback

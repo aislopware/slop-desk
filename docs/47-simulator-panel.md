@@ -164,8 +164,24 @@ same socket**. There is no second connection to keep in sync.
 | `0x03` | H.264 delta — same framing |
 | `0x04` | JPEG seed frame — painted before the first IDR, so the surface is never blank |
 
-**Down (text):** JSON. Errors and control, never pixels. A device that refuses to stream says so
-here and nowhere else — swallowing it is how a permanently blank panel with no explanation happens.
+**Down (text):** JSON. Errors and control, never pixels. Swallowing one is how a permanently blank
+panel with no explanation happens — but it is only **one** of the two ways a stream fails to start,
+and not the common one. See the trap below.
+
+⚠️⚠️ **A stream that will never start is SILENT — the server does not say no.** Measured 2026-08-04
+against the live server, twelve seconds per case:
+
+| device state | what arrives |
+| --- | --- |
+| Booted | `101` → JPEG seed at **0.05 s**, avcC + first IDR at **0.09 s**, then ~13 delta/s |
+| Shut down | `101` → **nothing at all.** No error text, no close frame, no bytes, indefinitely |
+
+So there is no event to turn into a failure, and a client that waits for one waits forever. This is
+exactly the reported bug: a row still showing Booted (the device list is up to 4 s stale), a click, an
+indicator with no end. The **only** fix is client-side — `SimulatorSidebarModel.firstFrameDeadline`
+(5 s, ~55× the measured healthy case) followed by a `/simulators.json` read-back, which separates the
+two causes: device gone (say so, return to the list) versus running but not encoding (stay, offer a
+retry). Reproduce either case with a bare websocket client; a `101` alone proves nothing.
 
 **Up (text):** JSON only — gestures, hardware buttons, keys, clipboard
 (`SimulatorInputEnvelope`).
@@ -253,7 +269,7 @@ Panel-wide, user-directed 2026-08-04, after four surfaces broke it independently
 
 | Was | Now |
 | --- | --- |
-| Header: green dot captioned `Live` while streaming | nothing while streaming, a plain grey `Connecting…` when not |
+| Header: green dot captioned `Live` while streaming | nothing — the title line is facts only (see *Three states, all of them definite*) |
 | List: booted device's family glyph in the accent | booted = primary ink at medium weight, shut down = tertiary |
 | Console: `info` process names in green | grey; only `error`/`fault` are inked |
 | Stage: success banner ringed in green | ringed in the neutral active border; only a failure is red |
@@ -301,6 +317,34 @@ facts that are always there.
 Pinned by `SimulatorDeviceTests` — the console and the test read the same `tint(for:)`, so the
 rendered ink cannot drift from the rule.
 
+### Three states, all of them definite
+
+The stage resolves into exactly one of three things, and none of them is open-ended
+(user-directed 2026-08-04):
+
+| state | drawn |
+| --- | --- |
+| loading (`isAwaitingStream`) | opaque veil over the stage: spinner + `Starting the stream…` |
+| streaming | the device |
+| stalled (past the deadline, still no video) | veil: `No video from this device.` + **Try Again** |
+
+Three details are load-bearing:
+
+**The veil is delayed 400 ms.** A healthy stream's first keyframe lands in 0.09 s, so a veil with no
+delay would flash grey over the bezel on *every* selection — drawing the failure onto the ordinary
+case. The delay is the only reason the view keeps its own copy of the loading state.
+
+**The veil stops at the header.** Covering the back control is what left the reported bug with no exit.
+
+**The caption moved onto the stage.** It used to be a `Connecting…` in the header's title line, which
+was wrong twice over: it captioned the state from *outside* the ambiguous object (an empty rectangle,
+a black screenshot and a dead stream are pixel-identical), and it was drawn from "no frames yet" — a
+condition that never expires. Both are fixed at the source; the header is facts again.
+
+**The JPEG seed is not arrival.** Only `0x01`/`0x02`/`0x03` end the loading state. The seed is the
+still the server sends while its encoder starts, so counting it would let a stream that never encodes
+pass as live, wearing a screenshot as a disguise.
+
 ---
 
 ## Traps
@@ -315,6 +359,9 @@ rendered ink cannot drift from the rule.
   minutes in, for no visible reason. `SimulatorStreamConnection.replyToPing` answers explicitly
   instead; `SimulatorStreamParametersTests` pins the framework behaviour so a future refactor cannot
   quietly reintroduce the flag.
+- **A stream for a non-booted device is SILENT, not refused** — `101` and then nothing, forever. No
+  error text, no close frame. Any "why is it loading?" question about this panel starts here; the
+  measurements and the client-side deadline are under *The stream socket*.
 - **Dial `NWEndpoint.url(...)`, not host+port.** The handshake's request line comes from the URL, and
   `format`/`version` ride the query string. Host+port opens a socket to the right machine and asks it
   for the server's default dialect.
@@ -413,7 +460,7 @@ rendered ink cannot drift from the rule.
 | `Simulator/SimulatorPlace.swift` | pure: coordinate parse / body / readout + the preset shortlist |
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
-| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console |
+| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console, the first-frame deadline |
 
 Two `Slate` components were added for this panel and belong to the whole system, not to it:
 

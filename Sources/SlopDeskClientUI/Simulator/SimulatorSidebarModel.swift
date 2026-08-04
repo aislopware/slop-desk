@@ -81,6 +81,11 @@ final class SimulatorSidebarModel {
     /// live values — either never pinned, or cleared.
     private(set) var pinnedLocation: SimulatorCoordinate?
 
+    /// True from the moment a device is selected until its first decodable video arrives — or until
+    /// ``firstFrameDeadline`` gives up on it. The panel's loading state, and deliberately NOT
+    /// "no frames yet": that phrasing has no end, and an indicator with no end is the bug below.
+    private(set) var isAwaitingStream = false
+
     // MARK: The console
 
     /// Whether the log drawer is open. Drives the SOCKET as well as the layout: `log stream` is a
@@ -127,6 +132,10 @@ final class SimulatorSidebarModel {
     /// Clears ``notice`` after its moment. Held so a second action replaces the first's timer rather
     /// than having two racing to blank the same slot.
     private var noticeClear: Task<Void, Never>?
+    /// Gives up on a stream that never starts. Held so selecting a second device cancels the first
+    /// device's verdict rather than letting it land on the new selection.
+    private var streamWatchdog: Task<Void, Never>?
+    private let firstFrameDeadline: Duration
 
     init(
         control: SimulatorControlling = SimulatorControlClient(),
@@ -134,11 +143,26 @@ final class SimulatorSidebarModel {
             = { SimulatorStreamConnection(sink: $0) },
         makeLogStream: @escaping @MainActor (@escaping (SimulatorLogEvent) -> Void)
             -> SimulatorLogStreaming = { SimulatorLogConnection(sink: $0) },
+        firstFrameDeadline: Duration = SimulatorSidebarModel.firstFrameDeadline,
     ) {
         self.control = control
         self.makeStream = makeStream
         self.makeLogStream = makeLogStream
+        self.firstFrameDeadline = firstFrameDeadline
     }
+
+    /// How long a freshly opened stream may stay silent before the panel stops believing in it.
+    ///
+    /// ⚠️ THE SERVER DOES NOT SAY NO. Measured 2026-08-04 against the live server: selecting a BOOTED
+    /// device produces its avcC and first IDR 0.09 s after the upgrade, while selecting a device that
+    /// is NOT booted gets a `101 Switching Protocols` and then nothing at all — no error text, no
+    /// close frame, no bytes, indefinitely. There is nothing on the wire to turn into a failure, so a
+    /// panel that waits for one waits forever. That is the whole bug, and the only possible fix is
+    /// this deadline plus the read-back in ``giveUpOnStream``.
+    ///
+    /// Five seconds is fifty-odd times the measured healthy case — wide enough for a cold encoder or
+    /// a slow link, short enough that nobody sits watching a rectangle that is never going to fill.
+    static let firstFrameDeadline: Duration = .seconds(5)
 
     // MARK: The ensure loop
 
@@ -241,6 +265,7 @@ final class SimulatorSidebarModel {
         guard udid != selection else { return }
         stream?.disconnect()
         stream = nil
+        settleStream()
         frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
         selection = udid
         // Every one of these is a claim about the PREVIOUS device. Carrying them over would have the
@@ -268,11 +293,70 @@ final class SimulatorSidebarModel {
         // The drawer stays latched across a device switch — someone reading logs while stepping
         // between two devices means to keep reading logs — so the socket follows the selection.
         if isConsoleOpen { openConsole() }
+        openStream(udid, host: host, port: port)
+    }
+
+    /// Open the socket for `udid` and start the clock on it. Shared by selection and by ``retry``, so
+    /// a retry cannot drift into a second, subtly different way of connecting.
+    private func openStream(_ udid: String, host: String, port: UInt16) {
         let connection = makeStream { [weak self] event in
             self?.handle(event, for: udid)
         }
         stream = connection
         connection.connect(host: host, port: port, udid: udid)
+        isAwaitingStream = true
+        streamWatchdog = Task { [weak self, firstFrameDeadline] in
+            try? await Task.sleep(for: firstFrameDeadline)
+            guard !Task.isCancelled else { return }
+            await self?.giveUpOnStream(udid)
+        }
+    }
+
+    /// Try the selected device's stream again, keeping everything else about the selection. The
+    /// device is still the subject — its console stays subscribed, its bezel stays loaded — so this
+    /// is deliberately not a re-selection, which would close both and cost a second artwork fetch.
+    func retry() {
+        guard let udid = selection, case let .ready(host, port) = phase else { return }
+        stream?.disconnect()
+        settleStream()
+        failure = nil
+        frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
+        openStream(udid, host: host, port: port)
+    }
+
+    /// The stream has answered — with video, with an error, or by ending. Stops the loading state and
+    /// stands the watchdog down; anything after this point has an explanation of its own.
+    private func settleStream() {
+        streamWatchdog?.cancel()
+        streamWatchdog = nil
+        isAwaitingStream = false
+    }
+
+    /// The deadline passed with the socket silent. Rather than blame the stream, ASK WHAT THE DEVICE
+    /// IS — the reported case was a row that said Booted, a click, and a load that never ended,
+    /// because the device had been shut down elsewhere and this panel's list was up to four seconds
+    /// stale. The read-back is what turns a hang into a sentence, and it is worth an extra request
+    /// precisely because it is the difference between the two causes: a device that is gone (say so
+    /// and go back, since there is nothing to look at) and a device that is running but not encoding
+    /// (stay, because the screen is the thing being worked on and re-selecting it is one click).
+    private func giveUpOnStream(_ udid: String) async {
+        guard selection == udid, isAwaitingStream, case let .ready(host, port) = phase else { return }
+        let name = devices.first { $0.udid == udid }?.name ?? "This device"
+        let live = try? await control.devices(host: host, port: port)
+        // The await let the world move: a frame may have landed, or the selection moved on.
+        guard selection == udid, isAwaitingStream else { return }
+        settleStream()
+        guard let live else {
+            failure = "\(name) is not sending video."
+            return
+        }
+        devices = live
+        if live.first(where: { $0.udid == udid })?.isBooted == true {
+            failure = "\(name) is running but not sending video."
+        } else {
+            failure = "\(name) is no longer running."
+            select(nil)
+        }
     }
 
     /// Send one input envelope to the live stream. No-op when nothing is selected.
@@ -506,10 +590,12 @@ final class SimulatorSidebarModel {
         case let .message(message):
             apply(message)
         case let .text(text):
-            // The server's only channel for "this device will not stream". Silence here is how a
-            // permanently blank panel with no explanation happens.
+            // One of the server's two channels for "this device will not stream", and the only one it
+            // ever uses out loud. The other is silence, which is ``firstFrameDeadline``'s job.
+            settleStream()
             failure = text
         case let .ended(reason):
+            settleStream()
             if let reason { failure = reason }
         }
     }
@@ -518,8 +604,14 @@ final class SimulatorSidebarModel {
         switch message {
         case let .configuration(record):
             guard let configuration = SimulatorWireProtocol.parseAVCConfiguration(record) else { return }
+            settleStream()
             frame = SimulatorScreenFrame(latest: .configuration(configuration), sequence: nextSequence())
         case let .accessUnit(data, isKeyframe):
+            // DECODABLE VIDEO ends the loading state; the JPEG seed below does NOT. The seed is a
+            // still the server sends while its encoder starts, so treating it as arrival would drop
+            // the indicator over a picture that is already stale and may never move — which is the
+            // hang this deadline exists to catch, wearing a screenshot as a disguise.
+            settleStream()
             frame = SimulatorScreenFrame(
                 latest: .accessUnit(data, isKeyframe: isKeyframe), sequence: nextSequence(),
             )

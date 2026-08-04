@@ -165,14 +165,22 @@ final class SimulatorSidebarModelTests: XCTestCase {
         )
     }
 
-    /// A model already at `.ready`, plus a peek at the most recently built stream.
-    private func readyModel(_ control: FakeControl) async -> (SimulatorSidebarModel, () -> FakeStream?) {
+    /// A model already at `.ready`, plus a peek at the most recently built stream. The first-frame
+    /// deadline defaults to something no test can reach by accident, so only the tests that are ABOUT
+    /// the deadline pay for waiting on it.
+    private func readyModel(
+        _ control: FakeControl, deadline: Duration = .seconds(600),
+    ) async -> (SimulatorSidebarModel, () -> FakeStream?) {
         var latest: FakeStream?
-        let model = SimulatorSidebarModel(control: control) { sink in
-            let stream = FakeStream(sink: sink)
-            latest = stream
-            return stream
-        }
+        let model = SimulatorSidebarModel(
+            control: control,
+            makeStream: { sink in
+                let stream = FakeStream(sink: sink)
+                latest = stream
+                return stream
+            },
+            firstFrameDeadline: deadline,
+        )
         await model.poll(host: { [host] in host }, ensure: { [port] in .init(state: .ready, port: port) })
         return (model, { latest })
     }
@@ -442,6 +450,119 @@ final class SimulatorSidebarModelTests: XCTestCase {
 
         stream()?.sink(.text("device B refuses to stream"))
         XCTAssertEqual(model.failure, "device B refuses to stream")
+    }
+
+    // MARK: The stream that never starts
+
+    /// ⚠️ THE SERVER DOES NOT SAY NO. Measured 2026-08-04 against the live server: opening the stream
+    /// for a device that is NOT booted returns `101 Switching Protocols` and then sends nothing at
+    /// all — no error text, no close frame, no bytes, indefinitely — while a booted device's first
+    /// keyframe arrives in 0.09 s. So there is no event these doubles could deliver to represent the
+    /// failure: the failure IS the absence, and every test below reproduces it by staying silent.
+    ///
+    /// Spin until the model has stopped waiting rather than sleeping a fixed span: the deadline is
+    /// injected tiny, but it is still a scheduler hop plus the state read-back.
+    private func awaitSettled(_ model: SimulatorSidebarModel) async {
+        for _ in 0..<400 {
+            if !model.isAwaitingStream { return }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func testASilentSocketForADeviceThatIsGoneSaysSoAndGoesBackToTheList() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true)]
+        let (model, stream) = await readyModel(control, deadline: .milliseconds(1))
+        await model.refreshDevices()
+        model.select("A")
+        XCTAssertTrue(model.isAwaitingStream)
+
+        // The reported bug: the row said Booted because this panel's list is up to four seconds
+        // stale, and the device had been shut down elsewhere. Nothing arrives on the socket.
+        control.devices = [device("A", booted: false)]
+        await awaitSettled(model)
+
+        // The read-back is what turns the hang into a sentence — and there is nothing to look at, so
+        // the panel returns to the list rather than sitting on a rectangle that will stay empty.
+        XCTAssertEqual(model.failure, "iPhone A is no longer running.")
+        XCTAssertNil(model.selection)
+        XCTAssertEqual(stream()?.disconnects, 1)
+    }
+
+    func testASilentSocketForADeviceStillRunningStaysOnTheDevice() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true)]
+        let (model, stream) = await readyModel(control, deadline: .milliseconds(1))
+        await model.refreshDevices()
+        model.select("A")
+        await awaitSettled(model)
+
+        // Running but not encoding is the other cause, and it keeps the selection: the screen is the
+        // thing being worked on, and the stage offers a retry in place.
+        XCTAssertEqual(model.failure, "iPhone A is running but not sending video.")
+        XCTAssertEqual(model.selection, "A")
+        XCTAssertEqual(stream()?.disconnects, 0)
+    }
+
+    func testAKeyframeStandsTheDeadlineDown() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true)]
+        let (model, stream) = await readyModel(control, deadline: .milliseconds(1))
+        model.select("A")
+        stream()?.sink(.message(.accessUnit(Data([0, 0, 0, 1, 0x65]), isKeyframe: true)))
+        XCTAssertFalse(model.isAwaitingStream)
+
+        try? await Task.sleep(for: .milliseconds(40))
+        // Well past the deadline: a healthy stream must never be interrupted by the watchdog that
+        // exists for the silent one.
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(model.selection, "A")
+    }
+
+    func testTheJpegSeedIsNotArrival() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true)]
+        let (model, stream) = await readyModel(control, deadline: .milliseconds(1))
+        await model.refreshDevices()
+        model.select("A")
+        stream()?.sink(.message(.jpeg(Data([0xFF, 0xD8]))))
+        // The seed is the still the server sends while its encoder starts. Counting it as arrival
+        // would let a stream that never encodes pass as live, wearing a screenshot as a disguise.
+        XCTAssertTrue(model.isAwaitingStream)
+
+        await awaitSettled(model)
+        XCTAssertEqual(model.failure, "iPhone A is running but not sending video.")
+    }
+
+    func testAnErrorFromTheServerEndsTheWaitAndARetryReopensTheSocket() async {
+        let (model, stream) = await readyModel(FakeControl())
+        model.select("A")
+        let first = stream()
+        first?.sink(.text("device A refuses to stream"))
+        // The server's one out-loud channel. It carries its own explanation, so the wait is over.
+        XCTAssertFalse(model.isAwaitingStream)
+
+        model.retry()
+        XCTAssertTrue(model.isAwaitingStream)
+        XCTAssertNil(model.failure)
+        // The device is still the subject: same selection, a fresh socket, the old one closed.
+        XCTAssertEqual(model.selection, "A")
+        XCTAssertEqual(first?.disconnects, 1)
+        XCTAssertNotIdentical(first, stream())
+        XCTAssertEqual(stream()?.connectedTo?.udid, "A")
+    }
+
+    func testSelectingASecondDeviceCancelsTheFirstsVerdict() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true), device("B", booted: true)]
+        let (model, _) = await readyModel(control, deadline: .milliseconds(1))
+        await model.refreshDevices()
+        model.select("A")
+        model.select("B")
+        await awaitSettled(model)
+        // B's own deadline may speak; A's must not — a verdict about the device nobody is looking at
+        // would name the wrong device in the banner and could send the panel back to the list.
+        XCTAssertEqual(model.failure, "iPhone B is running but not sending video.")
     }
 
     func testFramesAdvanceTheSequenceEvenWhenTheBytesRepeat() async {
