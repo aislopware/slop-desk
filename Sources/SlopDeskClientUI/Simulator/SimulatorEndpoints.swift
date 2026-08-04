@@ -55,10 +55,27 @@ enum SimulatorEndpoints {
 
     /// `GET` — one JPEG of the current screen. The cache-buster is the server's own idiom: without it
     /// a second capture inside the same session can come back from `URLSession`'s cache.
-    static func screenshot(host: String, port: UInt16, udid: String, nonce: UInt64) -> URL? {
+    ///
+    /// `scale` (an INTEGER downscale divisor) and `quality` (0–1) are the flags `baguette screenshot`
+    /// documents for its CLI, and the HTTP route honours both even though nothing on the server's own
+    /// page sends them — measured 2026-08-04 against the live server: native is 1206 × 2622 for
+    /// 480 KB in 30 ms, `scale=4` is 302 × 656 for 55 KB, and `scale=6&quality=0.5` is 202 × 438 for
+    /// **13.5 KB in 22 ms**. That last one is what makes the list's live cards affordable at all: a
+    /// fifth of what the idle VIDEO stream costs for the same device (33 KB/s, measured the same day),
+    /// where a native-resolution poll would have been seven times more.
+    ///
+    /// Both are omitted from the query when left at their defaults, so a full-resolution capture
+    /// builds the same URL it always did.
+    static func screenshot(
+        host: String, port: UInt16, udid: String, nonce: UInt64,
+        scale: Int = 1, quality: Double? = nil,
+    ) -> URL? {
         guard var components = components(host: host, port: port) else { return nil }
         components.percentEncodedPath = "/simulators/\(escape(udid))/screenshot.jpg"
-        components.queryItems = [URLQueryItem(name: "t", value: String(nonce))]
+        var items = [URLQueryItem(name: "t", value: String(nonce))]
+        if scale > 1 { items.append(URLQueryItem(name: "scale", value: String(scale))) }
+        if let quality { items.append(URLQueryItem(name: "quality", value: String(quality))) }
+        components.queryItems = items
         return components.url
     }
 

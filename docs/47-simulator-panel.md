@@ -267,17 +267,72 @@ Watch, TV, Vision) in a fixed rank, so the order cannot reshuffle between polls.
 live state as a subtitle while it is in transition and an **always-visible** trailing action (spinner
 while pending, stop when booted, play when not) — a hover-only control in a list you are scanning is
 a control you cannot find. Clicking a row boots a shut-down device and opens a booted one. The
-context menu carries Open / Boot / Shut Down plus Copy UDID and Copy Name.
+context menu carries Open / Boot / Copy Screenshot / Shut Down plus Copy UDID and Copy Name.
+
+### ⚠️ Running devices are CARDS, and the reason is a dead end worth knowing
+
+Second pass 2026-08-04 (user-directed: *the list looks bare*). The bareness had a cause, and it was
+not a want of ornament:
+
+> **For a device that is OFF, the server knows four things: name, runtime, state, udid.** Three are
+> already on screen and the fourth is in the context menu. There is no fifth fact to widen a row with.
+
+`definition.json` looks like the fifth and is not. It is **chrome** data, and DeviceKit falls back to
+a *near* model when it has no artwork for the real one — measured across this host's eleven devices:
+
+| device | `screen.rect` | true |
+|---|---|---|
+| iPhone 17 Pro | 400 × 872 | ≈ right |
+| **iPhone Air** | **438 × 954** | that is the 17 Pro Max's body |
+| **iPad Pro 11-inch (M5)** | **1032 × 1376** | that is the 13-inch's |
+| **iPad Air 11 / Air 13 / iPad (A16)** | **1024 × 1366, all three** | one body for three devices |
+
+So a "screen size" column would be wrong for four of eleven, and a per-row silhouette would draw
+three devices as each other. **Do not build either.**
+
+A device that is **running** has a fact none of the others do: a screen. `SimulatorRunningCard` draws
+it — the live capture at a fixed 200pt box, the name and the stop verb under it, clicking opens the
+stage. That is the whole answer to the bareness: the panel was missing a *subject*, not decoration.
+
+*The picture is affordable because it is small.* `screenshot.jpg` accepts `scale` (an integer
+divisor) and `quality` (0–1) on the HTTP route even though the server's own page never sends them:
+
+| request | pixels | bytes | time |
+|---|---|---|---|
+| native | 1206 × 2622 | 480 KB | 30 ms |
+| `scale=4` | 302 × 656 | 55 KB | 53 ms |
+| **`scale=6&quality=0.5`** | **202 × 438** | **13.5 KB** | **22 ms** |
+
+At the 2 s cadence that is **6.8 KB/s per running device — a fifth of what an IDLE video stream
+costs** (33 KB/s, measured the same day). Two cards on the wire measured ~17 KB/s including the
+device poll. The poll rides `.task`, so it dies with the view: measured on hardware, switching to the
+Files tab left `nettop` on the server **completely flat**. That is deliberately unlike the model's
+sockets, which outlive their view and needed an explicit `park()` — a card exists only while the list
+is on screen, so the view's own lifetime is the right one.
+
+*The box is normalised, not to scale.* A fixed height and a free width means what varies between two
+cards is the **aspect**: a phone comes out 92 wide, an iPad 132. True relative size is not available —
+the capture's pixel dimensions are real but the device scale factor (3× phone, 2× iPad) is in nothing
+the server sends, and `definition.json`'s point size is the fallback number above. Claim the shape,
+which is known; not the size, which is not.
+
+*And the width is spent on devices.* A right panel is ~700pt and a device name is ~180 of it, so one
+row per line put a play triangle five hundred points from the name it belonged to. Both groups lay
+out in a `LazyVGrid` whose column count follows the width — cards at a **fixed** width (adaptive
+would stretch a lone running device into one 700pt card with a 92pt phone floating in it), rows at a
+**minimum** so columns share the width. At panel width that is three columns; a narrow panel gets
+one. `Shut Down All` rides the RUNNING heading's accessory slot, and only once more than one device
+is up — with one running it is the same click as that card's own stop button under a longer name.
 
 *A row never repeats what its heading already said* (user-directed 2026-08-04). Two columns were
 saying it twice, and repetition down a scanned column is what made the list read as generated:
 
-- **The family glyph is drawn only under RUNNING.** RUNNING is the one group not cut by family, so it
-  is the one group where a leading mark carries information. Under `IPHONE` a phone glyph on every
-  row is a thirty-times-repeated restatement of the word directly above it — and worse, it pushed the
-  names off the left rail the headings sit on, so nothing in the column lined up.
-  `SimulatorListEntry.group` decides this once, per group, and `SimulatorDeviceTests` pins it.
-- **The runtime is said once per group, in the heading's own cluster.** `group` computes the runtime
+- **The family glyph is gone with the rows it qualified.** It was drawn only under RUNNING, the one
+  group not cut by family — and RUNNING is no longer a group of rows. A picture of an iPad says iPad
+  more plainly than a 13pt symbol beside a name. Under `IPHONE` it never was drawn: a phone glyph on
+  every row is a thirty-times-repeated restatement of the word directly above it, and it pushed the
+  names off the left rail the headings sit on.
+- **The runtime is said once per group, in the heading's own cluster.** `section` computes the runtime
   every member shares and hangs it on the **heading** as `SlateSectionHeader(caption:)` — immediately
   after the title, one ink quieter, same engraved register. It is deliberately not the header's
   `accessory` slot: that slot is pinned to the far trailing edge where a *control* belongs, and at
@@ -286,12 +341,13 @@ saying it twice, and repetition down a scanned column is what made the list read
   disagreement rather than as a shared value, so a server that omits the field cannot make a heading
   claim a runtime nobody has.
 
-*State rides weight, presence stays constant.* The booted device's name is one weight up (`.medium`
-against `.regular`) — the same non-hue channel the rest of the panel uses. The play/stop action is
-always drawn, but at `Slate.Text.tertiary` until the row is hovered, when it goes to primary: the
-**weight** of the affordance changes on hover, never its presence. A control that appears on hover
-cannot be found by scanning; a control at full contrast on every row of a thirty-row list is thirty
-competing calls to action.
+*State rides weight, presence stays constant.* A card's name is one weight up (`.medium` against the
+rows' `.regular`) — the same non-hue channel the rest of the panel uses, and now doubled by the fact
+that a card *is* a different shape from a row. The boot/stop verb is always drawn, but at
+`Slate.Text.tertiary` until the row or card is hovered, when it goes to primary: the **weight** of the
+affordance changes on hover, never its presence. A control that appears on hover cannot be found by
+scanning; a control at full contrast on every row of a thirty-row list is thirty competing calls to
+action.
 
 **The stage.** Two lit surfaces, not a stack of ruled bands: one top bar on `ground`, the device
 alone on `face` below it, and the console drawer as a third with its own raised head. Bands of equal
@@ -578,6 +634,7 @@ it, ~0.2 s, no black frame.
 | --- | --- | --- |
 | list ⇄ device drill | `standard` | a cut between two full surfaces |
 | device list reflow (boot/shutdown/filter) | `standard` | a booting device teleports into `RUNNING` and every row below jumps |
+| a card's first capture arriving | `fadeSlideIn` | the placeholder plate becomes a screen in one frame. **Only the first** — keyed on `screen == nil`, because cross-fading every poll would smear a scroll on the device into a dissolve and read as a slow panel rather than a live one |
 | console drawer open/close | `standard` | the drawer already had `.transition(.move(edge: .bottom))` and **no animation to ride it** — it arrived in one frame and took the device's height with it |
 | phase swap (`starting` → `ready` → …) | `standard` | server-boot → devices cuts hard |
 | pending spinner ⇄ boot/stop verb | `smallFade` | the one acknowledgement a click gets, delivered as a redraw |
@@ -585,9 +642,10 @@ it, ~0.2 s, no black frame.
 | header band appearing or leaving | `smallFade` | a device removed from the host takes the stage's top edge in one frame |
 | plate press | `smallFade` | see below |
 
-The reflow is keyed on the entry **identities**, not on the device array: a device whose `state` ticks
-through `Booting` is the same row saying something new, and re-running a thirty-row reflow for it would
-animate the list every second while nothing moved.
+The reflow is keyed on the section-qualified row **identities**, not on the device array: a device whose
+`state` ticks through `Booting` is the same row saying something new, and re-running a thirty-row reflow
+for it would animate the list every second while nothing moved. Section-qualified because the move a
+boot makes *is* between sections, and a plain list of udids would not see it.
 
 **⚠️ An inserted view cannot animate its own arrival.** Two of these were already written as
 `.transition(...)` plus an `.animation` **inside** the conditional branch, which animates a text swap
@@ -680,8 +738,10 @@ one control in the panel with no response to the pointer at all — share it.
   2026-08-04, a device that booted moved up into Running still drawing the receded family glyph and
   the Boot button from its family group, and one that shut down moved down still drawing the lit glyph
   and Shut Down — position followed the state, content did not, from a single `isBooted` read.
-  `SimulatorDeviceList.entries` flattens headings and rows into ONE `ForEach` over
-  `SimulatorListEntry`, whose id is `section/udid`, so changing group is a remove and an insert.
+  First fixed by flattening into one `ForEach` over section-qualified ids; now **structural**:
+  `SimulatorDeviceList.sections` gives every group its own container (a card grid or a row grid), and
+  a family group holds only shut-down devices, so a device cannot change boot state without also
+  changing container. `SimulatorDeviceTests` pins both halves.
 - **The log socket upgrades whatever `level` you send.** An invented level (`verbose`, `warn`) gets a
   successful websocket handshake and then dies when the server's `log stream` child refuses it — which
   reads as a console that connects and never prints. `SimulatorLogLevel` is a closed set of the five
@@ -691,6 +751,16 @@ one control in the panel with no response to the pointer at all — share it.
   the header prints beyond them has to come from somewhere that actually measured it — the resolution
   from the decoder's format description, the position from the call that succeeded. A "booted N s"
   synthesized from first sighting reads as fact and is wrong after every client restart.
+- ⚠️ **`definition.json` is CHROME, not device metrics — it falls back to a NEAR MODEL.** Measured
+  across eleven devices: iPhone Air comes back as the 17 Pro Max body, iPad Pro 11-inch as the
+  13-inch's, and iPad Air 11 / Air 13 / iPad (A16) all as one. Anything built on `screen.rect` as a
+  device size (a size column, a per-row silhouette) is wrong for four of eleven. The table is under
+  *Running devices are CARDS*. There is no route that gives a true point size for a shut-down device.
+- **A card's capture must never raise a notification.** `screenshot.jpg` for a device that has just
+  gone away answers **500 after 2.1 s** (measured). A polling card routed through `failure` would fire
+  a notification every two seconds about a device the list is about to stop drawing.
+  `SimulatorSidebarModel.thumbnail(for:)` is silent by construction; `copyScreenshot` is not, and that
+  is the difference between the two.
 - **`app-switcher` is a TOGGLE, and it is silent when there is nothing to show.** Measured
   2026-08-04 against a booted iPhone 17 Pro: press once from an app or the home screen and the card
   stack appears; press again and it dismisses into the front app. `swipe-to-app-switcher` behaves
@@ -745,7 +815,8 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorPlace.swift` | pure: coordinate parse / body / readout + the preset shortlist |
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
-| `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
+| `Simulator/SimulatorDeviceList.swift` | the device list — Running as cards, then families as rows, both in width-driven grids |
+| `Simulator/SimulatorRunningCard.swift` | one running device drawn as its own live screen, polled small |
 | `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console, the first-frame deadline, `park`/`resume` |
 
 Two `Slate` components were added for this panel and belong to the whole system, not to it:

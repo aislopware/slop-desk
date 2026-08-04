@@ -13,6 +13,20 @@
 // are the two cuts. Sorting inside a family is the server's own order, which is stable across polls;
 // a list that reorders itself under the cursor is the opposite of what someone clicking Boot wants.
 //
+// THE TWO GROUPS ARE DRAWN DIFFERENTLY, because only one of them has anything to show (user-directed
+// 2026-08-04, "the list looks bare"). For a device that is OFF the server knows four things — name,
+// runtime, state, udid — and three are already on screen. There is no fifth: measured 2026-08-04,
+// `definition.json` is CHROME data and falls back to a near model, so a size column or a per-row
+// silhouette built on it would be wrong for four of this host's eleven devices. A device that is
+// RUNNING has a screen, and that is what ``SimulatorRunningCard`` draws. The bareness was never a
+// want of ornament — it was a want of subject.
+//
+// AND THE PANEL'S WIDTH IS SPENT ON DEVICES, not on air. A right panel is ~700pt and a device name is
+// ~180 of it: one row per line put a play triangle five hundred points from the name it belonged to
+// and turned the trailing edge into a column of identical glyphs. Both groups lay out in a grid whose
+// column count follows the width — cards at a fixed width, rows at a minimum — so a wider panel shows
+// more devices rather than longer rows.
+//
 // EVERY ROW CARRIES ITS ACTION, at rest, not on hover. The previous revision hid boot and shutdown
 // behind the pointer: discoverable only by accident, and impossible to see the state of. What the
 // pointer changes is the action's WEIGHT, not its presence — at rest it is a small tertiary glyph, and
@@ -20,11 +34,11 @@
 // column of a dozen identical rings down the trailing edge, which is texture, not twelve verbs
 // (user-directed 2026-08-04).
 //
-// A ROW NEVER REPEATS WHAT ITS HEADING ALREADY SAID. One rule, applied twice: the runtime is lifted
-// into the heading when every member shares it, and the family glyph is drawn only under RUNNING —
-// the one group whose members are NOT all the same kind. Under `IPHONE` a column of iPhone glyphs is
-// the same fact stated eleven times, in the dimmest ink on the surface, along the edge the eye uses
-// to find the names.
+// A ROW NEVER REPEATS WHAT ITS HEADING ALREADY SAID: the runtime is lifted into the heading when
+// every member shares it, and under `IPHONE` a column of iPhone glyphs is the same fact stated eleven
+// times, in the dimmest ink on the surface, along the edge the eye uses to find the names. The family
+// glyph used to be drawn under RUNNING, the one group not cut by family; the cards retired it, since
+// a picture of an iPad already says iPad louder than a 13pt symbol can.
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
@@ -33,27 +47,32 @@ import AppKit
 import SFSafeSymbols
 import SwiftUI
 
-/// One line of the list: a section heading, or a device under one.
+/// One group of the list: a heading and its devices.
 ///
-/// The identity carries the SECTION as well as the device, and that is the whole point of the type.
-/// A device's udid alone is stable across a boot — which is correct for "is this the same device"
-/// and wrong for "is this the same row": the row's entire content (glyph tint, trailing verb,
-/// subtitle) is a function of the state that just changed, and reusing the built view keeps every
-/// one of them at its old value. Qualifying by section makes a device that changes group a REMOVE
-/// and an INSERT, so it is rebuilt from the device it now is.
-enum SimulatorListEntry: Identifiable {
-    /// A group's title, plus the runtime its members SHARE — `nil` when they do not all agree.
-    case heading(String, runtime: String?)
-    /// A device under one heading. `showsRuntime` and `showsFamily` are false when the heading above
-    /// it already says the same thing.
-    case device(SimulatorDevice, section: String, showsRuntime: Bool, showsFamily: Bool)
+/// A SECTION rather than a flat sequence of heading-or-device entries, and the identity trap that
+/// shape existed to dodge is now structural. A device's udid alone is stable across a boot — right
+/// for "is this the same device", wrong for "is this the same row", since the row's whole content is
+/// a function of the state that just changed. The earlier fix qualified each row's id by its section;
+/// this one gives every section its own container, so a device that boots is removed from one grid
+/// and inserted into another and cannot carry a stale view across. Families hold only shut-down
+/// devices, so a row can no longer change state without also changing container.
+struct SimulatorListSection: Identifiable {
+    let title: String
+    /// The runtime every member reports, or `nil` when they do not all agree.
+    let runtime: String?
+    let devices: [SimulatorDevice]
 
-    var id: String {
-        switch self {
-        case let .heading(title, _): "heading/\(title)"
-        case let .device(device, section, _, _): "\(section)/\(device.udid)"
-        }
-    }
+    var id: String { title }
+
+    /// The group of what is up — drawn as cards, and the only group not cut by family.
+    var isRunning: Bool { title == SimulatorDeviceList.runningTitle }
+
+    /// A device prints its own runtime only where the heading has not already said it.
+    func showsRuntime(_ device: SimulatorDevice) -> Bool { device.runtime != runtime }
+
+    /// This section's rows, named by section — the value the list's reflow watches. Section-qualified
+    /// because the move a boot makes IS between sections, and a plain list of udids would not see it.
+    var rowIdentities: [String] { devices.map { "\(title)/\($0.udid)" } }
 }
 
 struct SimulatorDeviceList: View {
@@ -72,45 +91,34 @@ struct SimulatorDeviceList: View {
         }
     }
 
-    /// The whole list as ONE flat sequence — headings and rows together, each carrying an identity
-    /// that names its section. Running first, then the families in the enum's own rank order rather
-    /// than in encounter order, so the headings do not reshuffle because the host's device set was
-    /// edited.
-    static func entries(for devices: [SimulatorDevice]) -> [SimulatorListEntry] {
-        var entries: [SimulatorListEntry] = []
+    /// The whole list as sections. Running first, then the families in the enum's own rank order
+    /// rather than in encounter order, so the headings do not reshuffle because the host's device set
+    /// was edited.
+    static func sections(for devices: [SimulatorDevice]) -> [SimulatorListSection] {
+        var sections: [SimulatorListSection] = []
         let booted = devices.filter(\.isBooted)
         // Running comes first and is NOT split by family: what is up is one short list, and cutting
         // three booted devices into three headed groups is ceremony over content.
         if !booted.isEmpty {
-            entries += group(Self.runningTitle, booted)
+            sections.append(section(runningTitle, booted))
         }
         let families = Dictionary(grouping: devices.filter { !$0.isBooted }) {
             SimulatorDeviceKind.infer(from: $0.name)
         }
         for (kind, members) in families.sorted(by: { $0.key.rank < $1.key.rank }) {
-            entries += group(kind.groupTitle, members)
+            sections.append(section(kind.groupTitle, members))
         }
-        return entries
+        return sections
     }
 
-    /// One heading and its rows, with the runtime LIFTED into the heading when every member shares
+    /// One heading and its devices, with the runtime LIFTED into the heading when every member shares
     /// it. A device set is a dozen devices on one installed runtime, so the per-row runtime was the
     /// same eight characters printed down the whole column — weight with no information in it, and
     /// the single loudest reason the list read as a spreadsheet. Said once at the top it is still
     /// answered at a glance; a row whose runtime differs from its neighbours keeps its own and is now
     /// the ONLY row carrying one, which is exactly the row worth noticing.
-    static func group(_ title: String, _ members: [SimulatorDevice]) -> [SimulatorListEntry] {
-        let shared = sharedRuntime(of: members)
-        // RUNNING is the one group not cut by family, so it is the one group where the leading glyph
-        // says something its heading did not.
-        let mixedFamilies = title == runningTitle
-        return [.heading(title, runtime: shared)]
-            + members.map {
-                .device(
-                    $0, section: title, showsRuntime: $0.runtime != shared,
-                    showsFamily: mixedFamilies,
-                )
-            }
+    static func section(_ title: String, _ members: [SimulatorDevice]) -> SimulatorListSection {
+        SimulatorListSection(title: title, runtime: sharedRuntime(of: members), devices: members)
     }
 
     /// The runtime every member reports, or `nil` if they disagree. An EMPTY runtime string counts as
@@ -174,22 +182,16 @@ struct SimulatorDeviceList: View {
 
     // MARK: List
 
-    /// ONE `ForEach`, over the flattened entries. Not a heading-plus-nested-`ForEach` per group: two
-    /// sibling `ForEach`es inside one lazy stack whose elements share an id let the stack reuse the
-    /// row it already built for that id. Measured 2026-08-04 — a device that booted moved up into
-    /// Running still drawing the grey glyph and the Boot button from its family group, while the one
-    /// that shut down moved down still drawing the accent glyph and Shut Down. Position followed the
-    /// state; the content did not.
     private var list: some View {
-        let entries = Self.entries(for: matches)
+        let sections = Self.sections(for: matches)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(entries) { entry in
-                    switch entry {
-                    case let .heading(title, runtime):
-                        heading(title, runtime: runtime)
-                    case let .device(device, _, showsRuntime, showsFamily):
-                        row(device, showsRuntime: showsRuntime, showsFamily: showsFamily)
+                ForEach(sections) { section in
+                    heading(section)
+                    if section.isRunning {
+                        shelf(section)
+                    } else {
+                        grid(section)
                     }
                 }
             }
@@ -197,15 +199,53 @@ struct SimulatorDeviceList: View {
             .padding(.bottom, Slate.Metric.space2)
         }
         // THE REFLOW. A boot is not a row changing colour: the device leaves its family, RUNNING
-        // appears above it, and everything under the cut shifts by a row — the one structural change
-        // this list ever makes, and it used to happen between two frames with nothing to connect the
-        // row you clicked to the row that arrived at the top. Keyed on the entry IDENTITIES, so a poll
-        // that returns the same devices animates nothing and a filter keystroke animates once.
+        // appears above it, and everything under the cut shifts — the one structural change this list
+        // ever makes, and it used to happen between two frames with nothing to connect the row you
+        // clicked to the card that arrived at the top. Keyed on the row IDENTITIES, so a poll that
+        // returns the same devices animates nothing and a filter keystroke animates once.
         //
-        // On the ids and not on `matches`: a device whose `state` string ticks through `Booting` is
-        // the SAME row saying something new, and re-running a 30-row reflow for it would animate the
-        // list every second while nothing moved.
-        .animation(Slate.Anim.standard, value: entries.map(\.id))
+        // On the identities and not on `matches`: a device whose `state` string ticks through
+        // `Booting` is the SAME row saying something new, and re-running the reflow for it would
+        // animate the list every second while nothing moved.
+        .animation(Slate.Anim.standard, value: sections.flatMap(\.rowIdentities))
+    }
+
+    /// The running devices, as cards at a FIXED column width. Fixed rather than adaptive so one
+    /// running device is one card and not a card stretched across the panel.
+    private var shelfColumns: [GridItem] {
+        [GridItem(
+            .adaptive(minimum: Slate.Metric.deviceCardWidth, maximum: Slate.Metric.deviceCardWidth),
+            spacing: Slate.Metric.space2, alignment: .topLeading,
+        )]
+    }
+
+    /// The shut-down devices, as rows in columns that SHARE the width. Adaptive here because a row's
+    /// content is a name, and a name is happy to have more room; a card's content is a picture at a
+    /// resolution the server already chose.
+    private var rowColumns: [GridItem] {
+        [GridItem(
+            .adaptive(minimum: Slate.Metric.deviceRowWidth),
+            spacing: Slate.Metric.space1, alignment: .leading,
+        )]
+    }
+
+    private func shelf(_ section: SimulatorListSection) -> some View {
+        LazyVGrid(columns: shelfColumns, alignment: .leading, spacing: Slate.Metric.space2) {
+            ForEach(section.devices) { device in
+                SimulatorRunningCard(model: model, device: device) { enter(device.udid) }
+                    .contextMenu { menu(for: device) }
+            }
+        }
+        .padding(.horizontal, Slate.Metric.space1)
+        .padding(.bottom, Slate.Metric.space2)
+    }
+
+    private func grid(_ section: SimulatorListSection) -> some View {
+        LazyVGrid(columns: rowColumns, alignment: .leading, spacing: 0) {
+            ForEach(section.devices) { device in
+                row(device, showsRuntime: section.showsRuntime(device))
+            }
+        }
     }
 
     /// The group's title, with its shared runtime as the heading's own CAPTION rather than as a
@@ -213,31 +253,40 @@ struct SimulatorDeviceList: View {
     /// taxonomy, so the runtime joins it as taxonomy rather than arriving in the prose face the rows
     /// below use — and beside the word it qualifies rather than at the panel's far edge, which at
     /// this surface's width is most of a screen away from it.
-    private func heading(_ title: String, runtime: String?) -> some View {
+    ///
+    /// The far edge is where the group's own CONTROL goes, which is the distinction the header shell
+    /// draws: `Shut Down All` is offered only once more than one device is up, because with one
+    /// running it is the same click as that card's own stop button under a longer name.
+    private func heading(_ section: SimulatorListSection) -> some View {
         // Nudged onto the ROWS' left rail. The shared header insets by `space2` and a list row by
         // `space3`; with the family glyph gone the row's title starts the run of text this heading
         // names, and four points of disagreement between two things meant to line up is the kind of
         // thing that reads as "off" without anyone locating why.
-        SlateSectionHeader(title, caption: runtime)
-            .padding(.leading, Slate.Metric.space1)
+        SlateSectionHeader(section.title, caption: section.runtime) {
+            if section.isRunning, section.devices.count > 1 {
+                SlatePlateButton(
+                    symbol: .stopCircle,
+                    help: "Shut down all \(section.devices.count) running devices",
+                    size: Slate.Typeface.footnote,
+                    plate: Slate.Metric.heightControl,
+                    tint: Slate.Text.tertiary,
+                ) {
+                    Task { await model.shutdownAll() }
+                }
+            }
+        }
+        .padding(.leading, Slate.Metric.space1)
     }
 
-    private func row(
-        _ device: SimulatorDevice, showsRuntime: Bool, showsFamily: Bool,
-    ) -> some View {
+    private func row(_ device: SimulatorDevice, showsRuntime: Bool) -> some View {
         SlateListRow(
-            active: model.selection == device.udid,
-            // Opening the screen is the row's gesture; boot and shutdown are the explicit control. A
-            // shut-down device has no screen, so its row boots it instead — doing nothing on a click
-            // is the behaviour that made the previous revision feel broken.
+            active: false,
+            // A shut-down device has no screen, so its row boots it — doing nothing on a click is the
+            // behaviour that made the previous revision feel broken.
             onTap: { open(device) },
-            leading: { mark(device, showsFamily: showsFamily) },
             title: {
-                // A booted device carries its name one weight up. The heading it sorts under already
-                // says it is running; this is what keeps that legible once the eye is down among the
-                // rows and the heading has scrolled out of the corner of it.
                 Text(device.name)
-                    .font(.system(size: Slate.Typeface.base, weight: device.isBooted ? .medium : .regular))
+                    .font(.system(size: Slate.Typeface.base))
                     .foregroundStyle(Slate.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -275,23 +324,6 @@ struct SimulatorDeviceList: View {
         return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
     }
 
-    /// The device family as the row's leading glyph — drawn ONLY where the heading has not already
-    /// said it (see the file header). Under RUNNING the shape says iPhone or iPad; everywhere else
-    /// the slot collapses and the names take the section header's own left rail.
-    ///
-    /// The glyph never says running-or-not in a HUE — that is the pattern this repo reversed on
-    /// 07-30, and this list has three stronger channels for it already: the heading the row sorts
-    /// under, the weight of its name, and the stop-versus-play verb at the end of it.
-    @ViewBuilder
-    private func mark(_ device: SimulatorDevice, showsFamily: Bool) -> some View {
-        if showsFamily {
-            Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
-                .font(.system(size: Slate.Typeface.body, weight: .medium))
-                .foregroundStyle(Slate.Text.primary)
-                .frame(width: Slate.Metric.iconSize)
-        }
-    }
-
     /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink, which
     /// steps to the primary one while the pointer is anywhere on the row. Solid rather than the
     /// enclosing `…Circle` pair — a ring at this size reads as a control chrome rather than as a
@@ -312,16 +344,13 @@ struct SimulatorDeviceList: View {
                     .transition(.opacity)
             } else {
                 SlatePlateButton(
-                    symbol: device.isBooted ? .stopFill : .playFill,
-                    help: device.isBooted ? "Shut down \(device.name)" : "Boot \(device.name)",
+                    symbol: .playFill,
+                    help: "Boot \(device.name)",
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
                 ) {
-                    Task {
-                        if device.isBooted { await model.shutdown(device.udid) }
-                        else { await model.boot(device.udid) }
-                    }
+                    Task { await model.boot(device.udid) }
                 }
                 .transition(.opacity)
             }
@@ -329,22 +358,17 @@ struct SimulatorDeviceList: View {
         .animation(Slate.Anim.smallFade, value: isPending)
     }
 
-    /// A click on a booted device opens its screen; on a shut-down one it boots it. Two verbs on one
-    /// gesture because they are the same intent — "I want to use this device" — and the row already
-    /// carries the explicit control for anyone who means the other one.
-    ///
+    /// A click on a shut-down device boots it — the same intent a click on a running card carries
+    /// ("I want to use this device"), one step earlier.
+    private func open(_ device: SimulatorDevice) {
+        guard !model.pending.contains(device.udid) else { return }
+        Task { await model.boot(device.udid) }
+    }
+
     /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
     /// the panel's transition vocabulary lives on the surface that owns both depths
     /// (``CodeSidebarColumn``), and the views themselves declare no animation for it. Same shape as
     /// the tab strip's `selectSurface`: the caller opens the beat, the transitions ride it.
-    private func open(_ device: SimulatorDevice) {
-        if device.isBooted {
-            enter(device.udid)
-        } else if !model.pending.contains(device.udid) {
-            Task { await model.boot(device.udid) }
-        }
-    }
-
     private func enter(_ udid: String) {
         withAnimation(Slate.Anim.standard) { model.select(udid) }
     }
@@ -353,6 +377,10 @@ struct SimulatorDeviceList: View {
     private func menu(for device: SimulatorDevice) -> some View {
         if device.isBooted {
             Button("Open Screen") { enter(device.udid) }
+            // The panel can already put a capture on the pasteboard, and a running device's screen is
+            // often worth a picture without being worth opening — a card is a hundred points tall, so
+            // the reader can see there is something to grab from here.
+            Button("Copy Screenshot") { Task { await model.copyScreenshot(of: device.udid) } }
             Button("Shut Down") { Task { await model.shutdown(device.udid) } }
         } else {
             Button("Boot") { Task { await model.boot(device.udid) } }

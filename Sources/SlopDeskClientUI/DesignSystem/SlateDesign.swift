@@ -462,6 +462,26 @@ enum Slate {
         /// wide as a caret card). 116 fits the longest card label ("Classic Light") without truncating.
         static let settingsCardWidth: CGFloat = 116
 
+        // Simulator DEVICE cards + the device list's columns (`SimulatorDeviceList`). A right panel is
+        // ~700pt wide and a device name is ~180 of it, so both of these exist to stop a list of names
+        // from being drawn one-per-line across a surface four times wider than anything on it.
+        /// The screen box inside a running device's card — the live thumbnail's height. This is the one
+        /// place the panel SHOWS a device rather than naming it, so it is sized to be read, and matched
+        /// to what the server actually sends: its scale-6 capture is 202 × 438 (measured 2026-08-04),
+        /// which at 2× is exactly a 200pt-tall box. Bigger would be upscaling; smaller would be paying
+        /// for pixels and then throwing them away.
+        static let deviceCardArt: CGFloat = 200
+        /// A device card's width — FIXED, like the Settings option card and for the same reason: an
+        /// adaptive column stretches, so a single running device would be one 700pt-wide card with a
+        /// 92pt phone floating in the middle of it. A portrait phone at ``deviceCardArt`` is the narrow
+        /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
+        /// against each other, and the caption under them still fits a name and its verb.
+        static let deviceCardWidth: CGFloat = 180
+        /// A device ROW's minimum column width in the list's grid. Fits the longest device name this
+        /// server serves ("iPad Pro 13-inch (M5)") plus its verb without truncating, and wraps to two
+        /// columns at panel width instead of stranding a triangle 500pt from the name it belongs to.
+        static let deviceRowWidth: CGFloat = 240
+
         /// A popover's content width. FIXED for the same reason the notification card is: a popover that
         /// hugs its content is a popover whose width is decided by whichever row happens to hold the
         /// longest string, so the same control opens at a different size on different data. 260 is the

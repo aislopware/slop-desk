@@ -253,6 +253,19 @@ final class SimulatorSidebarModel {
         await act(udid) { try await control.shutdown(host: $0, port: $1, udid: udid) }
     }
 
+    /// Stop everything that is up. Offered only where more than one device is running, because that is
+    /// the only place it is a different verb from the card's own stop button — and it is the state a
+    /// day of testing leaves behind, three encoders and three device processes nobody is looking at.
+    ///
+    /// Sequential rather than concurrent: `act` refuses a second call for a UDID already in flight but
+    /// not for a different one, and firing every shutdown at once would have each of them read the
+    /// device list back while the others were still landing.
+    func shutdownAll() async {
+        for udid in devices.filter(\.isBooted).map(\.udid) {
+            await shutdown(udid)
+        }
+    }
+
     private func act(_ udid: String, _ body: (String, UInt16) async throws -> Void) async {
         guard case let .ready(host, port) = phase, !pending.contains(udid) else { return }
         pending.insert(udid)
@@ -440,8 +453,12 @@ final class SimulatorSidebarModel {
     /// Capture the screen to the CLIPBOARD rather than to a file. A screenshot's next stop is almost
     /// always a message or a pull request, the app is sandboxed so a file needs a save panel in the
     /// way, and the pasteboard needs no permission at all.
-    func copyScreenshot() async {
-        guard case let .ready(host, port) = phase, let udid = selection else { return }
+    ///
+    /// `udid` defaults to the open device, which is the stage's call. The device LIST passes one
+    /// explicitly: a running device's screen can be worth a picture without being worth opening, and
+    /// the panel already knows how to take one.
+    func copyScreenshot(of udid: String? = nil) async {
+        guard case let .ready(host, port) = phase, let udid = udid ?? selection else { return }
         do {
             let jpeg = try await control.screenshot(host: host, port: port, udid: udid)
             // Decoded before it is written, not after: a JPEG the server truncated would otherwise
@@ -456,6 +473,25 @@ final class SimulatorSidebarModel {
             failure = Self.describe(error)
         }
     }
+
+    /// A small JPEG of a running device's screen, for its card in the list, or `nil` if the server
+    /// would not give one.
+    ///
+    /// SILENT ON FAILURE, and that is the whole reason it is not ``copyScreenshot``. A card polls, and
+    /// a device that shut down between the last device list and this request answers 500 — measured
+    /// 2026-08-04, after a 2.1 s wait. Routed through ``failure`` that would raise a notification card
+    /// every two seconds for a device the list is about to stop drawing anyway. The card simply keeps
+    /// the last picture it had, and the next device poll removes it.
+    func thumbnail(for udid: String) async -> Data? {
+        guard case let .ready(host, port) = phase else { return nil }
+        return try? await control.thumbnail(host: host, port: port, udid: udid)
+    }
+
+    /// How often a card asks for a new picture. Slower than "live" on purpose: this is the list, where
+    /// the question is *what is on that device*, not *what is it doing right now* — the stage answers
+    /// that at video rate one click away. Two seconds is 6.8 KB/s per running device at the measured
+    /// thumbnail size, a fifth of what an IDLE video stream costs.
+    static let thumbnailCadence: Duration = .seconds(2)
 
     /// Flip the demo status bar: Apple's own 9:41 with full bars and a full battery, or back to the
     /// device's real one. The single reason anyone reaches for a status-bar override is a clean

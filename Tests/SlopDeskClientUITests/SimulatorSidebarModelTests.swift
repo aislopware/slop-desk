@@ -77,9 +77,25 @@ private final class FakeControl: SimulatorControlling, @unchecked Sendable {
         orientations.append(value)
     }
 
-    func screenshot(host _: String, port _: UInt16, udid _: String) throws -> Data {
+    /// Which device each capture was asked for, in order — the stage takes the open one and the list
+    /// names one that is not open, so "which" is the whole of what separates the two call sites.
+    private(set) var screenshotUdids: [String] = []
+
+    func screenshot(host _: String, port _: UInt16, udid: String) throws -> Data {
         if let failure { throw failure }
         screenshots += 1
+        screenshotUdids.append(udid)
+        return screenshotResult
+    }
+
+    /// The card's capture. Counted separately from ``screenshot`` because the two have opposite
+    /// budgets and the model must not confuse them — a card polling the full-resolution route would
+    /// cost thirty-five times the bytes.
+    private(set) var thumbnails: [String] = []
+
+    func thumbnail(host _: String, port _: UInt16, udid: String) throws -> Data {
+        if let failure { throw failure }
+        thumbnails.append(udid)
         return screenshotResult
     }
 
@@ -815,6 +831,47 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertEqual(control.screenshots, 1)
         XCTAssertEqual(model.failure, "The screenshot could not be read.")
         XCTAssertNil(model.notice)
+    }
+
+    func testTheListCanCaptureADeviceItHasNotOpened() async {
+        // A running device's screen is often worth a picture without being worth opening, and its card
+        // is right there in the list. The stage keeps calling with no argument and still means "the
+        // device that is open".
+        //
+        // The bytes are deliberately not an image, so this never reaches the real pasteboard: what is
+        // being pinned is WHICH device the capture was asked for, and a test that clobbered the
+        // machine's clipboard to prove it would be paying far too much for the last line.
+        let control = FakeControl()
+        control.screenshotResult = Data([0x00, 0x01])
+        let (model, _) = await readyModel(control)
+        XCTAssertNil(model.selection)
+        await model.copyScreenshot(of: "B")
+        XCTAssertEqual(control.screenshotUdids, ["B"])
+    }
+
+    func testACardsCaptureFailingIsSilentRatherThanANotification() async {
+        // A card polls every two seconds, and a device that shut down between the last device list and
+        // this request answers 500 (measured 2026-08-04, after a 2.1 s wait). Routed through `failure`
+        // that would raise a notification card every two seconds about a device the list is already
+        // about to stop drawing — which is exactly the alert-shaped noise this panel spent a round
+        // removing.
+        let control = FakeControl()
+        control.failure = SimulatorControlError.status(500)
+        let (model, _) = await readyModel(control)
+        let data = await model.thumbnail(for: "A")
+        XCTAssertNil(data)
+        XCTAssertNil(model.failure)
+        XCTAssertNil(model.notice)
+    }
+
+    func testShuttingEverythingDownTouchesOnlyWhatIsRunning() async {
+        let control = FakeControl()
+        control.devices = [device("A", booted: true), device("B"), device("C", booted: true)]
+        let (model, _) = await readyModel(control)
+        await model.refreshDevices()
+        await model.shutdownAll()
+        XCTAssertEqual(control.shutDown, ["A", "C"])
+        XCTAssertTrue(model.devices.allSatisfy { !$0.isBooted })
     }
 
     func testADroppedFileIsSentUnderItsOwnNameAndConfirmed() async {

@@ -26,8 +26,13 @@ protocol SimulatorControlling: Sendable {
     /// for; the only consumer today turns them into an image.
     func resource(host: String, port: UInt16, reference: String) async throws -> Data
     func setOrientation(host: String, port: UInt16, udid: String, value: String) async throws
-    /// One JPEG of the current screen.
+    /// One JPEG of the current screen, at the device's own resolution — the capture that goes to the
+    /// pasteboard, where a downscale would be a worse picture for no saving anyone asked for.
     func screenshot(host: String, port: UInt16, udid: String) async throws -> Data
+    /// A SMALL JPEG of the current screen, for a card in the device list. Separate from ``screenshot``
+    /// rather than a parameter on it because the two have opposite budgets: one is captured once and
+    /// kept, the other arrives every couple of seconds for as long as the list is on screen.
+    func thumbnail(host: String, port: UInt16, udid: String) async throws -> Data
     /// Override the status bar, or clear every override when `overrides` is empty.
     func setStatusBar(
         host: String, port: UInt16, udid: String, overrides: [String: String],
@@ -111,12 +116,30 @@ struct SimulatorControlClient: SimulatorControlling {
     }
 
     func screenshot(host: String, port: UInt16, udid: String) async throws -> Data {
-        // The nonce is the server's own cache-buster. A capture must be of NOW, and a second one in
-        // the same session is exactly the request a cache would answer from its copy of the first.
-        let nonce = UInt64(Date().timeIntervalSince1970 * 1000)
-        return try await get(SimulatorEndpoints.screenshot(
-            host: host, port: port, udid: udid, nonce: nonce,
+        try await get(SimulatorEndpoints.screenshot(
+            host: host, port: port, udid: udid, nonce: Self.captureNonce(),
         ))
+    }
+
+    /// The divisor and quality a list card is captured at. Chosen by measuring the server rather than
+    /// by taste — see ``SimulatorEndpoints/screenshot(host:port:udid:nonce:scale:quality:)`` for the
+    /// three points on that curve. One rung finer would triple the bytes for pixels the card's 176pt
+    /// box cannot show.
+    static let thumbnailScale = 6
+    static let thumbnailQuality = 0.5
+
+    func thumbnail(host: String, port: UInt16, udid: String) async throws -> Data {
+        try await get(SimulatorEndpoints.screenshot(
+            host: host, port: port, udid: udid, nonce: Self.captureNonce(),
+            scale: Self.thumbnailScale, quality: Self.thumbnailQuality,
+        ))
+    }
+
+    /// The server's own cache-buster. A capture must be of NOW, and a second one in the same session
+    /// is exactly the request a cache would answer from its copy of the first — which for a card
+    /// polling every two seconds would mean a picture that never moves again.
+    private static func captureNonce() -> UInt64 {
+        UInt64(Date().timeIntervalSince1970 * 1000)
     }
 
     func setStatusBar(

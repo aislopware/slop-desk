@@ -79,36 +79,56 @@ final class SimulatorDeviceTests: XCTestCase {
     }
 
     func testRunningLeadsTheListAndEverythingElseFollowsItsFamilyInRankOrder() {
-        let entries = SimulatorDeviceList.entries(for: [
+        let sections = SimulatorDeviceList.sections(for: [
             device("iPad Pro 13-inch (M5)", booted: false),
             device("iPhone 17 Pro", booted: true),
             device("iPhone Air", booted: false),
         ])
-        XCTAssertEqual(entries.map(\.id), [
-            "heading/Running",
+        XCTAssertEqual(sections.map(\.id), ["Running", "iPhone", "iPad"])
+        XCTAssertEqual(sections.flatMap(\.rowIdentities), [
             "Running/udid-iPhone 17 Pro",
-            "heading/iPhone",
             "iPhone/udid-iPhone Air",
-            "heading/iPad",
             "iPad/udid-iPad Pro 13-inch (M5)",
         ])
     }
 
     func testNothingRunningMeansNoRunningHeadingRatherThanAnEmptyOne() {
-        let entries = SimulatorDeviceList.entries(for: [device("iPhone Air", booted: false)])
-        XCTAssertEqual(entries.map(\.id), ["heading/iPhone", "iPhone/udid-iPhone Air"])
+        let sections = SimulatorDeviceList.sections(for: [device("iPhone Air", booted: false)])
+        XCTAssertEqual(sections.map(\.id), ["iPhone"])
+        XCTAssertFalse(sections.contains(where: \.isRunning))
     }
 
     func testARowsIdentityChangesWhenItsDeviceChangesSection() {
         // The defect this pins, measured on hardware 2026-08-04: with a heading-plus-nested-`ForEach`
         // per group, two sibling `ForEach`es in one lazy stack shared an element id, and a device that
         // booted moved up into Running still drawing the grey glyph and the Boot button it had in its
-        // family group — position followed the state, content did not. A section-qualified id makes
-        // the move a remove and an insert, so the row is rebuilt from the device it now is.
-        let idle = SimulatorDeviceList.entries(for: [device("iPhone 17", booted: false)])
-        let running = SimulatorDeviceList.entries(for: [device("iPhone 17", booted: true)])
-        XCTAssertNotEqual(idle.last?.id, running.last?.id)
-        XCTAssertEqual(running.last?.id, "Running/udid-iPhone 17")
+        // family group — position followed the state, content did not. Sections make the move a
+        // remove and an insert, so the view is rebuilt from the device it now is.
+        let idle = SimulatorDeviceList.sections(for: [device("iPhone 17", booted: false)])
+        let running = SimulatorDeviceList.sections(for: [device("iPhone 17", booted: true)])
+        XCTAssertNotEqual(
+            idle.flatMap(\.rowIdentities),
+            running.flatMap(\.rowIdentities),
+        )
+        XCTAssertEqual(running.flatMap(\.rowIdentities), ["Running/udid-iPhone 17"])
+    }
+
+    /// A FAMILY GROUP HOLDS ONLY SHUT-DOWN DEVICES, which is what makes the identity rule structural
+    /// rather than a convention someone has to keep. A device cannot change boot state without also
+    /// changing section, so the row a family grid built can never be reused for a device that has
+    /// started running — the stale-content class of bug is closed by the grouping itself.
+    func testAFamilyGroupNeverHoldsARunningDevice() {
+        let sections = SimulatorDeviceList.sections(for: [
+            device("iPhone 17 Pro", booted: true),
+            device("iPhone Air", booted: false),
+        ])
+        for section in sections where !section.isRunning {
+            XCTAssertFalse(
+                section.devices.contains(where: \.isBooted),
+                "\(section.title) must not hold a booted device",
+            )
+        }
+        XCTAssertEqual(sections.first(where: \.isRunning)?.devices.map(\.name), ["iPhone 17 Pro"])
     }
 
     // MARK: The runtime the whole group shares
@@ -116,94 +136,57 @@ final class SimulatorDeviceTests: XCTestCase {
     func testAGroupOnOneRuntimeSaysItOnceInTheHeadingAndNotOnEveryRow() {
         // The noise this removes: a dozen devices on one installed runtime printed the same eight
         // characters down the entire column, which is what made the list read as a spreadsheet.
-        let entries = SimulatorDeviceList.entries(for: [
+        let sections = SimulatorDeviceList.sections(for: [
             device("iPhone Air", booted: false),
             device("iPhone 17", booted: false),
         ])
-        XCTAssertEqual(runtime(ofHeadingIn: entries), "iOS 26.5")
-        XCTAssertEqual(entries.compactMap(showsRuntime), [false, false])
+        XCTAssertEqual(sections.first?.runtime, "iOS 26.5")
+        XCTAssertEqual(showsRuntime(in: sections), [false, false])
     }
 
     func testTheODDROWKeepsItsOwnRuntimeAndIsTheOnlyOneCarryingOne() {
         // A mixed group cannot lift anything, so nothing is suppressed — but the moment a group DOES
         // agree, the row that differs is the single row printing a runtime, which is exactly the row
         // worth noticing.
-        let mixed = SimulatorDeviceList.entries(for: [
+        let mixed = SimulatorDeviceList.sections(for: [
             device("iPhone Air", booted: false),
             device("iPhone 17", booted: false, runtime: "iOS 18.5"),
         ])
-        XCTAssertNil(runtime(ofHeadingIn: mixed))
-        XCTAssertEqual(mixed.compactMap(showsRuntime), [true, true])
+        XCTAssertNil(mixed.first?.runtime)
+        XCTAssertEqual(showsRuntime(in: mixed), [true, true])
     }
 
     func testAnEmptyRuntimeIsNotAFactWorthLifting() {
         // `/simulators.json` can carry an empty runtime string. Lifted, it would print a heading
         // ending in a dangling separator — the panel promoting the ABSENCE of a fact into the place
         // it prints facts.
-        let entries = SimulatorDeviceList.entries(for: [
+        let sections = SimulatorDeviceList.sections(for: [
             device("iPhone Air", booted: false, runtime: ""),
             device("iPhone 17", booted: false, runtime: ""),
         ])
-        XCTAssertNil(runtime(ofHeadingIn: entries))
+        XCTAssertNil(sections.first?.runtime)
     }
 
     func testEachGroupDecidesForItselfRatherThanForTheWholeList() {
         // Running is its own group and is NOT split by family, so a booted device on another runtime
         // must not suppress the iPhone group's heading — or vice versa.
-        let entries = SimulatorDeviceList.entries(for: [
+        let sections = SimulatorDeviceList.sections(for: [
             device("iPhone 17 Pro", booted: true, runtime: "iOS 18.5"),
             device("iPhone Air", booted: false),
             device("iPhone 17", booted: false),
         ])
-        let headings = entries.compactMap { entry -> String? in
-            guard case let .heading(_, runtime) = entry else { return nil }
-            return runtime
-        }
-        XCTAssertEqual(headings, ["iOS 18.5", "iOS 26.5"])
+        XCTAssertEqual(sections.map(\.runtime), ["iOS 18.5", "iOS 26.5"])
     }
 
-    private func runtime(ofHeadingIn entries: [SimulatorListEntry]) -> String? {
-        for entry in entries {
-            if case let .heading(_, runtime) = entry { return runtime }
-        }
-        return nil
+    private func showsRuntime(in sections: [SimulatorListSection]) -> [Bool] {
+        sections.flatMap { section in section.devices.map(section.showsRuntime) }
     }
 
-    private func showsRuntime(_ entry: SimulatorListEntry) -> Bool? {
-        guard case let .device(_, _, showsRuntime, _) = entry else { return nil }
-        return showsRuntime
-    }
-
-    private func showsFamily(_ entry: SimulatorListEntry) -> Bool? {
-        guard case let .device(_, _, _, showsFamily) = entry else { return nil }
-        return showsFamily
-    }
-
-    /// The family glyph is drawn where — and only where — the heading has not already said the
-    /// family. Every group but RUNNING is cut BY family, so a glyph under one is the same fact
-    /// repeated down the whole column in the dimmest ink on the surface.
-    func testOnlyTheRunningGroupDrawsAFamilyGlyph() {
-        let entries = SimulatorDeviceList.entries(for: [
-            device("iPhone 17 Pro", booted: true),
-            device("iPad Air 11-inch (M4)", booted: true),
-            device("iPhone Air", booted: false),
-            device("iPad (A16)", booted: false),
-        ])
-        var running: [Bool] = []
-        var settled: [Bool] = []
-        var section = ""
-        for entry in entries {
-            switch entry {
-            case let .heading(title, _):
-                section = title
-            case let .device(_, _, _, showsFamily):
-                if section == SimulatorDeviceList.runningTitle { running.append(showsFamily) }
-                else { settled.append(showsFamily) }
-            }
-        }
-        XCTAssertEqual(running, [true, true], "RUNNING mixes families, so the glyph earns its column")
-        XCTAssertEqual(settled, [false, false], "a family group has already said which family it is")
-    }
+    // The FAMILY GLYPH is gone with the rows it qualified. It was drawn only under RUNNING, the one
+    // group not cut by family — and RUNNING is no longer a group of rows: a running device is drawn as
+    // its own screen, and a picture of an iPad says iPad more plainly than a 13pt symbol beside a name
+    // (user-directed 2026-08-04, "the list looks bare"). The rule it enforced still holds and is still
+    // pinned above: a row never repeats what its heading already said.
 
     // MARK: Colour means something is wrong
 
@@ -293,6 +276,25 @@ final class SimulatorDeviceTests: XCTestCase {
         XCTAssertEqual(
             SimulatorEndpoints.screenshot(host: host, port: port, udid: udid, nonce: 42)?.absoluteString,
             "http://10.0.0.7:54593/simulators/01D1D359/screenshot.jpg?t=42",
+        )
+    }
+
+    /// A CARD's capture and a PASTEBOARD capture are the same route with different budgets, and the
+    /// full-resolution one must keep building the URL it always did — the scale and quality flags are
+    /// omitted at their defaults rather than spelled out as `scale=1`.
+    func testAThumbnailAsksForTheServersDownscaleAndAFullCaptureAsksForNothing() {
+        XCTAssertEqual(
+            SimulatorEndpoints.screenshot(
+                host: "h", port: 1, udid: "u", nonce: 42,
+                scale: SimulatorControlClient.thumbnailScale,
+                quality: SimulatorControlClient.thumbnailQuality,
+            )?.absoluteString,
+            "http://h:1/simulators/u/screenshot.jpg?t=42&scale=6&quality=0.5",
+        )
+        XCTAssertEqual(
+            SimulatorEndpoints.screenshot(host: "h", port: 1, udid: "u", nonce: 42, scale: 1)?
+                .absoluteString,
+            "http://h:1/simulators/u/screenshot.jpg?t=42",
         )
     }
 
