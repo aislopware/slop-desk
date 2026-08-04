@@ -13,8 +13,9 @@ struct PlateIconButton: View {
     var size: CGFloat = Slate.Metric.iconSize
     var plate: CGFloat = Slate.Metric.plate
     /// A LATCHED state — the thing this button turns on is currently on. Distinct from hover, which
-    /// is about the pointer: an active plate keeps its fill with the pointer elsewhere, and inks its
-    /// glyph in the accent so the state survives on a theme whose hover tint is faint.
+    /// is about the pointer: an active plate keeps its fill with the pointer elsewhere, and draws its
+    /// glyph in the primary ink at a heavier weight so the state survives on a theme whose hover tint
+    /// is faint.
     var active = false
     var action: () -> Void = {}
 
@@ -25,12 +26,18 @@ struct PlateIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            // MEDIUM, matching ``SlatePlateButton`` — the two plate idioms drew the same glyphs at
-            // two weights, and at 13pt an SF Symbol in the regular weight goes wispy against a light
-            // theme's paper. One weight, so a plate is a plate wherever it is mounted.
+            // MEDIUM at rest, matching ``SlatePlateButton`` — the two plate idioms drew the same
+            // glyphs at two weights, and at 13pt an SF Symbol in the regular weight goes wispy
+            // against a light theme's paper. One weight, so a plate is a plate wherever it is
+            // mounted; SEMIBOLD is the one step above it, and it means latched.
+            //
+            // Latched is INK AND WEIGHT, never the accent (user-directed 2026-08-04). A blue glyph
+            // is a hue carrying state, which is the pattern this app reversed on 07-30 and again
+            // across the simulator panel; primary ink one weight up says the same thing in the two
+            // channels that work on any theme, and reads as "on" rather than as "special".
             Image(systemSymbol: symbol)
-                .font(.system(size: size, weight: .medium))
-                .foregroundStyle(active ? Slate.State.accent : Slate.Text.icon)
+                .font(.system(size: size, weight: active ? .semibold : .medium))
+                .foregroundStyle(active ? Slate.Text.primary : Slate.Text.icon)
                 .frame(width: plate, height: plate)
                 .background(background, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)

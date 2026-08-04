@@ -46,12 +46,22 @@ struct SimulatorDeviceHeader: View {
             PlateIconButton(symbol: .chevronLeft) { onBack() }
                 .help("All Devices")
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: Slate.Metric.space2) {
+                HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
                     Text(device.name)
                         .font(.system(size: Slate.Typeface.title, weight: .semibold))
                         .foregroundStyle(Slate.Text.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    // The runtime rides the TITLE, not the facts line: it is half of what names a
+                    // device — two iPhone 17 Pros differ by nothing else — and a caption reading
+                    // "iPhone 17 Pro · iOS 26.5" is how every simulator UI writes it. On the facts
+                    // line it was one dot-separated figure among four, which is where the thing you
+                    // are actually looking for goes to hide.
+                    Text(device.runtime)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.tertiary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     Spacer(minLength: 0)
                     state
                 }
@@ -61,12 +71,11 @@ struct SimulatorDeviceHeader: View {
         .animation(Slate.Anim.smallFade, value: isStreaming)
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
+        // NO RULE UNDER IT (user-directed 2026-08-04). The stage below opens on `face`, one step up
+        // in light, and that tone change IS the edge — MERIDIAN L5. The hairline was a second rule
+        // landing a few points under the tab strip's, which is what made the top of the panel read
+        // as a stack of bands rather than as a caption over a device.
         .background(Slate.Surface.ground)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Slate.Line.divider)
-                .frame(height: Slate.Metric.hairline)
-        }
     }
 
     /// ONLY THE ABNORMAL STATE, and without hue (user-directed 2026-08-04). The first cut lit a green
@@ -88,23 +97,25 @@ struct SimulatorDeviceHeader: View {
         }
     }
 
-    /// Ordered by how often it is the thing being checked. The runtime first — the usual reason two
-    /// rows look identical — then the pixel size, then the short UDID, which is what every other
-    /// tool wants pasted into it. Orientation and position appear only when they have something to
-    /// say: a portrait device and a device using live GPS are the ordinary case, and printing them
-    /// would spend the line's width on the absence of news.
+    /// Ordered by how often it is the thing being checked: the pixel size, then the short UDID,
+    /// which is what every other tool wants pasted into it. Orientation and position appear only
+    /// when they have something to say — a portrait device and a device using live GPS are the
+    /// ordinary case, and printing them would spend the line's width on the absence of news.
     private var facts: [SlateFact] {
-        var facts = [SlateFact("Runtime", device.runtime, tint: Slate.Text.secondary)]
+        // The runtime is NOT here — it sits beside the name, where it names the device.
+        var facts: [SlateFact] = []
         if let resolution {
             facts.append(SlateFact(
                 "Resolution", Self.pixels(resolution),
-                tint: Slate.Text.tertiary, isMeasured: true,
+                tint: Slate.Text.secondary, isMeasured: true,
             ))
         }
         if orientation != .portrait {
+            // Unlabelled: "Landscape Left" names itself, and it prints at all only because the
+            // device is not upright.
             facts.append(SlateFact(
                 "Orientation", Self.title(for: orientation), copies: orientation.wireValue,
-                tint: Slate.Text.tertiary,
+                tint: Slate.Text.tertiary, showsLabel: false,
             ))
         }
         if let pinnedLocation {
@@ -112,9 +123,11 @@ struct SimulatorDeviceHeader: View {
             // the device is lying about where it is, and the toolbar plate that pinned it is latched
             // in the accent six points below — two accents for one state inside one band is the
             // colour noise this header just lost its status dot over.
+            // "Simulated Location" is three words wide in a column that has none to spare, and the
+            // shorter label the toolbar plate already uses does the naming.
             facts.append(SlateFact(
                 "Simulated Location", pinnedLocation.readout,
-                tint: Slate.Text.secondary, isMeasured: true,
+                tint: Slate.Text.secondary, isMeasured: true, showsLabel: false,
             ))
         }
         // The UDID last and SHORT: the full value is 36 characters and would own the line, but the

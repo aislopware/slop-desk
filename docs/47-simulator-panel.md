@@ -252,6 +252,7 @@ Panel-wide, user-directed 2026-08-04, after four surfaces broke it independently
 | List: booted device's family glyph in the accent | booted = primary ink at medium weight, shut down = tertiary |
 | Console: `info` process names in green | grey; only `error`/`fault` are inked |
 | Stage: success banner ringed in green | ringed in the neutral active border; only a failure is red |
+| Any latched `PlateIconButton` glyph in the accent | primary ink one weight up (`.semibold`) — app-wide, not just here |
 
 The rule follows the 07-30 round that reversed hue-as-status across the workspace, and the two before
 it that deleted `ConnectionStatusPill` and rejected outcome dots. A live mirror is its own evidence —
@@ -260,10 +261,37 @@ rectangle and a black screenshot look identical. Colour spent on the ordinary ca
 stop reading the panel's colours at all, which is what made the handful of red lines the console
 exists to surface no easier to find than the hundreds of green ones around them.
 
-The one colour left at rest is the accent on a **latched plate** (Follow, console open, location
-pinned) — that is the app-wide "this control is on", not a status. The header's pinned-position fact
-is deliberately NOT accented for the same reason: it appears only when a position is pinned, so its
-presence already carries the state, and the plate that pinned it is lit six points below.
+**No colour is left at rest.** A latched plate was the last holdout — it lit its glyph in the accent
+— and that went too: latched is now primary ink at `.semibold` on a raised fill, three non-hue
+channels for one state. The header's pinned-position fact is unaccented for the same reason: it
+appears only when a position is pinned, so its presence already carries the state.
+
+### One rule across the top, not two
+
+The panel's top used to stack two hairlines a few points apart — the tab strip's, then the device
+header's — and the head of the column read as a pile of bands. The **header's** rule is the one that
+went (user-directed 2026-08-04): the stage below it opens on `face`, one step up in light, and that
+tone change IS the edge (MERIDIAN L5).
+
+The **strip's** rule stays, for every surface. A first pass made it conditional and that was wrong:
+the tab row is chrome that outranks whatever it switches between, and chrome without an edge floats.
+
+What the top bar looks like now, which is the shape of the reference design it was measured against:
+
+```
+[ ▤  ▣ Simulators  ▭ ]                    ↻  ▤     ← tab strip, one hairline under it
+ ‹  iPhone 17 Pro  iOS 26.5                        ← name (title rung) + runtime (grey)
+    Resolution 1206 × 2622 · UDID 01D1D359         ← labelled facts, grey label + brighter value
+────────────────────────────────────────────       ← no rule: `face` starts, and the tone is the edge
+```
+
+Two changes make that read as designed rather than generated. The runtime moved **out of the facts
+line and up beside the name** — it is half of what names a device, since two iPhone 17 Pros differ by
+nothing else, and among four dot-separated figures it was where the thing you were looking for went
+to hide. And every fact now **draws its label** (`SlateFact.showsLabel`): `1206 × 2622 · 01D1D359` is
+a riddle at rest, correct and unreadable. Facts that appear only when abnormal — orientation, a
+pinned position — opt out, because their presence is already the news and the width belongs to the
+facts that are always there.
 
 Pinned by `SimulatorDeviceTests` — the console and the test read the same `tint(for:)`, so the
 rendered ink cannot drift from the rule.
@@ -339,6 +367,13 @@ rendered ink cannot drift from the rule.
   the header prints beyond them has to come from somewhere that actually measured it — the resolution
   from the decoder's format description, the position from the call that succeeded. A "booted N s"
   synthesized from first sighting reads as fact and is wrong after every client restart.
+- **`app-switcher` is a TOGGLE, and it is silent when there is nothing to show.** Measured
+  2026-08-04 against a booted iPhone 17 Pro: press once from an app or the home screen and the card
+  stack appears; press again and it dismisses into the front app. `swipe-to-app-switcher` behaves
+  identically — both are the swipe-up-and-hold gesture, so neither is an idempotent "show". On a
+  freshly booted device with nothing backgrounded, the verb is accepted, returns no error on the
+  socket, and changes nothing on screen, exactly like the hardware. Reported as a broken button; it
+  is not one, and the tooltip now says "press again to dismiss" rather than promising a state.
 - **`location` clears with a DELETE**, like `status-bar`. There is no `{clear:true}` and an empty POST
   is a 400 — a clear spelled as a POST fails rather than no-ops.
 - **`SimulatorBezelView`/`SimulatorBareScreen` declare `onContentSize` AFTER `send`.** Swift's
@@ -380,7 +415,7 @@ Two `Slate` components were added for this panel and belong to the whole system,
 | File | Role |
 | --- | --- |
 | `DesignSystem/SlatePlateGroup.swift` | the tray that groups related plates into one instrument — a shared fill, which is a stronger grouping signal than a hairline. Sets `slateOnPlateTray`, which lifts a member plate's hover and latched fills a rung so they stay visible against it |
-| `DesignSystem/SlateFactLine.swift` | a run of measured facts: figures in the instrument voice, named values in the system face, a middle dot between, and each fact separately hoverable and copyable |
+| `DesignSystem/SlateFactLine.swift` | a run of measured facts: a drawn grey label ahead of each value, figures in the instrument voice, named values in the system face, a middle dot between, and each fact separately hoverable and copyable |
 
 `PlateIconButton` also gained the `.medium` glyph weight `SlatePlateButton` already used — the two
 plate idioms were drawing the same symbols at two weights, and at 13pt a regular-weight SF Symbol goes

@@ -87,6 +87,11 @@ struct CodeSidebarColumn: View {
             // split divider carries (batch 12's one visual language for seams). Without it the
             // ground band ends in an abrupt tone change against the workbench's own tab strip,
             // two mismatched grays stacked with no rule between them.
+            //
+            // It stays for EVERY surface (user-directed 2026-08-04, after a round that made it
+            // conditional): the tab row is chrome that outranks whatever it switches between, and
+            // chrome without an edge floats. The stacked-hairline complaint it was meant to fix
+            // belonged to the SECOND rule — the device header's — which is the one that went.
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             // A bare switch: the surfaces carry no animation of their own — whatever motion the
             // swap has rides the `selectSurface` transaction, exactly like the pre-removal

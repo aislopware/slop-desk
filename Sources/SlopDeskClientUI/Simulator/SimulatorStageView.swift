@@ -146,8 +146,13 @@ struct SimulatorStageView: View {
             SlatePlateGroup {
                 PlateIconButton(symbol: .house) { model.send(.button("home")) }
                     .help("Home")
+                // A TOGGLE, and the tooltip says so. Measured 2026-08-04 against a booted device:
+                // the verb is the swipe-up-and-hold gesture, so it opens the card stack from an app
+                // or the home screen and DISMISSES it when the stack is already up — and on a device
+                // with nothing backgrounded it does nothing visible, exactly like the hardware.
+                // `swipe-to-app-switcher` behaves identically; neither is an idempotent "show".
                 PlateIconButton(symbol: .squareOnSquare) { model.send(.button("app-switcher")) }
-                    .help("App Switcher")
+                    .help("App Switcher — press again to dismiss")
                 // The shade, which a device only has as an edge swipe and a mouse therefore cannot
                 // reach: the drag has to START outside the frame and end inside it, and a press that
                 // begins off the screen is a press this panel never sees. Control Centre has no
