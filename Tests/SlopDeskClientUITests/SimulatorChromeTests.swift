@@ -140,6 +140,14 @@ final class SimulatorChromeTests: XCTestCase {
         XCTAssertEqual(Set(ranks).count, ranks.count)
     }
 
+    func testEveryFamilyDrawsItsOwnShape() {
+        // `SimulatorFamilyMark` is on every row and every card so the machine can be told apart
+        // without reading the name. Two families sharing a symbol would silently undo that — the
+        // reader would see one shape and believe it means one thing.
+        let symbols = SimulatorDeviceKind.allCases.map(\.symbol)
+        XCTAssertEqual(Set(symbols).count, symbols.count)
+    }
+
     // MARK: Orientation
 
     func testAQuarterTurnCyclesForeverInBothDirections() {

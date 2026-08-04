@@ -103,6 +103,11 @@ struct SimulatorRunningCard: View {
 
     private var caption: some View {
         HStack(spacing: Slate.Metric.space1) {
+            // The same family mark the rows carry. The picture above it already says iPad or iPhone
+            // louder than a 13pt symbol can — but a card and a row for the same device should read
+            // the same way, and for the second between a boot landing and the first capture the
+            // placeholder is the only thing above this line.
+            SimulatorFamilyMark(device: device)
             Text(device.name)
                 .font(.system(size: Slate.Typeface.base, weight: .medium))
                 .foregroundStyle(Slate.Text.primary)

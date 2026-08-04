@@ -34,11 +34,14 @@
 // column of a dozen identical rings down the trailing edge, which is texture, not twelve verbs
 // (user-directed 2026-08-04).
 //
-// A ROW NEVER REPEATS WHAT ITS HEADING ALREADY SAID: the runtime is lifted into the heading when
-// every member shares it, and under `IPHONE` a column of iPhone glyphs is the same fact stated eleven
-// times, in the dimmest ink on the surface, along the edge the eye uses to find the names. The family
-// glyph used to be drawn under RUNNING, the one group not cut by family; the cards retired it, since
-// a picture of an iPad already says iPad louder than a 13pt symbol can.
+// A ROW NEVER REPEATS WHAT ITS HEADING ALREADY SAID — but a heading in a GRID does not reach every
+// row it names. The runtime is still lifted into the heading when every member shares it, and that
+// rule is unchanged. The family glyph is a different case now: in a single column, `IPAD` sat
+// directly above every row under it and a glyph on each was the same word restated eleven times. In
+// three columns the last row of the second grid line is most of a panel across and two lines down
+// from that heading, and the eye arriving at it has nothing but the name. So the glyph is back, on
+// every row and on every card — one shape per family, drawn in the icon ink so a column of them
+// sorts the list without competing with the names (user-directed 2026-08-04).
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
@@ -73,6 +76,28 @@ struct SimulatorListSection: Identifiable {
     /// This section's rows, named by section — the value the list's reflow watches. Section-qualified
     /// because the move a boot makes IS between sections, and a plain list of udids would not see it.
     var rowIdentities: [String] { devices.map { "\(title)/\($0.udid)" } }
+}
+
+/// The device family as a SHAPE, so the kind of machine is answered without reading a word
+/// (user-directed 2026-08-04). Shared by the rows and the cards so one device reads the same in both.
+///
+/// One glyph per family and no finer: SF Symbols has a phone, a pad, a watch, a television and a
+/// visor, and nothing that tells a 17 Pro from a 17 Pro Max. Faking that difference by scaling the
+/// symbol a point or two would be noise wearing the costume of information — the size *is* the thing
+/// the name says, and the name is right beside it.
+///
+/// Drawn in the ICON ink rather than the primary one. Every row carries this, so at full contrast a
+/// column of them is a rule down the leading edge competing with the names they exist to help find;
+/// in the dimmest ink they stop being legible at 13pt, which defeats the point of having them.
+struct SimulatorFamilyMark: View {
+    let device: SimulatorDevice
+
+    var body: some View {
+        Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
+            .font(.system(size: Slate.Typeface.body, weight: .medium))
+            .foregroundStyle(Slate.Text.icon)
+            .frame(width: Slate.Metric.iconSize)
+    }
 }
 
 struct SimulatorDeviceList: View {
@@ -259,9 +284,10 @@ struct SimulatorDeviceList: View {
     /// running it is the same click as that card's own stop button under a longer name.
     private func heading(_ section: SimulatorListSection) -> some View {
         // Nudged onto the ROWS' left rail. The shared header insets by `space2` and a list row by
-        // `space3`; with the family glyph gone the row's title starts the run of text this heading
-        // names, and four points of disagreement between two things meant to line up is the kind of
-        // thing that reads as "off" without anyone locating why.
+        // `space3`, and four points of disagreement between two things meant to line up is the kind
+        // of thing that reads as "off" without anyone locating why. The rail lands on the family
+        // glyph, which is where a section header belongs: the glyph column is the row's left edge,
+        // and a heading indented past it would hang in the middle of its own group.
         SlateSectionHeader(section.title, caption: section.runtime) {
             if section.isRunning, section.devices.count > 1 {
                 SlatePlateButton(
@@ -284,6 +310,7 @@ struct SimulatorDeviceList: View {
             // A shut-down device has no screen, so its row boots it — doing nothing on a click is the
             // behaviour that made the previous revision feel broken.
             onTap: { open(device) },
+            leading: { SimulatorFamilyMark(device: device) },
             title: {
                 Text(device.name)
                     .font(.system(size: Slate.Typeface.base))

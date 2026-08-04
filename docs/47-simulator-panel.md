@@ -324,14 +324,10 @@ would stretch a lone running device into one 700pt card with a 92pt phone floati
 one. `Shut Down All` rides the RUNNING heading's accessory slot, and only once more than one device
 is up — with one running it is the same click as that card's own stop button under a longer name.
 
-*A row never repeats what its heading already said* (user-directed 2026-08-04). Two columns were
-saying it twice, and repetition down a scanned column is what made the list read as generated:
+*A row repeats its heading only where the heading cannot reach it* (user-directed 2026-08-04). Text
+repeated down a scanned column is what made the list read as generated — but a heading over a **grid**
+does not stand above every row it names:
 
-- **The family glyph is gone with the rows it qualified.** It was drawn only under RUNNING, the one
-  group not cut by family — and RUNNING is no longer a group of rows. A picture of an iPad says iPad
-  more plainly than a 13pt symbol beside a name. Under `IPHONE` it never was drawn: a phone glyph on
-  every row is a thirty-times-repeated restatement of the word directly above it, and it pushed the
-  names off the left rail the headings sit on.
 - **The runtime is said once per group, in the heading's own cluster.** `section` computes the runtime
   every member shares and hangs it on the **heading** as `SlateSectionHeader(caption:)` — immediately
   after the title, one ink quieter, same engraved register. It is deliberately not the header's
@@ -340,6 +336,18 @@ saying it twice, and repetition down a scanned column is what made the list read
   whose runtime differs is the only one that still prints its own. An empty runtime counts as a
   disagreement rather than as a shared value, so a server that omits the field cannot make a heading
   claim a runtime nobody has.
+- **The family glyph is back, on every row and every card** — a reversal of the round above, and the
+  reason is the grid it now sits in (user-directed 2026-08-04). `SimulatorFamilyMark` reads
+  `SimulatorDeviceKind.infer`'s symbol and draws it in `Slate.Text.icon` at the row's leading slot.
+  When rows were one per line the heading was always a short glance up and the glyph was a
+  thirty-times restatement of it; in three columns the last cell of a grid's second line is most of a
+  panel across and two lines down from the word `IPHONE`, so the heading has stopped reaching it. A
+  shape is also read before a word is: the mark is what makes a scan *not* a read, which is the
+  point. One glyph per family and no finer — SF Symbols has nothing that tells a 17 Pro from a 17 Pro
+  Max, so a per-model silhouette would draw different devices as each other, the same failure mode as
+  the `definition.json` size column. Cards carry it too, where the picture above already says iPad
+  louder than a 13pt symbol can: a card and a row for one device should read the same way, and in the
+  second between a boot landing and the first capture the placeholder is all there is above that line.
 
 *State rides weight, presence stays constant.* A card's name is one weight up (`.medium` against the
 rows' `.regular`) — the same non-hue channel the rest of the panel uses, and now doubled by the fact
