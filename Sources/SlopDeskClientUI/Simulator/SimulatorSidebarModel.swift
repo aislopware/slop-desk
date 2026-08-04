@@ -179,7 +179,13 @@ final class SimulatorSidebarModel {
         ensure: () async -> MetadataCodec.ServiceEndpoint?,
         interval: Duration = .milliseconds(900),
     ) async {
-        phase = .starting
+        // A KNOWN-GOOD address survives a restart. This loop restarts every time the surface is
+        // mounted — leaving the tab and coming back, or reopening the collapsed panel — and resetting
+        // to `.starting` unconditionally replaced the whole surface with "Starting simulator server…"
+        // for one round-trip on every return, over a server that had never stopped running. The first
+        // ensure round overwrites this in either direction, so a host that really did go away is
+        // still one round-trip from saying so.
+        if case .ready = phase {} else { phase = .starting }
         while !Task.isCancelled {
             let endpoint = await ensure()
             guard !Task.isCancelled else { return }
@@ -368,6 +374,45 @@ final class SimulatorSidebarModel {
     /// Send one input envelope to the live stream. No-op when nothing is selected.
     func send(_ envelope: SimulatorInputEnvelope) {
         stream?.send(envelope)
+    }
+
+    // MARK: Parking
+
+    /// Drop the live sockets while KEEPING the selection — the surface has gone off screen (another
+    /// panel tab, or the whole right column collapsed) and nobody is looking at this device.
+    ///
+    /// MEASURED 2026-08-04, with a device open and the panel switched to its other tab: both
+    /// websockets stayed up and the server kept encoding. 33 KB/s on the wire for a device at REST,
+    /// 5.4% of a core on the client decoding into a layer that is no longer in any window, and 2.3%
+    /// on the host producing it — and every one of those is the FLOOR, since a device being driven
+    /// was measured at 2.1 Mbps. The device polls stopped on their own, because their `.task`s are
+    /// cancelled with the view; the stream did not, because the model that owns it is `@State` on the
+    /// column and survives the unmount by design. Nothing here was a leak — it was a socket doing
+    /// exactly what it was told, for a viewer that had left.
+    ///
+    /// The console's socket goes with it, and matters more per byte: `log stream` is a CHILD PROCESS
+    /// on the host per subscriber.
+    ///
+    /// The last keyframe stays in the sink on purpose. ``resume`` reconnects and the server's first
+    /// IDR lands 0.09 s later (measured), so coming back to the tab shows the device as it was left
+    /// rather than a grey veil that resolves a moment after the eye has already read it.
+    func park() {
+        stream?.disconnect()
+        stream = nil
+        settleStream()
+        logStream?.disconnect()
+        logStream = nil
+        isLogStarted = false
+    }
+
+    /// Re-open what ``park`` dropped. Idempotent by the `stream == nil` guard: an appearance with a
+    /// live socket, or with no device selected, does nothing at all.
+    func resume() {
+        guard stream == nil, let udid = selection, case let .ready(host, port) = phase else { return }
+        openStream(udid, host: host, port: port)
+        // Latched consoles come back with the device, for the same reason they survive a device
+        // switch: someone who left the drawer open meant to keep reading it.
+        if isConsoleOpen { openConsole() }
     }
 
     // MARK: Device controls

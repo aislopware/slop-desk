@@ -349,6 +349,13 @@ struct CodeSidebarColumn: View {
             guard case .ready = simulatorModel.phase else { return }
             await simulatorModel.watchDevices()
         }
+        // The two `.task`s above stop themselves when this surface goes away; the STREAM does not,
+        // because the model holding it is `@State` on the column and outlives the unmount by design.
+        // Left alone it kept a host encoder and two websockets running for a panel nobody could see —
+        // see ``SimulatorSidebarModel/park()`` for what that cost. Appearing re-opens it, which is
+        // also what makes coming back to the tab land on the device rather than on the list.
+        .onAppear { simulatorModel.resume() }
+        .onDisappear { simulatorModel.park() }
     }
 
     /// Changes when the server's ADDRESS does, not merely when the phase object is rebuilt — so a

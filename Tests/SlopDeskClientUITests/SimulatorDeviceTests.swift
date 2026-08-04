@@ -170,8 +170,39 @@ final class SimulatorDeviceTests: XCTestCase {
     }
 
     private func showsRuntime(_ entry: SimulatorListEntry) -> Bool? {
-        guard case let .device(_, _, showsRuntime) = entry else { return nil }
+        guard case let .device(_, _, showsRuntime, _) = entry else { return nil }
         return showsRuntime
+    }
+
+    private func showsFamily(_ entry: SimulatorListEntry) -> Bool? {
+        guard case let .device(_, _, _, showsFamily) = entry else { return nil }
+        return showsFamily
+    }
+
+    /// The family glyph is drawn where — and only where — the heading has not already said the
+    /// family. Every group but RUNNING is cut BY family, so a glyph under one is the same fact
+    /// repeated down the whole column in the dimmest ink on the surface.
+    func testOnlyTheRunningGroupDrawsAFamilyGlyph() {
+        let entries = SimulatorDeviceList.entries(for: [
+            device("iPhone 17 Pro", booted: true),
+            device("iPad Air 11-inch (M4)", booted: true),
+            device("iPhone Air", booted: false),
+            device("iPad (A16)", booted: false),
+        ])
+        var running: [Bool] = []
+        var settled: [Bool] = []
+        var section = ""
+        for entry in entries {
+            switch entry {
+            case let .heading(title, _):
+                section = title
+            case let .device(_, _, _, showsFamily):
+                if section == SimulatorDeviceList.runningTitle { running.append(showsFamily) }
+                else { settled.append(showsFamily) }
+            }
+        }
+        XCTAssertEqual(running, [true, true], "RUNNING mixes families, so the glyph earns its column")
+        XCTAssertEqual(settled, [false, false], "a family group has already said which family it is")
     }
 
     // MARK: Colour means something is wrong

@@ -14,8 +14,17 @@
 // a list that reorders itself under the cursor is the opposite of what someone clicking Boot wants.
 //
 // EVERY ROW CARRIES ITS ACTION, at rest, not on hover. The previous revision hid boot and shutdown
-// behind the pointer: discoverable only by accident, and impossible to see the state of. The glyph is
-// the family, the tint is the state, and the trailing control is always the one verb that applies.
+// behind the pointer: discoverable only by accident, and impossible to see the state of. What the
+// pointer changes is the action's WEIGHT, not its presence — at rest it is a small tertiary glyph, and
+// the hovered row's verb steps up to the primary ink. Drawn at full strength on every row it became a
+// column of a dozen identical rings down the trailing edge, which is texture, not twelve verbs
+// (user-directed 2026-08-04).
+//
+// A ROW NEVER REPEATS WHAT ITS HEADING ALREADY SAID. One rule, applied twice: the runtime is lifted
+// into the heading when every member shares it, and the family glyph is drawn only under RUNNING —
+// the one group whose members are NOT all the same kind. Under `IPHONE` a column of iPhone glyphs is
+// the same fact stated eleven times, in the dimmest ink on the surface, along the edge the eye uses
+// to find the names.
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
@@ -35,14 +44,14 @@ import SwiftUI
 enum SimulatorListEntry: Identifiable {
     /// A group's title, plus the runtime its members SHARE — `nil` when they do not all agree.
     case heading(String, runtime: String?)
-    /// A device under one heading. `showsRuntime` is false when the heading above it already says
-    /// the same thing.
-    case device(SimulatorDevice, section: String, showsRuntime: Bool)
+    /// A device under one heading. `showsRuntime` and `showsFamily` are false when the heading above
+    /// it already says the same thing.
+    case device(SimulatorDevice, section: String, showsRuntime: Bool, showsFamily: Bool)
 
     var id: String {
         switch self {
         case let .heading(title, _): "heading/\(title)"
-        case let .device(device, section, _): "\(section)/\(device.udid)"
+        case let .device(device, section, _, _): "\(section)/\(device.udid)"
         }
     }
 }
@@ -92,9 +101,15 @@ struct SimulatorDeviceList: View {
     /// the ONLY row carrying one, which is exactly the row worth noticing.
     static func group(_ title: String, _ members: [SimulatorDevice]) -> [SimulatorListEntry] {
         let shared = sharedRuntime(of: members)
+        // RUNNING is the one group not cut by family, so it is the one group where the leading glyph
+        // says something its heading did not.
+        let mixedFamilies = title == runningTitle
         return [.heading(title, runtime: shared)]
             + members.map {
-                .device($0, section: title, showsRuntime: $0.runtime != shared)
+                .device(
+                    $0, section: title, showsRuntime: $0.runtime != shared,
+                    showsFamily: mixedFamilies,
+                )
             }
     }
 
@@ -168,8 +183,10 @@ struct SimulatorDeviceList: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Self.entries(for: matches)) { entry in
                     switch entry {
-                    case let .heading(title, runtime): heading(title, runtime: runtime)
-                    case let .device(device, _, showsRuntime): row(device, showsRuntime: showsRuntime)
+                    case let .heading(title, runtime):
+                        heading(title, runtime: runtime)
+                    case let .device(device, _, showsRuntime, showsFamily):
+                        row(device, showsRuntime: showsRuntime, showsFamily: showsFamily)
                     }
                 }
             }
@@ -178,31 +195,36 @@ struct SimulatorDeviceList: View {
         }
     }
 
-    /// The group's title, with its shared runtime trailing in the same engraved register. One caps
-    /// label and one figure, not a label and a sentence: the heading is taxonomy, so the runtime
-    /// joins it as taxonomy rather than arriving in the prose face the rows below use.
+    /// The group's title, with its shared runtime as the heading's own CAPTION rather than as a
+    /// trailing accessory. One caps label and one figure, not a label and a sentence: the heading is
+    /// taxonomy, so the runtime joins it as taxonomy rather than arriving in the prose face the rows
+    /// below use — and beside the word it qualifies rather than at the panel's far edge, which at
+    /// this surface's width is most of a screen away from it.
     private func heading(_ title: String, runtime: String?) -> some View {
-        SlateSectionHeader(title) {
-            if let runtime {
-                Text(runtime)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular))
-                    .foregroundStyle(Slate.Text.tertiary)
-                    .lineLimit(1)
-            }
-        }
+        // Nudged onto the ROWS' left rail. The shared header insets by `space2` and a list row by
+        // `space3`; with the family glyph gone the row's title starts the run of text this heading
+        // names, and four points of disagreement between two things meant to line up is the kind of
+        // thing that reads as "off" without anyone locating why.
+        SlateSectionHeader(title, caption: runtime)
+            .padding(.leading, Slate.Metric.space1)
     }
 
-    private func row(_ device: SimulatorDevice, showsRuntime: Bool) -> some View {
+    private func row(
+        _ device: SimulatorDevice, showsRuntime: Bool, showsFamily: Bool,
+    ) -> some View {
         SlateListRow(
             active: model.selection == device.udid,
             // Opening the screen is the row's gesture; boot and shutdown are the explicit control. A
             // shut-down device has no screen, so its row boots it instead — doing nothing on a click
             // is the behaviour that made the previous revision feel broken.
             onTap: { open(device) },
-            leading: { mark(device) },
+            leading: { mark(device, showsFamily: showsFamily) },
             title: {
+                // A booted device carries its name one weight up. The heading it sorts under already
+                // says it is running; this is what keeps that legible once the eye is down among the
+                // rows and the heading has scrolled out of the corner of it.
                 Text(device.name)
-                    .font(.system(size: Slate.Typeface.base))
+                    .font(.system(size: Slate.Typeface.base, weight: device.isBooted ? .medium : .regular))
                     .foregroundStyle(Slate.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -211,7 +233,7 @@ struct SimulatorDeviceList: View {
             // overlay is for an affordance the meta fades out to make room for, and this action
             // never fades. Laid out side by side they cannot collide — the first cut of this row put
             // the button over the runtime and drew a play glyph through the word "iOS".
-            titleTrailing: { _ in
+            titleTrailing: { hovering in
                 HStack(spacing: Slate.Metric.space1) {
                     if let subtitle = subtitle(for: device, showsRuntime: showsRuntime) {
                         Text(subtitle)
@@ -220,7 +242,7 @@ struct SimulatorDeviceList: View {
                             .lineLimit(1)
                             .layoutPriority(-1)
                     }
-                    action(for: device)
+                    action(for: device, hovering: hovering)
                 }
             },
             trailingOverlay: { _ in EmptyView() },
@@ -240,40 +262,48 @@ struct SimulatorDeviceList: View {
         return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
     }
 
-    /// The device family as the row's leading glyph. The SHAPE says iPhone or iPad; running-or-not
-    /// rides LUMINANCE — a booted device's glyph is inked and weighted up, a shut-down one recedes to
-    /// the tertiary grey the rest of its row already uses.
+    /// The device family as the row's leading glyph — drawn ONLY where the heading has not already
+    /// said it (see the file header). Under RUNNING the shape says iPhone or iPad; everywhere else
+    /// the slot collapses and the names take the section header's own left rail.
     ///
-    /// It used to say it in the accent, and that is the hue-as-state pattern this repo reversed on
-    /// 07-30: brighter and bolder, never a colour (user-directed 2026-08-04). Colour was also the
-    /// weakest of the three channels already carrying this — the RUNNING heading these rows sort
-    /// under, and the stop-versus-play control at the end of each one, both say it unambiguously,
-    /// while a tinted glyph at 13pt says it only to someone who knows what the tint means.
-    private func mark(_ device: SimulatorDevice) -> some View {
-        Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
-            .font(.system(size: Slate.Typeface.body, weight: device.isBooted ? .medium : .regular))
-            .foregroundStyle(device.isBooted ? Slate.Text.primary : Slate.Text.tertiary)
-            .frame(width: Slate.Metric.iconSize)
+    /// The glyph never says running-or-not in a HUE — that is the pattern this repo reversed on
+    /// 07-30, and this list has three stronger channels for it already: the heading the row sorts
+    /// under, the weight of its name, and the stop-versus-play verb at the end of it.
+    @ViewBuilder
+    private func mark(_ device: SimulatorDevice, showsFamily: Bool) -> some View {
+        if showsFamily {
+            Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
+                .font(.system(size: Slate.Typeface.body, weight: .medium))
+                .foregroundStyle(Slate.Text.primary)
+                .frame(width: Slate.Metric.iconSize)
+        }
     }
 
+    /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink, which
+    /// steps to the primary one while the pointer is anywhere on the row. Solid rather than the
+    /// enclosing `…Circle` pair — a ring at this size reads as a control chrome rather than as a
+    /// direction, and a dozen of them down the trailing edge read as a rule.
     @ViewBuilder
-    private func action(for device: SimulatorDevice) -> some View {
+    private func action(for device: SimulatorDevice, hovering: Bool) -> some View {
         if model.pending.contains(device.udid) {
             // The platform's indicator through `WorkingSpinner`, not `ProgressView`: a bare
             // `ProgressView` in a hosted column resolves the Aqua appearance and comes out dark grey
             // on a dark theme (see `StatusDot`'s header).
             WorkingSpinner()
                 .frame(width: Slate.Metric.heightControl, height: Slate.Metric.heightControl)
-        } else if device.isBooted {
-            PlateIconButton(symbol: .stopCircle, plate: Slate.Metric.heightControl) {
-                Task { await model.shutdown(device.udid) }
-            }
-            .help("Shut down \(device.name)")
         } else {
-            PlateIconButton(symbol: .playCircle, plate: Slate.Metric.heightControl) {
-                Task { await model.boot(device.udid) }
+            SlatePlateButton(
+                symbol: device.isBooted ? .stopFill : .playFill,
+                help: device.isBooted ? "Shut down \(device.name)" : "Boot \(device.name)",
+                size: Slate.Typeface.footnote,
+                plate: Slate.Metric.heightControl,
+                tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
+            ) {
+                Task {
+                    if device.isBooted { await model.shutdown(device.udid) }
+                    else { await model.boot(device.udid) }
+                }
             }
-            .help("Boot \(device.name)")
         }
     }
 

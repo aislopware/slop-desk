@@ -263,23 +263,39 @@ Rebuilt 2026-08-04 (user-directed: the list and the control surface were too spa
 
 **The list.** Running devices come first as one un-split group — a device that just booted must not
 slide under the cursor into a family heading. Everything else is grouped by family (iPhone, iPad,
-Watch, TV, Vision) in a fixed rank, so the order cannot reshuffle between polls. Each row carries its
-family glyph as the leading mark, the live state as a subtitle while it is in transition, and an
-**always-visible** trailing action (spinner while pending, stop when booted, play when not) — a
-hover-only control in a list you are scanning is a control you cannot find. Clicking a row boots a
-shut-down device and opens a booted one. The context menu carries Open / Boot / Shut Down plus Copy
-UDID and Copy Name.
+Watch, TV, Vision) in a fixed rank, so the order cannot reshuffle between polls. Each row carries the
+live state as a subtitle while it is in transition and an **always-visible** trailing action (spinner
+while pending, stop when booted, play when not) — a hover-only control in a list you are scanning is
+a control you cannot find. Clicking a row boots a shut-down device and opens a booted one. The
+context menu carries Open / Boot / Shut Down plus Copy UDID and Copy Name.
 
-*The runtime is said once per group.* `SimulatorListEntry.group` computes the runtime every member of
-a heading shares and hangs it on the **heading**; a row whose runtime differs is the only one that
-still prints its own. An empty runtime counts as a disagreement rather than as a shared value, so a
-server that omits the field cannot make a heading claim a runtime nobody has. Without this, a
-thirty-device list repeated `iOS 26.5` thirty times in the one column the eye scans for difference.
+*A row never repeats what its heading already said* (user-directed 2026-08-04). Two columns were
+saying it twice, and repetition down a scanned column is what made the list read as generated:
 
-**The stage.** Two lit surfaces, not four ruled bands: the header sits on `ground`, the device and
-the toolbar that drives it share one `face`, and the console drawer opens as a third with its own
-raised head. Four bands of equal tone read as a stack of unrelated strips; grouping the toolbar with
-the device says at a glance that the verbs act on the thing above them (MERIDIAN L5).
+- **The family glyph is drawn only under RUNNING.** RUNNING is the one group not cut by family, so it
+  is the one group where a leading mark carries information. Under `IPHONE` a phone glyph on every
+  row is a thirty-times-repeated restatement of the word directly above it — and worse, it pushed the
+  names off the left rail the headings sit on, so nothing in the column lined up.
+  `SimulatorListEntry.group` decides this once, per group, and `SimulatorDeviceTests` pins it.
+- **The runtime is said once per group, in the heading's own cluster.** `group` computes the runtime
+  every member shares and hangs it on the **heading** as `SlateSectionHeader(caption:)` — immediately
+  after the title, one ink quieter, same engraved register. It is deliberately not the header's
+  `accessory` slot: that slot is pinned to the far trailing edge where a *control* belongs, and at
+  panel width a qualifier sent there becomes a lone readout marooned across an empty rule. A row
+  whose runtime differs is the only one that still prints its own. An empty runtime counts as a
+  disagreement rather than as a shared value, so a server that omits the field cannot make a heading
+  claim a runtime nobody has.
+
+*State rides weight, presence stays constant.* The booted device's name is one weight up (`.medium`
+against `.regular`) — the same non-hue channel the rest of the panel uses. The play/stop action is
+always drawn, but at `Slate.Text.tertiary` until the row is hovered, when it goes to primary: the
+**weight** of the affordance changes on hover, never its presence. A control that appears on hover
+cannot be found by scanning; a control at full contrast on every row of a thirty-row list is thirty
+competing calls to action.
+
+**The stage.** Two lit surfaces, not a stack of ruled bands: one top bar on `ground`, the device
+alone on `face` below it, and the console drawer as a third with its own raised head. Bands of equal
+tone read as a stack of unrelated strips (MERIDIAN L5).
 
 *Identity* — `SimulatorDeviceHeader`: the back control (navigation belongs beside the device's name,
 not in the surface strip), the device name at the `title` rung — the one size in the panel that
@@ -300,6 +316,15 @@ left/right; Home and App Switcher (gestures with no hardware to click); copy scr
 status-bar toggle; then, right-aligned, the location popover and the console latch. Screenshots go to
 the **clipboard**, not to a file — the client app is sandboxed, and a screenshot's next stop is a
 message or a PR. Any file dropped on the stage is sent to `files`.
+
+They live **in the top bar**, right-aligned, as of 2026-08-04 (user-directed). Two problems went at
+once. The identity band was half empty at panel width — a name, a fact line, and then several hundred
+points of nothing out to the trailing edge — while the verbs sat in a strip along the stage floor,
+under the device they act on, in the reading order of a footer. Folding them into the bar spends the
+empty half on the controls and puts the verbs above the thing they drive. This is **not** the
+previously-rejected "give the toolbar its own band": no band is added, one is removed. The identity
+takes `layoutPriority(-1)` so the name truncates before any plate does — the verbs are fixed-size and
+a clipped name is still a name, while a clipped icon rail is a missing control.
 
 **Notification Centre and Lock were removed** (user-directed 2026-08-04). Both were there because the
 server offers the verb, which is not a reason. Neither is reached for while driving an app, and both
@@ -359,10 +384,10 @@ the tab row is chrome that outranks whatever it switches between, and chrome wit
 What the top bar looks like now, which is the shape of the reference design it was measured against:
 
 ```
-[ ▤  ▣ Simulators  ▭ ]                    ↻  ▤     ← tab strip, one hairline under it
- ‹  iPhone 17 Pro  iOS 26.5                        ← name (title rung) + runtime (grey)
-    Resolution 1206 × 2622 · UDID 01D1D359         ← labelled facts, grey label + brighter value
-────────────────────────────────────────────       ← no rule: `face` starts, and the tone is the edge
+[ ▤  ▣ Simulators  ▭ ]                              ↻  ▤   ← tab strip, one hairline under it
+ ‹  iPhone 17 Pro  iOS 26.5            ↺ ↻ | ⌂ ▤ | ⎘ ▦   ⌖ ▤
+    Resolution 1206 × 2622 · UDID 01D1D359          ← labelled facts, grey label + brighter value
+──────────────────────────────────────────────────────────  ← no rule: `face` starts; tone is the edge
 ```
 
 Two changes make that read as designed rather than generated. The runtime moved **out of the facts
@@ -429,6 +454,58 @@ condition that never expires. Both are fixed at the source; the header is facts 
 **The JPEG seed is not arrival.** Only `0x01`/`0x02`/`0x03` end the loading state. The seed is the
 still the server sends while its encoder starts, so counting it would let a stream that never encodes
 pass as live, wearing a screenshot as a disguise.
+
+---
+
+## A panel that is not on screen holds no sockets
+
+Measured 2026-08-04, host mac-studio ↔ client macbook-pro, device idle at the springboard:
+
+| with the Simulators tab hidden behind Files | before | after |
+| --- | --- | --- |
+| `baguette` TCP sockets to the client (`lsof -sTCP:ESTABLISHED`) | 2 (stream + log) | 0 |
+| egress on those sockets (`nettop`) | 33 KB/s | 0 |
+| client CPU | 5.4% of a core | idle |
+| host `baguette` CPU | 2.3% of a core | idle |
+
+Those are **floors**: a device at rest still re-encodes its idle screen, and a driven one was measured
+earlier in this document at 2.1 Mbps. The cost was paid for a surface nobody could see.
+
+The leak came from an asymmetry that is easy to rebuild: SwiftUI cancels a `.task` when its view
+unmounts, but `SimulatorSidebarModel` is `@State` on `CodeSidebarColumn` and **survives the unmount by
+design** — that is what keeps the selection and the poll cache warm across a tab switch. The polling
+tasks stopped on their own; the two websockets, owned by the surviving model, did not.
+
+So the model gets an explicit pair, driven from `.onAppear` / `.onDisappear` on `simulatorSurface`:
+
+- `park()` drops the stream and log connections and clears `isLogStarted`, **keeping** `selection`,
+  `isConsoleOpen` and the frame sink. The last keyframe stays in the sink on purpose — it is what
+  `resume()` hands a cold decoder so the stage comes back with a picture instead of black.
+- `resume()` re-dials the same device and, if the console was latched, its log socket. Idempotent by
+  a `stream == nil` guard, and a no-op with no selection or no `.ready` address.
+
+**A known-good address survives the remount.** `poll(...)` used to reset `phase` to `.starting`
+unconditionally, so every return to the tab replaced the whole surface with *Starting simulator
+server…* for one round-trip — a flash of a cold-start state on a server that had been up for hours.
+It now keeps a `.ready` phase and only re-announces starting when it does not have one.
+
+Pinned by four tests in `SimulatorSidebarModelTests` (both sockets dropped, device kept; console
+re-latched on return; `resume` idempotent and selection-gated; `.ready` survives a remount).
+
+### Two things that were measured and left alone
+
+Both looked like obvious wins and both were false. They are recorded so the next sweep does not spend
+the same hours:
+
+- **Per-frame `@Observable` writes are not rebuilding the panel.** The worry was that writing an
+  unchanged value (e.g. a resolution that has not moved) still wakes observers. It does not:
+  `withObservationTracking` fired **20/20** on genuine changes and **0/20** on same-value writes to an
+  `Equatable` property. A first probe reported 0 for both and was wrong — it re-armed tracking
+  asynchronously, so a tight write loop slipped past the scope entirely. Any future probe here needs a
+  fresh tracking scope per write plus a control arm that alternates values.
+- **Input encoding is not on the critical path.** The gesture envelope encoder costs **5.31 µs**; at
+  the 120 Hz ceiling of a trackpad that is **0.06% of a core**. Rewriting it buys nothing measurable
+  and the latency it would chase lives in the network and the server.
 
 ---
 
@@ -521,6 +598,11 @@ pass as live, wearing a screenshot as a disguise.
 - **`SimulatorBezelView`/`SimulatorBareScreen` declare `onContentSize` AFTER `send`.** Swift's
   trailing-closure forward scan takes the first unfilled function-typed parameter, so putting the size
   callback earlier silently rebinds every existing call site's gesture handler to it.
+  `SimulatorDeviceHeader` declares its `actions` view builder after `onBack` for the same reason.
+- **A `.task` dies with its view; a `@State` model does not.** Everything the surface owns through a
+  `.task` stops itself on unmount, so a socket held by the surviving model looks stopped and is not.
+  Anything long-lived that the panel opens needs an explicit counterpart in `park()`/`resume()` — see
+  *A panel that is not on screen holds no sockets* for what that cost while it was missing.
 
 ---
 
@@ -544,15 +626,15 @@ pass as live, wearing a screenshot as a disguise.
 | `Simulator/SimulatorFrameSink.swift` | the video path with SwiftUI taken out of it: direct delivery + cold-start replay |
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/pinch/edge/key mapping |
 | `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
-| `Simulator/SimulatorStageView.swift` | the streaming surface: header + device + toolbar + drawer + banner + drop target |
-| `Simulator/SimulatorDeviceHeader.swift` | what device this is: name, measured facts, back |
+| `Simulator/SimulatorStageView.swift` | the streaming surface: top bar + device + drawer + banner + drop target |
+| `Simulator/SimulatorDeviceHeader.swift` | the panel's one top bar: back, name, measured facts, and the verbs |
 | `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
 | `Simulator/SimulatorLogLine.swift` | pure: compact-line parse, log envelope decode, the level set |
 | `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorPlace.swift` | pure: coordinate parse / body / readout + the preset shortlist |
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
-| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console, the first-frame deadline |
+| `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream, the console, the first-frame deadline, `park`/`resume` |
 
 Two `Slate` components were added for this panel and belong to the whole system, not to it:
 

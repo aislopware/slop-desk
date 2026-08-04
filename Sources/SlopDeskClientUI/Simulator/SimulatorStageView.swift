@@ -5,18 +5,19 @@
 // picks a surface; this file owns everything inside the Simulators one, which is what keeps the
 // column readable as a switch rather than as a device panel with a code panel attached.
 //
-// FOUR BANDS, top to bottom: identity, device, verbs, output. The order is not decorative — it is
-// what makes a caption a caption and a drawer a drawer. The header names the thing the other three
-// bands are about, so it goes above them; the console is what the device just said, so it goes below
-// the device rather than beside it, and the tap-watch-read loop stays one column.
+// THREE BANDS, top to bottom: the top bar, the device, its output. The order is not decorative — it
+// is what makes a caption a caption and a drawer a drawer. The top bar names the thing the other two
+// are about and carries the verbs that act on it, so it goes above them; the console is what the
+// device just said, so it goes below the device rather than beside it, and the tap-watch-read loop
+// stays one column.
 //
-// TWO SURFACES, NOT FOUR (MERIDIAN L5, depth by light). The first cut painted every band the chrome
-// tone, which left the one lit, live thing in the panel sitting on exactly the same grey as the
-// buttons around it — a flat sheet with hairlines ruled across it. The device and its output are
-// CONTENT and take the lit `face`; the header is HOUSING and stays on `ground`. The toolbar is what
-// forced the decision: given a band of its own it would stripe the column (dim, lit, dim, lit), so
-// it lost its background entirely and became a rail of trays floating ON the stage — which is also
-// where a device's buttons belong, beside the device rather than in a separate strip about it.
+// TWO SURFACES (MERIDIAN L5, depth by light). The first cut painted every band the chrome tone, which
+// left the one lit, live thing in the panel sitting on exactly the same grey as the buttons around it
+// — a flat sheet with hairlines ruled across it. The device and its output are CONTENT and take the
+// lit `face`; the top bar is HOUSING and stays on `ground`. The verbs used to be a fourth band's
+// worth of trays floating on the stage, kept off `ground` so they would not stripe the column; they
+// now ride the top bar, which needs no new band and had a half-width of nothing in it (see
+// ``SimulatorDeviceHeader``). The stage under it is the device and nothing else.
 //
 // THE BODY OR A BARE RECT. With chrome loaded the stream is seated in the real device, side buttons
 // and all. Without it — still loading, or a model the server cannot describe — it falls back to the
@@ -24,10 +25,10 @@
 // until the artwork arrives would make a slow fetch look like a dead stream.
 //
 // THE TOOLBAR is the buttons the BODY cannot offer. Power, volume and the action button are physical
-// and live on the bezel where the eye already expects them; Home, the app switcher and the pull-down
-// shades are gestures with no hardware to click, and rotate, capture, the demo status bar, the
-// console and the simulated position are host-side settings. Splitting them that way is why the
-// toolbar is a strip rather than a palette.
+// and live on the bezel where the eye already expects them; Home and the app switcher are gestures
+// with no hardware to click, and rotate, capture, the demo status bar, the console and the simulated
+// position are host-side settings. Splitting them that way is why the toolbar is a strip rather than
+// a palette.
 //
 // DROP TO INSTALL. The server routes a dropped file by extension — an `.app`/`.ipa` is installed, an
 // image or video lands in Photos — so this side deliberately accepts any file and lets the server
@@ -49,18 +50,13 @@ struct SimulatorStageView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            // The STAGE: the device and the rail that drives it, on one lit surface. Grouped rather
-            // than stacked loose so the toolbar can sit on the same tone as the device it acts on —
-            // the thing that stops the column reading as four ruled bands.
-            VStack(spacing: 0) {
-                device
-                toolbar
-            }
-            .background(Slate.Surface.face)
-            .overlay { stageState }
-            .animation(Slate.Anim.smallFade, value: showsLoading)
-            .animation(Slate.Anim.smallFade, value: isStalled)
-            .task(id: model.isAwaitingStream) { await followLoading() }
+            // The STAGE: one lit surface with the device on it and nothing else.
+            device
+                .background(Slate.Surface.face)
+                .overlay { stageState }
+                .animation(Slate.Anim.smallFade, value: showsLoading)
+                .animation(Slate.Anim.smallFade, value: isStalled)
+                .task(id: model.isAwaitingStream) { await followLoading() }
             console
         }
         .overlay(alignment: .top) { banner }
@@ -84,6 +80,7 @@ struct SimulatorStageView: View {
                 orientation: model.orientation,
                 pinnedLocation: model.pinnedLocation,
                 onBack: { model.select(nil) },
+                actions: { toolbar },
             )
         }
     }
@@ -132,14 +129,26 @@ struct SimulatorStageView: View {
 
     /// Three trays and a trailing pair: turn it, drive it, capture it — then look at it. Ten loose
     /// plates in a row read as texture rather than as verbs, so each job takes a ``SlatePlateGroup``
-    /// and the rail becomes four objects instead of twelve. The `Spacer` before the inspect pair is
-    /// what makes the rail degrade by widening a gutter rather than by clipping a button off the end.
+    /// and the rail becomes four objects instead of twelve.
     ///
     /// The inspect pair stays OFF the trays on purpose. Both are latching — a pinned position and an
     /// open console outlive the click — and a latched plate is drawn as a lit key, which reads as lit
     /// only against the panel's own tone. Sitting them on a tray would put a lit key inside a lit
     /// tray and cost exactly the signal they exist to carry.
+    ///
+    /// It mounts in the top bar's trailing slot, so there is no `Spacer` here: the band's own layout
+    /// puts the air between the device's name and the first tray, and this rail keeps its intrinsic
+    /// width at every panel size. What the vanished `Spacer` DID carry is the gap that separated the
+    /// inspect pair from the trays, so the rail keeps it explicitly — at the trays' own spacing those
+    /// two loose plates read as a fourth tray with its fill forgotten.
     private var toolbar: some View {
+        HStack(spacing: Slate.Metric.space3) {
+            trays
+            inspect
+        }
+    }
+
+    private var trays: some View {
         HStack(spacing: Slate.Metric.space2) {
             SlatePlateGroup {
                 PlateIconButton(symbol: .rotateLeft) { Task { await model.rotate(.left) } }
@@ -176,7 +185,11 @@ struct SimulatorStageView: View {
                     ? "Restore the real status bar"
                     : "Demo status bar (9:41)")
             }
-            Spacer(minLength: 0)
+        }
+    }
+
+    private var inspect: some View {
+        HStack(spacing: Slate.Metric.space2) {
             if model.isSendingFile { WorkingSpinner() }
             location
             // A ruled list, not a terminal prompt: this opens a READER over the device's output, and
@@ -187,8 +200,6 @@ struct SimulatorStageView: View {
             }
             .help(model.isConsoleOpen ? "Hide the device log" : "Show the device log")
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.bottom, Slate.Metric.space2)
     }
 
     /// Latched while a position is pinned, so the toolbar says the device is somewhere else without

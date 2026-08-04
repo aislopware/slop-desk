@@ -616,6 +616,107 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertFalse(model.hasVideo)
     }
 
+    // MARK: Parking
+
+    /// A model with a peek at BOTH socket kinds — parking is about the pair, and the two standing
+    /// helpers each expose only one.
+    private func parkableModel() async -> (
+        SimulatorSidebarModel, () -> [FakeStream], () -> [FakeLogStream],
+    ) {
+        var streams: [FakeStream] = []
+        var logs: [FakeLogStream] = []
+        let model = SimulatorSidebarModel(
+            control: FakeControl(),
+            makeStream: { sink in
+                let stream = FakeStream(sink: sink)
+                streams.append(stream)
+                return stream
+            },
+            makeLogStream: { sink in
+                let stream = FakeLogStream(sink: sink)
+                logs.append(stream)
+                return stream
+            },
+            firstFrameDeadline: .seconds(600),
+        )
+        await model.poll(host: { [host] in host }, ensure: { [port] in .init(state: .ready, port: port) })
+        return (model, { streams }, { logs })
+    }
+
+    func testLeavingTheSurfaceDropsBothSocketsAndKeepsTheDevice() async {
+        // The panel going off screen used to change nothing: the host kept encoding and both
+        // websockets stayed up for a viewer that had left. See `park()` for the measurement.
+        let (model, streams, logs) = await parkableModel()
+        model.select("A")
+        model.toggleConsole()
+        XCTAssertEqual(streams().count, 1)
+        XCTAssertEqual(logs().count, 1)
+
+        model.park()
+        XCTAssertEqual(streams().first?.disconnects, 1)
+        XCTAssertEqual(logs().first?.disconnects, 1)
+        // The DEVICE is untouched — parking is about sockets, not about what the panel is showing.
+        XCTAssertEqual(model.selection, "A")
+        XCTAssertTrue(model.isConsoleOpen)
+    }
+
+    func testComingBackReDialsTheSameDeviceAndItsLatchedConsole() async {
+        let (model, streams, logs) = await parkableModel()
+        model.select("A")
+        model.toggleConsole()
+        model.park()
+
+        model.resume()
+        XCTAssertEqual(streams().count, 2)
+        XCTAssertEqual(streams().last?.connectedTo?.udid, "A")
+        XCTAssertEqual(logs().count, 2, "a drawer left open comes back subscribed")
+        XCTAssertTrue(model.isAwaitingStream, "and the first-frame deadline runs again")
+    }
+
+    func testResumingIsIdempotentAndNeedsADeviceToResume() async {
+        let (model, streams, _) = await parkableModel()
+        model.resume()
+        XCTAssertTrue(streams().isEmpty, "nothing is selected — there is nothing to re-dial")
+
+        model.select("A")
+        XCTAssertEqual(streams().count, 1)
+        // An appearance while the socket is live must not open a second one: SwiftUI is free to
+        // send appear/disappear pairs a redraw apart, and two streams for one panel is the cost
+        // parking exists to remove, doubled.
+        model.resume()
+        model.resume()
+        XCTAssertEqual(streams().count, 1)
+    }
+
+    func testAKnownGoodAddressSurvivesTheSurfaceBeingRemounted() async {
+        // The ensure loop restarts on every mount. Resetting to `.starting` unconditionally put
+        // "Starting simulator server…" over the whole panel for a round-trip every time someone
+        // stepped back into the tab — and it also stranded `resume()`, which needs the address.
+        let (model, _, _) = await parkableModel()
+        guard case .ready = model.phase else {
+            XCTFail("the fixture is meant to be ready")
+            return
+        }
+        let restart = Task {
+            await model.poll(
+                host: { [host] in host },
+                ensure: {
+                    try? await Task.sleep(for: .seconds(600))
+                    return nil
+                },
+            )
+        }
+        await Task.yield()
+        guard case let .ready(host, port) = model.phase else {
+            restart.cancel()
+            XCTFail("a restart must not blank an address that still works")
+            return
+        }
+        XCTAssertEqual(host, self.host)
+        XCTAssertEqual(port, self.port)
+        restart.cancel()
+    }
+
     func testInputGoesNowhereWithNothingSelected() async {
         let (model, stream) = await readyModel(FakeControl())
         model.send(.button("home"))

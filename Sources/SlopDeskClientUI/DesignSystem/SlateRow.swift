@@ -95,10 +95,16 @@ extension SlateListRow where Leading == EmptyView {
 /// A sidebar section header: uppercase, tertiary, small — with an optional trailing accessory (e.g. "+").
 struct SlateSectionHeader<Accessory: View>: View {
     let title: String
+    /// A qualifier that belongs to the TITLE — drawn immediately after it, one ink quieter, in the
+    /// same engraved register. Distinct from ``accessory``, which is pinned to the far trailing edge
+    /// where a CONTROL belongs: a qualifier sent there stops reading as part of the heading the wider
+    /// the surface gets, until at panel width it is a lone readout marooned across an empty rule.
+    var caption: String?
     let accessory: Accessory
 
-    init(_ title: String, @ViewBuilder accessory: () -> Accessory) {
+    init(_ title: String, caption: String? = nil, @ViewBuilder accessory: () -> Accessory) {
         self.title = title
+        self.caption = caption
         self.accessory = accessory()
     }
 
@@ -110,6 +116,13 @@ struct SlateSectionHeader<Accessory: View>: View {
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.State.header)
+            if let caption {
+                Text(caption)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular))
+                    .foregroundStyle(Slate.Text.tertiary)
+                    .lineLimit(1)
+                    .padding(.leading, Slate.Metric.space2)
+            }
             Spacer(minLength: 0)
             accessory
         }
@@ -120,8 +133,8 @@ struct SlateSectionHeader<Accessory: View>: View {
 }
 
 extension SlateSectionHeader where Accessory == EmptyView {
-    init(_ title: String) {
-        self.init(title) { EmptyView() }
+    init(_ title: String, caption: String? = nil) {
+        self.init(title, caption: caption) { EmptyView() }
     }
 }
 #endif

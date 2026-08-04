@@ -23,6 +23,15 @@
 // device; leaving the device is navigation, and putting it beside the device's own name is where
 // every split view in the app already puts it.
 //
+// AND SO DO THE VERBS, now (user-directed 2026-08-04). They used to float along the BOTTOM of the
+// stage — the reasoning was that a device's controls belong beside the device rather than in a strip
+// about it, and that giving them a band of their own would stripe the column dim/lit/dim/lit. Both
+// held; what neither accounted for was the width. This band's trailing half was empty at every panel
+// size, and the same ten plates that read as "beside the device" in a narrow column read as specks
+// scattered along the floor of a wide one. Landing them here costs no new band — it fills the one
+// that was already half empty — and puts the verbs where the eye enters the panel. The stage below is
+// now nothing but the device.
+//
 // NO COLOURED STATUS INDICATOR, here or anywhere else in the panel (user-directed 2026-08-04). A
 // green dot captioned "Live" used to sit at the end of the title line, which is the ornament this app
 // has already removed twice: `ConnectionStatusPill` was deleted for it, and the 07-30 round reversed
@@ -41,12 +50,16 @@
 import SFSafeSymbols
 import SwiftUI
 
-struct SimulatorDeviceHeader: View {
+struct SimulatorDeviceHeader<Actions: View>: View {
     var device: SimulatorDevice
     var resolution: CGSize?
     var orientation: SimulatorOrientation
     var pinnedLocation: SimulatorCoordinate?
     var onBack: () -> Void
+    /// The verbs that act on this device, right-aligned in the same band. Declared last so a caller
+    /// can pass them as a trailing closure — and AFTER `onBack` so an unlabelled one still binds to
+    /// the view builder rather than to the navigation handler.
+    @ViewBuilder var actions: () -> Actions
 
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
@@ -73,6 +86,11 @@ struct SimulatorDeviceHeader: View {
                 }
                 SlateFactLine(facts: facts)
             }
+            // The identity yields its width first: the verbs are fixed-size plates and the name
+            // truncates, which is the right way round — a clipped rail would put a verb somewhere
+            // the pointer cannot reach, while a clipped name is still a name.
+            .layoutPriority(-1)
+            actions()
         }
         // Keyed on WHICH facts are present, not on their values: a resolution arriving with the first
         // decoded frame, or a position being pinned, adds a fact mid-sentence, and the line should
