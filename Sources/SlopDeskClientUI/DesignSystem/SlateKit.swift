@@ -97,14 +97,13 @@ struct SlatePlateStyle: ButtonStyle {
 struct PanelTabPlate: View {
     /// What a tab draws before its label.
     ///
-    /// The split is between a SHAPE and a BRAND, and it is a measurement rather than a taxonomy: a
-    /// shape symbol is drawn on Apple's optical grid and sits right at the label's own type size,
-    /// while a brand — a logo silhouette or a hand-drawn path — carries its own proportions and needs
-    /// ``Slate/Metric/brandMark`` to weigh the same. ``android`` is additionally the one mark no icon
-    /// set ships, for the reason ``AndroidRobotMark`` documents.
+    /// The split is NOT between a shape and a brand. `apple.logo` is a brand and takes the same em as
+    /// `folder`, because Apple's optical grid already makes them agree — see
+    /// ``Slate/Metric/androidMark`` for the measurements that retired the earlier brand case. The
+    /// split is between a symbol on that grid and the one mark no icon set ships, which is a drawn
+    /// path with no grid behind it and therefore the only one carrying its own size.
     enum Mark {
         case symbol(SFSymbol)
-        case brand(SFSymbol)
         case android
     }
 
@@ -126,38 +125,52 @@ struct PanelTabPlate: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                glyph
-                if selected {
-                    Text(label)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                }
-            }
-            .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-            .padding(.horizontal, selected ? 8 : 6)
-            .frame(height: Slate.Metric.plate)
-            .background(
-                selected ? Slate.State.hover : .clear,
-                in: .rect(cornerRadius: Slate.Metric.radiusControl),
-            )
-            .contentShape(.rect)
+            plate
+                .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
+                .background(
+                    selected ? Slate.State.hover : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                )
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
     }
 
-    /// Both brand marks take ``Slate/Metric/brandMark``, so the drawn one and the symbol one sit at
-    /// one optical size rather than the hand-built one being a hair off.
+    /// A collapsed tab is a SQUARE CELL, not a plate hugging its glyph.
+    ///
+    /// Hugging gave every tab a different width, because the marks are 10 to 17 points across: the
+    /// gaps between them came out ragged and the row read as four unrelated things rather than one
+    /// control (user-reported 2026-08-04). A square on ``Slate/Metric/plate`` is also exactly the cell
+    /// ``PlateIconButton`` occupies, and that button is what the TRAILING end of this same strip is
+    /// built from — so one grid now runs from the first tab to the last action instead of two.
+    ///
+    /// The selected tab keeps hugging. It carries a label, so its width is meant to be its own.
+    @ViewBuilder
+    private var plate: some View {
+        if selected {
+            HStack(spacing: 4) {
+                glyph
+                Text(label).font(.system(size: Slate.Typeface.footnote, weight: .medium))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: Slate.Metric.plate)
+        } else {
+            glyph.frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+        }
+    }
+
+    /// Symbols take the strip's ICON measure (``Slate/Metric/iconSize``) — the one the action plates
+    /// at the other end of the strip already use, and not the label's type size. A glyph and a word
+    /// are not the same kind of thing, and sizing both from `footnote` had the tabs drawing at 11
+    /// while the reload button beside them drew at 13.
     @ViewBuilder
     private var glyph: some View {
         switch mark {
         case let .symbol(symbol):
             Image(systemSymbol: symbol)
-                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-        case let .brand(symbol):
-            Image(systemSymbol: symbol)
-                .font(.system(size: Slate.Metric.brandMark, weight: .medium))
+                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
         case .android:
-            AndroidRobotMark(side: Slate.Metric.brandMark)
+            AndroidRobotMark(side: Slate.Metric.androidMark)
         }
     }
 }

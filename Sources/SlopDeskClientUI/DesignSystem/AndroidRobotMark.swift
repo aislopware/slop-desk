@@ -31,9 +31,10 @@ import SwiftUI
 
 /// Android's robot head at `side` points square, in the current foreground style.
 struct AndroidRobotMark: View {
-    /// The mark's box — ``Slate/Metric/brandMark``, not the type size the plate's symbols take. A
-    /// drawn brand mark and an SF Symbol do not weigh the same at the same measure; the token has
-    /// the account.
+    /// The mark's box — ``Slate/Metric/androidMark``, which is NOT the measure the plate's symbols
+    /// take and is the only such exception in the strip. The token carries the measurements: a dome
+    /// under splayed antennae is half again as wide as it is tall, so this box is the one that lands
+    /// its INK closest to the band the SF Symbols beside it occupy.
     let side: CGFloat
 
     var body: some View {
