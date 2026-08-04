@@ -7,18 +7,42 @@
 // the search plate are the same ones the navigator uses, so a theme swap repoints this list with
 // everything else.
 //
-// GROUPING is by boot state, not by the server's two arrays. It happens to be the same partition
-// today, but the panel's meaning is "what is running" vs "what could run", and a device moving
-// between the groups when it boots is the one motion in this list that carries information.
+// GROUPING is by DEVICE FAMILY, with running devices lifted into their own group above. A device set
+// is thirty near-identical strings ("iPhone 17", "iPhone 17 Pro", "iPhone 17 Pro Max"), and the two
+// questions actually asked of this list are "what is running" and "where are the iPads" — so those
+// are the two cuts. Sorting inside a family is the server's own order, which is stable across polls;
+// a list that reorders itself under the cursor is the opposite of what someone clicking Boot wants.
 //
-// The row's trailing slot swaps under hover: runtime at rest, the boot/shutdown control while the
-// pointer is on the row. That is the shell's own idiom (``SlateListRow``'s `trailingOverlay`), and it
-// is what lets a fixed-height row carry both the identity of the runtime and an action without
-// squeezing them into a sidebar's width side by side.
+// EVERY ROW CARRIES ITS ACTION, at rest, not on hover. The previous revision hid boot and shutdown
+// behind the pointer: discoverable only by accident, and impossible to see the state of. The glyph is
+// the family, the tint is the state, and the trailing control is always the one verb that applies.
+//
+// The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
 #if os(macOS)
+import AppKit
 import SFSafeSymbols
 import SwiftUI
+
+/// One line of the list: a section heading, or a device under one.
+///
+/// The identity carries the SECTION as well as the device, and that is the whole point of the type.
+/// A device's udid alone is stable across a boot — which is correct for "is this the same device"
+/// and wrong for "is this the same row": the row's entire content (glyph tint, trailing verb,
+/// subtitle) is a function of the state that just changed, and reusing the built view keeps every
+/// one of them at its old value. Qualifying by section makes a device that changes group a REMOVE
+/// and an INSERT, so it is rebuilt from the device it now is.
+enum SimulatorListEntry: Identifiable {
+    case heading(String)
+    case device(SimulatorDevice, section: String)
+
+    var id: String {
+        switch self {
+        case let .heading(title): "heading/\(title)"
+        case let .device(device, section): "\(section)/\(device.udid)"
+        }
+    }
+}
 
 struct SimulatorDeviceList: View {
     @Bindable var model: SimulatorSidebarModel
@@ -35,6 +59,31 @@ struct SimulatorDeviceList: View {
                 || $0.runtime.localizedCaseInsensitiveContains(trimmed)
         }
     }
+
+    /// The whole list as ONE flat sequence — headings and rows together, each carrying an identity
+    /// that names its section. Running first, then the families in the enum's own rank order rather
+    /// than in encounter order, so the headings do not reshuffle because the host's device set was
+    /// edited.
+    static func entries(for devices: [SimulatorDevice]) -> [SimulatorListEntry] {
+        var entries: [SimulatorListEntry] = []
+        let booted = devices.filter(\.isBooted)
+        // Running comes first and is NOT split by family: what is up is one short list, and cutting
+        // three booted devices into three headed groups is ceremony over content.
+        if !booted.isEmpty {
+            entries.append(.heading(Self.runningTitle))
+            entries += booted.map { .device($0, section: Self.runningTitle) }
+        }
+        let families = Dictionary(grouping: devices.filter { !$0.isBooted }) {
+            SimulatorDeviceKind.infer(from: $0.name)
+        }
+        for (kind, members) in families.sorted(by: { $0.key.rank < $1.key.rank }) {
+            entries.append(.heading(kind.groupTitle))
+            entries += members.map { .device($0, section: kind.groupTitle) }
+        }
+        return entries
+    }
+
+    static let runningTitle = "Running"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -84,20 +133,20 @@ struct SimulatorDeviceList: View {
 
     // MARK: List
 
+    /// ONE `ForEach`, over the flattened entries. Not a heading-plus-nested-`ForEach` per group: two
+    /// sibling `ForEach`es inside one lazy stack whose elements share an id let the stack reuse the
+    /// row it already built for that id. Measured 2026-08-04 — a device that booted moved up into
+    /// Running still drawing the grey glyph and the Boot button from its family group, while the one
+    /// that shut down moved down still drawing the accent glyph and Shut Down. Position followed the
+    /// state; the content did not.
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                let booted = matches.filter(\.isBooted)
-                let idle = matches.filter { !$0.isBooted }
-                // A heading over nothing is noise, so each group appears only when it has rows —
-                // which also means a machine with one booted device shows one heading, not two.
-                if !booted.isEmpty {
-                    SlateSectionHeader("Running")
-                    ForEach(booted) { row($0) }
-                }
-                if !idle.isEmpty {
-                    SlateSectionHeader("Available")
-                    ForEach(idle) { row($0) }
+                ForEach(Self.entries(for: matches)) { entry in
+                    switch entry {
+                    case let .heading(title): SlateSectionHeader(title)
+                    case let .device(device, _): row(device)
+                    }
                 }
             }
             .padding(.horizontal, Slate.Metric.space2)
@@ -109,9 +158,9 @@ struct SimulatorDeviceList: View {
         SlateListRow(
             active: model.selection == device.udid,
             // Opening the screen is the row's gesture; boot and shutdown are the explicit control. A
-            // shut-down device has no screen, so its row does nothing until it is booted — streaming
-            // nothing would look like a hang rather than a state.
-            onTap: { if device.isBooted { model.select(device.udid) } },
+            // shut-down device has no screen, so its row boots it instead — doing nothing on a click
+            // is the behaviour that made the previous revision feel broken.
+            onTap: { open(device) },
             leading: { mark(device) },
             title: {
                 Text(device.name)
@@ -120,41 +169,54 @@ struct SimulatorDeviceList: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             },
-            titleTrailing: { hovering in
-                if model.pending.contains(device.udid) {
-                    // The platform's indicator through `WorkingSpinner`, not `ProgressView`: a bare
-                    // `ProgressView` in a hosted column resolves the Aqua appearance and comes out
-                    // dark grey on a dark theme (see `StatusDot`'s header).
-                    WorkingSpinner()
-                } else if !device.runtime.isEmpty {
-                    Text(device.runtime)
+            // Both in the trailing CLUSTER, not one of them in the shell's hover overlay: that
+            // overlay is for an affordance the meta fades out to make room for, and this action
+            // never fades. Laid out side by side they cannot collide — the first cut of this row put
+            // the button over the runtime and drew a play glyph through the word "iOS".
+            titleTrailing: { _ in
+                HStack(spacing: Slate.Metric.space1) {
+                    Text(subtitle(for: device))
                         .font(.system(size: Slate.Typeface.footnote))
                         .foregroundStyle(Slate.Text.tertiary)
                         .lineLimit(1)
-                        // Faded rather than removed, so the row's trailing edge does not jump as the
-                        // pointer crosses it.
-                        .opacity(hovering ? 0 : 1)
-                }
-            },
-            trailingOverlay: { hovering in
-                if hovering, !model.pending.contains(device.udid) {
+                        .layoutPriority(-1)
                     action(for: device)
                 }
             },
+            trailingOverlay: { _ in EmptyView() },
         )
+        .contextMenu { menu(for: device) }
     }
 
-    /// The boot state, as the row's leading mark. One shape, two tones — the accent for a device that
-    /// is up, a muted disc for one that is not; the title never recolours.
+    /// The trailing text: the runtime normally, the live state while it is changing. A device spends
+    /// seconds in `Booting`, and showing its runtime through that is the panel claiming nothing is
+    /// happening while something is.
+    private func subtitle(for device: SimulatorDevice) -> String {
+        let settled = device.state.isEmpty
+            || device.isBooted
+            || device.state.caseInsensitiveCompare("Shutdown") == .orderedSame
+        return settled ? device.runtime : device.state
+    }
+
+    /// The device family as the row's leading glyph, tinted by boot state. Two channels, one mark:
+    /// the SHAPE says iPhone or iPad, the TINT says running or not — which is what makes a set of
+    /// thirty near-identical names scannable at all.
     private func mark(_ device: SimulatorDevice) -> some View {
-        Circle()
-            .fill(device.isBooted ? Slate.State.accent : Slate.Text.tertiary.opacity(0.4))
-            .frame(width: Slate.Metric.dot, height: Slate.Metric.dot)
+        Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(device.isBooted ? Slate.State.accent : Slate.Text.tertiary)
+            .frame(width: Slate.Metric.iconSize)
     }
 
     @ViewBuilder
     private func action(for device: SimulatorDevice) -> some View {
-        if device.isBooted {
+        if model.pending.contains(device.udid) {
+            // The platform's indicator through `WorkingSpinner`, not `ProgressView`: a bare
+            // `ProgressView` in a hosted column resolves the Aqua appearance and comes out dark grey
+            // on a dark theme (see `StatusDot`'s header).
+            WorkingSpinner()
+                .frame(width: Slate.Metric.heightControl, height: Slate.Metric.heightControl)
+        } else if device.isBooted {
             PlateIconButton(symbol: .stopCircle, plate: Slate.Metric.heightControl) {
                 Task { await model.shutdown(device.udid) }
             }
@@ -164,6 +226,38 @@ struct SimulatorDeviceList: View {
                 Task { await model.boot(device.udid) }
             }
             .help("Boot \(device.name)")
+        }
+    }
+
+    /// A click on a booted device opens its screen; on a shut-down one it boots it. Two verbs on one
+    /// gesture because they are the same intent — "I want to use this device" — and the row already
+    /// carries the explicit control for anyone who means the other one.
+    private func open(_ device: SimulatorDevice) {
+        if device.isBooted {
+            model.select(device.udid)
+        } else if !model.pending.contains(device.udid) {
+            Task { await model.boot(device.udid) }
+        }
+    }
+
+    @ViewBuilder
+    private func menu(for device: SimulatorDevice) -> some View {
+        if device.isBooted {
+            Button("Open Screen") { model.select(device.udid) }
+            Button("Shut Down") { Task { await model.shutdown(device.udid) } }
+        } else {
+            Button("Boot") { Task { await model.boot(device.udid) } }
+        }
+        Divider()
+        // The UDID is what every other tool wants — `xcrun simctl`, a test invocation, a bug report —
+        // and it is far too long to put in a sidebar row.
+        Button("Copy UDID") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(device.udid, forType: .string)
+        }
+        Button("Copy Name") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(device.name, forType: .string)
         }
     }
 

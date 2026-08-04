@@ -63,6 +63,60 @@ skipped, not fatal; only a non-object root fails the parse. `state` is kept as t
 string — simctl has more states than the two observed (`Booting`, `Shutting Down`, `Creating`), and a
 closed enum would turn a transient state into a decode failure for the whole list.
 
+### `GET /simulators/<udid>/definition.json` — the device body
+
+The panel draws the **real device**, not a rectangle on grey, and this route is where the geometry
+and the artwork come from. It is DeviceKit model data, so it **answers for a shut-down device too**.
+
+```json
+{ "identity": { "model": "iPhone 17 Pro" },
+  "screen": {
+    "viewport":    { "width": 436, "height": 908 },
+    "rect":        { "x": 18, "y": 18, "width": 400, "height": 872 },
+    "clipRadius":  62,
+    "bezelImage":  { "bare": "/simulators/U/bezel.png?buttons=false",
+                     "rest": "/simulators/U/bezel.png" } },
+  "buttons": [
+    { "id": "power",
+      "box":      { "leftPct": 97.0, "topPct": 28.8, "widthPct": 3.6, "heightPct": 11.1 },
+      "images":   { "rest": "…/chrome-button/power.png", "pressed": "…/chrome-button/power-down.png" },
+      "envelope": { "button": "power", "type": "button" },
+      "z": "below" } ] }
+```
+
+**Percentages, not points.** Every button box is a fraction of the *viewport*, so one decode scales to
+any panel width without a second layout pass. Boxes legitimately fall **outside 0–100**: side buttons
+protrude from the body (`leftPct` negative on the left rail, past 100 on the right). That is what
+`SimulatorChrome.bleed` accounts for, and why the panel lays out to the bleed rather than to the
+viewport — laying out to the viewport clips the buttons off at the panel's edge.
+
+`z: "below"` is why the panel fetches `bezelImage.bare` (`?buttons=false`) and draws the buttons
+*under* it: the bezel's own edge is what makes a protruding button read as seated rather than pasted
+on. The `rest` body with buttons baked in is kept for a still preview where nothing is pressable.
+
+Measured 2026-08-04: iPad Pro 13-inch (M5) → viewport 1124×1468, rect {46,46,1032,1376},
+clipRadius 29, three buttons.
+
+### The control routes
+
+| route | method | argument | what it does |
+| --- | --- | --- | --- |
+| `/simulators/<udid>/orientation` | POST | `?value=landscape-left` | kebab-case; the four quarter turns |
+| `/simulators/<udid>/screenshot.jpg` | GET | `?t=<nonce>` | JPEG of NOW — the nonce is the cache-buster |
+| `/simulators/<udid>/status-bar` | POST / **DELETE** | JSON body / — | POST sets overrides, DELETE restores |
+| `/simulators/<udid>/files` | POST | `?name=<file>`, body = bytes | routed **by extension** server-side |
+| `/simulators/<udid>/bezel.png` | GET | `?buttons=false` | body artwork |
+| `/simulators/<udid>/chrome-button/<file>` | GET | — | one button's rest / pressed art |
+
+`files` is deliberately not classified client-side: the server installs an `.app`/`.ipa` and drops an
+image or video into Photos, and guessing that taxonomy locally would reject the one build someone
+wanted. The upload uses its own long timeout (`SimulatorControlClient.uploadTimeout`, 300 s) — an
+`.ipa` install is not a 15-second request.
+
+Deliberately **not** surfaced yet, though the server offers them: `logs`, `location`, `camera` /
+`camera-source`, `3d-model.json` / `render-3d.png` / `stream.3d.*`. Each needs UI of its own (a log
+console, a map picker, a 3D viewport) rather than another toolbar plate.
+
 ### The stream socket
 
 `ws://<host>:<port>/simulators/<udid>/stream?format=avcc&version=v2` — **input and control ride the
@@ -92,6 +146,33 @@ Every positional envelope carries the `width`/`height` of the surface the client
 against, and the server rescales to the device. So the panel never needs to know the device's true
 resolution to place a tap — it reports its own fitted rect and the point within it
 (`SimulatorScreenLayout`).
+
+---
+
+## The two surfaces
+
+Rebuilt 2026-08-04 (user-directed: the list and the control surface were too sparse to work with).
+
+**The list.** Running devices come first as one un-split group — a device that just booted must not
+slide under the cursor into a family heading. Everything else is grouped by family (iPhone, iPad,
+Watch, TV, Vision) in a fixed rank, so the order cannot reshuffle between polls. Each row carries its
+family glyph tinted by state as the leading mark, the live state as a subtitle while it is in
+transition, and an **always-visible** trailing action (spinner while pending, stop when booted, play
+when not) — a hover-only control in a list you are scanning is a control you cannot find. Clicking a
+row boots a shut-down device and opens a booted one. The context menu carries Open / Boot / Shut Down
+plus Copy UDID and Copy Name.
+
+**The stage.** The stream is seated in the real body, side buttons and all. Buttons swap to their
+pressed artwork on touch-down and fire the envelope on **release**, which is what makes a long-press
+on Power do what a long-press on Power does. The toolbar carries only what the body cannot offer:
+rotate left/right, Home and App Switcher (gestures with no hardware to click), Lock, copy screenshot,
+and the demo status-bar toggle. Screenshots go to the **clipboard**, not to a file — the client app is
+sandboxed, and a screenshot's next stop is a message or a PR. Any file dropped on the stage is sent
+to `files`.
+
+Without chrome — still loading, or a model the server cannot describe — the stage falls back to the
+plain rectangle. A working screen with no bezel is a working screen; refusing to draw until the
+artwork arrives makes a slow fetch look like a dead stream.
 
 ---
 
@@ -131,6 +212,30 @@ resolution to place a tap — it reports its own fitted rect and the point withi
   scrolls rather than banking against the next one. Isolated with the CLI while debugging: `baguette
   swipe --duration 0.05` over 32 pt DOES scroll, so a short fast swipe is not the problem; magnitude
   and sign were.
+- **A button box outside 0–100 % is not a bad decode.** Side buttons protrude from the body on
+  purpose. Clamping the box, or laying out to the viewport instead of `SimulatorChrome.bleed`, shaves
+  them off at the panel's edge and looks like missing artwork.
+- **Never upsample the bezel art.** `SimulatorBezelView` caps its fit scale at 1. Past that the body
+  goes soft while the video stays sharp, which reads as a broken render rather than a big device.
+- **A server-supplied reference already carries its query and its escaping.** `bezelImage.bare` is
+  `bezel.png?buttons=false`. Putting it through the UDID route builder escapes the `?` into the path
+  — the double-encoding trap from the other side. `SimulatorEndpoints.resolve` uses
+  `URL(string:relativeTo:)` for exactly these.
+- **`visionpro` is deprecated as an SF Symbol on macOS 15** — the spelling is `visionPro`.
+- **The status bar clears with a DELETE, and rejects the whole body on one bad field.** There is no
+  `{"clear": true}`: an empty or flag-only POST answers `400 set at least one status-bar field`, so a
+  clear spelled as an override fails rather than no-ops. And `batteryState` is
+  `charging | charged | discharging` — "unplugged" reads like the right word and 400s the entire
+  preset. Both measured 2026-08-04 against a live server; `SimulatorControlClient.statusBarMethod`
+  and the demo-preset test pin them.
+- **A device row's identity has to carry its SECTION, not just its UDID.** The device list was first
+  drawn as a heading plus a nested `ForEach` per group. Two sibling `ForEach`es inside one
+  `LazyVStack` whose elements share an id let the stack reuse the row it already built: measured
+  2026-08-04, a device that booted moved up into Running still drawing the grey family glyph and the
+  Boot button from its family group, and one that shut down moved down still drawing the accent glyph
+  and Shut Down — position followed the state, content did not, from a single `isBooted` read.
+  `SimulatorDeviceList.entries` flattens headings and rows into ONE `ForEach` over
+  `SimulatorListEntry`, whose id is `section/udid`, so changing group is a remove and an insert.
 
 ---
 
@@ -145,9 +250,15 @@ resolution to place a tap — it reports its own fitted rect and the point withi
 | `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, pure |
 | `Simulator/SimulatorVideoFormat.swift` | `CMFormatDescription` + `CMSampleBuffer` construction |
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
-| `Simulator/SimulatorControlClient.swift` | list / boot / shutdown (`URLSession`) |
+| `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
+| `Simulator/SimulatorDeviceKind.swift` | product name → family (glyph, heading, sort rank), pure |
+| `Simulator/SimulatorOrientation.swift` | the quarter-turn cycle + wire spelling + demo status bar, pure |
+| `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
+| `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/key mapping |
-| `Simulator/SimulatorDeviceList.swift` | the device list, on the Slate row shell |
+| `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
+| `Simulator/SimulatorStageView.swift` | the streaming surface: device + toolbar + banner + drop target |
+| `Simulator/SimulatorDeviceList.swift` | the device list — Running, then grouped by family |
 | `Simulator/SimulatorSidebarModel.swift` | the two loops, the selection, the one live stream |
 
 Both runtime seams are injectable (`SimulatorControlling`, `SimulatorStreaming`) so the model is

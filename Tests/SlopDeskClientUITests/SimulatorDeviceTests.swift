@@ -67,6 +67,48 @@ final class SimulatorDeviceTests: XCTestCase {
         XCTAssertEqual(SimulatorDevice.decodeList(json("{}")), [])
     }
 
+    // MARK: The rendered list
+
+    private func device(_ name: String, booted: Bool) -> SimulatorDevice {
+        SimulatorDevice(
+            udid: "udid-\(name)", name: name, runtime: "iOS 26.5",
+            state: booted ? "Booted" : "Shutdown", isBooted: booted,
+        )
+    }
+
+    func testRunningLeadsTheListAndEverythingElseFollowsItsFamilyInRankOrder() {
+        let entries = SimulatorDeviceList.entries(for: [
+            device("iPad Pro 13-inch (M5)", booted: false),
+            device("iPhone 17 Pro", booted: true),
+            device("iPhone Air", booted: false),
+        ])
+        XCTAssertEqual(entries.map(\.id), [
+            "heading/Running",
+            "Running/udid-iPhone 17 Pro",
+            "heading/iPhone",
+            "iPhone/udid-iPhone Air",
+            "heading/iPad",
+            "iPad/udid-iPad Pro 13-inch (M5)",
+        ])
+    }
+
+    func testNothingRunningMeansNoRunningHeadingRatherThanAnEmptyOne() {
+        let entries = SimulatorDeviceList.entries(for: [device("iPhone Air", booted: false)])
+        XCTAssertEqual(entries.map(\.id), ["heading/iPhone", "iPhone/udid-iPhone Air"])
+    }
+
+    func testARowsIdentityChangesWhenItsDeviceChangesSection() {
+        // The defect this pins, measured on hardware 2026-08-04: with a heading-plus-nested-`ForEach`
+        // per group, two sibling `ForEach`es in one lazy stack shared an element id, and a device that
+        // booted moved up into Running still drawing the grey glyph and the Boot button it had in its
+        // family group — position followed the state, content did not. A section-qualified id makes
+        // the move a remove and an insert, so the row is rebuilt from the device it now is.
+        let idle = SimulatorDeviceList.entries(for: [device("iPhone 17", booted: false)])
+        let running = SimulatorDeviceList.entries(for: [device("iPhone 17", booted: true)])
+        XCTAssertNotEqual(idle.last?.id, running.last?.id)
+        XCTAssertEqual(running.last?.id, "Running/udid-iPhone 17")
+    }
+
     // MARK: Endpoints
 
     func testTheRouteTableMatchesTheServersOwn() {
@@ -86,9 +128,52 @@ final class SimulatorDeviceTests: XCTestCase {
             "http://10.0.0.7:54593/simulators/01D1D359/shutdown",
         )
         XCTAssertEqual(
-            SimulatorEndpoints.chrome(host: host, port: port, udid: udid)?.absoluteString,
-            "http://10.0.0.7:54593/simulators/01D1D359/chrome.json",
+            SimulatorEndpoints.definition(host: host, port: port, udid: udid)?.absoluteString,
+            "http://10.0.0.7:54593/simulators/01D1D359/definition.json",
         )
+        XCTAssertEqual(
+            SimulatorEndpoints.statusBar(host: host, port: port, udid: udid)?.absoluteString,
+            "http://10.0.0.7:54593/simulators/01D1D359/status-bar",
+        )
+    }
+
+    func testTheSettingRoutesCarryTheirArgumentInTheQueryStringAsTheServerExpects() {
+        let host = "10.0.0.7"
+        let port: UInt16 = 54593
+        let udid = "01D1D359"
+        XCTAssertEqual(
+            SimulatorEndpoints.orientation(
+                host: host, port: port, udid: udid, value: "landscape-left",
+            )?.absoluteString,
+            "http://10.0.0.7:54593/simulators/01D1D359/orientation?value=landscape-left",
+        )
+        // The nonce is the server's own cache-buster: a capture must be of NOW, and a second one in
+        // the same session is exactly the request a cache would answer from its copy of the first.
+        XCTAssertEqual(
+            SimulatorEndpoints.screenshot(host: host, port: port, udid: udid, nonce: 42)?.absoluteString,
+            "http://10.0.0.7:54593/simulators/01D1D359/screenshot.jpg?t=42",
+        )
+    }
+
+    func testAFileNameIsQueryEscapedRatherThanBreakingTheRoute() {
+        // The body is the file, so the name rides the query string — where a space or an ampersand in
+        // a build's name would otherwise truncate it or invent a second parameter.
+        let url = SimulatorEndpoints.files(
+            host: "h", port: 1, udid: "u", name: "My App&Co.ipa",
+        )
+        XCTAssertEqual(url?.absoluteString, "http://h:1/simulators/u/files?name=My%20App%26Co.ipa")
+    }
+
+    func testAServerSuppliedReferenceKeepsItsQueryInsteadOfBeingReEscaped() {
+        // Bezel artwork comes back as `bezel.png?buttons=false`. Running that through the UDID
+        // builder would escape the `?` into the path — the double-encoding trap, from the other side.
+        XCTAssertEqual(
+            SimulatorEndpoints.resolve(
+                "/simulators/u/bezel.png?buttons=false", host: "h", port: 1,
+            )?.absoluteString,
+            "http://h:1/simulators/u/bezel.png?buttons=false",
+        )
+        XCTAssertNil(SimulatorEndpoints.resolve("/a.png", host: "", port: 1))
     }
 
     func testTheStreamURLAsksForLengthPrefixedNALsOnTheWebsocketScheme() {

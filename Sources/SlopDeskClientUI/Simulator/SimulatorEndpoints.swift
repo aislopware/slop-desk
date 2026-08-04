@@ -33,10 +33,57 @@ enum SimulatorEndpoints {
         action(host: host, port: port, udid: udid, action: "shutdown")
     }
 
-    /// `GET` — the bezel layout: button hit boxes, image URLs, screen inset. Needed to place a home
-    /// or side-button affordance over the right part of the frame.
-    static func chrome(host: String, port: UInt16, udid: String) -> URL? {
-        action(host: host, port: port, udid: udid, action: "chrome.json")
+    /// `GET` — the device's physical body in the shape the panel draws it: viewport-relative
+    /// percentages and ready-made image references. The server also serves `chrome.json`, which is
+    /// the same bezel in absolute points; the percentages are what scale to a sidebar's width without
+    /// a second layout pass. Answers for a shut-down device too, since it is model data rather than
+    /// process state.
+    static func definition(host: String, port: UInt16, udid: String) -> URL? {
+        action(host: host, port: port, udid: udid, action: "definition.json")
+    }
+
+    /// `POST` — set the interface orientation. The value rides the query string, matching the
+    /// server's own route; the body is empty.
+    static func orientation(
+        host: String, port: UInt16, udid: String, value: String,
+    ) -> URL? {
+        guard var components = components(host: host, port: port) else { return nil }
+        components.percentEncodedPath = "/simulators/\(escape(udid))/orientation"
+        components.queryItems = [URLQueryItem(name: "value", value: value)]
+        return components.url
+    }
+
+    /// `GET` — one JPEG of the current screen. The cache-buster is the server's own idiom: without it
+    /// a second capture inside the same session can come back from `URLSession`'s cache.
+    static func screenshot(host: String, port: UInt16, udid: String, nonce: UInt64) -> URL? {
+        guard var components = components(host: host, port: port) else { return nil }
+        components.percentEncodedPath = "/simulators/\(escape(udid))/screenshot.jpg"
+        components.queryItems = [URLQueryItem(name: "t", value: String(nonce))]
+        return components.url
+    }
+
+    /// `POST`, JSON body — override or clear the status bar (time, bars, battery).
+    static func statusBar(host: String, port: UInt16, udid: String) -> URL? {
+        action(host: host, port: port, udid: udid, action: "status-bar")
+    }
+
+    /// `POST`, raw file bytes — hand the device a file. The server routes on the extension: an
+    /// `.app`/`.ipa` is installed, an image or video lands in Photos. The name rides the query string
+    /// because the body is the file itself.
+    static func files(host: String, port: UInt16, udid: String, name: String) -> URL? {
+        guard var components = components(host: host, port: port) else { return nil }
+        components.percentEncodedPath = "/simulators/\(escape(udid))/files"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        return components.url
+    }
+
+    /// Resolve a reference the SERVER handed back — a bezel or button image path out of
+    /// ``SimulatorChrome``. `URL(string:relativeTo:)` rather than this file's own builder on purpose:
+    /// the server's references carry a query (`bezel.png?buttons=false`) and are already escaped, and
+    /// re-escaping a whole reference is precisely the double-encoding trap the UDID routes avoid.
+    static func resolve(_ reference: String, host: String, port: UInt16) -> URL? {
+        guard let base = components(host: host, port: port)?.url else { return nil }
+        return URL(string: reference, relativeTo: base)
     }
 
     /// The frame + input websocket. Both directions ride this one socket: H.264 down, gesture JSON

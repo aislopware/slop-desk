@@ -54,6 +54,23 @@ final class SimulatorSidebarModel {
     /// The last failure worth showing. Cleared by the next success — a stale error over a working
     /// list is worse than no error.
     private(set) var failure: String?
+    /// A short confirmation for an action whose result is not on screen — a screenshot went to the
+    /// clipboard, a file reached the device. Distinct from ``failure`` so a success cannot look like
+    /// an error, and self-clearing: a confirmation that outlives the action becomes noise.
+    private(set) var notice: String?
+
+    /// The selected device's physical body, once fetched. `nil` while it loads or when the server
+    /// cannot describe this model — the screen then draws bare, which is the previous behaviour and a
+    /// perfectly usable fallback rather than an error state.
+    private(set) var chrome: SimulatorChromeAssets?
+    /// The interface orientation the panel last asked for. Local because the server has no read side:
+    /// it is what the next rotate is relative to, not a claim about the device.
+    private(set) var orientation: SimulatorOrientation = .portrait
+    /// Whether the demo status bar (9:41, full bars, full battery) is in force.
+    private(set) var isStatusBarOverridden = false
+    /// Set while a file is uploading, so the drop target can say so — an `.app` bundle takes long
+    /// enough that silence reads as a drop that missed.
+    private(set) var isSendingFile = false
 
     /// Bumped by the strip's reload button — part of the column's `.task` id, so a bump cancels the
     /// settled loop and re-ensures from scratch (respawning a server that died).
@@ -70,6 +87,15 @@ final class SimulatorSidebarModel {
     private let makeStream: @MainActor (@escaping (SimulatorStreamEvent) -> Void) -> SimulatorStreaming
     private var stream: SimulatorStreaming?
     private var frameSequence: UInt64 = 0
+    /// Bezel artwork by UDID. Worth keeping: it is per-model, never changes, and re-fetching three
+    /// images every time someone steps back to the list and in again is visible as a blank frame.
+    private var chromeCache: [String: SimulatorChromeAssets] = [:]
+    /// Cancels an in-flight chrome fetch when the selection moves on, so a slow load for the previous
+    /// device cannot land on the current one.
+    private var chromeLoad: Task<Void, Never>?
+    /// Clears ``notice`` after its moment. Held so a second action replaces the first's timer rather
+    /// than having two racing to blank the same slot.
+    private var noticeClear: Task<Void, Never>?
 
     init(
         control: SimulatorControlling = SimulatorControlClient(),
@@ -183,8 +209,17 @@ final class SimulatorSidebarModel {
         stream = nil
         frame = SimulatorScreenFrame(latest: .none, sequence: nextSequence())
         selection = udid
+        // Both are claims about the PREVIOUS device. Carrying them over would have the new screen
+        // rotate from the old one's angle and its status-bar toggle show the wrong position.
+        orientation = .portrait
+        isStatusBarOverridden = false
 
-        guard let udid, case let .ready(host, port) = phase else { return }
+        guard let udid, case let .ready(host, port) = phase else {
+            chromeLoad?.cancel()
+            chrome = nil
+            return
+        }
+        loadChrome(for: udid)
         let connection = makeStream { [weak self] event in
             self?.handle(event, for: udid)
         }
@@ -195,6 +230,122 @@ final class SimulatorSidebarModel {
     /// Send one input envelope to the live stream. No-op when nothing is selected.
     func send(_ envelope: SimulatorInputEnvelope) {
         stream?.send(envelope)
+    }
+
+    // MARK: Device controls
+
+    /// Turn the device a quarter turn. The video's own dimensions follow on the next keyframe, so the
+    /// layout needs no help — only the next rotation needs to know where this one left off.
+    func rotate(_ direction: SimulatorOrientation.Turn) async {
+        guard case let .ready(host, port) = phase, let udid = selection else { return }
+        let target = orientation.turned(direction)
+        do {
+            try await control.setOrientation(host: host, port: port, udid: udid, value: target.wireValue)
+            orientation = target
+        } catch {
+            failure = Self.describe(error)
+        }
+    }
+
+    /// Capture the screen to the CLIPBOARD rather than to a file. A screenshot's next stop is almost
+    /// always a message or a pull request, the app is sandboxed so a file needs a save panel in the
+    /// way, and the pasteboard needs no permission at all.
+    func copyScreenshot() async {
+        guard case let .ready(host, port) = phase, let udid = selection else { return }
+        do {
+            let jpeg = try await control.screenshot(host: host, port: port, udid: udid)
+            // Decoded before it is written, not after: a JPEG the server truncated would otherwise
+            // reach the pasteboard as bytes nothing can paste, and the panel would call that a
+            // success.
+            guard SimulatorPasteboard.write(jpeg: jpeg) != nil else {
+                failure = "The screenshot could not be read."
+                return
+            }
+            show(notice: "Screenshot copied")
+        } catch {
+            failure = Self.describe(error)
+        }
+    }
+
+    /// Flip the demo status bar: Apple's own 9:41 with full bars and a full battery, or back to the
+    /// device's real one. The single reason anyone reaches for a status-bar override is a clean
+    /// capture, so this is that preset rather than a form.
+    func toggleStatusBarOverride() async {
+        guard case let .ready(host, port) = phase, let udid = selection else { return }
+        let overrides = isStatusBarOverridden ? [:] : SimulatorStatusBar.demo
+        do {
+            try await control.setStatusBar(host: host, port: port, udid: udid, overrides: overrides)
+            isStatusBarOverridden.toggle()
+            show(notice: isStatusBarOverridden ? "Demo status bar on" : "Status bar restored")
+        } catch {
+            failure = Self.describe(error)
+        }
+    }
+
+    /// Hand the device a dropped file. The server routes on the extension — an `.app`/`.ipa` is
+    /// installed, an image or a video lands in Photos — so this side deliberately does not try to
+    /// classify it and get the taxonomy wrong.
+    func send(file url: URL, contents: Data) async {
+        guard case let .ready(host, port) = phase, let udid = selection, !isSendingFile else { return }
+        isSendingFile = true
+        defer { isSendingFile = false }
+        let name = url.lastPathComponent
+        do {
+            try await control.sendFile(
+                host: host, port: port, udid: udid, name: name, contents: contents,
+            )
+            show(notice: "Sent \(name)")
+        } catch {
+            failure = Self.describe(error)
+        }
+    }
+
+    /// A failure raised by the VIEW rather than by a call. A dropped file the sandbox will not let it
+    /// read never reaches the client at all, and silence there looks like a drop that missed the
+    /// target.
+    func report(_ text: String) {
+        notice = nil
+        noticeClear?.cancel()
+        failure = text
+    }
+
+    /// How long a confirmation stays up. Long enough to read one short line, short enough that it is
+    /// gone before it can be mistaken for state.
+    static let noticeLifetime: Duration = .seconds(2)
+
+    private func show(notice text: String) {
+        failure = nil
+        notice = text
+        noticeClear?.cancel()
+        noticeClear = Task { [weak self] in
+            try? await Task.sleep(for: Self.noticeLifetime)
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
+    }
+
+    // MARK: Chrome
+
+    /// Fetch the selected device's body. Cache first so stepping back to the list and in again does
+    /// not blank the bezel; a failure is left silent on purpose — the panel simply draws bare, which
+    /// is a working screen, and an error banner over a working screen is worse than no bezel.
+    private func loadChrome(for udid: String) {
+        chromeLoad?.cancel()
+        if let cached = chromeCache[udid] {
+            chrome = cached
+            return
+        }
+        chrome = nil
+        guard case let .ready(host, port) = phase else { return }
+        let control = control
+        chromeLoad = Task { [weak self] in
+            let assets = await SimulatorChromeAssets.load(
+                udid: udid, host: host, port: port, control: control,
+            )
+            guard let assets, !Task.isCancelled, let self, selection == udid else { return }
+            chromeCache[udid] = assets
+            chrome = assets
+        }
     }
 
     private func handle(_ event: SimulatorStreamEvent, for udid: String) {

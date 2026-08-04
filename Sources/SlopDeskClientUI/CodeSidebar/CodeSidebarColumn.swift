@@ -356,31 +356,11 @@ struct CodeSidebarColumn: View {
 
     @ViewBuilder
     private var simulatorReadyContent: some View {
-        if let selection = simulatorModel.selection {
-            SimulatorScreenView(frame: simulatorModel.frame) { simulatorModel.send($0) }
-                // The darkest rung under the frame: the fitted rect rarely fills a sidebar's aspect,
-                // and letterbox that reads as chrome is better than letterbox that reads as content.
-                .background(Slate.Surface.ground)
-                .overlay(alignment: .bottom) { simulatorHardwareBar }
-                // Identity by DEVICE: switching devices must build a fresh view rather than feed a
-                // second stream's frames into a layer configured for the first one's parameter sets.
-                .id(selection)
+        if simulatorModel.selection != nil {
+            SimulatorStageView(model: simulatorModel)
         } else {
             SimulatorDeviceList(model: simulatorModel)
         }
-    }
-
-    /// The hardware buttons the frame itself cannot offer — there is no bezel in the panel to click.
-    /// Home and lock only: the pair that unsticks a device someone has navigated into a corner, which
-    /// is the whole job of this bar. A full bezel replica belongs in a bigger surface than a sidebar.
-    private var simulatorHardwareBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            PlateIconButton(symbol: .house) { simulatorModel.send(.button("home")) }
-                .help("Home")
-            PlateIconButton(symbol: .lock) { simulatorModel.send(.button("lock")) }
-                .help("Lock")
-        }
-        .padding(Slate.Metric.space2)
     }
 
     /// The centered spinner surface — the code-server boot and the pre-push projectKey wait share

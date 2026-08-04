@@ -12,6 +12,10 @@ struct PlateIconButton: View {
     let symbol: SFSymbol
     var size: CGFloat = Slate.Metric.iconSize
     var plate: CGFloat = Slate.Metric.plate
+    /// A LATCHED state — the thing this button turns on is currently on. Distinct from hover, which
+    /// is about the pointer: an active plate keeps its fill with the pointer elsewhere, and inks its
+    /// glyph in the accent so the state survives on a theme whose hover tint is faint.
+    var active = false
     var action: () -> Void = {}
 
     @State private var hovering = false
@@ -20,14 +24,19 @@ struct PlateIconButton: View {
         Button(action: action) {
             Image(systemSymbol: symbol)
                 .font(.system(size: size))
-                .foregroundStyle(Slate.Text.icon)
+                .foregroundStyle(active ? Slate.State.accent : Slate.Text.icon)
                 .frame(width: plate, height: plate)
-                .background(hovering ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+                .background(background, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
+    }
+
+    private var background: Color {
+        if active { return Slate.State.selected }
+        return hovering ? Slate.State.hover : .clear
     }
 }
 

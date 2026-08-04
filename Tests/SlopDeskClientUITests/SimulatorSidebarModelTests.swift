@@ -47,6 +47,55 @@ private final class FakeControl: SimulatorControlling, @unchecked Sendable {
         devices[index].isBooted = isBooted
         devices[index].state = isBooted ? "Booted" : "Shutdown"
     }
+
+    // MARK: The device-control half
+
+    /// What the panel asked the device to do, in order — one log for every route that only SETS, so a
+    /// test can assert the wire value rather than the fact that a call happened.
+    private(set) var orientations: [String] = []
+    private(set) var statusBars: [[String: String]] = []
+    private(set) var files: [(name: String, bytes: Int)] = []
+    private(set) var screenshots = 0
+    /// Answered by ``chrome``. Nil is the "this model has no description" case the panel must survive.
+    var chromeResult: SimulatorChrome?
+    /// Answered by ``screenshot`` — JPEG bytes in the real thing, arbitrary here.
+    var screenshotResult = Data()
+
+    func chrome(host _: String, port _: UInt16, udid _: String) throws -> SimulatorChrome {
+        if let failure { throw failure }
+        guard let chromeResult else { throw SimulatorControlError.malformedResponse }
+        return chromeResult
+    }
+
+    func resource(host _: String, port _: UInt16, reference _: String) throws -> Data {
+        if let failure { throw failure }
+        return Data()
+    }
+
+    func setOrientation(host _: String, port _: UInt16, udid _: String, value: String) throws {
+        if let failure { throw failure }
+        orientations.append(value)
+    }
+
+    func screenshot(host _: String, port _: UInt16, udid _: String) throws -> Data {
+        if let failure { throw failure }
+        screenshots += 1
+        return screenshotResult
+    }
+
+    func setStatusBar(
+        host _: String, port _: UInt16, udid _: String, overrides: [String: String],
+    ) throws {
+        if let failure { throw failure }
+        statusBars.append(overrides)
+    }
+
+    func sendFile(
+        host _: String, port _: UInt16, udid _: String, name: String, contents: Data,
+    ) throws {
+        if let failure { throw failure }
+        files.append((name, contents.count))
+    }
 }
 
 @MainActor
@@ -385,6 +434,131 @@ final class SimulatorSidebarModelTests: XCTestCase {
         model.select("A")
         model.send(.button("home"))
         XCTAssertEqual(stream()?.sent.count, 1)
+    }
+
+    // MARK: Device controls
+
+    func testRotatingWalksTheCycleAndSendsTheServersOwnSpelling() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.rotate(.right)
+        await model.rotate(.right)
+        await model.rotate(.left)
+        XCTAssertEqual(control.orientations, ["landscape-right", "portrait-upside-down", "landscape-right"])
+        XCTAssertEqual(model.orientation, .landscapeRight)
+    }
+
+    func testAFailedRotationLeavesTheRememberedAngleWhereItWas() async {
+        // The angle is what the NEXT rotation is relative to. Advancing it on a call the server
+        // refused would have every later rotation off by a quarter turn.
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        control.failure = SimulatorControlError.status(500)
+        await model.rotate(.right)
+        XCTAssertEqual(model.orientation, .portrait)
+        XCTAssertEqual(model.failure, "The simulator server answered 500.")
+    }
+
+    func testRotationIsRefusedWithNothingSelected() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        await model.rotate(.right)
+        XCTAssertTrue(control.orientations.isEmpty)
+    }
+
+    func testTheStatusBarToggleSendsThePresetThenTheClear() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.toggleStatusBarOverride()
+        XCTAssertTrue(model.isStatusBarOverridden)
+        XCTAssertEqual(control.statusBars.first?["time"], "9:41")
+
+        await model.toggleStatusBarOverride()
+        XCTAssertFalse(model.isStatusBarOverridden)
+        // Empty is how the client spells "clear"; the client turns that into the server's own flag.
+        XCTAssertEqual(control.statusBars.last, [:])
+    }
+
+    func testAFailedStatusBarCallDoesNotFlipTheTogglesPosition() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        control.failure = SimulatorControlError.status(500)
+        await model.toggleStatusBarOverride()
+        XCTAssertFalse(model.isStatusBarOverridden)
+    }
+
+    func testBothDeviceSettingsResetWhenTheSelectionMoves() async {
+        // Each is a claim about the PREVIOUS device. Carried over, the new screen would rotate from
+        // the wrong angle and show the wrong toggle position.
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.rotate(.right)
+        await model.toggleStatusBarOverride()
+
+        model.select("B")
+        XCTAssertEqual(model.orientation, .portrait)
+        XCTAssertFalse(model.isStatusBarOverridden)
+    }
+
+    func testAnUndecodableScreenshotIsReportedRatherThanSilentlyDropped() async {
+        // The fake answers bytes that are not an image, which is what a server problem looks like
+        // from here — and a capture that quietly does nothing is the worst version of that.
+        let control = FakeControl()
+        control.screenshotResult = Data([0x00, 0x01])
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.copyScreenshot()
+        XCTAssertEqual(control.screenshots, 1)
+        XCTAssertEqual(model.failure, "The screenshot could not be read.")
+        XCTAssertNil(model.notice)
+    }
+
+    func testADroppedFileIsSentUnderItsOwnNameAndConfirmed() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.send(file: URL(fileURLWithPath: "/tmp/Demo.app"), contents: Data([1, 2, 3]))
+        XCTAssertEqual(control.files.map(\.name), ["Demo.app"])
+        XCTAssertEqual(control.files.first?.bytes, 3)
+        XCTAssertEqual(model.notice, "Sent Demo.app")
+        XCTAssertNil(model.failure)
+    }
+
+    func testAFileGoesNowhereWithNothingSelected() async {
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        await model.send(file: URL(fileURLWithPath: "/tmp/Demo.app"), contents: Data([1]))
+        XCTAssertTrue(control.files.isEmpty)
+    }
+
+    func testAFailedSendReportsAndClearsTheInFlightFlag() async {
+        let control = FakeControl()
+        control.failure = SimulatorControlError.status(415)
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.send(file: URL(fileURLWithPath: "/tmp/Demo.app"), contents: Data([1]))
+        XCTAssertEqual(model.failure, "The simulator server answered 415.")
+        // Left set, the drop target would claim an upload is running forever.
+        XCTAssertFalse(model.isSendingFile)
+    }
+
+    func testAViewRaisedFailureClearsAPendingConfirmation() async {
+        // A file the sandbox will not let the view read never reaches the client, so the VIEW has to
+        // be able to say so. Both share one banner slot: a "Sent Demo.app" left standing under
+        // "Could not read Demo.app" would claim success and failure for the same drop.
+        let control = FakeControl()
+        let (model, _) = await readyModel(control)
+        model.select("A")
+        await model.send(file: URL(fileURLWithPath: "/tmp/Demo.app"), contents: Data([1]))
+        XCTAssertEqual(model.notice, "Sent Demo.app")
+        model.report("Could not read Demo.app.")
+        XCTAssertEqual(model.failure, "Could not read Demo.app.")
+        XCTAssertNil(model.notice)
     }
 
     // MARK: Notices
