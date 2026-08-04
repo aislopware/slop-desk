@@ -345,7 +345,18 @@ does not stand above every row it names:
   shape is also read before a word is: the mark is what makes a scan *not* a read, which is the
   point. One glyph per family and no finer — SF Symbols has nothing that tells a 17 Pro from a 17 Pro
   Max, so a per-model silhouette would draw different devices as each other, the same failure mode as
-  the `definition.json` size column. Cards carry it too, where the picture above already says iPad
+  the `definition.json` size column. **The pad is drawn landscape**: `iphone` and `ipad` differ only
+  in ASPECT, and aspect is the channel that does not survive being 13 points tall — rendered at the
+  size the rows use they are two small vertical rounded rectangles (measured across every candidate
+  pair 2026-08-04; `iphone.gen3`/`ipad.gen2` is the same shape again, and `apps.iphone`/`apps.ipad`
+  turn both into speckle, which is worse). A turned rectangle is a different SILHOUETTE, and
+  silhouette reads at any size. It claims no orientation: nothing else in the panel says orientation
+  with a device outline — the stage rotates with arrows and spells the word in its fact line — and
+  `appletv` is not the wide box one would fear but a square carrying the wordmark, so the five
+  silhouettes stay mutually distinct. The mark's column is one control rung wide
+  (`Slate.Metric.deviceMarkWidth`), because at 13pt type the phone is 13 across and the vision headset
+  23; sized to the narrowest, the wide ones touch the name. Cards carry it too, where the picture
+  above already says iPad
   louder than a 13pt symbol can: a card and a row for one device should read the same way, and in the
   second between a boot landing and the first capture the placeholder is all there is above that line.
 

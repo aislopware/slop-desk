@@ -84,7 +84,8 @@ struct SimulatorListSection: Identifiable {
 /// One glyph per family and no finer: SF Symbols has a phone, a pad, a watch, a television and a
 /// visor, and nothing that tells a 17 Pro from a 17 Pro Max. Faking that difference by scaling the
 /// symbol a point or two would be noise wearing the costume of information — the size *is* the thing
-/// the name says, and the name is right beside it.
+/// the name says, and the name is right beside it. Which silhouette each family gets, and why the pad
+/// is turned on its side, is in ``SimulatorDeviceKind/symbol``.
 ///
 /// Drawn in the ICON ink rather than the primary one. Every row carries this, so at full contrast a
 /// column of them is a rule down the leading edge competing with the names they exist to help find;
@@ -96,7 +97,10 @@ struct SimulatorFamilyMark: View {
         Image(systemSymbol: SimulatorDeviceKind.infer(from: device.name).symbol)
             .font(.system(size: Slate.Typeface.body, weight: .medium))
             .foregroundStyle(Slate.Text.icon)
-            .frame(width: Slate.Metric.iconSize)
+            // Leading, not centred: inside a family group every row carries the SAME silhouette, so
+            // what centring would buy is nothing, while what it costs is the heading — a 13pt phone
+            // centred in a 24pt column starts five points right of the `IPHONE` above it.
+            .frame(width: Slate.Metric.deviceMarkWidth, alignment: .leading)
     }
 }
 

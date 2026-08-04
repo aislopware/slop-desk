@@ -477,6 +477,12 @@ enum Slate {
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
         static let deviceCardWidth: CGFloat = 180
+        /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
+        /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
+        /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into
+        /// the gap and touch the name; sized to the widest, every name in the list starts on one rail
+        /// no matter which family the row belongs to.
+        static let deviceMarkWidth: CGFloat = heightControl
         /// A device ROW's minimum column width in the list's grid. Fits the longest device name this
         /// server serves ("iPad Pro 13-inch (M5)") plus its verb without truncating, and wraps to two
         /// columns at panel width instead of stranding a triangle 500pt from the name it belongs to.

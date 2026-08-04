@@ -26,10 +26,28 @@ enum SimulatorDeviceKind: String, CaseIterable, Sendable {
     case tv
     case vision
 
+    /// THE PAD IS DRAWN LANDSCAPE ON PURPOSE. `iphone` and `ipad` differ only in ASPECT, and aspect is
+    /// the one channel that does not survive being 13 points tall — rendered side by side at the size
+    /// the rows actually use, they are two small vertical rounded rectangles and the reader is back to
+    /// reading the name (measured across every candidate pair 2026-08-04: `gen3`/`gen2` is the same
+    /// shape, and `apps.*` turns both into speckle at this size, which is worse). Turning the pad on
+    /// its side changes the SILHOUETTE, and silhouette reads at any size. It also happens to be how
+    /// the two devices are held.
+    ///
+    /// It is not a claim about orientation. Nothing else in this panel says orientation with a device
+    /// outline — the stage's rotate controls are arrows and its fact line spells the word — so there
+    /// is no second meaning for a turned rectangle to collide with. And the mark is only ever drawn in
+    /// the list: beside a shut-down device, which has no orientation, or on a card, whose framebuffer
+    /// never rotates anyway.
+    ///
+    /// Checked against the rest of the set, since a landscape rectangle is the shape a television
+    /// would want: `appletv` is not a wide box but a square carrying the Apple TV wordmark, so the two
+    /// stay apart. All five silhouettes are mutually distinct at 13pt, which is the property
+    /// `testEveryFamilyDrawsItsOwnShape` pins by name.
     var symbol: SFSymbol {
         switch self {
         case .phone: .iphone
-        case .pad: .ipad
+        case .pad: .ipadLandscape
         case .watch: .applewatch
         case .tv: .appletv
         case .vision: .visionPro
