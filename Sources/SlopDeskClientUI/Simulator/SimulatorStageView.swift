@@ -46,10 +46,11 @@ struct SimulatorStageView: View {
     @State private var isLocationOpen = false
     /// The veil's own state, which is the model's loading state DELAYED — see ``veilDelay``.
     @State private var showsLoading = false
+    @State private var isRetryHovering = false
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            headerLayer
             // The STAGE: one lit surface with the device on it and nothing else.
             device
                 .background(Slate.Surface.face)
@@ -59,7 +60,6 @@ struct SimulatorStageView: View {
                 .task(id: model.isAwaitingStream) { await followLoading() }
             console
         }
-        .overlay(alignment: .top) { banner }
         .overlay { dropHighlight }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted.animation(Slate.Anim.smallFade)) { providers in
             accept(providers)
@@ -71,6 +71,16 @@ struct SimulatorStageView: View {
     /// Absent while the selection has been made but the device list has not caught up — the header's
     /// whole job is to state facts about a known device, and a header of placeholders would be the
     /// panel captioning a device it cannot name.
+    /// A container so the band can animate its own absence. A device can leave the list under the
+    /// panel — someone shuts it down from Xcode, or the host's set is re-read mid-session — and the
+    /// band it names goes with it, taking the stage's whole top edge in one frame. `.animation` on the
+    /// conditional itself would be attached to the view that just stopped existing; on the layer it
+    /// survives to carry the removal.
+    private var headerLayer: some View {
+        VStack(spacing: 0) { header }
+            .animation(Slate.Anim.smallFade, value: selected?.udid)
+    }
+
     @ViewBuilder
     private var header: some View {
         if let device = selected {
@@ -79,9 +89,13 @@ struct SimulatorStageView: View {
                 resolution: model.resolution,
                 orientation: model.orientation,
                 pinnedLocation: model.pinnedLocation,
-                onBack: { model.select(nil) },
+                // ONE transaction, matching the way in (``SimulatorDeviceList/enter(_:)``): the drill's
+                // transitions are declared on the surface that owns both depths and animate only
+                // because this write opens a beat for them.
+                onBack: { withAnimation(Slate.Anim.standard) { model.select(nil) } },
                 actions: { toolbar },
             )
+            .transition(.opacity)
         }
     }
 
@@ -190,16 +204,26 @@ struct SimulatorStageView: View {
 
     private var inspect: some View {
         HStack(spacing: Slate.Metric.space2) {
-            if model.isSendingFile { WorkingSpinner() }
+            // Its arrival shifts the two plates beside it, so it fades in rather than appearing —
+            // an install is the one verb here with no visible target, and the rail jumping is the
+            // only thing that says the drop was taken.
+            if model.isSendingFile {
+                WorkingSpinner()
+                    .transition(.opacity)
+            }
             location
             // A ruled list, not a terminal prompt: this opens a READER over the device's output, and
             // the `>_` glyph promises a place to type. (`.terminal` is also the Terminal.app icon and
             // deprecated at this target.)
             PlateIconButton(symbol: .listBulletRectangle, active: model.isConsoleOpen) {
-                model.toggleConsole()
+                // The drawer's own `.transition` has always been a move from the bottom edge; until
+                // this transaction it had no animation to ride, so it arrived in one frame and took
+                // the device's height with it.
+                withAnimation(Slate.Anim.standard) { model.toggleConsole() }
             }
             .help(model.isConsoleOpen ? "Hide the device log" : "Show the device log")
         }
+        .animation(Slate.Anim.smallFade, value: model.isSendingFile)
     }
 
     /// Latched while a position is pinned, so the toolbar says the device is somewhere else without
@@ -249,22 +273,34 @@ struct SimulatorStageView: View {
         } else if isStalled {
             veil {
                 caption("No video from this device.")
-                // A stalled stream is the one failure here that a second attempt genuinely fixes —
-                // the socket is fine, the encoder never started — so the stage offers the retry
-                // rather than making someone go back to the list and pick the same row again.
-                Button { model.retry() } label: {
-                    Text("Try Again")
-                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                        .foregroundStyle(Slate.Text.primary)
-                        .padding(.horizontal, Slate.Metric.space3)
-                        .padding(.vertical, Slate.Metric.space1)
-                        .background(
-                            Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl),
-                        )
-                }
-                .buttonStyle(.plain)
+                retry
             }
         }
+    }
+
+    /// A stalled stream is the one failure here that a second attempt genuinely fixes — the socket is
+    /// fine, the encoder never started — so the stage offers the retry rather than making someone go
+    /// back to the list and pick the same row again.
+    ///
+    /// It is the only TEXT button in the panel, and it was also the only control in it with no
+    /// response to the pointer at all: a plain-styled `Button` on a static fill, in the middle of a
+    /// surface that has just admitted nothing is working. It now rides ``SlatePlateStyle`` like every
+    /// plate — hover lights the fill a rung, and the press drops it back, which is the plate idiom's
+    /// own "key going down" spelled on a wider shape.
+    private var retry: some View {
+        Button { model.retry() } label: {
+            Text("Try Again")
+                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                .foregroundStyle(Slate.Text.primary)
+                .padding(.horizontal, Slate.Metric.space3)
+                .padding(.vertical, Slate.Metric.space1)
+                .contentShape(.rect)
+        }
+        .buttonStyle(SlatePlateStyle { pressed in
+            isRetryHovering && !pressed ? Slate.State.selected : Slate.Surface.raised
+        })
+        .onHover { isRetryHovering = $0 }
+        .animation(Slate.Anim.smallFade, value: isRetryHovering)
     }
 
     /// OPAQUE, on the stage's own tone rather than a dimming scrim. A scrim says "something is on top
@@ -303,39 +339,15 @@ struct SimulatorStageView: View {
 
     // MARK: Feedback
 
-    /// One slot, failure winning. Both cannot be true — a failure clears the notice and a notice
-    /// clears the failure — but stating the precedence here means a future third source cannot
-    /// silently outrank an error.
-    ///
-    /// ONLY THE FAILURE IS COLOURED (user-directed 2026-08-04). A notice says a thing the reader just
-    /// asked for worked, and a banner appearing at all already says that; ringing it in green made
-    /// the panel's alarm colour the thing it shows most often, which is how an interface teaches
-    /// people to stop reading its colours. Across this whole panel a hue now means one thing.
-    @ViewBuilder
-    private var banner: some View {
-        if let failure = model.failure {
-            capsule(failure, tint: Slate.Status.err)
-        } else if let notice = model.notice {
-            capsule(notice, tint: Slate.Line.active)
-        }
-    }
-
-    private func capsule(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.primary)
-            .lineLimit(2)
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-            .overlay {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(tint, lineWidth: Slate.Metric.hairline)
-            }
-            .padding(Slate.Metric.space2)
-            .transition(.opacity)
-            .animation(Slate.Anim.smallFade, value: text)
-    }
+    // THIS PANEL DRAWS NO BANNER (user-directed 2026-08-04). A bordered capsule used to float at the
+    // top of the stage carrying `failure` or `notice` — a bespoke alert shape, in a window that already
+    // has exactly one thing for reporting an event, and one that read as an alert from some other
+    // application. Every report now leaves through the app's notification card; the announcement lives
+    // on the surface that outlives both the stage and the list (see
+    // ``CodeSidebarColumn/announce(_:isFailure:)``).
+    //
+    // What stays here is the STATE, which a notification cannot carry: a stream with no video is
+    // drawn on the stage itself, where the ambiguous empty rectangle is, with the retry beside it.
 
     /// The drop affordance is a border, not a dimming veil: the point of dropping onto a live screen
     /// is watching the install land, and covering the device to say "you may drop here" hides it.

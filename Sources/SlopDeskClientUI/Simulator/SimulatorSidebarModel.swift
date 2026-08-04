@@ -276,7 +276,10 @@ final class SimulatorSidebarModel {
         stream?.disconnect()
         stream = nil
         settleStream()
-        frames.reset()
+        // DISCARD, not reset: the stage keys its screen on the selection, so this device's surface is
+        // about to be replaced rather than reused — and it stays on screen through the navigation
+        // transition, which a flush would spend on a blanked layer. See ``SimulatorFrameSink/discard``.
+        frames.discard()
         hasVideo = false
         selection = udid
         // Every one of these is a claim about the PREVIOUS device. Carrying them over would have the
@@ -358,13 +361,17 @@ final class SimulatorSidebarModel {
         // The await let the world move: a frame may have landed, or the selection moved on.
         guard selection == udid, isAwaitingStream else { return }
         settleStream()
+        // The two verdicts that LEAVE the device on screen do not name it: the report is carried by the
+        // app's notification, which prints the device as the card's own subject, and the header behind
+        // the card is still naming it too. The third does — it takes the reader back to the list, where
+        // nothing else is left saying which device this was about.
         guard let live else {
-            failure = "\(name) is not sending video."
+            failure = "No video has arrived from this device."
             return
         }
         devices = live
         if live.first(where: { $0.udid == udid })?.isBooted == true {
-            failure = "\(name) is running but not sending video."
+            failure = "The device is running, but no video has arrived."
         } else {
             failure = "\(name) is no longer running."
             select(nil)

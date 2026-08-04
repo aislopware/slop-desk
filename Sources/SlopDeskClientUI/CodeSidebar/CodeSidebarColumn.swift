@@ -51,6 +51,9 @@ struct CodeSidebarColumn: View {
 
     @State private var surfaceTab: SurfaceTab = .code
     @State private var simulatorModel = SimulatorSidebarModel()
+    /// Where the Simulators surface's reports go — the window's own notification stack, so this panel
+    /// speaks in the same card as everything else that has something to say. See ``announce(_:isFailure:)``.
+    @Environment(\.overlayCoordinator) private var overlayCoordinator
 
     private var activePane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
@@ -313,7 +316,10 @@ struct CodeSidebarColumn: View {
     /// leaving the tab drops the device poll and the live stream rather than paying for them
     /// off-screen.
     private var simulatorSurface: some View {
-        Group {
+        // A ZSTACK, not a `Group`: a phase change swaps one full-surface state for another, and while
+        // the two overlap a `Group` inside the column's `VStack` lays them out as two stacked bands —
+        // the outgoing state visibly squeezing the incoming one for the length of the fade.
+        ZStack {
             switch simulatorModel.phase {
             case .ready:
                 simulatorReadyContent
@@ -334,6 +340,10 @@ struct CodeSidebarColumn: View {
                 )
             }
         }
+        // Keyed on WHICH phase, not on the phase value: a `.ready` server that respawns on a new port
+        // is the same surface and must not blink, while server-boot → devices is a real change of
+        // subject and cuts hard without this.
+        .animation(Slate.Anim.standard, value: simulatorPhaseKey)
         .task(id: simulatorModel.generation) {
             await simulatorModel.poll(
                 host: { [connection] in connection.target.host },
@@ -356,6 +366,46 @@ struct CodeSidebarColumn: View {
         // also what makes coming back to the tab land on the device rather than on the list.
         .onAppear { simulatorModel.resume() }
         .onDisappear { simulatorModel.park() }
+        // Every report the panel makes leaves through the app's OWN notification (user-directed
+        // 2026-08-04). The panel used to draw its own: a bordered capsule floating over the stage and a
+        // second, differently-shaped one ruled into the list — two bespoke alert chromes for events the
+        // window already has one card for, and the capsule read as an alert from another application.
+        //
+        // Here rather than on either surface, because the surfaces come and go under the message: the
+        // "no longer running" verdict sets the text and clears the selection in one write, so a listener
+        // on the stage would be torn down in the same transaction that fired it.
+        .onChange(of: simulatorModel.failure) { _, text in announce(text, isFailure: true) }
+        .onChange(of: simulatorModel.notice) { _, text in announce(text, isFailure: false) }
+    }
+
+    /// One card, replaced rather than stacked (the fixed id is the warp `object_id` discipline the other
+    /// window-level notices use): these are reports about ONE panel, and three of them queued behind each
+    /// other would outlive the thing they describe.
+    ///
+    /// The device is the SUBJECT and the sentence is the detail, not the other way round. A headline is
+    /// one middle-truncated line, and every one of these messages is longer than that line — put the
+    /// sentence there and the reader loses its middle, which is where the verb is.
+    private func announce(_ text: String?, isFailure: Bool) {
+        guard let text, !text.isEmpty else { return }
+        overlayCoordinator?.pushToast(Toast(
+            id: "simulator",
+            flavor: isFailure ? .error : .success,
+            // An event at a device, not an agent's lifecycle — and with no pane to jump to, so the card
+            // renders as a plain notice rather than a door.
+            source: .command,
+            title: simulatorSubject,
+            body: text,
+            headline: simulatorSubject,
+        ))
+    }
+
+    /// The device the report is about, or the panel itself when there is none — a report that arrives
+    /// after the selection is cleared still has to say where it came from.
+    private var simulatorSubject: String {
+        guard let udid = simulatorModel.selection,
+              let device = simulatorModel.devices.first(where: { $0.udid == udid })
+        else { return "Simulators" }
+        return device.name
     }
 
     /// Changes when the server's ADDRESS does, not merely when the phase object is rebuilt — so a
@@ -365,13 +415,43 @@ struct CodeSidebarColumn: View {
         return "\(host):\(port)"
     }
 
-    @ViewBuilder
-    private var simulatorReadyContent: some View {
-        if simulatorModel.selection != nil {
-            SimulatorStageView(model: simulatorModel)
-        } else {
-            SimulatorDeviceList(model: simulatorModel)
+    /// Which of the four states is on screen, with the `.ready` payload deliberately dropped.
+    private var simulatorPhaseKey: String {
+        switch simulatorModel.phase {
+        case .ready: "ready"
+        case .starting: "starting"
+        case .unavailable: "unavailable"
+        case .offline: "offline"
         }
+    }
+
+    /// The list and the device are ONE surface at two depths, so the swap between them is a DRILL,
+    /// not a cut. The stage always enters from the trailing side and leaves back that way, the list
+    /// always from the leading side — one direction per view, which is what makes "in" and "out"
+    /// legible without either of them knowing which way the last move went.
+    ///
+    /// The shift is a NUDGE, not a page slide. A full-width push of a live H.264 surface is 200ms of
+    /// a video layer being composited across the panel to say something a few points of parallax
+    /// already say; the depth cue is the offset's direction, and the fade carries the rest.
+    ///
+    /// A ZStack for the same reason the phase switch above uses one — mid-transition both views are
+    /// mounted, and in a plain `if`/`else` the outgoing list would squeeze the arriving device.
+    private var simulatorReadyContent: some View {
+        ZStack {
+            if simulatorModel.selection != nil {
+                SimulatorStageView(model: simulatorModel)
+                    .transition(Self.drill(from: Slate.Metric.space4))
+            } else {
+                SimulatorDeviceList(model: simulatorModel)
+                    .transition(Self.drill(from: -Slate.Metric.space4))
+            }
+        }
+    }
+
+    /// Enter from `shift`, leave back to it — symmetric, because a view's side of the hierarchy does
+    /// not change with the direction of travel.
+    private static func drill(from shift: CGFloat) -> AnyTransition {
+        .offset(x: shift).combined(with: .opacity)
     }
 
     /// The centered spinner surface — the code-server boot and the pre-push projectKey wait share

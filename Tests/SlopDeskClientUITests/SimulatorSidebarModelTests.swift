@@ -499,7 +499,7 @@ final class SimulatorSidebarModelTests: XCTestCase {
 
         // Running but not encoding is the other cause, and it keeps the selection: the screen is the
         // thing being worked on, and the stage offers a retry in place.
-        XCTAssertEqual(model.failure, "iPhone A is running but not sending video.")
+        XCTAssertEqual(model.failure, "The device is running, but no video has arrived.")
         XCTAssertEqual(model.selection, "A")
         XCTAssertEqual(stream()?.disconnects, 0)
     }
@@ -531,7 +531,7 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertTrue(model.isAwaitingStream)
 
         await awaitSettled(model)
-        XCTAssertEqual(model.failure, "iPhone A is running but not sending video.")
+        XCTAssertEqual(model.failure, "The device is running, but no video has arrived.")
     }
 
     func testAnErrorFromTheServerEndsTheWaitAndARetryReopensTheSocket() async {
@@ -562,7 +562,7 @@ final class SimulatorSidebarModelTests: XCTestCase {
         await awaitSettled(model)
         // B's own deadline may speak; A's must not — a verdict about the device nobody is looking at
         // would name the wrong device in the banner and could send the panel back to the list.
-        XCTAssertEqual(model.failure, "iPhone B is running but not sending video.")
+        XCTAssertEqual(model.failure, "The device is running, but no video has arrived.")
     }
 
     func testEveryFrameReachesTheRendererEvenWhenTheBytesRepeat() async {
@@ -602,7 +602,7 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertFalse(model.hasVideo)
     }
 
-    func testGoingBackToTheListDropsTheSocketAndTheFrame() async {
+    func testGoingBackToTheListDropsTheSocketAndTheReplay() async {
         let (model, stream) = await readyModel(FakeControl())
         model.select("A")
         stream()?.sink(.message(.jpeg(Data([0xFF, 0xD8]))))
@@ -611,9 +611,17 @@ final class SimulatorSidebarModelTests: XCTestCase {
         model.select(nil)
         XCTAssertNil(model.selection)
         XCTAssertEqual(stream()?.disconnects, 1)
-        // Cleared, not left showing: the next selection must not open on the previous device's frame.
-        XCTAssertEqual(renderer.calls.last, "reset")
         XCTAssertFalse(model.hasVideo)
+        // The MOUNTED surface is left holding its picture — it is the OUTGOING view, it is about to
+        // be discarded whole (the stage keys its screen on the selection), and it stays on screen for
+        // the length of the back transition. Flushing it here spent that transition fading out a
+        // device with its screen switched off.
+        XCTAssertEqual(renderer.calls, ["seed"])
+        // What must not survive is the REPLAY, which is the half that could reach the NEXT device:
+        // whatever mounts after this opens on nothing at all.
+        let next = FakeRenderer()
+        model.frames.attach(next)
+        XCTAssertTrue(next.calls.isEmpty)
     }
 
     // MARK: Parking

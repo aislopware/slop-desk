@@ -39,21 +39,49 @@ struct PlateIconButton: View {
                 .font(.system(size: size, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? Slate.Text.primary : Slate.Text.icon)
                 .frame(width: plate, height: plate)
-                .background(background, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SlatePlateStyle { background(pressed: $0) })
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
+        // The LATCH, animated like the hover it sits above. Without this a toggle snapped between
+        // two fills while the pointer that flipped it faded smoothly — one control, two speeds.
+        .animation(Slate.Anim.smallFade, value: active)
     }
 
     /// Loose: hover fills faintly, latched sits on the selection tint. On a tray both move up —
     /// latched becomes a REAL raised surface, which is the only fill that still reads as "this one is
     /// on" when its neighbours are already carrying the tray's own tint.
-    private var background: Color {
-        if active { return onTray ? Slate.Surface.raised : Slate.State.selected }
-        if !hovering { return .clear }
+    ///
+    /// A PRESS moves the plate one rung in the direction the click is about to take it: a loose plate
+    /// lights toward "on", a latched one drops toward "off". Every verb on these plates acts on a
+    /// remote device, so the only other acknowledgement is the device itself changing a round trip
+    /// later — and a key that does not move under the pointer reads as one that missed the click.
+    private func background(pressed: Bool) -> Color {
+        // XOR: pressing previews the latch state the click lands on.
+        if active != pressed { return onTray ? Slate.Surface.raised : Slate.State.selected }
+        if !hovering, !pressed { return .clear }
         return onTray ? Slate.State.selected : Slate.State.hover
+    }
+}
+
+/// The plate idiom's fill, drawn by the BUTTON STYLE so it can see the press.
+///
+/// `.buttonStyle(.plain)` with the fill inside the label cannot: `isPressed` reaches a style and
+/// nothing else, and the alternatives — a `DragGesture(minimumDistance: 0)` or a long-press sensor —
+/// both take the events the row shells and scroll views underneath these buttons need.
+struct SlatePlateStyle: ButtonStyle {
+    /// The fill for the plate, asked once per press phase.
+    let fill: (_ isPressed: Bool) -> Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                fill(configuration.isPressed), in: .rect(cornerRadius: Slate.Metric.radiusControl),
+            )
+            // Both directions through the same 120ms fade: a click shorter than that still shows,
+            // because the release fades from wherever the press had reached.
+            .animation(Slate.Anim.smallFade, value: configuration.isPressed)
     }
 }
 

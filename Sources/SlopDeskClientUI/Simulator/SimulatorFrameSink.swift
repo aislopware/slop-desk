@@ -79,13 +79,22 @@ final class SimulatorFrameSink {
         renderer?.showSeed(jpeg)
     }
 
-    /// A device switch or a disconnect. Drops the replay as well as the picture: the next stream's
-    /// frames must not decode against this one's parameter sets.
+    /// A disconnect or a retry, where the SAME surface stays mounted. Drops the replay as well as the
+    /// picture: the next stream's frames must not decode against this one's parameter sets.
     func reset() {
+        discard()
+        renderer?.reset()
+    }
+
+    /// A device SWITCH, where the surface itself is being replaced (the stage keys its screen on the
+    /// selection, so the next device mounts a new layer that this sink has nothing to replay into).
+    /// Same forgetting, minus the flush — and the flush is the whole difference: the outgoing view
+    /// lives on for the length of the navigation transition, and blanking its layer would spend that
+    /// transition fading out a device with its screen switched off.
+    func discard() {
         configuration = nil
         keyframe = nil
         seed = nil
-        renderer?.reset()
     }
 }
 #endif

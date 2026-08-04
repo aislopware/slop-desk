@@ -356,7 +356,7 @@ Panel-wide, user-directed 2026-08-04, after four surfaces broke it independently
 | Header: green dot captioned `Live` while streaming | nothing — the title line is facts only (see *Three states, all of them definite*) |
 | List: booted device's family glyph in the accent | booted = primary ink at medium weight, shut down = tertiary |
 | Console: `info` process names in green | grey; only `error`/`fault` are inked |
-| Stage: success banner ringed in green | ringed in the neutral active border; only a failure is red |
+| Stage: success banner ringed in green | the panel draws no banner at all — see *Reports leave through the app's notification* |
 | Any latched `PlateIconButton` glyph in the accent | primary ink one weight up (`.semibold`) — app-wide, not just here |
 
 The rule follows the 07-30 round that reversed hue-as-status across the workspace, and the two before
@@ -370,6 +370,37 @@ exists to surface no easier to find than the hundreds of green ones around them.
 — and that went too: latched is now primary ink at `.semibold` on a raised fill, three non-hue
 channels for one state. The header's pinned-position fact is unaccented for the same reason: it
 appears only when a position is pinned, so its presence already carries the state.
+
+### Reports leave through the app's notification
+
+User-directed 2026-08-04. The panel used to carry **two** alert chromes of its own: a bordered capsule
+floating at the top of the stage (`failure` or `notice`), and a differently-shaped warning row ruled in
+above the device list for a failed poll. Neither matched anything else in the window — the capsule in
+particular read as an alert raised by some other application — and the window already has exactly one
+surface for "something happened": `ToastStackView`.
+
+Both are gone. `SimulatorSidebarModel` still holds `failure` / `notice`; what changed is who draws them.
+`CodeSidebarColumn.announce(_:isFailure:)` watches both and pushes one card:
+
+- **fixed id `simulator`**, so a newer report replaces the older rather than stacking three cards about
+  one panel (the warp `object_id` discipline the other window-level notices use);
+- **`source: .command`, no `paneKey`** — an event at a device, with nowhere to jump, so the card renders
+  as a plain notice rather than a door;
+- **the device is the subject, the sentence is the detail.** A toast headline is one middle-truncated
+  line at ~35 characters and every one of these messages is longer, so a sentence put there loses its
+  middle — which is where the verb is. `headline`/`title` = the device name (or `Simulators` when the
+  selection has already been cleared), `body` = the sentence.
+
+**It listens on the SURFACE, not on the stage.** The "no longer running" verdict sets the text and
+clears the selection in one write, so an `.onChange` living on `SimulatorStageView` would be torn down
+by the same transaction that fired it. That verdict is also the only one of the three that still names
+the device in its own sentence — it is the one that sends the reader back to the list, where nothing
+else is left saying which device it was about.
+
+**What did NOT move: state.** A notification is an event and expires; the stalled stream is a condition,
+and it stays drawn on the stage where the ambiguous empty rectangle is, with its retry beside it. The
+same split is why a failed poll leaves the rows alone — the last-known devices are still the best
+information available, and blanking them would make a flaky link look like a device set that vanished.
 
 ### One rule across the top, not two
 
@@ -509,6 +540,80 @@ the same hours:
 
 ---
 
+## Motion
+
+Added 2026-08-04 (user-directed). The panel had the design system's hover fades and nothing else: every
+structural change in it — a device opening, a drawer arriving, a boot moving a row into another group —
+happened between two frames. MERIDIAN spends its artistry budget on structure, typography and
+**transient** motion, so the rule applied here is that **anything that changes the panel's structure
+animates, and anything at rest does not**. No springs, no scale, no motion on text; every beat is one of
+the `Slate.Anim` curves.
+
+**The drill.** The list and the device are one surface at two depths, so the swap between them is a
+navigation move rather than a cut. Both live in a `ZStack` in `CodeSidebarColumn.simulatorReadyContent`
+— in a plain `if`/`else` inside the column's `VStack` the two would be laid out as stacked bands and the
+outgoing view would squeeze the arriving one for the length of the fade. Each declares ONE symmetric
+transition (offset + opacity), the stage's toward the trailing side and the list's toward the leading
+one, so "in" and "out" are legible without either knowing which way the last move went. The shift is a
+nudge (`space4`), not a page slide: a full-width push of a live H.264 surface spends 200 ms compositing
+a video layer across the panel to say what a few points of parallax already say.
+
+The animation is a **transaction at the call site** — `withAnimation(Slate.Anim.standard)` around the
+selection write in `SimulatorDeviceList.enter(_:)` and in the header's back action — matching the tab
+strip's `selectSurface`. The views declare transitions; they do not declare animations.
+
+**⚠️ A flush on the way out costs the transition its picture.** The outgoing stage stays mounted for the
+length of the drill, so `select(_:)` calling `SimulatorFrameSink.reset()` — which flushes the display
+layer with `removingDisplayedImage: true` — spent that 200 ms fading out a device with its screen
+switched off. `select(_:)` now calls `discard()`: same forgetting of the replay (parameter sets, seed,
+keyframe), no flush. It is safe precisely because the stage keys its screen on the selection, so the
+next device mounts a **new** layer that this sink has nothing to replay into. `reset()` stays for
+`retry()`, where the same surface is reused and blanking it is the point. Verified frame-by-frame from a
+`screencapture -v` recording: the device fades out holding its home screen while the list fades in over
+it, ~0.2 s, no black frame.
+
+**What else moves, and why each one is structural rather than decorative:**
+
+| beat | curve | what would happen without it |
+| --- | --- | --- |
+| list ⇄ device drill | `standard` | a cut between two full surfaces |
+| device list reflow (boot/shutdown/filter) | `standard` | a booting device teleports into `RUNNING` and every row below jumps |
+| console drawer open/close | `standard` | the drawer already had `.transition(.move(edge: .bottom))` and **no animation to ride it** — it arrived in one frame and took the device's height with it |
+| phase swap (`starting` → `ready` → …) | `standard` | server-boot → devices cuts hard |
+| pending spinner ⇄ boot/stop verb | `smallFade` | the one acknowledgement a click gets, delivered as a redraw |
+| banner / failure arrival | `smallFade` | *(retired the same day — reports moved to the app's notification; the rule it taught is below)* |
+| header band appearing or leaving | `smallFade` | a device removed from the host takes the stage's top edge in one frame |
+| plate press | `smallFade` | see below |
+
+The reflow is keyed on the entry **identities**, not on the device array: a device whose `state` ticks
+through `Booting` is the same row saying something new, and re-running a thirty-row reflow for it would
+animate the list every second while nothing moved.
+
+**⚠️ An inserted view cannot animate its own arrival.** Two of these were already written as
+`.transition(...)` plus an `.animation` **inside** the conditional branch, which animates a text swap
+between two live values and nothing else — every appearance and every dismissal stayed a hard cut. The
+animation has to sit on a container that outlives the change: `headerLayer` in `SimulatorStageView`
+exists for exactly that and for no other reason (its sibling `bannerLayer` did too, until the banner
+itself was retired). The same rule is why the drawer's
+long-standing `.transition` did nothing until a `withAnimation` transaction was put around
+`toggleConsole()`.
+
+**⚠️ `.move(edge:)` on an unclipped overlay travels the view's whole height.** The stage banner was an
+overlay over the top bar, and a move transition climbed it out of the panel and across the tab strip on
+its way in; `.offset(y:)` + opacity is the arrival cue without the trip. The banner is gone, the trap is
+not — the drop highlight and any future overlay sit in the same unclipped position.
+
+**The press beat.** `SlatePlateStyle` (in `SlateKit.swift`) draws the plate fill from the *button style*
+rather than the label, because `isPressed` reaches a style and nothing else — and the alternatives, a
+zero-distance `DragGesture` or a long-press sensor, take the events the row shells and scroll views
+underneath these plates need. A press moves the plate one rung in the direction the click is about to
+take it: a loose plate lights toward "on", a latched one drops toward "off" (`active != pressed`). Every
+verb on these plates acts on a **remote** device, so without it the only acknowledgement of a click was
+the device changing a round trip later. Both plate idioms and the stage's `Try Again` — until now the
+one control in the panel with no response to the pointer at all — share it.
+
+---
+
 ## Traps
 
 - **`baguette` CLI `stream` is unusable** — `avcc` emits 0 bytes, `h264` is rejected at runtime
@@ -603,6 +708,13 @@ the same hours:
   `.task` stops itself on unmount, so a socket held by the surviving model looks stopped and is not.
   Anything long-lived that the panel opens needs an explicit counterpart in `park()`/`resume()` — see
   *A panel that is not on screen holds no sockets* for what that cost while it was missing.
+- **A view being INSERTED cannot animate its own arrival, and a view being REMOVED cannot either.** An
+  `.animation` written inside the conditional branch covers value changes within a mounted view and
+  nothing else; the transition needs an animation on a container that outlives the change. Two banners
+  and a drawer in this panel each looked animated and each cut hard. See *Motion*.
+- **Do not flush the frame sink on a device SWITCH.** The outgoing stage is still on screen for the
+  length of the navigation transition. `select(_:)` uses `SimulatorFrameSink.discard()`; `reset()` — the
+  one that blanks the layer — is for `retry()`, where the surface is reused.
 
 ---
 
@@ -623,10 +735,10 @@ the same hours:
 | `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
 | `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |
 | `Simulator/SimulatorScrollGesture.swift` | scroll → ONE continuous `touch1` contact, with re-grip; pure |
-| `Simulator/SimulatorFrameSink.swift` | the video path with SwiftUI taken out of it: direct delivery + cold-start replay |
+| `Simulator/SimulatorFrameSink.swift` | the video path with SwiftUI taken out of it: direct delivery + cold-start replay, `reset` vs `discard` |
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/pinch/edge/key mapping |
 | `Simulator/SimulatorBezelView.swift` | the device: art, screen clipped into `screen.rect`, live buttons |
-| `Simulator/SimulatorStageView.swift` | the streaming surface: top bar + device + drawer + banner + drop target |
+| `Simulator/SimulatorStageView.swift` | the streaming surface: top bar + device + drawer + drop target |
 | `Simulator/SimulatorDeviceHeader.swift` | the panel's one top bar: back, name, measured facts, and the verbs |
 | `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
 | `Simulator/SimulatorLogLine.swift` | pure: compact-line parse, log envelope decode, the level set |

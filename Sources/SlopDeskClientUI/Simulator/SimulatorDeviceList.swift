@@ -127,9 +127,6 @@ struct SimulatorDeviceList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
-            if let failure = model.failure {
-                banner(failure)
-            }
             if model.devices.isEmpty {
                 message("No simulator devices on the host.")
             } else if matches.isEmpty {
@@ -161,8 +158,13 @@ struct SimulatorDeviceList: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                // It appears on the FIRST keystroke and vanishes on the last, which at a field's
+                // trailing edge is a glyph blinking beside the caret. The fade is what keeps it from
+                // reading as part of the typing.
+                .transition(.opacity)
             }
         }
+        .animation(Slate.Anim.smallFade, value: query.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightControl)
         .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
@@ -179,9 +181,10 @@ struct SimulatorDeviceList: View {
     /// that shut down moved down still drawing the accent glyph and Shut Down. Position followed the
     /// state; the content did not.
     private var list: some View {
-        ScrollView {
+        let entries = Self.entries(for: matches)
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Self.entries(for: matches)) { entry in
+                ForEach(entries) { entry in
                     switch entry {
                     case let .heading(title, runtime):
                         heading(title, runtime: runtime)
@@ -193,6 +196,16 @@ struct SimulatorDeviceList: View {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.bottom, Slate.Metric.space2)
         }
+        // THE REFLOW. A boot is not a row changing colour: the device leaves its family, RUNNING
+        // appears above it, and everything under the cut shifts by a row — the one structural change
+        // this list ever makes, and it used to happen between two frames with nothing to connect the
+        // row you clicked to the row that arrived at the top. Keyed on the entry IDENTITIES, so a poll
+        // that returns the same devices animates nothing and a filter keystroke animates once.
+        //
+        // On the ids and not on `matches`: a device whose `state` string ticks through `Booting` is
+        // the SAME row saying something new, and re-running a 30-row reflow for it would animate the
+        // list every second while nothing moved.
+        .animation(Slate.Anim.standard, value: entries.map(\.id))
     }
 
     /// The group's title, with its shared runtime as the heading's own CAPTION rather than as a
@@ -283,45 +296,63 @@ struct SimulatorDeviceList: View {
     /// steps to the primary one while the pointer is anywhere on the row. Solid rather than the
     /// enclosing `…Circle` pair — a ring at this size reads as a control chrome rather than as a
     /// direction, and a dozen of them down the trailing edge read as a rule.
-    @ViewBuilder
     private func action(for device: SimulatorDevice, hovering: Bool) -> some View {
-        if model.pending.contains(device.udid) {
-            // The platform's indicator through `WorkingSpinner`, not `ProgressView`: a bare
-            // `ProgressView` in a hosted column resolves the Aqua appearance and comes out dark grey
-            // on a dark theme (see `StatusDot`'s header).
-            WorkingSpinner()
-                .frame(width: Slate.Metric.heightControl, height: Slate.Metric.heightControl)
-        } else {
-            SlatePlateButton(
-                symbol: device.isBooted ? .stopFill : .playFill,
-                help: device.isBooted ? "Shut down \(device.name)" : "Boot \(device.name)",
-                size: Slate.Typeface.footnote,
-                plate: Slate.Metric.heightControl,
-                tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
-            ) {
-                Task {
-                    if device.isBooted { await model.shutdown(device.udid) }
-                    else { await model.boot(device.udid) }
+        let isPending = model.pending.contains(device.udid)
+        // The two occupy the SAME slot and cross-fade rather than replace each other. Both are
+        // `heightControl` square, so the row does not move; what would move without this is the eye,
+        // because a glyph becoming a spinner in one frame reads as a redraw rather than as the click
+        // being accepted — and accepting the click is the whole of what the spinner is there to say.
+        return ZStack {
+            if isPending {
+                // The platform's indicator through `WorkingSpinner`, not `ProgressView`: a bare
+                // `ProgressView` in a hosted column resolves the Aqua appearance and comes out dark
+                // grey on a dark theme (see `StatusDot`'s header).
+                WorkingSpinner()
+                    .frame(width: Slate.Metric.heightControl, height: Slate.Metric.heightControl)
+                    .transition(.opacity)
+            } else {
+                SlatePlateButton(
+                    symbol: device.isBooted ? .stopFill : .playFill,
+                    help: device.isBooted ? "Shut down \(device.name)" : "Boot \(device.name)",
+                    size: Slate.Typeface.footnote,
+                    plate: Slate.Metric.heightControl,
+                    tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
+                ) {
+                    Task {
+                        if device.isBooted { await model.shutdown(device.udid) }
+                        else { await model.boot(device.udid) }
+                    }
                 }
+                .transition(.opacity)
             }
         }
+        .animation(Slate.Anim.smallFade, value: isPending)
     }
 
     /// A click on a booted device opens its screen; on a shut-down one it boots it. Two verbs on one
     /// gesture because they are the same intent — "I want to use this device" — and the row already
     /// carries the explicit control for anyone who means the other one.
+    ///
+    /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
+    /// the panel's transition vocabulary lives on the surface that owns both depths
+    /// (``CodeSidebarColumn``), and the views themselves declare no animation for it. Same shape as
+    /// the tab strip's `selectSurface`: the caller opens the beat, the transitions ride it.
     private func open(_ device: SimulatorDevice) {
         if device.isBooted {
-            model.select(device.udid)
+            enter(device.udid)
         } else if !model.pending.contains(device.udid) {
             Task { await model.boot(device.udid) }
         }
     }
 
+    private func enter(_ udid: String) {
+        withAnimation(Slate.Anim.standard) { model.select(udid) }
+    }
+
     @ViewBuilder
     private func menu(for device: SimulatorDevice) -> some View {
         if device.isBooted {
-            Button("Open Screen") { model.select(device.udid) }
+            Button("Open Screen") { enter(device.udid) }
             Button("Shut Down") { Task { await model.shutdown(device.udid) } }
         } else {
             Button("Boot") { Task { await model.boot(device.udid) } }
@@ -341,23 +372,12 @@ struct SimulatorDeviceList: View {
 
     // MARK: Notices
 
-    /// A failure sits ABOVE the list rather than replacing it: the last-known devices are still the
-    /// best information available, and blanking them on one failed poll would make a flaky link look
-    /// like a device set that vanished.
-    private func banner(_ text: String) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Image(systemSymbol: .exclamationmarkTriangle)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Status.warn)
-            Text(text)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Slate.Metric.space3)
-        .padding(.bottom, Slate.Metric.space2)
-    }
+    // A FAILED POLL DRAWS NOTHING HERE (user-directed 2026-08-04). It used to rule a warning row in
+    // above the rows, on the reasoning that the last-known devices are still the best information
+    // available and blanking them would make a flaky link look like a device set that vanished. That
+    // reasoning stands, and is exactly why the list is left alone: the report goes to the window's
+    // notification card like every other report this panel makes, and the rows keep saying what they
+    // last knew. Two bespoke alert shapes in one panel was the thing being fixed.
 
     private func message(_ text: String) -> some View {
         Text(text)

@@ -66,8 +66,12 @@ struct SimulatorConsoleView: View {
             SlatePlateGroup {
                 PlateIconButton(symbol: .trash) { model.clearLog() }
                     .help("Clear Console")
-                PlateIconButton(symbol: .xmark) { model.toggleConsole() }
-                    .help("Hide Console")
+                // Closes through the same transaction the toolbar plate opens with, so the drawer
+                // leaves the way it arrived rather than vanishing from under the pointer.
+                PlateIconButton(symbol: .xmark) {
+                    withAnimation(Slate.Anim.standard) { model.toggleConsole() }
+                }
+                .help("Hide Console")
             }
         }
         .padding(.horizontal, Slate.Metric.space2)
@@ -105,18 +109,24 @@ struct SimulatorConsoleView: View {
 
     // MARK: Rows
 
-    @ViewBuilder
+    /// The waiting sentence and the log cross-fade rather than replace each other: the first line to
+    /// arrive after a subscribe swaps a centred sentence for a wall of mono text, and cut hard it
+    /// reads as the drawer being rebuilt. Keyed on emptiness alone — the rows themselves must never
+    /// animate, a console at full tilt appends dozens of lines a second.
     private var content: some View {
-        if visible.isEmpty {
-            Text(emptyMessage)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(Slate.Metric.space2)
-        } else {
-            rows
+        ZStack {
+            if visible.isEmpty {
+                Text(emptyMessage)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.tertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(Slate.Metric.space2)
+            } else {
+                rows
+            }
         }
+        .animation(Slate.Anim.smallFade, value: visible.isEmpty)
     }
 
     private var rows: some View {

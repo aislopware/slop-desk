@@ -26,13 +26,12 @@ struct SlatePlateButton: View {
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(tint)
                 .frame(width: plate, height: plate)
-                .background(
-                    hovering ? Slate.State.hover : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
-                )
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        // Press steps one rung past hover — see ``SlatePlateStyle``. This is the plate under the
+        // pointer in every list row's trailing verb, where the click's effect (a device booting) is
+        // seconds away and the only immediate answer is the key going down.
+        .buttonStyle(SlatePlateStyle { $0 ? Slate.State.selected : hovering ? Slate.State.hover : .clear })
         .slateHelp(help)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
