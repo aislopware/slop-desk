@@ -201,12 +201,11 @@ struct MetadataResponseBuilder {
         case .ensureCodeServer,
              .ensureSimulatorServer,
              .ensureAndroidBridge,
-             .ensureWebBrowser,
              .openInCodeServer,
              .syncCodeFont:
             // The right-panel service verbs are likewise NOT this READ-ONLY builder's job —
             // `MuxChannelSession.serveMetadata` routes them to `HostCodeServerPerformer` /
-            // `HostSimulatorPerformer` / `HostAndroidPerformer` / `HostWebPerformer` BEFORE the
+            // `HostSimulatorPerformer` / `HostAndroidPerformer` BEFORE the
             // builder (they spawn a child process or bind a socket), so they never reach here in
             // production. Reaching this case is a routing bug; answer `.error` defensively (this
             // pure reducer must NEVER perform a host side effect).

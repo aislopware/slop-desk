@@ -207,30 +207,6 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// identical (lazy, host-global, never-wait, poll-until-ready) and that is what this payload
     /// describes; nothing in it claims the far side is HTTP.
     case ensureAndroidBridge = 22
-    /// **Side-effecting.** Ensure the host's WEB browser — the backend of the right panel's Web
-    /// surface, a headless Chrome the host supervises and the client drives through Chrome's own
-    /// DevTools frontend. Request payload: EMPTY, for verb 21's reason: one host runs one browser,
-    /// and every pane, project and client sees the same one.
-    ///
-    /// Response payload: ``MetadataCodec/ServiceEndpoint``, the same shape and the same never-wait
-    /// contract as verbs 18, 21 and 22. `unavailable` means no Chrome-family binary on the host.
-    ///
-    /// **The port is a RELAY's, not the browser's.** Chrome binds its debugging port to `127.0.0.1`
-    /// and cannot be told otherwise — `--remote-debugging-address=0.0.0.0` is accepted and ignored
-    /// (measured 2026-08-05) — so hostd fronts it with a listener of its own, exactly as verb 22's
-    /// bridge fronts the loopback socket `adb forward` opens. What crosses is still an address.
-    ///
-    /// The client reaches that port through its OWN loopback relay and loads
-    /// `http://127.0.0.1:<local>/devtools/inspector.html?ws=127.0.0.1:<local>/devtools/page/<id>` —
-    /// the frontend Chrome itself serves, so it is always the version of the browser rendering the
-    /// page. The relay is not a convenience there: the frontend's CSP admits `ws://127.0.0.1:*`
-    /// only, so a mesh address cannot be dialled from it at all.
-    ///
-    /// **What this port grants.** A DevTools endpoint can read files and run code as the host user.
-    /// That is the same authority verb 22's bridge already hands over (`adb` gives a device shell),
-    /// and it rests on the same invariant: security is the WireGuard mesh, never an app-layer
-    /// credential (docs/DECISIONS.md).
-    case ensureWebBrowser = 23
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

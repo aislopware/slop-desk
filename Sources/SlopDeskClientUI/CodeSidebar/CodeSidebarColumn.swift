@@ -47,7 +47,6 @@ struct CodeSidebarColumn: View {
         case code
         case simulators
         case android
-        case web
         case desktop
     }
 
@@ -59,11 +58,6 @@ struct CodeSidebarColumn: View {
     /// surface would mean a list whose rows dispatch on platform and a stage whose every control has
     /// two implementations. They are two device sets that happen to look alike in a sidebar.
     @State private var androidModel = AndroidSidebarModel()
-    /// The Web surface's own model. A FIFTH tab for the same reason the fourth is one: it shares no
-    /// protocol with its neighbours — a browser's own DevTools frontend over CDP, against
-    /// `baguette`'s websocket and `scrcpy` over `adb` — and what it inspects is a page on the HOST,
-    /// not a device.
-    @State private var webModel = WebSidebarModel()
     /// Where the Simulators surface's reports go — the window's own notification stack, so this panel
     /// speaks in the same card as everything else that has something to say. See ``announce(_:isFailure:)``.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
@@ -119,8 +113,6 @@ struct CodeSidebarColumn: View {
                 simulatorSurface
             case .android:
                 androidSurface
-            case .web:
-                webSurface
             case .desktop:
                 // The announced window-OS surface — content still a placeholder; the TAB is real
                 // (selecting it parks the Code surface, whose pooled webview survives unmounted
@@ -163,11 +155,9 @@ struct CodeSidebarColumn: View {
 
     private var strip: some View {
         HStack(spacing: 2) {
-            // THE WIDTH LADDER. Five tabs carrying a mark and a word measure 401pt — more than the
-            // panel's whole 380pt minimum (`codeSidebarMinWidth`), let alone the ~310 left once the
-            // strip's padding and the two action plates are paid for. So the top rung needs about
-            // 470pt of panel; the middle one (selected tab named, the rest square cells) measures
-            // 170 and fits the minimum with room to spare. `ViewThatFits` picks
+            // THE WIDTH LADDER. Four tabs carrying a mark and a word want ~330pt, and the panel's
+            // minimum (`codeSidebarMinWidth`, 380) leaves the tabs about 310 once the action plates
+            // are paid for — so a panel dragged narrow has to give something up. `ViewThatFits` picks
             // the first rung that fits: every tab named, then only the selected one, then none. It
             // degrades a rung at a time rather than truncating, because a tab reading "Simulat…" has
             // stopped saying what it switches to, while a mark alone still does.
@@ -195,14 +185,6 @@ struct CodeSidebarColumn: View {
             case .android:
                 PlateIconButton(symbol: .arrowClockwise) { androidModel.requestReload() }
                     .help("Reload the device list")
-            case .web:
-                // The FRONTEND, not the page: the page has reload inside DevTools (and ⌘R in it),
-                // while a frontend that has lost its socket has nothing of its own to fix that.
-                PlateIconButton(symbol: .arrowClockwise) {
-                    WebInspectorWebViewPool.shared.reload()
-                    webModel.requestReload()
-                }
-                .help("Reload the inspector")
             case .desktop:
                 EmptyView()
             }
@@ -222,7 +204,7 @@ struct CodeSidebarColumn: View {
         case none
     }
 
-    /// The five surface tabs, as their own GROUP on a wider gap than the action plates trailing
+    /// The four surface tabs, as their own GROUP on a wider gap than the action plates trailing
     /// them: two lit plates side by side (the selected tab and the one under the pointer) touched at
     /// the strip's 2pt spacing and read as one long fill, where `space1` opens a channel between them
     /// while still holding the tabs closer to each other than to anything else.
@@ -264,16 +246,6 @@ struct CodeSidebarColumn: View {
                 showsLabel: names(.android),
             ) { selectSurface(.android) }
                 .help("Emulators — the host's Android emulators and attached devices")
-            // Chrome's own wheel and Chrome's own name (user-directed 2026-08-05). `globe` and
-            // "Web" named a register the surface does not actually occupy: this panel drives ONE
-            // browser, the inspector in it is that browser's, and the pages behave the way that
-            // engine behaves. Naming the engine is the honest label, and it is the same argument
-            // the platform tabs beside it already won.
-            PanelTabPlate(
-                mark: .chrome, label: "Chrome", selected: surfaceTab == .web,
-                showsLabel: names(.web),
-            ) { selectSurface(.web) }
-                .help("Chrome — the host's browser, with its own inspector")
             PanelTabPlate(
                 symbol: .display, label: "Desktop", selected: surfaceTab == .desktop,
                 showsLabel: names(.desktop),
@@ -640,136 +612,6 @@ struct CodeSidebarColumn: View {
 
     private var androidPhaseKey: String {
         switch androidModel.phase {
-        case .ready: "ready"
-        case .starting: "starting"
-        case .unavailable: "unavailable"
-        case .offline: "offline"
-        }
-    }
-
-    // MARK: The Web surface
-
-    /// The Web surface. Machine-scoped like the two device surfaces — one host, one browser — and
-    /// lazy for the same reason: the `.task`s live here rather than on the column, so a user who
-    /// never opens this tab never makes the host start a browser at all.
-    private var webSurface: some View {
-        ZStack {
-            switch webModel.phase {
-            case .ready:
-                webReadyContent
-            case .starting:
-                waiting("Starting the browser…")
-            case .unavailable:
-                placeholder(
-                    symbol: .globe,
-                    title: "No browser found on host",
-                    // Chrome leads because the pages under test are written for it, but any Blink
-                    // browser serves the same inspector — the locator takes Chromium, Brave and
-                    // Edge too (`WebBrowserToolchain`).
-                    detail: "brew install --cask google-chrome",
-                    detailIsCommand: true,
-                )
-            case .offline:
-                placeholder(
-                    symbol: .boltSlash,
-                    title: "Host unreachable",
-                    detail: "The browser opens once a pane is connected.",
-                )
-            }
-        }
-        // Keyed on WHICH phase, for the device surfaces' reason: a browser that respawns on a new
-        // port is the same surface and must not blink.
-        .animation(Slate.Anim.standard, value: webPhaseKey)
-        .task(id: webModel.generation) {
-            await webModel.poll(
-                host: { [connection] in connection.target.host },
-                ensure: { [store] in
-                    await Self.firstConnectedMetadataClient(store)?.ensureWebBrowser()
-                },
-                // The loopback relay is MANDATORY here, not an upgrade as it is for the workbench:
-                // the DevTools frontend's own policy admits a debugging websocket to `127.0.0.1`
-                // and nothing else, so a frontend loaded from the mesh address renders in full and
-                // then reports a closed connection. Its own key, so this origin's stored DevTools
-                // layout stays apart from the workbench's.
-                localize: { host, port in
-                    await CodeSidebarProxyPool.shared.endpoint(
-                        host: host, port: port, key: CodeSidebarProxyPorts.webProxyKey,
-                    ) ?? (host, port)
-                },
-            )
-        }
-        .task(id: webReadyKey) {
-            guard case .ready = webModel.phase else { return }
-            await webModel.watchTargets()
-        }
-        .task(id: webReadyKey) {
-            guard case .ready = webModel.phase else { return }
-            await watchWebViewportFit()
-        }
-        .onChange(of: webModel.failure) { _, text in announceWeb(text) }
-    }
-
-    /// The bar over the frontend. The frontend mounts only once there is a page to attach to — a
-    /// browser mid-start has a debugging port but no target list yet, and an inspector pointed at a
-    /// target that does not exist loads into an error rather than a spinner.
-    private var webReadyContent: some View {
-        VStack(spacing: 0) {
-            WebAddressBar(model: webModel)
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            if let url = webModel.frontendURL {
-                let veiled = WebInspectorWebViewPool.shared.loadState.veiled
-                WebInspectorWebView(url: url)
-                    .overlay {
-                        if veiled {
-                            waiting("Opening the inspector…")
-                                .background(Slate.Surface.ground)
-                                .transition(.opacity)
-                        }
-                    }
-                    .animation(Slate.Anim.smallFade, value: veiled)
-            } else {
-                waiting("Finding a page…")
-            }
-        }
-    }
-
-    /// Keeps the host's browser shaped like the space DevTools gives its page — see
-    /// ``WebViewportFit`` for why the page would otherwise sit in a band of empty column.
-    ///
-    /// A POLL rather than a geometry observer, because the column moves for three different reasons
-    /// and only one of them is this panel resizing: DevTools has a minimum width the split hits on
-    /// its own, and the user can drag the divider inside the frontend. One measurement a second
-    /// catches all three, and the model drops the round unless the column actually moved.
-    private func watchWebViewportFit() async {
-        while !Task.isCancelled {
-            if let column = await WebInspectorWebViewPool.shared.screencastColumn() {
-                await webModel.fitViewport(column: column)
-            }
-            try? await Task.sleep(for: .seconds(1))
-        }
-    }
-
-    /// Its own toast id, for the reason the Android surface's has one: two panels can both have
-    /// something to say, and a shared id would have one replace the other.
-    private func announceWeb(_ text: String?) {
-        guard let text, !text.isEmpty else { return }
-        overlayCoordinator?.pushToast(Toast(
-            id: "web",
-            flavor: .error,
-            source: .command,
-            title: "Web",
-            body: text,
-            headline: "Web",
-        ))
-    }
-
-    private var webReadyKey: String {
-        guard case let .ready(host, port) = webModel.phase else { return "" }
-        return "\(host):\(port)"
-    }
-
-    private var webPhaseKey: String {
-        switch webModel.phase {
         case .ready: "ready"
         case .starting: "starting"
         case .unavailable: "unavailable"

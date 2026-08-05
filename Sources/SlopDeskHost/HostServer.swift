@@ -571,10 +571,6 @@ public final class HostServer: @unchecked Sendable {
         // devices. The devices themselves — including emulators this host booted — are left running,
         // for the same reason.
         HostAndroidPerformer.sharedManager.shutdown()
-        // The Web surface's browser is the one child that IS killed here: unlike a booted simulator
-        // or emulator it is headless, on a profile nothing else uses, and invisible on the host's
-        // screen — leaving it running would strand a process the user cannot see to stop.
-        HostWebPerformer.sharedManager.shutdown()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
         // refcounts above; this is the belt-and-braces daemon-stop sweep).
         repoWatcher.shutdown()

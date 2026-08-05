@@ -294,21 +294,6 @@ public final class MetadataClient {
         return try? MetadataCodec.decodeServiceEndpoint(payload)
     }
 
-    /// Ensures the HOST runs its headless browser and reports where it stands
-    /// (``MetadataVerb/ensureWebBrowser``; the right panel's Web surface). Takes no root — one host
-    /// runs one browser, whose tabs every pane and client share.
-    ///
-    /// Same never-wait/poll contract as ``ensureSimulatorServer()``. The port is HTTP, but what it
-    /// serves is the browser's OWN DevTools frontend plus the debugging endpoints beside it, so the
-    /// caller loads it through a loopback relay of its own: the frontend accepts a websocket back to
-    /// `ws://127.0.0.1:*` only. `nil` on a malformed reply, an OLD host answering `.unsupportedVerb`,
-    /// or a dropped reply (the registry timeout → `.error`).
-    public func ensureWebBrowser() async -> MetadataCodec.ServiceEndpoint? {
-        let (status, payload) = await request(.ensureWebBrowser, payload: Data())
-        guard status == .ok else { return nil }
-        return try? MetadataCodec.decodeServiceEndpoint(payload)
-    }
-
     /// Pushes the CLIENT's terminal-font truth into the shared workbench settings
     /// (``MetadataVerb/syncCodeFont``; the embedded editor must read like the terminal beside it).
     /// Best-effort by design — the caller fires it after an ensure round or a live prefs change and

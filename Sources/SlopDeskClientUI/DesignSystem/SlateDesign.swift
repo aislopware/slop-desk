@@ -497,15 +497,6 @@ enum Slate {
         /// mark beside its own word is no longer compared with the mark two tabs over, so the width
         /// this costs stopped mattering, and nothing recommended changing what the ink says.
         static let androidMark: CGFloat = 17
-        /// ``ChromeMark``'s box — the SYMBOLS' em, unlike the robot above.
-        ///
-        /// It needed a number of its own only while the mark was drawn in Google's colours, which
-        /// made it a filled disc: a disc is the one shape whose bounding box IS its ink, so at 13 it
-        /// stood 13 × 13 against `folder`'s strokes and read as the heaviest thing in the strip, and
-        /// 12 was where its silhouette rejoined the band. Redrawn in one ink the wheel is a broken
-        /// RING — line weight, like everything beside it — so the em that makes the SF Symbols agree
-        /// makes this agree too, and the exception went away.
-        static let chromeMark: CGFloat = 13
         /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
         /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
         /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into

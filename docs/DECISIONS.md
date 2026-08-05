@@ -6819,12 +6819,12 @@ in the palette, the selection branch sent exactly the selected characters, the n
 branch sent the caret's whole line, the cd carried the resolved directory, and both result arms
 (status bar, warning notification) rendered.
 
-## The panel gets a fifth tab: the host's browser, with its own inspector (2026-08-05)
+## The panel gets a fifth tab: the host's browser, with its own inspector (2026-08-05, REMOVED)
 
 Files, Simulators and Emulators all answer "what is on this machine". Web answers a different
 question — "what does this page do" — and it is the one the panel could not answer at all. The
 tab drives a browser that runs on the HOST and inspects it with THAT BROWSER'S OWN DevTools
-frontend, over Chrome's debugging protocol (`docs/49-web-panel.md`; metadata verb 23).
+frontend, over Chrome's debugging protocol (metadata verb 23).
 
 The obvious build was the cheap one: the client already embeds WebKit, so render the page
 locally and open Safari's Web Inspector on it. It was rejected on two counts that a preview
@@ -6857,3 +6857,30 @@ a bare loopback host gets `http://`, because that is where the host's dev server
 Unlike the two device tabs, hostd's shutdown terminates this child. A booted simulator or
 emulator is the user's own machine state; a headless browser on a private profile is a process
 nobody can see to stop.
+
+## …and loses it again: a screencast is not a browser (2026-08-05)
+
+The tab shipped, was used, and was removed the same day (user-directed). Three complaints came
+back from real use, and measuring them separated one architectural verdict from two bugs.
+
+Two were bugs, and both were fixed before the removal: the pointer never changed shape over a
+link, because DevTools' screencast simply does not carry the cursor — the panel now asks for it
+over the frontend's OWN debugging socket, hijacked at document start; and the pages flagged the
+browser, which was three launch flags (`--disable-blink-features=AutomationControlled`, a real
+user-agent built from the bundle version, and `--screen-info`, without which every page reads an
+800×600 screen).
+
+The third was not a bug. `Page.screencastFrame` ships a WHOLE JPEG per frame and waits for an ack
+before the next one, which measured 20–25 fps on loopback and 14–17 over the mesh. Four
+independent attempts moved none of it: cutting the payload fivefold bought 3 fps, a trivial page
+measured the same as a heavy one, `--disable-gpu-vsync --disable-frame-rate-limit` gave 23, and
+the mesh was never the constraint. A coding tool's own browser is scrolled and hovered constantly,
+and at that rate the scrolling is what the user feels.
+
+The only native-feeling route left was the app's existing video path — capture a real Chrome
+window with ScreenCaptureKit and inject input, which is what the Desktop surface is FOR. Building
+a second, browser-shaped copy of it behind a panel tab is not worth a tab, so the feature was
+deleted rather than rebuilt: files, tests, its gate script, its dialect doc, and metadata verb 23
+(no deprecation shim — this repo does not carry backcompat). What survives is this entry, so the
+next person who proposes a CDP-screencast browser panel finds the measurement instead of
+repeating it.
