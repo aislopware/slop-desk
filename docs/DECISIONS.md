@@ -6818,3 +6818,42 @@ half drove a real code-server 4.112 under chrome-headless-shell over CDP: both c
 in the palette, the selection branch sent exactly the selected characters, the no-selection
 branch sent the caret's whole line, the cd carried the resolved directory, and both result arms
 (status bar, warning notification) rendered.
+
+## The panel gets a fifth tab: the host's browser, with its own inspector (2026-08-05)
+
+Files, Simulators and Emulators all answer "what is on this machine". Web answers a different
+question — "what does this page do" — and it is the one the panel could not answer at all. The
+tab drives a browser that runs on the HOST and inspects it with THAT BROWSER'S OWN DevTools
+frontend, over Chrome's debugging protocol (`docs/49-web-panel.md`; metadata verb 23).
+
+The obvious build was the cheap one: the client already embeds WebKit, so render the page
+locally and open Safari's Web Inspector on it. It was rejected on two counts that a preview
+pane cannot buy back. The page under development is served by the HOST — a dev server on the
+host's `localhost`, the host's hosts-file, its certificates and its cookies — so a browser
+sitting on the host types `localhost:5173` and is there, while a client-side web view needs a
+forwarded port for every service and still breaks on the first absolute link the app emits to
+its own origin. And WebKit gives an embedding app no supported way to open its inspector at
+all: the private route (`_inspector` / `attach`) is what cmux and muxy both use, is macOS-only,
+and cmux's own source warns that a repeated attach can crash inside `platformAttach`. A
+SlopDesk client also runs on iPad, where that route does not exist.
+
+Chrome serves its entire frontend over HTTP, which turns the whole problem into a URL. Measured
+before any of this was written: that frontend renders and drives a page correctly inside
+WKWebView on macOS AND on iPadOS 26.5, with no private API on either. One surface, one
+behaviour, every client — and nothing of DevTools vendored, so it can never fall out of step
+with the protocol behind it.
+
+Two relays, and neither is optional. Chrome binds its debugging port to loopback and cannot be
+talked out of it (`--remote-debugging-address=0.0.0.0` is accepted and ignored), so hostd fronts
+it. The frontend then opens its websocket back to `ws://127.0.0.1:*` and admits nothing else, so
+the client fronts the mesh endpoint on a stable loopback origin of its own — under its own key,
+because DevTools stores its whole layout against that origin.
+
+The address bar navigates the EXISTING page over CDP rather than opening a new one: a new target
+means a new DevTools session, which is exactly what an address bar must not cost. It is not a
+search box either — prose resolves to nothing rather than being shipped to a search engine, and
+a bare loopback host gets `http://`, because that is where the host's dev server is.
+
+Unlike the two device tabs, hostd's shutdown terminates this child. A booted simulator or
+emulator is the user's own machine state; a headless browser on a private profile is a process
+nobody can see to stop.

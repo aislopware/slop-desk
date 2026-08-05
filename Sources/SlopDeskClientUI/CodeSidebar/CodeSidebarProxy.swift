@@ -37,6 +37,17 @@ enum CodeSidebarProxyPorts {
     /// second origin to keep apart.
     static let sharedProxyKey = "slopdesk-code-sidebar"
 
+    /// The Web surface's relay. A SECOND key rather than a second use of the first: the two front
+    /// different host services, and the DevTools frontend keys its whole stored layout — docked
+    /// side, panel sizes, open drawers — on its origin, which must therefore not move when the
+    /// workbench's relay retargets.
+    ///
+    /// For the Web surface the relay is not the upgrade it is for the workbench, it is the only way
+    /// in: the frontend opens its debugging websocket to `ws://127.0.0.1:*` and its own policy
+    /// admits nothing else, so a frontend loaded straight from the mesh address renders in full and
+    /// then reports a closed connection (measured 2026-08-05).
+    static let webProxyKey = "slopdesk-web-inspector"
+
     /// The `attempt`-th candidate port for `key`. Attempt 0 is THE stable port; later attempts
     /// stride away from it (bind-collision fallback — another process on the slot) while staying
     /// in range.

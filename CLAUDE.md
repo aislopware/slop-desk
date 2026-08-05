@@ -28,3 +28,4 @@ SlopDesk = low-latency remote coding (macOS host, macOS/iOS clients). Swift owns
 - No contiguous secret literals in fixtures (GitHub push protection) — assemble at runtime
 - A test calling `HostServer.start()` must set `SLOPDESK_WORKSPACE_STATE_DIR` or inject `workspaceStore:`, else it overwrites the real workspace
 - VT HEVC: no `max_ref_frames=1` (all-IDR); no `UsingHardware…` query under low-latency RC (`-12900`); no Lossless key; `DataRateLimits` = bitrate/8
+- Chrome CDP (Web panel): `--remote-allow-origins=*` required since 111; own `--user-data-dir` mandatory since 136; `--remote-debugging-address` is accepted and IGNORED ⇒ two relays, host and client (`docs/49`)

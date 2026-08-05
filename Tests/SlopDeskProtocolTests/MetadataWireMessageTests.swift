@@ -285,10 +285,13 @@ final class MetadataWireMessageTests: XCTestCase {
         // The Android-bridge ensure (side-effecting spawn; the SAME ServiceEndpoint payload as 18
         // and 21, empty request — docs/20).
         XCTAssertEqual(MetadataVerb.ensureAndroidBridge.rawValue, 22)
+        // The web-browser ensure (side-effecting spawn; the SAME ServiceEndpoint payload as 18, 21
+        // and 22, empty request — docs/20).
+        XCTAssertEqual(MetadataVerb.ensureWebBrowser.rawValue, 23)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap. The probe
-        // moves up with each verb added (it was 22 before ensureAndroidBridge).
+        // moves up with each verb added (it was 23 before ensureWebBrowser).
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 23))
+        XCTAssertNil(MetadataVerb(rawValue: 24))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

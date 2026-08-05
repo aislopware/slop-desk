@@ -1,0 +1,173 @@
+// WebInspectorWebView — the Web surface's web view: Chrome's OWN DevTools frontend, loaded from the
+// host's browser through the client's loopback relay.
+//
+// Nothing of DevTools is vendored here. The browser serves the whole frontend from its debugging
+// port, so what the panel renders is always the build that matches the protocol behind it — the
+// reason this route was taken over WebKit's own inspector, which an embedding app has no supported
+// way to open (and whose private path is macOS-only, while a SlopDesk client must also run on iPad).
+//
+// ONE pooled web view, not one per target. Switching tabs re-points the SAME instance: minting a new
+// one per page would pay the frontend's boot every time, and the pooled instance is also what
+// survives the panel being collapsed or another tab being selected.
+//
+// HANG-SAFETY: nothing in the unit-test dependency closure may construct a WKWebView — the pool is
+// `macOS`-gated and reached only from the mounted surface. The pure parts (URL building, address
+// normalisation) live in `WebSidebarModel`.
+
+#if os(macOS)
+import AppKit
+import SwiftUI
+import WebKit
+
+/// The frontend's first-paint veil, the same device the workbench uses: WebKit paints its default
+/// white between the provisional commit and the page's first paint, and DevTools takes long enough
+/// to boot that the flash is plainly visible against the dark panel.
+@MainActor
+@Observable
+final class WebInspectorLoadState {
+    private(set) var veiled = true
+    func navigationStarted() { veiled = true }
+    func navigationSettled() { veiled = false }
+}
+
+/// The retained `WKNavigationDelegate` driving the veil (`navigationDelegate` is weak). Failures
+/// settle too — a dead endpoint must surface WebKit's error page, never an eternal spinner.
+@MainActor
+private final class WebInspectorNavigationObserver: NSObject, WKNavigationDelegate {
+    let state: WebInspectorLoadState
+
+    init(state: WebInspectorLoadState) {
+        self.state = state
+    }
+
+    func webView(_: WKWebView, didStartProvisionalNavigation _: WKNavigation?) {
+        state.navigationStarted()
+    }
+
+    func webView(_: WKWebView, didFinish _: WKNavigation?) {
+        state.navigationSettled()
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation?, withError _: Error) {
+        state.navigationSettled()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation?, withError _: Error) {
+        state.navigationSettled()
+    }
+}
+
+/// The single pooled frontend web view. `@MainActor` (WKWebView is main-thread only).
+@MainActor
+final class WebInspectorWebViewPool {
+    static let shared = WebInspectorWebViewPool()
+
+    let loadState = WebInspectorLoadState()
+    private var webView: WKWebView?
+    private var navigationObserver: WebInspectorNavigationObserver?
+
+    /// The web view, pointed at `url`. Re-loads only when the address actually moved — a re-render
+    /// with the same target must not restart the frontend and throw away the user's open panel,
+    /// their breakpoints and their console history.
+    func webView(url: URL) -> WKWebView {
+        if let existing = webView {
+            if existing.url != url { existing.load(URLRequest(url: url)) }
+            return existing
+        }
+        let configuration = WKWebViewConfiguration()
+        // DevTools' own audio/video previews (a page's media in the network panel) must not stall
+        // behind a user-gesture gate the panel can never satisfy.
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.themeSeedSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
+        let created = WKWebView(frame: .zero, configuration: configuration)
+        // Right-click → Inspect Element on the FRONTEND itself — the only window into a DevTools
+        // build that misbehaves, exactly as the workbench keeps one.
+        created.isInspectable = true
+        created.underPageBackgroundColor = NSColor(webSlateBackdropHex: Slate.theme.terminalBackgroundHex)
+        // WebKit's base canvas is white until first paint; there is no public API for it, and the
+        // long-standing KVC key lets the dark panel show through instead.
+        created.setValue(false, forKey: "drawsBackground")
+        let observer = WebInspectorNavigationObserver(state: loadState)
+        navigationObserver = observer
+        created.navigationDelegate = observer
+        created.load(URLRequest(url: url))
+        webView = created
+        return created
+    }
+
+    /// Reload the frontend (the strip's reload plate). The PAGE is untouched — reloading what the
+    /// user is inspecting is a different verb, and one they can reach from inside DevTools.
+    func reload() {
+        webView?.reload()
+    }
+
+    /// Seeds DevTools' dark theme on the FIRST load only.
+    ///
+    /// DevTools keeps its settings in the frontend origin's `localStorage`, and the client's relay
+    /// gives that origin a stable port — so this survives both a browser respawn and an app
+    /// relaunch, and the user's own later choice of theme is never overwritten (the guard is what
+    /// makes it a seed rather than a policy). The value is JSON, quotes included: DevTools parses
+    /// what it reads back.
+    ///
+    /// ⚠️ The key is `ui-theme`, KEBAB-case. DevTools renamed its setting keys, and the old
+    /// `uiTheme` is still accepted into storage while being read by nobody — so seeding it looks
+    /// like it worked (the key is there afterwards) and the frontend still comes up light.
+    /// Measured against Chrome 150: `ui-theme` puts `theme-with-dark-background` on the root
+    /// element, `uiTheme` does nothing (`docs/49`).
+    nonisolated static let themeSeedSource = """
+    (function () {
+      try {
+        if (!window.localStorage.getItem('ui-theme')) {
+          window.localStorage.setItem('ui-theme', '"dark"');
+        }
+      } catch (e) {}
+    })();
+    """
+}
+
+/// Mounts the pooled frontend inside a container view — a container (not the web view itself)
+/// because the pooled `NSView` must survive this representable's teardown, exactly as the
+/// workbench's does.
+struct WebInspectorWebView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context _: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        return container
+    }
+
+    func updateNSView(_ container: NSView, context _: Context) {
+        let webView = WebInspectorWebViewPool.shared.webView(url: url)
+        guard webView.superview !== container else { return }
+        container.subviews.forEach { $0.removeFromSuperview() }
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
+}
+
+private extension NSColor {
+    /// Concrete sRGB colour from the theme's 6-hex backdrop string — appearance-stable, for the
+    /// reason the workbench's twin records (the SwiftUI-Color→NSColor bridge resolves through the
+    /// effective appearance and can read wrong on light themes).
+    convenience init(webSlateBackdropHex hex: String) {
+        let value = UInt64(hex, radix: 16) ?? 0
+        self.init(
+            srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
+            green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255,
+            alpha: 1,
+        )
+    }
+}
+#endif

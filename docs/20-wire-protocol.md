@@ -196,12 +196,14 @@ never offers or falls back to another version.
     the running workbench) / `20` syncCodeFont (**side-effecting** — folds the client's terminal
     font prefs into the shared workbench settings), plus `21` ensureSimulatorServer
     (**side-effecting** — lazily spawns/reports the shared simulator server behind the right
-    panel's Simulators tab) and `22` ensureAndroidBridge (**side-effecting** — lazily starts/reports
-    the shared Android bridge behind the right panel's Android tab). `payload` is the
+    panel's Simulators tab), `22` ensureAndroidBridge (**side-effecting** — lazily starts/reports
+    the shared Android bridge behind the right panel's Android tab) and `23` ensureWebBrowser
+    (**side-effecting** — lazily starts/reports the shared headless browser behind the right panel's
+    Web tab). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`/
-    `ensureSimulatorServer`/`ensureAndroidBridge`),
+    `ensureSimulatorServer`/`ensureAndroidBridge`/`ensureWebBrowser`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`/`ensureCodeServer` (`openInCodeServer` additionally allows
@@ -402,6 +404,28 @@ never offers or falls back to another version.
     the listener binds `0.0.0.0` with no credential; security = the WireGuard mesh. The host routes
     22 to `HostAndroidPerformer` BEFORE the read-only responder; an OLD host answers
     `unsupportedVerb` and the tab stays on its offline surface.
+  - **`ensureWebBrowser` (23) is the embedded-browser verb** (2026-08-05 — the client's right-panel
+    **Web** tab): the host lazily starts its ONE shared headless Chrome via `WebBrowserManager` and
+    replies **immediately** with the current state — the same never-wait contract as 18, 21 and 22.
+    Request payload: **empty** (a browser is a MACHINE resource; a NON-empty payload answers `error`,
+    so a future field can never be silently dropped by an old host). Response: status `ok` + the SAME
+    3-byte `[UInt8 state][UInt16 BE port]` `ServiceEndpoint` payload as 18/21/22 — `0` starting,
+    `1` ready, `2` unavailable (no Chrome-family browser on the host → the tab shows the
+    `brew install --cask google-chrome` hint). What the client does with a ready port is unlike its
+    three neighbours in one way worth stating: the port is a **hostd-side RELAY's**
+    (`WebDebugRelay`), never the browser's, because Chrome binds its debugging socket to `127.0.0.1`
+    and `--remote-debugging-address=0.0.0.0` is accepted and ignored (measured 2026-08-05). The
+    client then fronts THAT with a loopback relay of its own and loads the browser's OWN DevTools
+    frontend from it — mandatory, not an upgrade: the frontend opens its debugging websocket to
+    `ws://127.0.0.1:*` and admits nothing else. Nothing of DevTools is vendored; the whole foreign
+    dialect (CDP + the `/json/*` endpoints) is `docs/49-web-panel.md`. **No auth token** — the relay
+    binds `0.0.0.0` with no credential; security = the WireGuard mesh. Reaching that port grants
+    host-user code execution (a browser will fetch and run anything), the same authority verb 22's
+    `adb` bridge already hands out, and it rests on the same invariant. Unlike 21's booted simulators
+    and 22's emulators, hostd's shutdown **terminates** this child: it is headless, on a profile
+    nothing else uses, and invisible on the host's screen. The host routes 23 to `HostWebPerformer`
+    BEFORE the read-only responder; an OLD host answers `unsupportedVerb` and the tab stays on its
+    offline surface.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

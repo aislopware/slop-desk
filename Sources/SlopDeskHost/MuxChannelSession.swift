@@ -3573,6 +3573,15 @@ final class MuxChannelSession: @unchecked Sendable {
                 sendControl([response], to: id)
                 return
             }
+            // ensureWebBrowser = 23 does the same for the right panel's Web surface: it spawns the
+            // host's headless browser and fronts its loopback-only debugging port with a relay.
+            // Same never-wait contract as 18 and 21.
+            if let response = HostWebPerformer.response(
+                requestID: requestID, verb: verb, payload: payload,
+            ) {
+                sendControl([response], to: id)
+                return
+            }
             let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
             let response = MetadataResponseBuilder(query: probe)
                 .response(requestID: requestID, verb: verb, payload: payload)
