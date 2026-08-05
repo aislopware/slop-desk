@@ -155,10 +155,16 @@ start a browser at all.
 
 A headless browser still has exactly one frontmost tab, and a backgrounded page is **not
 composited** — DevTools attached to one draws an empty screencast and reports *"The tab is
-inactive"*. Every path that moves the selection (the first list round, the tab menu, opening a tab,
-closing the selected one) therefore ends in `GET /json/activate/<id>`; measured 2026-08-05, opening
-a second tab parks the first and a single activate ("Target activated") brings the picture back.
-`WebSidebarModelTests` pins all four paths.
+inactive"*. Every path that moves the selection (the tab menu, opening a tab, closing the selected
+one) therefore ends in `GET /json/activate/<id>`; measured 2026-08-05, opening a second tab parks the
+first and a single activate ("Target activated") brings the picture back.
+
+⚠️ Fronting on a SWITCH is not enough, and that was the first fix's bug. **The browser fronts tabs
+the panel never asked it to** — Chrome opens `chrome://settings/help` on its own update check, a page
+opens a window, an extension raises one. The selected page then goes dark mid-session under someone
+who was typing into it. So every list round re-asserts the front: `/json/list` answers in
+most-recently-active order (measured), so a selection that is not at the head of the list has been
+parked and is re-activated. `WebSidebarModelTests` pins both that and the four selection paths.
 
 - **`WebSidebarModel`** — two loops (ensure, then a slower `/json/list` poll), the phase machine, and
   the pure builders. The address field is an input first and a readout second: it follows a page that
@@ -182,17 +188,36 @@ up light. Measured on Chrome 150 — `ui-theme` puts `theme-with-dark-background
 `uiTheme` changes nothing. Same rename hit the screencast split
 (`inspector-view.screencast-split-view-state`). `WebInspectorThemeSeedTests` pins the key.
 
-### Width, measured
+### Width, measured — and why the browser follows the panel
 
-At a **1200pt** panel the frontend lays out as a full DevTools: page screencast on the left, Elements
-and its styles sidebar on the right. At the panel's **380–420pt** minimum the screencast column falls
-to ~170pt and the page inside it is a thumbnail — and seeding the split wider barely moves it,
-because the screencast letterboxes the page's own aspect (a 1440×900 viewport in a narrow column is
-short no matter how much width it is given). That is inherent to a screencast, not a layout bug, and
-the fix is the panel's own divider: `codeSidebarMinWidth` is a minimum with **no maximum**, so web
-work is done with the panel dragged wide. DevTools' built-in screencast address bar collapses to a
-few characters at that width, which is the second reason `WebAddressBar` sits above the frontend
-rather than deferring to it.
+DevTools' panels have a hard minimum of **270pt**, so the screencast column is whatever is left:
+`panel − 276`. That part is not negotiable and seeding the split does nothing about it.
+
+What the panel DOES fix is the shape of what goes in that column. The screencast scales the page to
+FIT, keeping the page's aspect — so a 1440×900 browser in a tall narrow column renders as a short
+band with empty room above and below it, at every panel width. `WebViewportFit` + `setWindowSize`
+resize the host's browser **window** to the column's shape once a second, which is the same thing a
+person does by dragging a window corner, and the page then fills the column.
+
+The window, not `Emulation.setDeviceMetricsOverride`: an emulation override belongs to the CDP
+client that set it and dies when that client disconnects, so honouring it would mean holding a
+session open beside the frontend's own for the panel's whole life. A window resize is browser state
+— it survives the socket closing, a frontend reload, and is shared by every tab, because they share
+the window. `--window-size=1440,900` is therefore only a starting value.
+
+Measured (Chrome 150, 2026-08-05): `Browser.setWindowBounds` **clamps the width at 500** and accepts
+any height (2049 honoured, far past the virtual screen); a headless window still spends **87pt** on
+browser chrome (a 2049-tall window reports `innerHeight` 1962); DevTools reserves **44 × 71** of the
+column for its device frame and navigation bar. The width floor is paid for in HEIGHT — taking 500
+without stretching the height would hand back a shape that is not the column's, and the empty band
+would come straight back.
+
+`Browser.*` is answered only by the **browser-level** socket, whose path carries a per-launch UUID —
+hence the `/json/version` fetch. Only the PATH is taken from `webSocketDebuggerUrl`: the address in
+it is the browser's own loopback port, two relays away from anything the client can reach.
+
+DevTools' built-in screencast address bar still collapses to a few characters at panel width, which
+is why `WebAddressBar` sits above the frontend rather than deferring to it.
 
 ---
 

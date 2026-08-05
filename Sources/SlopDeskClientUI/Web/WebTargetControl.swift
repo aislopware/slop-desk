@@ -81,6 +81,37 @@ struct WebTargetControl: WebTargetControlling {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    /// Two CDP round trips on the BROWSER-level socket: which window holds this page, then the new
+    /// bounds for it. Page-level sockets cannot do this — `Browser.*` is only answered by the
+    /// browser endpoint, whose path has to be fetched because it carries a per-launch UUID.
+    func setWindowSize(host: String, port: UInt16, targetID: String, size: CGSize) async -> Bool {
+        guard let path = await browserSocketPath(host: host, port: port),
+              let socketURL = URL(string: "ws://\(host):\(port)\(path)")
+        else { return false }
+        let task = Self.session.webSocketTask(with: socketURL)
+        task.resume()
+        defer { task.cancel(with: .goingAway, reason: nil) }
+
+        guard await (try? task.send(.string(Self.windowForTargetMessage(targetID: targetID)))) != nil,
+              let reply = try? await task.receive(),
+              let windowID = Self.decodeWindowID(reply)
+        else { return false }
+        let bounds = Self.setWindowBoundsMessage(windowID: windowID, size: size)
+        guard await (try? task.send(.string(bounds))) != nil,
+              let confirmation = try? await task.receive()
+        else { return false }
+        return Self.isCommandSuccess(confirmation)
+    }
+
+    /// The browser socket's PATH, from `/json/version`. The URL that endpoint answers with names the
+    /// browser's own loopback port, which is not the port this client reaches it on — everything
+    /// here is two relays away — so only the path is taken and the address is the caller's.
+    private func browserSocketPath(host: String, port: UInt16) async -> String? {
+        guard let url = Self.endpoint(host: host, port: port, path: "/json/version") else { return nil }
+        guard let (data, _) = try? await Self.session.data(from: url) else { return nil }
+        return Self.decodeBrowserSocketPath(data)
+    }
+
     // MARK: Pure parts (pinned by `WebTargetControlTests`)
 
     static func endpoint(host: String, port: UInt16, path: String) -> URL? {
@@ -103,14 +134,59 @@ struct WebTargetControl: WebTargetControlling {
         return text
     }
 
-    /// Whether a CDP reply says the navigation happened. A reply carrying `error` is a refusal
-    /// (an unsupported scheme, a target that closed mid-flight) and must NOT read as success.
-    static func isNavigateSuccess(_ message: URLSessionWebSocketTask.Message) -> Bool {
-        guard case let .string(text) = message,
-              let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
+    /// Whether a CDP reply says the command happened. A reply carrying `error` is a refusal (an
+    /// unsupported scheme, a target that closed mid-flight) and must NOT read as success.
+    static func isCommandSuccess(_ message: URLSessionWebSocketTask.Message) -> Bool {
+        guard let object = decodeMessage(message) else { return false }
         return object["error"] == nil && object["result"] != nil
+    }
+
+    /// Kept as its own name because a navigation's reply is the one the address bar reads.
+    static func isNavigateSuccess(_ message: URLSessionWebSocketTask.Message) -> Bool {
+        isCommandSuccess(message)
+    }
+
+    static func windowForTargetMessage(targetID: String) -> String {
+        message(id: 1, method: "Browser.getWindowForTarget", params: ["targetId": targetID])
+    }
+
+    /// Chrome clamps the width at 500 and takes any height (`WebViewportFit`), and `windowState` is
+    /// required: without it a window Chrome considers maximised ignores the bounds entirely.
+    static func setWindowBoundsMessage(windowID: Int, size: CGSize) -> String {
+        message(id: 2, method: "Browser.setWindowBounds", params: [
+            "windowId": windowID,
+            "bounds": [
+                "width": Int(size.width), "height": Int(size.height), "windowState": "normal",
+            ],
+        ])
+    }
+
+    static func decodeWindowID(_ message: URLSessionWebSocketTask.Message) -> Int? {
+        guard let object = decodeMessage(message), object["error"] == nil else { return nil }
+        return (object["result"] as? [String: Any])?["windowId"] as? Int
+    }
+
+    /// `/json/version` → the PATH of the browser socket, UUID and all.
+    static func decodeBrowserSocketPath(_ data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = object["webSocketDebuggerUrl"] as? String,
+              let components = URLComponents(string: text),
+              !components.path.isEmpty
+        else { return nil }
+        return components.path
+    }
+
+    private static func decodeMessage(_ message: URLSessionWebSocketTask.Message) -> [String: Any]? {
+        guard case let .string(text) = message, let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func message(id: Int, method: String, params: [String: Any]) -> String {
+        let body: [String: Any] = ["id": id, "method": method, "params": params]
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let text = String(data: data, encoding: .utf8)
+        else { return "" }
+        return text
     }
 
     /// `/json/list` → the PAGE targets only. The list also carries extension background pages,

@@ -702,6 +702,10 @@ struct CodeSidebarColumn: View {
             guard case .ready = webModel.phase else { return }
             await webModel.watchTargets()
         }
+        .task(id: webReadyKey) {
+            guard case .ready = webModel.phase else { return }
+            await watchWebViewportFit()
+        }
         .onChange(of: webModel.failure) { _, text in announceWeb(text) }
     }
 
@@ -726,6 +730,22 @@ struct CodeSidebarColumn: View {
             } else {
                 waiting("Finding a page…")
             }
+        }
+    }
+
+    /// Keeps the host's browser shaped like the space DevTools gives its page — see
+    /// ``WebViewportFit`` for why the page would otherwise sit in a band of empty column.
+    ///
+    /// A POLL rather than a geometry observer, because the column moves for three different reasons
+    /// and only one of them is this panel resizing: DevTools has a minimum width the split hits on
+    /// its own, and the user can drag the divider inside the frontend. One measurement a second
+    /// catches all three, and the model drops the round unless the column actually moved.
+    private func watchWebViewportFit() async {
+        while !Task.isCancelled {
+            if let column = await WebInspectorWebViewPool.shared.screencastColumn() {
+                await webModel.fitViewport(column: column)
+            }
+            try? await Task.sleep(for: .seconds(1))
         }
     }
 

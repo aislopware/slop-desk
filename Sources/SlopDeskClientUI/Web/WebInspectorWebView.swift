@@ -105,6 +105,35 @@ final class WebInspectorWebViewPool {
         webView?.reload()
     }
 
+    /// The screencast column's size, measured out of the frontend's own layout.
+    ///
+    /// It is asked of the frontend rather than computed from the panel's geometry because the split
+    /// between the page and DevTools' panels is DevTools' to decide — it has a minimum of its own,
+    /// it remembers where the user dragged the divider, and both move without the panel resizing.
+    /// The answer feeds ``WebViewportFit``.
+    ///
+    /// `nil` while the frontend is still booting, which is not an error: the fit loop asks again.
+    func screencastColumn() async -> CGSize? {
+        guard let webView else { return nil }
+        let value = try? await webView.evaluateJavaScript(Self.columnMeasureSource)
+        guard let box = value as? [String: Any],
+              let width = box["w"] as? Double, let height = box["h"] as? Double,
+              width > 0, height > 0
+        else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    /// `.screencast` is the whole left-hand column: DevTools' navigation bar, the device frame it
+    /// draws, and the page inside them.
+    private static let columnMeasureSource = """
+    (function () {
+      var element = document.querySelector('.screencast');
+      if (!element) { return null; }
+      var box = element.getBoundingClientRect();
+      return { w: box.width, h: box.height };
+    })();
+    """
+
     /// Seeds DevTools' dark theme on the FIRST load only.
     ///
     /// DevTools keeps its settings in the frontend origin's `localStorage`, and the client's relay

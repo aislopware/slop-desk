@@ -75,6 +75,9 @@ protocol WebTargetControlling: Sendable {
     /// it renders nothing and reports *"The tab is inactive"*. Selecting a page in this panel has to
     /// mean selecting it in the browser, or the panel shows a live inspector over a dead picture.
     func activate(host: String, port: UInt16, targetID: String) async -> Bool
+    /// Resizes the browser WINDOW the page lives in, so its shape follows the panel's — see
+    /// ``WebViewportFit`` for why the window and not an emulation override.
+    func setWindowSize(host: String, port: UInt16, targetID: String, size: CGSize) async -> Bool
 }
 
 @MainActor
@@ -104,6 +107,10 @@ final class WebSidebarModel {
     // MARK: Wiring
 
     private let control: any WebTargetControlling
+    /// The screencast column the browser window was last shaped to. Not observable — nothing draws
+    /// it, and it exists only to keep ``fitViewport(column:)`` from resizing the browser on every
+    /// round.
+    private var fittedColumn: CGSize = .zero
 
     init(control: any WebTargetControlling = WebTargetControl()) {
         self.control = control
@@ -194,15 +201,42 @@ final class WebSidebarModel {
             // A target SWITCH always rewrites the field: it is a different page, so whatever was
             // typed for the old one no longer refers to anything.
             address = listed.first { $0.id == resolved }?.url ?? ""
-            // …and it has to become the browser's frontmost tab, or the frontend attaches to a page
-            // the compositor has parked. This is the path a FIRST list takes, so it is also what
-            // makes the panel's opening frame a live one.
-            if let resolved { _ = await control.activate(host: host, port: port, targetID: resolved) }
         } else if !isEditingAddress, let live = listed.first(where: { $0.id == resolved })?.url {
             // The page navigated on its own (a link, a redirect, a router push) — the field follows,
             // which is what makes it a readout as well as an input.
             address = live
         }
+        // Fronting on a SWITCH is not enough, because the browser fronts tabs the panel never asked
+        // it to: Chrome opens `chrome://settings/help` on its own update check, a page opens a
+        // window, an extension raises one. Whatever it was steals the compositor, the selected page
+        // goes dark mid-session, and DevTools says "The tab is inactive" over a page the user was
+        // typing into. So the front is re-asserted every round, not just when the selection moves.
+        if let resolved, Self.isParked(resolved, in: listed) {
+            _ = await control.activate(host: host, port: port, targetID: resolved)
+        }
+    }
+
+    /// Resize the browser so the page fills the column DevTools has given it, `column` being that
+    /// column measured out of the frontend itself (the view supplies it — nothing here may touch
+    /// WebKit). A no-op until the column has actually moved, because this costs a real window
+    /// resize and a relayout of the page the user is reading.
+    func fitViewport(column: CGSize) async {
+        guard case let .ready(host, port) = phase, let target = selection else { return }
+        guard WebViewportFit.isWorthRefitting(column, fitted: fittedColumn) else { return }
+        guard let size = WebViewportFit.windowSize(column: column) else { return }
+        guard await control.setWindowSize(host: host, port: port, targetID: target, size: size)
+        else { return }
+        // Recorded only on success, so a refused resize is retried on the next round rather than
+        // being remembered as done.
+        fittedColumn = column
+    }
+
+    /// Whether `id` has lost the front of the browser. `/json/list` answers in most-recently-active
+    /// order (measured 2026-08-05), so the front page is the first one — anything else at the head
+    /// of the list means something took it. Pure, and deliberately conservative: if that ordering
+    /// ever stops holding, this reads "parked" every round and costs one idempotent activate.
+    static func isParked(_ id: String, in targets: [WebTarget]) -> Bool {
+        targets.first?.id != id
     }
 
     /// Which page the frontend should be on after a list round. Pure — pinned by tests. Keeping a

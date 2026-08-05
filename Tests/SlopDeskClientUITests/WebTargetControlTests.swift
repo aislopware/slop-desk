@@ -98,5 +98,51 @@ final class WebTargetControlTests: XCTestCase {
         XCTAssertNil(WebTargetControl.endpoint(host: "", port: 51000, path: "/json/list"))
         XCTAssertNil(WebTargetControl.endpoint(host: "127.0.0.1", port: 0, path: "/json/list"))
     }
+
+    // The browser socket's ADDRESS in that payload is the browser's own loopback port, which is two
+    // relays away from anything this client can reach. Only the path — which carries a per-launch
+    // UUID and so cannot be guessed — is usable.
+    func testOnlyThePathIsTakenFromTheBrowserSocketURL() {
+        let payload = Data("""
+        {"Browser":"Chrome/150.0.7871.187",
+         "webSocketDebuggerUrl":"ws://127.0.0.1:58118/devtools/browser/0703e030-4f6c-456e-8af0-471a3f8"}
+        """.utf8)
+        XCTAssertEqual(
+            WebTargetControl.decodeBrowserSocketPath(payload),
+            "/devtools/browser/0703e030-4f6c-456e-8af0-471a3f8",
+        )
+        XCTAssertNil(WebTargetControl.decodeBrowserSocketPath(Data("{}".utf8)))
+        XCTAssertNil(WebTargetControl.decodeBrowserSocketPath(Data("not json".utf8)))
+    }
+
+    func testTheWindowIDIsReadOnlyFromASuccessfulReply() {
+        let ok = URLSessionWebSocketTask.Message.string(#"{"id":1,"result":{"windowId":652094784}}"#)
+        XCTAssertEqual(WebTargetControl.decodeWindowID(ok), 652_094_784)
+
+        let refused = URLSessionWebSocketTask.Message.string(
+            #"{"id":1,"error":{"code":-32000,"message":"No target with given id"},"result":{"windowId":7}}"#,
+        )
+        XCTAssertNil(WebTargetControl.decodeWindowID(refused), "an error reply is not a window")
+    }
+
+    func testTheBoundsMessageCarriesWindowStateAndWholePoints() {
+        let text = WebTargetControl.setWindowBoundsMessage(
+            windowID: 42, size: CGSize(width: 500.4, height: 2442.6),
+        )
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let params = object["params"] as? [String: Any],
+              let bounds = params["bounds"] as? [String: Any]
+        else {
+            XCTFail("expected a CDP message")
+            return
+        }
+        XCTAssertEqual(object["method"] as? String, "Browser.setWindowBounds")
+        XCTAssertEqual(params["windowId"] as? Int, 42)
+        XCTAssertEqual(bounds["width"] as? Int, 500)
+        XCTAssertEqual(bounds["height"] as? Int, 2442)
+        // Without it, a window Chrome considers maximised ignores the bounds outright.
+        XCTAssertEqual(bounds["windowState"] as? String, "normal")
+    }
 }
 #endif

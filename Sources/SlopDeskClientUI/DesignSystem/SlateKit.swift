@@ -120,8 +120,6 @@ struct PanelTabPlate: View {
     enum Mark {
         case symbol(SFSymbol)
         case android
-        /// The one mark carrying its own colour — see ``ChromeMark`` for why a monochrome Chrome
-        /// wheel says nothing.
         case chrome
     }
 

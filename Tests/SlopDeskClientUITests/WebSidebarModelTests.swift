@@ -174,6 +174,7 @@ final class WebSidebarActionTests: XCTestCase {
         private(set) var opened: [String] = []
         private(set) var closed: [String] = []
         private(set) var activated: [String] = []
+        private(set) var windowSizes: [CGSize] = []
         var refuses = false
 
         init(targets: [WebTarget]) { stored = targets }
@@ -210,9 +211,29 @@ final class WebSidebarActionTests: XCTestCase {
         func activate(host _: String, port _: UInt16, targetID: String) async -> Bool {
             if refuses { return false }
             activated.append(targetID)
+            front(targetID)
             return true
         }
+
+        func setWindowSize(host _: String, port _: UInt16, targetID _: String, size: CGSize) async -> Bool {
+            if refuses { return false }
+            windowSizes.append(size)
+            return true
+        }
+
         // swiftlint:enable async_without_await
+
+        /// `/json/list` answers in most-recently-active order, so the fake models THAT rather than a
+        /// plain array — the panel reads the head of the list to tell whether its page still has the
+        /// front, and a fake that never reorders could not fail that check.
+        private func front(_ id: String) {
+            guard let index = stored.firstIndex(where: { $0.id == id }) else { return }
+            stored.insert(stored.remove(at: index), at: 0)
+        }
+
+        /// Something other than the panel takes the front: Chrome's own update page, a popup, an
+        /// extension. This is the situation that put "The tab is inactive" over a live page.
+        func stealFront(_ id: String) { front(id) }
     }
 
     /// A model already at `.ready`, without going through the poll loop (which would need a host).
@@ -235,27 +256,85 @@ final class WebSidebarActionTests: XCTestCase {
     }
 
     // A backgrounded page is not composited, so the frontend attached to it draws nothing and says
-    // "The tab is inactive". Every path that moves the selection must front the page in the browser
-    // too — the panel's selection and the browser's front tab are the SAME fact.
+    // "The tab is inactive". The panel's selection and the browser's front tab are the SAME fact.
     func testEveryPathThatMovesTheSelectionFrontsThePageInTheBrowser() async {
         let control = FakeControl(targets: [
             WebTarget(id: "A", title: "", url: "https://a/"),
             WebTarget(id: "B", title: "", url: "https://b/"),
         ])
         let model = await readyModel(control)
-        XCTAssertEqual(control.activated, ["A"], "the first list round fronts what it selects")
+        XCTAssertEqual(model.selection, "A")
+        XCTAssertEqual(control.activated, [], "the front page needs no fronting")
 
         await model.select("B")
-        XCTAssertEqual(control.activated, ["A", "B"])
+        XCTAssertEqual(control.activated, ["B"])
 
         await model.select("B")
-        XCTAssertEqual(control.activated, ["A", "B"], "re-selecting the current page is not a switch")
+        XCTAssertEqual(control.activated, ["B"], "re-selecting the current page is not a switch")
 
         await model.openTab(url: "https://c/")
-        XCTAssertEqual(control.activated, ["A", "B", "NEW1"])
+        XCTAssertEqual(control.activated, ["B", "NEW1"])
 
         await model.closeTab("NEW1")
         XCTAssertEqual(control.activated.last, model.selection)
+    }
+
+    // The regression the user hit: the page was live, they typed into it, and the browser fronted
+    // something else underneath them (Chrome's own update page, in the report) — after which the
+    // inspector sat over a page nothing was drawing. A round that only fronts on a SWITCH cannot
+    // recover from this, because the selection never moved.
+    func testAPageTheBROWSERParksIsBroughtBackWithoutTheSelectionMoving() async {
+        let control = FakeControl(targets: [
+            WebTarget(id: "A", title: "", url: "https://a/"),
+            WebTarget(id: "B", title: "", url: "https://b/"),
+        ])
+        let model = await readyModel(control)
+        XCTAssertEqual(model.selection, "A")
+
+        control.stealFront("B")
+        await model.refreshTargets()
+
+        XCTAssertEqual(model.selection, "A", "the panel does not follow the browser's own choice")
+        XCTAssertEqual(control.activated, ["A"], "it takes the front back")
+
+        await model.refreshTargets()
+        XCTAssertEqual(control.activated, ["A"], "and stops asking once it has it")
+    }
+
+    func testTheBrowserIsReshapedOnlyWhenTheColumnActuallyMoves() async {
+        let control = FakeControl(targets: [WebTarget(id: "A", title: "", url: "https://a/")])
+        let model = await readyModel(control)
+
+        await model.fitViewport(column: CGSize(width: 220, height: 900))
+        XCTAssertEqual(control.windowSizes.count, 1)
+
+        await model.fitViewport(column: CGSize(width: 223, height: 901))
+        XCTAssertEqual(control.windowSizes.count, 1, "a column that jittered is the same column")
+
+        await model.fitViewport(column: CGSize(width: 520, height: 900))
+        XCTAssertEqual(control.windowSizes.count, 2)
+    }
+
+    func testARefusedResizeIsRetriedRatherThanRememberedAsDone() async {
+        let control = FakeControl(targets: [WebTarget(id: "A", title: "", url: "https://a/")])
+        let model = await readyModel(control)
+        control.refuses = true
+
+        await model.fitViewport(column: CGSize(width: 220, height: 900))
+        control.refuses = false
+        await model.fitViewport(column: CGSize(width: 220, height: 900))
+
+        XCTAssertEqual(control.windowSizes.count, 1)
+    }
+
+    func testTheParkedCheckReadsTheHeadOfTheList() {
+        let targets = [
+            WebTarget(id: "A", title: "", url: ""),
+            WebTarget(id: "B", title: "", url: ""),
+        ]
+        XCTAssertFalse(WebSidebarModel.isParked("A", in: targets))
+        XCTAssertTrue(WebSidebarModel.isParked("B", in: targets))
+        XCTAssertTrue(WebSidebarModel.isParked("A", in: []))
     }
 
     func testSubmittingNavigatesTheCURRENTPageRatherThanOpeningAnother() async {
