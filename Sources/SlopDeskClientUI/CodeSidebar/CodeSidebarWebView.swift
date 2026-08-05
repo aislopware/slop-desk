@@ -62,20 +62,28 @@ enum CodeSidebarFocusPolicy {
     }
 
     /// The standard editing command a bare ⌘-chord maps to while the webview owns the keyboard.
-    /// VS Code's WEB build does not act on raw ⌘C/⌘V/⌘X/⌘A keydowns — in a browser those belong to
-    /// the Edit menu, which drives the DOM copy/paste/cut/select-all natively — and this app's
-    /// menus are shortcut-less by design, so nobody sent WebKit the editing actions and the chords
-    /// fell through "unhandled". Worse than a no-op: WebKit re-dispatches an unhandled key
-    /// equivalent, and the terminal's doCommand-redispatch tail swallowed the second pass as
-    /// terminal input — libghostty's own `cmd+v = paste` binding then pasted into the PTY while
-    /// the user was looking at the editor (user-reported 2026-08-03). The webview claiming these
-    /// four (first-responder-gated, exactly like the terminal's own claim) is the same contract a
-    /// browser's Edit menu provides. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    /// The set is EXACTLY the three clipboard chords, and that is not a taste call: VS Code
+    /// registers `editor.action.clipboardCut/Copy/PasteAction` with their keybinding gated on the
+    /// NATIVE build (`kbOpts: isNative ? {…} : undefined`), because in a browser those belong to
+    /// the Edit menu, which drives the DOM cut/copy/paste. This app's menus are shortcut-less by
+    /// design, so nobody sent WebKit the editing actions and the chords fell through "unhandled".
+    /// Worse than a no-op: WebKit re-dispatches an unhandled key equivalent, and the terminal's
+    /// doCommand-redispatch tail swallowed the second pass as terminal input — libghostty's own
+    /// `cmd+v = paste` binding then pasted into the PTY while the user was looking at the editor
+    /// (user-reported 2026-08-03). The webview claiming these three (first-responder-gated, exactly
+    /// like the terminal's own claim) is the same contract a browser's Edit menu provides.
+    ///
+    /// Every OTHER chord — including ⌘A, ⌘Z and ⌘⇧Z — must NOT be claimed here. Those carry an
+    /// unconditional core keybinding in the web build (`editor.action.selectAll` / `undo` / `redo`,
+    /// weight 0), and each routes itself to a native text input when one has focus, so the page
+    /// handles them everywhere. Claiming ⌘A drove WebKit's DOM select-all against the editor's
+    /// hidden textarea — which holds a scratch buffer, not the document — so select-all in the
+    /// editor did nothing at all (user-reported 2026-08-05). Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`.
     enum EditingCommand: Equatable {
         case copy
         case paste
         case cut
-        case selectAll
     }
 
     static func editingCommand(modifiers: NSEvent.ModifierFlags, key: String?) -> EditingCommand? {
@@ -86,7 +94,6 @@ enum CodeSidebarFocusPolicy {
         case "c": return .copy
         case "v": return .paste
         case "x": return .cut
-        case "a": return .selectAll
         default: return nil
         }
     }
@@ -288,12 +295,13 @@ final class CodeSidebarWKWebView: WKWebView {
     /// Refuse the app-reserved chords (``CodeSidebarFocusPolicy/isReservedAppChord(modifiers:key:)``)
     /// so they continue up to the main menu — WebKit's own implementation forwards ⌘-chords to the
     /// page and returns `true`, which is how a focused editor swallowed ⌘Q whole. The standard
-    /// editing chords are CLAIMED here instead and driven through WebKit's native editing actions
+    /// clipboard chords are CLAIMED here instead and driven through WebKit's native editing actions
     /// (``CodeSidebarFocusPolicy/editingCommand(modifiers:key:)`` — the Edit-menu contract a browser
     /// gives VS Code web, which this app's shortcut-less menus never provided): the DOM
-    /// copy/paste/cut/select-all runs against whatever has focus in the page, and the clipboard
-    /// bridge sees the copies. First-responder-gated like the terminal's claim, so a focused find
-    /// bar / native field never loses its own ⌘C/⌘V to the panel.
+    /// copy/paste/cut runs against whatever has focus in the page, and the clipboard bridge sees
+    /// the copies. First-responder-gated like the terminal's claim, so a focused find bar / native
+    /// field never loses its own ⌘C/⌘V to the panel. Nothing else may be added to that set — the
+    /// workbench binds the rest itself and a claim here silently outranks it.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let key = event.charactersIgnoringModifiers?.lowercased()
         if CodeSidebarFocusPolicy.isReservedAppChord(modifiers: event.modifierFlags, key: key) {
@@ -311,7 +319,6 @@ final class CodeSidebarWKWebView: WKWebView {
                 case .copy: #selector(NSText.copy(_:))
                 case .paste: #selector(NSText.paste(_:))
                 case .cut: #selector(NSText.cut(_:))
-                case .selectAll: #selector(NSText.selectAll(_:))
                 }
             if responds(to: action) {
                 perform(action, with: nil)

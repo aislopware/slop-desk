@@ -88,14 +88,25 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
     // MARK: Editing chords
 
     func testBareCommandEditingChordsMapToTheNativeEditingActions() {
-        // VS Code web never acts on raw ⌘C/⌘V/⌘X/⌘A keydowns — in a browser those are the Edit
+        // VS Code web never acts on raw ⌘C/⌘V/⌘X keydowns — it registers those three commands with
+        // their keybinding gated on the native build, because in a browser they are the Edit
         // menu's, and this app's menus are shortcut-less. The webview claims them and drives
         // WebKit's own editing actions instead; unclaimed they bounce back and became phantom
         // terminal input (libghostty's cmd+v paste binding).
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "c"), .copy)
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "v"), .paste)
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "x"), .cut)
-        XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "a"), .selectAll)
+    }
+
+    func testWorkbenchOwnedChordsAreNeverClaimedAsEditingCommands() {
+        // The mirror of the pin above, and the reason it is narrow: ⌘A / ⌘Z / ⌘⇧Z carry an
+        // unconditional core keybinding in the web build and route themselves to a native text
+        // input when one has focus, so the page owns them everywhere. Claiming ⌘A ran WebKit's DOM
+        // select-all against the editor's hidden scratch textarea, and select-all in the editor did
+        // nothing (user-reported 2026-08-05). Anything added here outranks the workbench silently.
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "a"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "z"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .shift], key: "z"))
     }
 
     func testModifiedOrForeignChordsAreNotEditingCommands() {
@@ -103,7 +114,7 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         // (⌘⇧V markdown preview, ⌘⌥C toggle-case-sensitive find, …).
         XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .shift], key: "v"))
         XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .option], key: "c"))
-        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .control], key: "a"))
+        XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command, .control], key: "x"))
         XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "p"))
         XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [], key: "c"))
         XCTAssertNil(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: nil))
