@@ -324,7 +324,9 @@ final class WebBrowserManagerTests: XCTestCase {
     // MARK: Launch arguments
 
     func testLaunchArgumentsCarryEveryLoadBearingFlag() {
-        let arguments = WebBrowserManager.launchArguments(profileDirectory: "/tmp/web-profile")
+        let arguments = WebBrowserManager.launchArguments(
+            profileDirectory: "/tmp/web-profile", browserVersion: "151.0.7922.76",
+        )
         XCTAssertEqual(
             arguments,
             [
@@ -335,9 +337,48 @@ final class WebBrowserManagerTests: XCTestCase {
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--window-size=1440,900",
+                "--disable-blink-features=AutomationControlled",
+                "--screen-info={1920x1080}",
+                "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
                 "about:blank",
             ],
         )
+    }
+
+    // Measured 2026-08-05 against Chrome 151, refereed by `bot.sannysoft.com`: without these three a
+    // headless browser announces itself as one — `navigator.webdriver` true, `HeadlessChrome` in the
+    // user agent, and an 800×600 screen. With them it passes every row the page tests.
+    func testTheBotTellsHeadlessShipsWithAreAllTurnedOff() {
+        let arguments = WebBrowserManager.launchArguments(
+            profileDirectory: "/tmp/p", browserVersion: "151.0.7922.76",
+        )
+        XCTAssertTrue(arguments.contains("--disable-blink-features=AutomationControlled"))
+        XCTAssertTrue(arguments.contains("--screen-info={1920x1080}"))
+        XCTAssertFalse(
+            arguments.contains { $0.contains("Headless") }, "the user agent must not name the mode",
+        )
+    }
+
+    func testTheUserAgentCarriesTheBrowsersOwnMajorVersion() {
+        // The client hints report the REAL version whatever the flag says, so a user agent built on
+        // a guessed major would disagree with them — which is the tell it was meant to remove.
+        XCTAssertEqual(
+            WebBrowserManager.userAgent(forBrowserVersion: "151.0.7922.76"),
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        )
+        XCTAssertNil(WebBrowserManager.userAgent(forBrowserVersion: nil))
+        XCTAssertNil(WebBrowserManager.userAgent(forBrowserVersion: ""))
+        XCTAssertNil(WebBrowserManager.userAgent(forBrowserVersion: "Chromium 151"))
+    }
+
+    func testAVersionlessBrowserKeepsItsOwnUserAgentRatherThanAGuessedOne() {
+        // A `PATH`-installed Chromium has no bundle to read a version out of. Inventing one would
+        // put a UA and a set of client hints on the wire that contradict each other.
+        let arguments = WebBrowserManager.launchArguments(profileDirectory: "/tmp/p", browserVersion: nil)
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("--user-agent=") })
+        XCTAssertTrue(arguments.contains("--disable-blink-features=AutomationControlled"))
     }
 
     func testAllowedOriginsAreWideOpen() {
@@ -345,14 +386,17 @@ final class WebBrowserManagerTests: XCTestCase {
         // frontend is loaded from the client's own loopback origin — a port that varies per client
         // and per machine, so there is nothing narrower to name. The mesh is the boundary.
         XCTAssertTrue(
-            WebBrowserManager.launchArguments(profileDirectory: "/tmp/p").contains("--remote-allow-origins=*"),
+            WebBrowserManager.launchArguments(profileDirectory: "/tmp/p", browserVersion: nil)
+                .contains("--remote-allow-origins=*"),
         )
     }
 
     func testProfileDirectoryIsNeverTheDefaultOne() {
         // Chrome 136+ REFUSES remote debugging on the OS-default profile, and a Chrome the user is
         // already running holds its lock. The flag must always name a directory of ours.
-        let arguments = WebBrowserManager.launchArguments(profileDirectory: "/tmp/web-profile")
+        let arguments = WebBrowserManager.launchArguments(
+            profileDirectory: "/tmp/web-profile", browserVersion: nil,
+        )
         XCTAssertEqual(arguments.filter { $0.hasPrefix("--user-data-dir=") }.count, 1)
     }
 
@@ -466,6 +510,38 @@ final class WebBrowserToolchainTests: XCTestCase {
         try Data().write(to: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url.path
+    }
+
+    func testTheBundleVersionIsReadOutOfTheAppsOwnPlist() throws {
+        // The user agent needs the browser's real major version, and reading it out of the bundle
+        // costs a file read — running the binary with `--version` would put a second browser process
+        // on the launch path, which is the one place that must not wait.
+        let binary = try makeExecutable("apps/Google Chrome.app/Contents/MacOS/Google Chrome")
+        let plist = root.appendingPathComponent("apps/Google Chrome.app/Contents/Info.plist")
+        try PropertyListSerialization
+            .data(fromPropertyList: ["CFBundleShortVersionString": "151.0.7922.76"], format: .xml, options: 0)
+            .write(to: plist)
+
+        XCTAssertEqual(WebBrowserToolchain.version(ofExecutable: binary), "151.0.7922.76")
+    }
+
+    func testABinaryWithNoBundleHasNoVersionRatherThanAWrongOne() throws {
+        let loose = try makeExecutable("bin/chromium")
+        XCTAssertNil(WebBrowserToolchain.infoPlistPath(forExecutable: loose))
+        XCTAssertNil(WebBrowserToolchain.version(ofExecutable: loose))
+        // A bundle whose plist carries no version is the same answer: say nothing.
+        let binary = try makeExecutable("apps/Chromium.app/Contents/MacOS/Chromium")
+        XCTAssertNil(WebBrowserToolchain.version(ofExecutable: binary))
+    }
+
+    func testThePlistPathIsDerivedFromTheExecutablePath() {
+        XCTAssertEqual(
+            WebBrowserToolchain
+                .infoPlistPath(forExecutable: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "/Applications/Google Chrome.app/Contents/Info.plist",
+        )
+        XCTAssertNil(WebBrowserToolchain.infoPlistPath(forExecutable: "/opt/homebrew/bin/chromium"))
+        XCTAssertNil(WebBrowserToolchain.infoPlistPath(forExecutable: "chromium"))
     }
 
     func testPrefersChromeOverTheOtherBlinkBrowsers() throws {

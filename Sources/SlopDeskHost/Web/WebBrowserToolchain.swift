@@ -69,6 +69,33 @@ enum WebBrowserToolchain {
         return nil
     }
 
+    /// The bundle version of the located executable, e.g. `151.0.7922.76`.
+    ///
+    /// Read from the app bundle's own `Info.plist` rather than by running the binary with
+    /// `--version`: the launch path must not wait on a second browser process, and the plist is a
+    /// file read that cannot hang. `nil` for a `PATH`-installed binary, which has no bundle — see
+    /// ``WebBrowserManager/launchArguments(profileDirectory:browserVersion:)`` for what is given up
+    /// in that case.
+    static func version(ofExecutable binary: String, fileManager: FileManager = .default) -> String? {
+        guard let plist = infoPlistPath(forExecutable: binary),
+              let data = fileManager.contents(atPath: plist),
+              let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let entries = object as? [String: Any],
+              let version = entries["CFBundleShortVersionString"] as? String, !version.isEmpty
+        else { return nil }
+        return version
+    }
+
+    /// `<…>.app/Contents/MacOS/<executable>` → `<…>.app/Contents/Info.plist`. Pure; `nil` for any
+    /// path that is not shaped like a bundle executable.
+    static func infoPlistPath(forExecutable binary: String) -> String? {
+        var components = binary.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.count >= 3, components.removeLast().isEmpty == false,
+              components.removeLast() == "MacOS", components.last == "Contents"
+        else { return nil }
+        return components.joined(separator: "/") + "/Info.plist"
+    }
+
     /// `/Applications` plus the user's own. The user's comes from `$HOME` IN THE ENVIRONMENT, never
     /// `NSHomeDirectory()`/`homeDirectoryForCurrentUser` — ``CodeServerManager``'s rule: both of
     /// those resolve through directory services and are blind to a `HOME` an operator overrode.

@@ -110,6 +110,11 @@ final class WebBrowserHardwareTests: XCTestCase {
         // Loopback is what the browser binds and what the relay must therefore dial; a debugger URL
         // naming anything else means the flags moved and the client's own relay would mis-target.
         XCTAssertTrue(versionBody.contains("ws://127.0.0.1:"), versionBody)
+        // The user-agent flag reached the real browser. Only a live run can say so: the flag is
+        // built from a version read out of the bundle, and a browser that ignored it (or a bundle
+        // whose plist moved) still answers everything else exactly the same way. `HeadlessChrome`
+        // on the wire is the difference between a page serving the panel and a page serving a wall.
+        XCTAssertFalse(versionBody.contains("HeadlessChrome"), versionBody)
 
         // A page target must exist without the client minting one — that is what `about:blank` in
         // the argument vector buys.

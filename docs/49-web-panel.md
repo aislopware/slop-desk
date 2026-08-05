@@ -226,6 +226,42 @@ sites collapse into a column of wrapped characters. The floor is paid for in HEI
 it without stretching the height would hand back a shape that is not the column's, and the empty band
 would come straight back.
 
+### Not looking like a bot
+
+A headless browser announces itself, and sites that care serve it a wall. Measured 2026-08-05
+against Chrome 151, refereed by `bot.sannysoft.com` — three signals, three flags, and the page goes
+from failing its WebDriver row to passing every row:
+
+| tell | default | flag |
+| --- | --- | --- |
+| `navigator.webdriver` | `true` in headless whether or not anything drives it | `--disable-blink-features=AutomationControlled` |
+| user agent | `HeadlessChrome/151.0.0.0` | `--user-agent=…Chrome/<major>.0.0.0…` |
+| `screen` | `800×600`, a size no Mac has had this century | `--screen-info={1920x1080}` |
+
+What is NOT a tell, measured on the same run, so nothing is spent defending it: the client hints
+(`Sec-CH-UA`, `…-full-version-list`, `…-platform`) already say `Google Chrome` on macOS in headless
+— the UA string is the only thing that leaks the mode, and a captured request from the hardened
+browser is byte-shaped like a real one. `navigator.userAgentData`, `deviceMemory` (32),
+`plugins.length` (5), EME, the battery API and `Notification.permission` are all present and normal.
+WebGL reports the host's real Metal renderer.
+
+⚠️ The user agent carries the browser's **real major version**, read from the app bundle's
+`Info.plist` (a file read — the launch path must not wait on a second browser process). A guessed
+version would disagree with the client hints, which is the tell it was meant to remove; so a
+`PATH`-installed Chromium, which has no bundle, keeps its honest `HeadlessChrome` instead. The
+hardware gate asserts on `/json/version` that the flag reached the browser.
+
+**An attached inspector is not itself detectable**, measured: the classic CDP probe — a getter on an
+object passed to `console.debug`, which fires if something is consuming console messages — does not
+fire on Chrome 151 with `Runtime.enable` held open. The same goes for the `Error.stack` variant.
+
+**zendriver / nodriver / undetected-chromedriver do not apply here.** They are Python CDP clients,
+and what they actually do about detection is the flag hygiene above plus avoiding
+`chromedriver`/`--enable-automation` — which this panel never had, because it speaks CDP directly.
+Their remaining tricks (patched `Runtime.addBinding` globals, profile-preference edits) buy nothing
+measurable against the tests above. There is no Python in this panel's path and no reason to add
+any.
+
 DevTools' built-in screencast address bar still collapses to a few characters at panel width, which
 is why `WebAddressBar` sits above the frontend rather than deferring to it.
 

@@ -45,6 +45,8 @@ final class WebBrowserManager: @unchecked Sendable {
     typealias Spawner = @Sendable (
         _ binary: String, _ arguments: [String], _ onLogLine: @escaping @Sendable (String) -> Void,
     ) throws -> any HostServiceProcessHandle
+    /// The located browser's version string, for the user agent (`nil` → the flag is dropped).
+    typealias VersionReader = @Sendable (_ binary: String) -> String?
     /// Whether a TCP connect to `127.0.0.1:port` succeeds (bounded, never hangs).
     typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
     /// Builds the mesh-facing relay in front of Chrome's loopback port.
@@ -70,6 +72,7 @@ final class WebBrowserManager: @unchecked Sendable {
     private let locateBinary: BinaryLocator
     private let locateProfile: ProfileLocator
     private let spawn: Spawner
+    private let readVersion: VersionReader
     private let probe: ReadinessProbe
     private let makeRelay: RelayFactory
     private let probeInterval: Duration
@@ -79,6 +82,7 @@ final class WebBrowserManager: @unchecked Sendable {
         binaryLocator: @escaping BinaryLocator = WebBrowserManager.defaultBinaryLocator,
         profileLocator: @escaping ProfileLocator = WebBrowserManager.defaultProfileLocator,
         spawner: @escaping Spawner = WebBrowserManager.defaultSpawner,
+        versionReader: @escaping VersionReader = { WebBrowserToolchain.version(ofExecutable: $0) },
         readinessProbe: @escaping ReadinessProbe = WebBrowserManager.defaultReadinessProbe,
         relayFactory: @escaping RelayFactory = WebBrowserManager.defaultRelayFactory,
         probeInterval: Duration = .milliseconds(500),
@@ -86,6 +90,7 @@ final class WebBrowserManager: @unchecked Sendable {
         locateBinary = binaryLocator
         locateProfile = profileLocator
         spawn = spawner
+        readVersion = versionReader
         probe = readinessProbe
         makeRelay = relayFactory
         self.probeInterval = probeInterval
@@ -112,7 +117,10 @@ final class WebBrowserManager: @unchecked Sendable {
             guard let port = Self.parseDevToolsPort(fromLogLine: line) else { return }
             self?.recordPort(port, spawnedAs: generation)
         }
-        guard let handle = try? spawn(binary, Self.launchArguments(profileDirectory: profile), onLine) else {
+        let arguments = Self.launchArguments(
+            profileDirectory: profile, browserVersion: readVersion(binary),
+        )
+        guard let handle = try? spawn(binary, arguments, onLine) else {
             return MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
         }
         instance = Instance(handle: handle)
@@ -200,8 +208,25 @@ final class WebBrowserManager: @unchecked Sendable {
     ///   prompt would dirty a profile nothing ever looks at.
     /// - `about:blank` — start with a page target, so the client always has something to attach to
     ///   without minting one first.
-    static func launchArguments(profileDirectory: String) -> [String] {
-        [
+    ///
+    /// The last three flags are the ones that keep sites from serving the panel a bot wall. Measured
+    /// 2026-08-05 against Chrome 151, with `bot.sannysoft.com` as the referee — without them the
+    /// browser fails its WebDriver row, with them it passes every row:
+    ///
+    /// - `--disable-blink-features=AutomationControlled` — `navigator.webdriver` is `true` in
+    ///   headless whether or not anything drives it. This is the switch that turns it off, and it is
+    ///   the single loudest signal a page reads.
+    /// - `--user-agent=` — headless writes `HeadlessChrome/151.0.0.0` into the UA and nothing else
+    ///   leaks the mode: the client hints (`Sec-CH-UA`) already say `Google Chrome`, so the string is
+    ///   the only thing to repair. It must carry the browser's REAL major version, because a UA that
+    ///   disagrees with the hints is itself the tell.
+    /// - `--screen-info=` — headless reports an 800×600 screen, a size no Mac has had this century.
+    ///
+    /// `browserVersion` nil (a `PATH`-installed Chromium, which has no bundle to read a version out
+    /// of) drops the UA flag rather than guessing a version: a wrong major disagrees with the client
+    /// hints, which is worse than the honest `HeadlessChrome`.
+    static func launchArguments(profileDirectory: String, browserVersion: String?) -> [String] {
+        var arguments = [
             "--headless=new",
             "--remote-debugging-port=0",
             "--remote-allow-origins=*",
@@ -209,8 +234,30 @@ final class WebBrowserManager: @unchecked Sendable {
             "--no-first-run",
             "--no-default-browser-check",
             "--window-size=1440,900",
-            "about:blank",
+            "--disable-blink-features=AutomationControlled",
+            "--screen-info={" + screenInfo + "}",
         ]
+        if let userAgent = userAgent(forBrowserVersion: browserVersion) {
+            arguments.append("--user-agent=" + userAgent)
+        }
+        arguments.append("about:blank")
+        return arguments
+    }
+
+    /// The screen the page is told the browser sits on. A plausible desktop rather than the host's
+    /// real one: the panel's window is 1440×900 and has to fit inside it, and the host's own display
+    /// is not a fact any page has a claim on.
+    static let screenInfo = "1920x1080"
+
+    /// Chrome's macOS user agent, carrying `version`'s major. Everything else in it is frozen by
+    /// Chrome itself — the OS version has read `10_15_7` since UA reduction, and the minor version
+    /// triplet is always `0.0.0`, so a real Chrome and this string differ in nothing.
+    static func userAgent(forBrowserVersion version: String?) -> String? {
+        guard let major = version?.split(separator: ".").first, !major.isEmpty,
+              major.allSatisfy(\.isNumber)
+        else { return nil }
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/\(major).0.0.0 Safari/537.36"
     }
 
     /// Extracts the port from Chrome's own announcement, e.g.
