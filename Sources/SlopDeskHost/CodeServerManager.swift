@@ -385,8 +385,10 @@ final class CodeServerManager: @unchecked Sendable {
     /// agree), with "Symbols Nerd Font" behind it for private-use glyphs.
     /// The status bar STAYS (v14, user-directed 2026-08-03 — v6..v13 hid it): it is the
     /// workbench's own footing (branch, problems, cursor position) and its seam border rides
-    /// the retinted `statusBar.border`. `window.title` drops the `${appName}` suffix so any surface that
-    /// ever renders it says the project, not "code-server". Auto-save on focus change: the
+    /// the retinted `statusBar.border`. NOTHING seeds `window.title` (v17 dropped the template v6
+    /// introduced): the web title bar is clipped off client-side and the panel's strip no longer
+    /// reads the document title, so the workbench's own default is as invisible as any shape we
+    /// could pin. Auto-save on focus change: the
     /// terminal pane beside the editor is where builds/tests run, and switching to it IS the
     /// moment the file must be on disk. Markdown opens straight into the RENDERED preview
     /// (`workbench.editorAssociations` → the built-in `vscode.markdown.preview.editor`): in this
@@ -420,7 +422,6 @@ final class CodeServerManager: @unchecked Sendable {
         "workbench.sideBar.location": "right",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "window.menuBarVisibility": "hidden",
-        "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
         "workbench.editor.empty.hint": "hidden",
         "workbench.editor.decorations.badges": false,
         "window.commandCenter": false,
@@ -915,6 +916,52 @@ final class CodeServerManager: @unchecked Sendable {
             "editor.lineNumbersMinChars": 3,
             "editor.glyphMargin": false,
             "editor.folding": false,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v16 — carried a `window.title` template shaped for the panel strip's active-file readout.
+        // The readout is gone (user-directed 2026-08-05: the workbench's own editor tab already
+        // says which file is open), and with the web title bar clipped away client-side nothing
+        // renders a title at all, so v17 drops the key back to the workbench's default.
+        """
+        {
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
             "files.autoSave": "onFocusChange"
         }
         """,

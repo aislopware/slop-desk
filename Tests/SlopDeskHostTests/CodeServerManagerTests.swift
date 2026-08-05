@@ -891,11 +891,10 @@ final class CodeServerManagerTests: XCTestCase {
         // Line rhythm parity: 1.32 is JetBrains Mono's own vertical metric ((1020 + 300) / 1000)
         // — the exact ratio ghostty rounds into its cell height.
         XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.32)
-        // Any surface that ever renders the title says the project, never "code-server".
-        XCTAssertEqual(
-            settings["window.title"] as? String,
-            "${dirty}${activeEditorShort}${separator}${rootName}",
-        )
+        // v17: NO `window.title` template. The web title bar is clipped off client-side and the
+        // panel's strip stopped reading the document title (the workbench's own editor tab already
+        // names the open file), so there is no surface left for a shape here to reach.
+        XCTAssertNil(settings["window.title"])
         // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
         // v9: NO compact tab density. The 22px compact row minus the Slate plate recut (height −

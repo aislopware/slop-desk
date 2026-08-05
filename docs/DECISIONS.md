@@ -6884,3 +6884,21 @@ deleted rather than rebuilt: files, tests, its gate script, its dialect doc, and
 (no deprecation shim — this repo does not carry backcompat). What survives is this entry, so the
 next person who proposes a CDP-screencast browser panel finds the measurement instead of
 repeating it.
+
+## The panel strip stops naming the open file (2026-08-05)
+
+The strip carried the active editor's name, read off the workbench's own document title and
+shown next to the tab plates. It is gone, user-directed: a long filename crowded the tabs
+beside it, and the workbench already prints the same name in its editor tab an inch below —
+the readout was a second copy of a fact the surface underneath never stopped stating.
+
+Deleted whole rather than shortened: the parser, the pooled per-project readout, the KVO
+registration on `WKWebView.title`, and its tests. A middle-truncated copy of a nearby label is
+still a copy, and it still costs the tabs their width.
+
+The seed follows it down. `window.title` was pinned to
+`${dirty}${activeEditorShort}${separator}${rootName}` back when the web title bar was visible,
+and stayed because the strip read it; with the title bar clipped off client-side and no reader
+left, v17 drops the key and lets the workbench keep its default (v16 joins `obsoleteSeeds`, so
+pristine hosts upgrade in place). Nothing renders a title in this panel now — the honest shape
+for a string nobody displays is no string at all.
