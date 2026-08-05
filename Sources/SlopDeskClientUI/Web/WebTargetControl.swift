@@ -10,6 +10,11 @@
 // Everything here runs through the client's LOOPBACK relay, which is why the addresses below are
 // `127.0.0.1` — see `CodeSidebarProxyPool` and `WebSidebarPhase.ready`.
 //
+// ⚠️ `/json/activate` is not optional politeness. A headless browser still has exactly ONE frontmost
+// tab, and a backgrounded page is not composited — DevTools attached to it draws an empty screencast
+// and says *"The tab is inactive"*. Measured 2026-08-05: opening a second tab parks the first, and a
+// single `GET /json/activate/<id>` ("Target activated") brings the picture back.
+//
 // Hang-safety: URLSession tasks are real network objects. Nothing in the unit-test closure may
 // construct this — the model takes it behind ``WebTargetControlling``.
 
@@ -66,6 +71,12 @@ struct WebTargetControl: WebTargetControlling {
 
     func close(host: String, port: UInt16, targetID: String) async -> Bool {
         guard let url = Self.endpoint(host: host, port: port, path: "/json/close/\(targetID)") else { return false }
+        guard let (_, response) = try? await Self.session.data(from: url) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    func activate(host: String, port: UInt16, targetID: String) async -> Bool {
+        guard let url = Self.endpoint(host: host, port: port, path: "/json/activate/\(targetID)") else { return false }
         guard let (_, response) = try? await Self.session.data(from: url) else { return false }
         return (response as? HTTPURLResponse)?.statusCode == 200
     }

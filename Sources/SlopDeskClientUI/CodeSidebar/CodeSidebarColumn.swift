@@ -163,10 +163,10 @@ struct CodeSidebarColumn: View {
 
     private var strip: some View {
         HStack(spacing: 2) {
-            // THE WIDTH LADDER. Five tabs carrying a mark and a word measure 385pt — more than the
+            // THE WIDTH LADDER. Five tabs carrying a mark and a word measure 401pt — more than the
             // panel's whole 380pt minimum (`codeSidebarMinWidth`), let alone the ~310 left once the
             // strip's padding and the two action plates are paid for. So the top rung needs about
-            // 455pt of panel; the middle one (selected tab named, the rest square cells) measures
+            // 470pt of panel; the middle one (selected tab named, the rest square cells) measures
             // 170 and fits the minimum with room to spare. `ViewThatFits` picks
             // the first rung that fits: every tab named, then only the selected one, then none. It
             // degrades a rung at a time rather than truncating, because a tab reading "Simulat…" has
@@ -264,13 +264,16 @@ struct CodeSidebarColumn: View {
                 showsLabel: names(.android),
             ) { selectSurface(.android) }
                 .help("Emulators — the host's Android emulators and attached devices")
-            // `globe` for the register the whole surface is in — a page on the open web or on the
-            // host's own dev server; `safari`'s compass would name a browser this panel is not.
+            // Chrome's own wheel and Chrome's own name (user-directed 2026-08-05). `globe` and
+            // "Web" named a register the surface does not actually occupy: this panel drives ONE
+            // browser, the inspector in it is that browser's, and the pages behave the way that
+            // engine behaves. Naming the engine is the honest label, and it is the same argument
+            // the platform tabs beside it already won.
             PanelTabPlate(
-                symbol: .globe, label: "Web", selected: surfaceTab == .web,
+                mark: .chrome, label: "Chrome", selected: surfaceTab == .web,
                 showsLabel: names(.web),
             ) { selectSurface(.web) }
-                .help("Web — the host's browser, with its own inspector")
+                .help("Chrome — the host's browser, with its own inspector")
             PanelTabPlate(
                 symbol: .display, label: "Desktop", selected: surfaceTab == .desktop,
                 showsLabel: names(.desktop),

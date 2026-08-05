@@ -70,6 +70,11 @@ protocol WebTargetControlling: Sendable {
     func newTarget(host: String, port: UInt16, url: String) async -> WebTarget?
     /// Closes a page.
     func close(host: String, port: UInt16, targetID: String) async -> Bool
+    /// Brings a page to the FRONT of the browser (`/json/activate`). A headless browser still has
+    /// exactly one frontmost tab, and a backgrounded one is not composited — so DevTools attached to
+    /// it renders nothing and reports *"The tab is inactive"*. Selecting a page in this panel has to
+    /// mean selecting it in the browser, or the panel shows a live inspector over a dead picture.
+    func activate(host: String, port: UInt16, targetID: String) async -> Bool
 }
 
 @MainActor
@@ -189,6 +194,10 @@ final class WebSidebarModel {
             // A target SWITCH always rewrites the field: it is a different page, so whatever was
             // typed for the old one no longer refers to anything.
             address = listed.first { $0.id == resolved }?.url ?? ""
+            // …and it has to become the browser's frontmost tab, or the frontend attaches to a page
+            // the compositor has parked. This is the path a FIRST list takes, so it is also what
+            // makes the panel's opening frame a live one.
+            if let resolved { _ = await control.activate(host: host, port: port, targetID: resolved) }
         } else if !isEditingAddress, let live = listed.first(where: { $0.id == resolved })?.url {
             // The page navigated on its own (a link, a redirect, a router push) — the field follows,
             // which is what makes it a readout as well as an input.
@@ -206,10 +215,15 @@ final class WebSidebarModel {
 
     // MARK: Actions
 
-    func select(_ id: String) {
+    /// Switch the panel to a page — which means switching the BROWSER to it too. The local state
+    /// moves first so the menu answers immediately; the activate that follows is what stops the
+    /// frontend from attaching to a parked tab.
+    func select(_ id: String) async {
         guard id != selection else { return }
         selection = id
         address = targets.first { $0.id == id }?.url ?? ""
+        guard case let .ready(host, port) = phase else { return }
+        _ = await control.activate(host: host, port: port, targetID: id)
     }
 
     func beginEditingAddress() { isEditingAddress = true }
@@ -245,6 +259,9 @@ final class WebSidebarModel {
         targets.append(opened)
         selection = opened.id
         address = opened.url
+        // `/json/new` already fronts what it opens, but the panel does not get to depend on that:
+        // ONE rule holds everywhere — whatever this panel has selected is the browser's front tab.
+        _ = await control.activate(host: host, port: port, targetID: opened.id)
         await refreshTargets()
     }
 
@@ -261,6 +278,10 @@ final class WebSidebarModel {
         if selection == id {
             selection = targets.first?.id
             address = targets.first?.url ?? ""
+            // The successor inherits the front of the browser as well as the panel's selection.
+            if let successor = selection {
+                _ = await control.activate(host: host, port: port, targetID: successor)
+            }
         }
         await refreshTargets()
     }

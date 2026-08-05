@@ -125,6 +125,8 @@ Measured shapes (2026-08-05, Chrome 150):
 - `PUT /json/new?<percent-encoded url>` → the one target it made. **PUT, not GET**: Chrome answers a
   GET with `Using unsafe HTTP verb GET to invoke /json/new. This action supports only PUT verb.`
 - `GET /json/close/<id>` → closes a tab.
+- `GET /json/activate/<id>` → answers `Target activated` and makes that page the browser's front
+  tab. See the client-surface section: without it the frontend inspects a page nothing is drawing.
 - `ws /devtools/page/<id>` + `{"id":1,"method":"Page.navigate","params":{"url":…}}` → the address
   bar. There is **no HTTP endpoint that points an existing page somewhere**, and a new target means a
   new DevTools session — which is exactly what an address bar must not cost. The socket is opened per
@@ -138,9 +140,25 @@ Measured shapes (2026-08-05, Chrome 150):
 
 ## The client surface
 
-`CodeSidebarColumn`'s fifth tab. Machine-scoped like Simulators and Emulators — one host, one
-browser, one set of tabs — and lazy the same way: the `.task`s live on the surface, so a user who
-never opens this tab never makes the host start a browser at all.
+`CodeSidebarColumn`'s fifth tab, named **Chrome** and marked with Chrome's own wheel
+(user-directed 2026-08-05 — "Web" and a globe named a register the surface does not occupy: this
+panel drives ONE browser, the inspector is that browser's, and the pages behave the way that engine
+behaves). The code keeps the neutral `web` naming, because a Blink fallback (`docs/49` search order)
+is still the same surface. ``ChromeMark`` is the one mark in the app carrying its own colour; a
+monochrome Chrome wheel is three seams in a disc and names nothing.
+
+Machine-scoped like Simulators and Emulators — one host, one browser, one set of tabs — and lazy the
+same way: the `.task`s live on the surface, so a user who never opens this tab never makes the host
+start a browser at all.
+
+### ⚠️ The panel's selection IS the browser's front tab
+
+A headless browser still has exactly one frontmost tab, and a backgrounded page is **not
+composited** — DevTools attached to one draws an empty screencast and reports *"The tab is
+inactive"*. Every path that moves the selection (the first list round, the tab menu, opening a tab,
+closing the selected one) therefore ends in `GET /json/activate/<id>`; measured 2026-08-05, opening
+a second tab parks the first and a single activate ("Target activated") brings the picture back.
+`WebSidebarModelTests` pins all four paths.
 
 - **`WebSidebarModel`** — two loops (ensure, then a slower `/json/list` poll), the phase machine, and
   the pure builders. The address field is an input first and a readout second: it follows a page that

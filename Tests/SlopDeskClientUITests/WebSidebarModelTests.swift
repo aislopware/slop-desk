@@ -173,6 +173,7 @@ final class WebSidebarActionTests: XCTestCase {
         private(set) var navigations: [(id: String, url: String)] = []
         private(set) var opened: [String] = []
         private(set) var closed: [String] = []
+        private(set) var activated: [String] = []
         var refuses = false
 
         init(targets: [WebTarget]) { stored = targets }
@@ -205,6 +206,12 @@ final class WebSidebarActionTests: XCTestCase {
             stored.removeAll { $0.id == targetID }
             return true
         }
+
+        func activate(host _: String, port _: UInt16, targetID: String) async -> Bool {
+            if refuses { return false }
+            activated.append(targetID)
+            return true
+        }
         // swiftlint:enable async_without_await
     }
 
@@ -225,6 +232,30 @@ final class WebSidebarActionTests: XCTestCase {
         XCTAssertEqual(model.selection, "A")
         XCTAssertEqual(model.address, "https://example.com/")
         XCTAssertNotNil(model.frontendURL)
+    }
+
+    // A backgrounded page is not composited, so the frontend attached to it draws nothing and says
+    // "The tab is inactive". Every path that moves the selection must front the page in the browser
+    // too — the panel's selection and the browser's front tab are the SAME fact.
+    func testEveryPathThatMovesTheSelectionFrontsThePageInTheBrowser() async {
+        let control = FakeControl(targets: [
+            WebTarget(id: "A", title: "", url: "https://a/"),
+            WebTarget(id: "B", title: "", url: "https://b/"),
+        ])
+        let model = await readyModel(control)
+        XCTAssertEqual(control.activated, ["A"], "the first list round fronts what it selects")
+
+        await model.select("B")
+        XCTAssertEqual(control.activated, ["A", "B"])
+
+        await model.select("B")
+        XCTAssertEqual(control.activated, ["A", "B"], "re-selecting the current page is not a switch")
+
+        await model.openTab(url: "https://c/")
+        XCTAssertEqual(control.activated, ["A", "B", "NEW1"])
+
+        await model.closeTab("NEW1")
+        XCTAssertEqual(control.activated.last, model.selection)
     }
 
     func testSubmittingNavigatesTheCURRENTPageRatherThanOpeningAnother() async {
@@ -276,7 +307,7 @@ final class WebSidebarActionTests: XCTestCase {
             WebTarget(id: "B", title: "", url: "https://b/"),
         ])
         let model = await readyModel(control)
-        model.select("A")
+        await model.select("A")
         await model.closeTab("A")
 
         XCTAssertEqual(control.closed, ["A"])

@@ -38,7 +38,7 @@ struct WebAddressBar: View {
         Menu {
             ForEach(model.targets) { target in
                 Button {
-                    model.select(target.id)
+                    Task { await model.select(target.id) }
                 } label: {
                     if target.id == model.selection {
                         Label(target.displayName, systemSymbol: .checkmark)

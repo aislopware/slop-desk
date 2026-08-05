@@ -120,6 +120,9 @@ struct PanelTabPlate: View {
     enum Mark {
         case symbol(SFSymbol)
         case android
+        /// The one mark carrying its own colour — see ``ChromeMark`` for why a monochrome Chrome
+        /// wheel says nothing.
+        case chrome
     }
 
     let mark: Mark
@@ -202,6 +205,8 @@ struct PanelTabPlate: View {
                 .font(.system(size: Slate.Metric.iconSize, weight: .medium))
         case .android:
             AndroidRobotMark(side: Slate.Metric.androidMark)
+        case .chrome:
+            ChromeMark(side: Slate.Metric.chromeMark)
         }
     }
 
