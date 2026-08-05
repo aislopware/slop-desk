@@ -83,6 +83,11 @@ final class WebInspectorWebViewPool {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true,
         ))
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.hoverCursorSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+        ))
         let created = WKWebView(frame: .zero, configuration: configuration)
         // Right-click → Inspect Element on the FRONTEND itself — the only window into a DevTools
         // build that misbehaves, exactly as the workbench keeps one.
@@ -154,6 +159,127 @@ final class WebInspectorWebViewPool {
           window.localStorage.setItem('ui-theme', '"dark"');
         }
       } catch (e) {}
+    })();
+    """
+
+    /// Gives the screencast the cursor the PAGE would be showing.
+    ///
+    /// DevTools' screencast never does this itself — measured against its module on Chrome 151, the
+    /// only `cursor` in it is a static rule for touch mode. So a link, a text run and a resize handle
+    /// all look identical under an arrow, which is the one thing that tells you a remote page is
+    /// remote.
+    ///
+    /// It rides the frontend's OWN protocol socket rather than opening one. `window.WebSocket` is
+    /// wrapped at document start (before the frontend's modules run, which is what makes the wrap
+    /// possible at all), the page-target connection is kept, and commands go out on it with ids far
+    /// above anything the frontend mints. Replies to those ids are swallowed before the frontend's
+    /// own listener sees them — an id it did not mint is a protocol error to it. The gain is that
+    /// there is no second session to keep alive, no second target to follow when the panel switches
+    /// pages, and no extra hop through the two relays.
+    ///
+    /// The PAGE reports what it is under, not the frontend: a script installed in the page records
+    /// the element of each `mousemove` — the very events DevTools is already dispatching — and the
+    /// frontend reads its computed cursor while the pointer is over the canvas. That way nothing
+    /// here has to reproduce the screencast's coordinate mapping, which is DevTools' own and moves
+    /// with its zoom and device frame.
+    ///
+    /// A custom `url(…)` cursor is reduced to the keyword it falls back to: the image belongs to the
+    /// page's origin and would be resolved against the frontend's, which loads nothing.
+    nonisolated static let hoverCursorSource = """
+    (function () {
+      var FLOOR = 900000;
+      var Native = window.WebSocket;
+      var live = null;
+      var waiting = {};
+      var nextID = FLOOR;
+
+      function Wrapped(url, protocols) {
+        var socket = protocols === undefined ? new Native(url) : new Native(url, protocols);
+        if (String(url).indexOf('/devtools/page/') !== -1) {
+          live = socket;
+          socket.addEventListener('message', function (event) {
+            var message;
+            try { message = JSON.parse(event.data); } catch (e) { return; }
+            if (!message || typeof message.id !== 'number' || message.id < FLOOR) { return; }
+            event.stopImmediatePropagation();
+            var resolve = waiting[message.id];
+            if (resolve) { delete waiting[message.id]; resolve(message.result); }
+          });
+          socket.addEventListener('open', arm);
+        }
+        return socket;
+      }
+      Wrapped.prototype = Native.prototype;
+      Wrapped.CONNECTING = 0;
+      Wrapped.OPEN = 1;
+      Wrapped.CLOSING = 2;
+      Wrapped.CLOSED = 3;
+      window.WebSocket = Wrapped;
+
+      function call(method, params) {
+        return new Promise(function (resolve) {
+          if (!live || live.readyState !== 1) { resolve(null); return; }
+          var id = ++nextID;
+          waiting[id] = resolve;
+          live.send(JSON.stringify({ id: id, method: method, params: params || {} }));
+          setTimeout(function () {
+            if (waiting[id]) { delete waiting[id]; resolve(null); }
+          }, 4000);
+        });
+      }
+
+      var RECORDER = "(function () {"
+        + " var key = Symbol.for('slopdesk.hover');"
+        + " if (window[key]) { return; }"
+        + " var slot = { target: null };"
+        + " window[key] = slot;"
+        + " addEventListener('mousemove', function (e) { slot.target = e.target; }, true);"
+        + " })()";
+      var READER = "(function () {"
+        + " var slot = window[Symbol.for('slopdesk.hover')];"
+        + " var target = slot && slot.target;"
+        + " if (!target || !target.isConnected) { return ''; }"
+        + " return getComputedStyle(target).cursor;"
+        + " })()";
+
+      function arm() {
+        call('Runtime.evaluate', { expression: RECORDER });
+        call('Page.addScriptToEvaluateOnNewDocument', { source: RECORDER });
+      }
+
+      var canvas = null;
+      var shown = '';
+      var timer = null;
+
+      function keyword(value) {
+        if (!value) { return 'default'; }
+        if (value.indexOf('url(') !== -1 || value.indexOf('image-set(') !== -1) {
+          var parts = value.split(',');
+          value = parts[parts.length - 1].trim();
+        }
+        return /^[a-z-]+$/.test(value) ? value : 'default';
+      }
+
+      function poll() {
+        if (!canvas) { return; }
+        call('Runtime.evaluate', { expression: READER, returnByValue: true }).then(function (answer) {
+          var value = answer && answer.result ? answer.result.value : '';
+          var safe = keyword(value);
+          if (canvas && safe !== shown) { shown = safe; canvas.style.cursor = safe; }
+          if (canvas) { timer = setTimeout(poll, 90); }
+        });
+      }
+
+      document.addEventListener('mousemove', function (event) {
+        var target = event.target;
+        var found = target && target.closest ? target.closest('.screencast canvas') : null;
+        if (found === canvas) { return; }
+        if (canvas) { canvas.style.cursor = ''; }
+        canvas = found;
+        shown = '';
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (canvas) { poll(); }
+      }, true);
     })();
     """
 }

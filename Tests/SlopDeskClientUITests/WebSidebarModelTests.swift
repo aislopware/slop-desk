@@ -453,4 +453,56 @@ final class WebInspectorThemeSeedTests: XCTestCase {
         XCTAssertTrue(source.contains("if (!window.localStorage.getItem("))
     }
 }
+
+/// The hover-cursor script. Pure string checks — nothing here constructs a web view (hang-safety),
+/// and the behaviour itself is proved by hand against a real frontend (`docs/49`).
+final class WebInspectorHoverCursorTests: XCTestCase {
+    private let source = WebInspectorWebViewPool.hoverCursorSource
+
+    // The script rides the frontend's own socket. Two things make that safe, and both are easy to
+    // lose in an edit: the wrap must only keep the PAGE connection (the frontend opens others), and
+    // replies to our ids must never reach the frontend's dispatcher, which treats an id it did not
+    // mint as a protocol error.
+    func testItRidesOnlyThePageSocketAndSwallowsItsOwnReplies() {
+        XCTAssertTrue(source.contains("'/devtools/page/'"))
+        XCTAssertTrue(source.contains("event.stopImmediatePropagation()"))
+        XCTAssertTrue(source.contains("message.id < FLOOR"))
+        // Far above anything the frontend mints, which counts up from 1.
+        XCTAssertTrue(source.contains("var FLOOR = 900000"))
+    }
+
+    // The wrap has to be in place before the frontend's modules run, or its socket is the native one
+    // and nothing here ever sees a message.
+    func testTheWrapReplacesTheGlobalAndKeepsItsConstants() {
+        XCTAssertTrue(source.contains("window.WebSocket = Wrapped"))
+        XCTAssertTrue(source.contains("Wrapped.prototype = Native.prototype"))
+        XCTAssertTrue(source.contains("Wrapped.OPEN = 1"))
+    }
+
+    // The cursor is the PAGE's answer about its own element, which is what keeps the frontend from
+    // having to reproduce the screencast's coordinate mapping. It has to survive a navigation, so
+    // the recorder is installed for the current document AND for every document after it.
+    func testThePageRecordsWhatThePointerIsOverAcrossNavigations() {
+        XCTAssertTrue(source.contains("Runtime.evaluate"))
+        XCTAssertTrue(source.contains("Page.addScriptToEvaluateOnNewDocument"))
+        XCTAssertTrue(source.contains("Symbol.for('slopdesk.hover')"))
+        XCTAssertTrue(source.contains("'mousemove'"))
+    }
+
+    // A page's custom `url(…)` cursor names an image on the PAGE's origin; the frontend would
+    // resolve it against its own and draw nothing, so only the fallback keyword is worn.
+    func testACustomImageCursorIsReducedToItsKeyword() {
+        XCTAssertTrue(source.contains("value.indexOf('url(')"))
+        XCTAssertTrue(source.contains("/^[a-z-]+$/.test(value)"))
+        XCTAssertTrue(source.contains("return 'default'"))
+    }
+
+    // Polling belongs to the pointer being over the picture: off it, the loop stops and the inline
+    // cursor is dropped so the frontend's own styling comes back.
+    func testItPollsOnlyWhileThePointerIsOverTheScreencast() {
+        XCTAssertTrue(source.contains(".closest('.screencast canvas')"))
+        XCTAssertTrue(source.contains("canvas.style.cursor = ''"))
+        XCTAssertTrue(source.contains("clearTimeout(timer)"))
+    }
+}
 #endif

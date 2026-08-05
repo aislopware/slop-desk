@@ -226,6 +226,62 @@ sites collapse into a column of wrapped characters. The floor is paid for in HEI
 it without stretching the height would hand back a shape that is not the column's, and the empty band
 would come straight back.
 
+### The cursor, and riding the frontend's own socket
+
+DevTools' screencast never changes the cursor — measured against its module on Chrome 151, the only
+`cursor` in it is a static rule for touch mode. A link, a text run and a resize handle all sit under
+the same arrow, which is the one thing that makes a remote page feel remote.
+
+The panel fixes it from inside the frontend, on the frontend's **own protocol socket**:
+`window.WebSocket` is wrapped by a user script at document start (before DevTools' modules run —
+that is what makes the wrap possible), the `/devtools/page/` connection is kept, and commands go out
+on it with ids from `900000` up. Replies to those ids are swallowed with
+`stopImmediatePropagation()` before the frontend's dispatcher sees them: an id it did not mint is a
+protocol error to it.
+
+⚠️ The cursor is the **page's** answer, not the frontend's. A script installed in the page (once for
+the open document, and via `Page.addScriptToEvaluateOnNewDocument` for every one after) records the
+element of each `mousemove` — the very events DevTools is already dispatching — and the frontend
+reads its computed cursor while the pointer is over the canvas. Nothing has to reproduce the
+screencast's coordinate mapping, which is DevTools' own and moves with its zoom and device frame.
+A custom `url(…)` cursor is reduced to its fallback keyword: the image belongs to the page's origin
+and would be resolved against the frontend's.
+
+The same socket is the cheap way to add anything else the frontend does not do. It costs no second
+session, no second target to follow when the panel switches pages, and no extra hop through the two
+relays.
+
+### ⚠️ The screencast tops out around 20 fps — measured, and not tunable
+
+`Page.screencastFrame` is a full JPEG per frame with a per-frame ack, and it is slow in a way no
+parameter reaches. Measured 2026-08-05, Chrome 151, acking immediately on receipt (which is already
+faster than DevTools, who acks after drawing):
+
+| | frames/s | KB/frame |
+| --- | --- | --- |
+| loopback, panel shape (500×2355) | 20–25 | 129–155 |
+| over the mesh, same | 14–17 | 145 |
+| over the mesh, quality 50 | 15 | 95 |
+| over the mesh, quality 50 + half resolution | 17 | 29 |
+| loopback, a trivial page instead of Wikipedia | 25 | 155 |
+| loopback, `--disable-gpu-vsync --disable-frame-rate-limit` | 23 | 155 |
+
+Read the table as four negatives: **bytes are not the limit** (cutting the payload 5× buys 3 fps),
+content is not the limit, the mesh costs about a third but is not the limit, and headless frame
+pacing is not the limit either. The fitted tall viewport is not the villain — 500×2355 measures
+*faster* than a plain 1440×900 window, which has more page to rasterize.
+
+So ~20 fps at the client is what this pixel path gives, and trackpad scrolling over it cannot feel
+native however the input is dispatched. For the record, the input side is DevTools': its
+`InputModel.emitWheelEvent` sends one `Input.dispatchMouseEvent{type: mouseWheel}` per DOM wheel
+event, and CDP has no phase or momentum field to carry a macOS gesture even if the panel dispatched
+the events itself.
+
+Anything better needs a different pixel path — a real video stream, which a HEADLESS browser cannot
+produce (CDP emits JPEG/PNG only). That means a headful browser on a display nobody looks at, mirrored
+the way the Android tab mirrors a device. Not built; the trade is a large one and it reopens the
+window-mirroring decision in `docs/DECISIONS.md`.
+
 ### Not looking like a bot
 
 A headless browser announces itself, and sites that care serve it a wall. Measured 2026-08-05
