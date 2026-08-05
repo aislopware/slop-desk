@@ -8,37 +8,37 @@ import XCTest
 
 final class WebViewportFitTests: XCTestCase {
     func testAWideColumnIsMatchedOneToOne() {
-        // Wide enough that Chrome's 500-point floor never binds, so the window is the column minus
-        // what DevTools keeps, plus the browser chrome a headless window still spends.
-        let size = WebViewportFit.windowSize(column: CGSize(width: 744, height: 971))
+        // Wide enough that the legibility floor never binds, so the viewport is exactly the column
+        // minus what DevTools keeps for the device frame and its navigation bar.
+        let size = WebViewportFit.viewportSize(column: CGSize(width: 744, height: 971))
         XCTAssertEqual(size?.width, 700)
-        XCTAssertEqual(size?.height, 987)
+        XCTAssertEqual(size?.height, 900)
     }
 
     func testTheWidthFloorIsPaidForInHEIGHT() {
-        // Chrome refuses a window under 500 wide. Taking the floor without stretching the height to
-        // match would hand back a shape that is not the column's, and the empty band the whole
-        // exercise removes would come straight back.
+        // A 176-point page is a column of wrapped characters, not a site. Taking the floor without
+        // stretching the height to match would hand back a shape that is not the column's, and the
+        // empty band the whole exercise removes would come straight back.
         let column = CGSize(width: 220, height: 900)
-        guard let size = WebViewportFit.windowSize(column: column) else {
+        guard let size = WebViewportFit.viewportSize(column: column) else {
             XCTFail("expected a fit")
             return
         }
         XCTAssertEqual(size.width, WebViewportFit.minimumViewportWidth)
         let usable = CGSize(width: 220 - 44, height: 900 - 71)
-        let viewport = size.height - WebViewportFit.browserChromeHeight
         XCTAssertEqual(
-            viewport / size.width, usable.height / usable.width, accuracy: 0.01,
-            "the window's aspect is the column's",
+            size.height / size.width, usable.height / usable.width, accuracy: 0.01,
+            "the viewport's aspect is the column's",
         )
     }
 
     func testAColumnTooSmallToBeAPageIsNotFitted() {
-        // A collapsed panel, or a frontend measured before it has laid out. Resizing the browser to
-        // one of those leaves the window absurd once the panel opens again.
-        XCTAssertNil(WebViewportFit.windowSize(column: CGSize(width: 40, height: 900)))
-        XCTAssertNil(WebViewportFit.windowSize(column: CGSize(width: 220, height: 60)))
-        XCTAssertNil(WebViewportFit.windowSize(column: .zero))
+        // A collapsed panel, or a frontend measured before it has laid out. Overriding the page to
+        // one of those leaves it absurd once the panel opens again — and an override the panel set
+        // is one no later session can clear.
+        XCTAssertNil(WebViewportFit.viewportSize(column: CGSize(width: 40, height: 900)))
+        XCTAssertNil(WebViewportFit.viewportSize(column: CGSize(width: 220, height: 60)))
+        XCTAssertNil(WebViewportFit.viewportSize(column: .zero))
     }
 
     func testJitterIsNotAResize() {

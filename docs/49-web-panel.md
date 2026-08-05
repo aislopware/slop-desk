@@ -35,7 +35,8 @@ CodeSidebarProxyPool(key: web)  ── mesh TCP ──────────�
       ├── GET  /json/list                     (the tab menu)
       ├── PUT  /json/new?<url>                (open a tab)
       ├── GET  /json/close/<id>               (close a tab)
-      └── ws   /devtools/page/<id>            (one Page.navigate, then closed — the address bar)
+      ├── GET  /json/activate/<id>            (front a tab — a parked page draws nothing)
+      └── ws   /devtools/page/<id>            (one command, then closed — navigate, or fit)
 ```
 
 ### Why the browser runs on the HOST
@@ -195,26 +196,35 @@ DevTools' panels have a hard minimum of **270pt**, so the screencast column is w
 
 What the panel DOES fix is the shape of what goes in that column. The screencast scales the page to
 FIT, keeping the page's aspect — so a 1440×900 browser in a tall narrow column renders as a short
-band with empty room above and below it, at every panel width. `WebViewportFit` + `setWindowSize`
-resize the host's browser **window** to the column's shape once a second, which is the same thing a
-person does by dragging a window corner, and the page then fills the column.
+band with empty room above and below it, at every panel width. `WebViewportFit` computes the shape
+the column wants and `setViewportSize` applies it to the selected page once a second, after which
+the page fills the column.
 
-The window, not `Emulation.setDeviceMetricsOverride`: an emulation override belongs to the CDP
-client that set it and dies when that client disconnects, so honouring it would mean holding a
-session open beside the frontend's own for the panel's whole life. A window resize is browser state
-— it survives the socket closing, a frontend reload, and is shared by every tab, because they share
-the window. `--window-size=1440,900` is therefore only a starting value.
+⚠️ **The viewport, not the window.** The first cut resized the browser window
+(`Browser.setWindowBounds`) on the belief that an emulation override belongs to the CDP client that
+set it and dies with that client's socket. Measured false on Chrome 150, 2026-08-05:
 
-Measured (Chrome 150, 2026-08-05): `Browser.setWindowBounds` **clamps the width at 500** and accepts
-any height (2049 honoured, far past the virtual screen); a headless window still spends **87pt** on
-browser chrome (a 2049-tall window reports `innerHeight` 1962); DevTools reserves **44 × 71** of the
-column for its device frame and navigation bar. The width floor is paid for in HEIGHT — taking 500
-without stretching the height would hand back a shape that is not the column's, and the empty band
+- an override set from a socket that then closes is still in force minutes later
+  (`333×777` read back long after the setter had exited);
+- a LATER session cannot undo it — `Emulation.clearDeviceMetricsOverride` answers `{}` and changes
+  nothing, because a session clears only its own;
+- the only thing that moves a stale override is **another override**, which any session may set.
+
+So a window resize is not authority over the page's size, it is a suggestion that any leftover
+override outranks. The measured symptom is a 500-point-wide window rendering a 176-point page, and
+nothing done to the window fixes it. Setting the override IS the mechanism: it survives the socket
+closing, it displaces whatever was there, and it needs no window arithmetic and no browser-level
+socket.
+
+The cost is that an override is per TARGET. A page the panel has not fitted renders at the window's
+size, so `WebSidebarModel` forgets the fitted column whenever the selection moves and the next round
+fits the new page.
+
+Measured alongside: DevTools reserves **44 × 71** of the column for its device frame and navigation
+bar. The panel keeps a **500-point legibility floor** — not a protocol limit; at 176 points real
+sites collapse into a column of wrapped characters. The floor is paid for in HEIGHT, because taking
+it without stretching the height would hand back a shape that is not the column's, and the empty band
 would come straight back.
-
-`Browser.*` is answered only by the **browser-level** socket, whose path carries a per-launch UUID —
-hence the `/json/version` fetch. Only the PATH is taken from `webSocketDebuggerUrl`: the address in
-it is the browser's own loopback port, two relays away from anything the client can reach.
 
 DevTools' built-in screencast address bar still collapses to a few characters at panel width, which
 is why `WebAddressBar` sits above the frontend rather than deferring to it.

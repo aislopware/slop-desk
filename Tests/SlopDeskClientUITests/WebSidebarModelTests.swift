@@ -174,7 +174,7 @@ final class WebSidebarActionTests: XCTestCase {
         private(set) var opened: [String] = []
         private(set) var closed: [String] = []
         private(set) var activated: [String] = []
-        private(set) var windowSizes: [CGSize] = []
+        private(set) var fits: [(id: String, size: CGSize)] = []
         var refuses = false
 
         init(targets: [WebTarget]) { stored = targets }
@@ -215,9 +215,9 @@ final class WebSidebarActionTests: XCTestCase {
             return true
         }
 
-        func setWindowSize(host _: String, port _: UInt16, targetID _: String, size: CGSize) async -> Bool {
+        func setViewportSize(host _: String, port _: UInt16, targetID: String, size: CGSize) async -> Bool {
             if refuses { return false }
-            windowSizes.append(size)
+            fits.append((targetID, size))
             return true
         }
 
@@ -306,13 +306,32 @@ final class WebSidebarActionTests: XCTestCase {
         let model = await readyModel(control)
 
         await model.fitViewport(column: CGSize(width: 220, height: 900))
-        XCTAssertEqual(control.windowSizes.count, 1)
+        XCTAssertEqual(control.fits.count, 1)
 
         await model.fitViewport(column: CGSize(width: 223, height: 901))
-        XCTAssertEqual(control.windowSizes.count, 1, "a column that jittered is the same column")
+        XCTAssertEqual(control.fits.count, 1, "a column that jittered is the same column")
 
         await model.fitViewport(column: CGSize(width: 520, height: 900))
-        XCTAssertEqual(control.windowSizes.count, 2)
+        XCTAssertEqual(control.fits.count, 2)
+    }
+
+    // An emulation override belongs to ONE page. The page the panel moves to has never been fitted,
+    // so it is still laid out at the browser window's size — and the fit has to run again for it
+    // even though the column has not moved a point.
+    func testMovingTheSelectionRefitsTheNewPage() async {
+        let control = FakeControl(targets: [
+            WebTarget(id: "A", title: "", url: "https://a/"),
+            WebTarget(id: "B", title: "", url: "https://b/"),
+        ])
+        let model = await readyModel(control)
+        let column = CGSize(width: 220, height: 900)
+
+        await model.fitViewport(column: column)
+        XCTAssertEqual(control.fits.map(\.id), ["A"])
+
+        await model.select("B")
+        await model.fitViewport(column: column)
+        XCTAssertEqual(control.fits.map(\.id), ["A", "B"], "the same column is a new fit on a new page")
     }
 
     func testARefusedResizeIsRetriedRatherThanRememberedAsDone() async {
@@ -324,7 +343,7 @@ final class WebSidebarActionTests: XCTestCase {
         control.refuses = false
         await model.fitViewport(column: CGSize(width: 220, height: 900))
 
-        XCTAssertEqual(control.windowSizes.count, 1)
+        XCTAssertEqual(control.fits.count, 1)
     }
 
     func testTheParkedCheckReadsTheHeadOfTheList() {

@@ -75,9 +75,9 @@ protocol WebTargetControlling: Sendable {
     /// it renders nothing and reports *"The tab is inactive"*. Selecting a page in this panel has to
     /// mean selecting it in the browser, or the panel shows a live inspector over a dead picture.
     func activate(host: String, port: UInt16, targetID: String) async -> Bool
-    /// Resizes the browser WINDOW the page lives in, so its shape follows the panel's — see
-    /// ``WebViewportFit`` for why the window and not an emulation override.
-    func setWindowSize(host: String, port: UInt16, targetID: String, size: CGSize) async -> Bool
+    /// Reshapes the PAGE so it fills the column DevTools gives it — see ``WebViewportFit`` for why
+    /// an emulation override and not a window resize.
+    func setViewportSize(host: String, port: UInt16, targetID: String, size: CGSize) async -> Bool
 }
 
 @MainActor
@@ -107,9 +107,10 @@ final class WebSidebarModel {
     // MARK: Wiring
 
     private let control: any WebTargetControlling
-    /// The screencast column the browser window was last shaped to. Not observable — nothing draws
-    /// it, and it exists only to keep ``fitViewport(column:)`` from resizing the browser on every
-    /// round.
+    /// The screencast column the SELECTED page was last shaped to. Not observable — nothing draws
+    /// it, and it exists only to keep ``fitViewport(column:)`` from relaying out the page every
+    /// round. Forgotten whenever the selection moves, because an emulation override belongs to one
+    /// target: a page the panel has not fitted yet renders at the window's size, not the column's.
     private var fittedColumn: CGSize = .zero
 
     init(control: any WebTargetControlling = WebTargetControl()) {
@@ -197,7 +198,7 @@ final class WebSidebarModel {
         targets = listed
         let resolved = Self.resolvedSelection(current: selection, targets: listed)
         if resolved != selection {
-            selection = resolved
+            adoptSelection(resolved)
             // A target SWITCH always rewrites the field: it is a different page, so whatever was
             // typed for the old one no longer refers to anything.
             address = listed.first { $0.id == resolved }?.url ?? ""
@@ -216,15 +217,15 @@ final class WebSidebarModel {
         }
     }
 
-    /// Resize the browser so the page fills the column DevTools has given it, `column` being that
-    /// column measured out of the frontend itself (the view supplies it — nothing here may touch
-    /// WebKit). A no-op until the column has actually moved, because this costs a real window
-    /// resize and a relayout of the page the user is reading.
+    /// Reshape the page so it fills the column DevTools has given it, `column` being that column
+    /// measured out of the frontend itself (the view supplies it — nothing here may touch WebKit).
+    /// A no-op until the column has actually moved, because this relays out the page the user is
+    /// reading.
     func fitViewport(column: CGSize) async {
         guard case let .ready(host, port) = phase, let target = selection else { return }
         guard WebViewportFit.isWorthRefitting(column, fitted: fittedColumn) else { return }
-        guard let size = WebViewportFit.windowSize(column: column) else { return }
-        guard await control.setWindowSize(host: host, port: port, targetID: target, size: size)
+        guard let size = WebViewportFit.viewportSize(column: column) else { return }
+        guard await control.setViewportSize(host: host, port: port, targetID: target, size: size)
         else { return }
         // Recorded only on success, so a refused resize is retried on the next round rather than
         // being remembered as done.
@@ -237,6 +238,15 @@ final class WebSidebarModel {
     /// ever stops holding, this reads "parked" every round and costs one idempotent activate.
     static func isParked(_ id: String, in targets: [WebTarget]) -> Bool {
         targets.first?.id != id
+    }
+
+    /// The ONE place the selection is written. An emulation override belongs to a single target, so
+    /// the page the panel moves to has not been fitted to anything yet — forgetting the fitted
+    /// column here is what makes the next fit round reshape it (`WebViewportFit`).
+    private func adoptSelection(_ id: String?) {
+        guard id != selection else { return }
+        selection = id
+        fittedColumn = .zero
     }
 
     /// Which page the frontend should be on after a list round. Pure — pinned by tests. Keeping a
@@ -254,7 +264,7 @@ final class WebSidebarModel {
     /// frontend from attaching to a parked tab.
     func select(_ id: String) async {
         guard id != selection else { return }
-        selection = id
+        adoptSelection(id)
         address = targets.first { $0.id == id }?.url ?? ""
         guard case let .ready(host, port) = phase else { return }
         _ = await control.activate(host: host, port: port, targetID: id)
@@ -291,7 +301,7 @@ final class WebSidebarModel {
         }
         failure = nil
         targets.append(opened)
-        selection = opened.id
+        adoptSelection(opened.id)
         address = opened.url
         // `/json/new` already fronts what it opens, but the panel does not get to depend on that:
         // ONE rule holds everywhere — whatever this panel has selected is the browser's front tab.
@@ -310,7 +320,7 @@ final class WebSidebarModel {
         failure = nil
         targets.removeAll { $0.id == id }
         if selection == id {
-            selection = targets.first?.id
+            adoptSelection(targets.first?.id)
             address = targets.first?.url ?? ""
             // The successor inherits the front of the browser as well as the panel's selection.
             if let successor = selection {
