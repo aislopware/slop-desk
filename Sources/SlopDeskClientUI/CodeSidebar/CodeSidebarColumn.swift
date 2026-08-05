@@ -167,7 +167,6 @@ struct CodeSidebarColumn: View {
                 tabs(labelling: .none)
             }
             Spacer(minLength: 0)
-            if surfaceTab == .code { activeEditorReadout }
             switch surfaceTab {
             case .code:
                 PlateIconButton(symbol: .arrowClockwise) {
@@ -251,40 +250,6 @@ struct CodeSidebarColumn: View {
                 showsLabel: names(.desktop),
             ) { selectSurface(.desktop) }
                 .help("Desktop — the host's window surface")
-        }
-    }
-
-    /// The active editor's name (plus an unsaved-changes dot) read straight off the workbench's
-    /// document title — see ``CodeSidebarWorkbenchTitle``. It sits between the tab plates and the
-    /// actions, in the secondary register: this is a glance-readout, not a control. The workbench
-    /// renders the same fact in its own tab, so when nothing is open the readout says nothing
-    /// rather than reserving space for an em-dash.
-    ///
-    /// It YIELDS the width (negative layout priority): now that the tabs carry words rather than
-    /// glyphs they need about 250pt of the panel's 380pt minimum, and something in the strip has to
-    /// give first. A truncated filename is still a readout — the name is middle-truncated and the
-    /// full one is in the tooltip — whereas a truncated tab is a control that stopped saying what
-    /// it switches to.
-    @ViewBuilder
-    private var activeEditorReadout: some View {
-        if let root = activeProjectRoot,
-           let editor = CodeSidebarWebViewPool.shared.readout(for: root).activeEditor
-        {
-            HStack(spacing: Slate.Metric.space1) {
-                if editor.dirty {
-                    Circle()
-                        .fill(Slate.Text.secondary)
-                        .frame(width: Slate.Metric.dot, height: Slate.Metric.dot)
-                }
-                Text(editor.name)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .help(editor.dirty ? "\(editor.name) — unsaved changes" : editor.name)
-            .padding(.trailing, Slate.Metric.space1)
-            .layoutPriority(-1)
         }
     }
 

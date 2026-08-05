@@ -342,19 +342,6 @@ final class CodeSidebarWebLoadState {
     func navigationSettled() { veiled = false }
 }
 
-/// Per-project readout of the workbench's active editor, fed by KVO on `WKWebView.title` (see
-/// ``CodeSidebarWorkbenchTitle``). `@Observable` so the panel's strip re-renders as the user opens
-/// files and edits them; pooled with the webview, so a warm project swap shows the right file
-/// immediately rather than blanking until the next title change.
-@MainActor
-@Observable
-final class CodeSidebarWorkbenchReadout {
-    private(set) var activeEditor: CodeSidebarActiveEditor?
-    func update(title: String?) {
-        activeEditor = CodeSidebarWorkbenchTitle.activeEditor(in: title)
-    }
-}
-
 /// The retained `WKNavigationDelegate` driving a ``CodeSidebarWebLoadState`` (`navigationDelegate`
 /// is weak — the pool holds this alongside the webview). Failures also settle: a dead endpoint must
 /// surface WebKit's error page, never an eternal spinner veil.
@@ -406,10 +393,6 @@ final class CodeSidebarWebViewPool {
     /// every mount, which between them are the only moments a project is "used".
     private var recency: [String] = []
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
-    private var readouts: [String: CodeSidebarWorkbenchReadout] = [:]
-    /// Retains the `title` KVO registrations behind ``CodeSidebarWorkbenchReadout`` — an
-    /// `NSKeyValueObservation` stops observing the moment it is released.
-    private var titleObservations: [String: NSKeyValueObservation] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
     private var keyWindowObservers: [NSObjectProtocol] = []
     /// The workspace tab the keyboard was last CLAIMED in (a click inside a webview, or a restore).
@@ -481,15 +464,6 @@ final class CodeSidebarWebViewPool {
         return state
     }
 
-    /// The project's active-editor readout — created on demand for the same reason as
-    /// ``loadState(for:)`` (the strip reads it before the webview exists).
-    func readout(for projectRoot: String) -> CodeSidebarWorkbenchReadout {
-        if let existing = readouts[projectRoot] { return existing }
-        let readout = CodeSidebarWorkbenchReadout()
-        readouts[projectRoot] = readout
-        return readout
-    }
-
     /// The (created-on-first-use) webview for `projectRoot`, pointed at `url`. An existing entry is
     /// re-loaded ONLY when the endpoint moved (`CodeSidebarModel.endpointMoved` — a respawned
     /// service on a fresh port); the page otherwise owns its own navigation.
@@ -529,12 +503,6 @@ final class CodeSidebarWebViewPool {
         let observer = CodeSidebarNavigationObserver(state: loadState(for: projectRoot))
         navigationObservers[projectRoot] = observer
         webView.navigationDelegate = observer
-        // The active-file readout: the workbench keeps its document title in step with the active
-        // editor (seed v14's `window.title`), and WebKit republishes it here.
-        let readout = readout(for: projectRoot)
-        titleObservations[projectRoot] = webView.observe(\.title, options: [.initial, .new]) { observed, _ in
-            MainActor.assumeIsolated { readout.update(title: observed.title) }
-        }
         webView.load(URLRequest(url: url))
         webViews[projectRoot] = webView
         evictColdestIfOverCap()
@@ -619,10 +587,8 @@ final class CodeSidebarWebViewPool {
         let webView = webViews.removeValue(forKey: projectRoot)
         webView?.stopLoading()
         webView?.navigationDelegate = nil
-        titleObservations.removeValue(forKey: projectRoot)?.invalidate()
         navigationObservers.removeValue(forKey: projectRoot)
         loadStates.removeValue(forKey: projectRoot)
-        readouts.removeValue(forKey: projectRoot)
         recency.removeAll { $0 == projectRoot }
     }
 
