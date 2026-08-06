@@ -27,7 +27,7 @@ protocol HostServiceProcessHandle: AnyObject, Sendable {
 
 enum HostServiceProcess {
     /// Locates `name` on the host: `overrideVariable` wins when it names an executable, else a
-    /// `PATH` walk plus the Homebrew prefixes. `nil` ⇒ the service is not installed (the panel
+    /// `PATH` walk plus ``fallbackBinDirectories``. `nil` ⇒ the service is not installed (the panel
     /// renders its install hint rather than failing).
     ///
     /// An override that is SET but not executable resolves to `nil` rather than falling through to
@@ -42,7 +42,7 @@ enum HostServiceProcess {
             return fileManager.isExecutableFile(atPath: override) ? override : nil
         }
         var directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        directories.append(contentsOf: homebrewBinDirectories)
+        directories.append(contentsOf: fallbackBinDirectories)
         for directory in directories {
             let candidate = directory + "/" + name
             if fileManager.isExecutableFile(atPath: candidate) { return candidate }
@@ -50,10 +50,15 @@ enum HostServiceProcess {
         return nil
     }
 
-    /// The Homebrew bin directories appended to every `PATH` walk — Apple-silicon prefix first.
-    /// hostd is launched by `nohup`/launchd, not a login shell, so its inherited `PATH` routinely
-    /// misses both.
-    static let homebrewBinDirectories = ["/opt/homebrew/bin", "/usr/local/bin"]
+    /// The bin directories appended to every `PATH` walk — hostd is launched by `nohup`/launchd,
+    /// not a login shell, so its inherited `PATH` routinely misses all of them. `~/.local/bin`
+    /// comes FIRST and Homebrew after: a service installed there is the hand-managed, newer copy
+    /// (code-server ships standalone that way, and its Homebrew formula froze at 4.112), so when
+    /// both exist the hand-managed one is the one the operator meant. Apple-silicon prefix leads
+    /// the Homebrew pair.
+    static let fallbackBinDirectories = [
+        NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin",
+    ]
 
     /// Spawns `binary` and streams each line of its MERGED stdout/stderr to `onLogLine` (the port
     /// parse). Throws when the exec itself fails (missing/broken binary → the caller reports

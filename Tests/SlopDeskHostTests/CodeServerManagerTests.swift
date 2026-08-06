@@ -862,7 +862,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["editor.folding"] as? Bool, false)
         // v16: the reading aids (user-directed 2026-08-04) — structure guides in the editor AND
         // the file tree. Sticky scroll and always-on tree guides are genuine non-defaults
-        // (verified in the shipped 4.112 bundle: `stickyScroll={enabled:!1`, tree guides
+        // (verified in the shipped 4.131 bundle: `stickyScroll={enabled:!1`, tree guides
         // default "onHover"); the indentation-guide pin is the ask by its own name.
         XCTAssertEqual(settings["editor.guides.indentation"] as? Bool, true)
         XCTAssertEqual(settings["editor.guides.bracketPairs"] as? String, "active")
@@ -871,11 +871,15 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(settings["workbench.tree.renderIndentGuides"] as? String, "always")
         XCTAssertEqual(settings["workbench.tree.indent"] as? Int, 16)
         // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
-        // flags unknown keys as warnings in a file we authored. These three were v6's offenders
-        // (desktop-only / Code-OSS-absent): they must never come back.
+        // flags unknown keys as warnings in a file we authored. These two are still unregistered
+        // (desktop-only / absent from the shipped workbench) and must never come back.
         XCTAssertNil(settings["window.customTitleBarVisibility"])
-        XCTAssertNil(settings["chat.disableAIFeatures"])
         XCTAssertNil(settings["chat.commandCenter.enabled"])
+        // v18: `chat.disableAIFeatures` RETURNS — v7 dropped it because Code-OSS had no chat to
+        // disable, and code-server 4.113+ bundles the Copilot chat extension that registers it
+        // again (verified in the 4.131 bundle). The intent never changed: this panel is seeded
+        // with the AI surfaces off.
+        XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
         // The file tree hugs the window's right edge — the panel hangs off it.
         XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
         // The editor face IS the terminal's: JetBrains Mono (what libghostty actually renders —
@@ -1343,11 +1347,19 @@ final class HostCodeServerPerformerTests: XCTestCase {
         settingsFileURL: URL? = nil,
         bridge: FakeBridge = FakeBridge(),
     ) -> CodeServerManager {
-        // settingsSeeder / cliRunner / settingsFileURL / bridge injected as fakes — the default
-        // seams touch the real user's settings file, exec a real binary or bind a real socket.
+        // settingsSeeder / cliRunner / registry reader / settingsFileURL / bridge injected as
+        // fakes — the default seams touch the real user's settings file and extension registry,
+        // exec a real binary or bind a real socket. The registry answers SATISFIED so an open
+        // never records a bundled `--install-extension` alongside the `-r` under test (the
+        // production seam would, on any dev machine missing one of the bundled ids).
         let settingsURL = settingsFileURL
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("performer-tests-absent-\(UUID().uuidString).json")
+        let satisfiedRegistry = try? JSONSerialization.data(
+            withJSONObject: CodeServerManager.bundledMarketplaceExtensions.map {
+                ["identifier": ["id": $0]]
+            },
+        )
         return CodeServerManager(
             binaryLocator: { binary },
             spawner: { _, _, _ in
@@ -1360,6 +1372,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 cli.record(arguments)
                 return 0
             },
+            installedExtensionsRegistry: { satisfiedRegistry },
             settingsFileURL: { settingsURL },
             bridge: bridge,
             probeInterval: .zero,

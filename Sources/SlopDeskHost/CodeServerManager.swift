@@ -358,7 +358,7 @@ final class CodeServerManager: @unchecked Sendable {
     /// one shared settings file) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
-    /// location FORCE-SHOWS the web title bar (re-confirmed on 4.112, the v6-era observation): it
+    /// location FORCE-SHOWS the web title bar (re-confirmed on 4.131, the v6-era observation): it
     /// must host the relocated global actions (accounts + manage). No seedable key hides it
     /// (`window.customTitleBarVisibility` stays desktop-only/UNREGISTERED — v7 dropped it,
     /// pixel-verified equal), so the CLIENT clips the band off instead — the macOS webview mount
@@ -371,7 +371,10 @@ final class CodeServerManager: @unchecked Sendable {
     /// `glyphMargin` off (no debugger here), `folding` off (the arrows column; ⌘⇧P still folds
     /// by command for the rare need). Every key seeded must be REGISTERED in the shipped web
     /// workbench's configuration schema (the settings editor flags unknown keys as warnings in a
-    /// file we authored — the chat.* pair died with v6 for the same reason).
+    /// file we authored — the chat.* pair died with v7 for the same reason; the schema is what
+    /// moved, not the intent, so `chat.disableAIFeatures` returns in v18 now that code-server
+    /// 4.113+ bundles the Copilot chat extension and registers it again —
+    /// `chat.commandCenter.enabled` is still absent and stays out).
     /// View switching is keyboard-first (⌘⇧E / ⌘⇧F / ⌃⇧G, ⌘, — chords the client webview
     /// deliberately passes through), matching the app's zero-chrome register. The sidebar sits on
     /// the RIGHT (the panel hangs off the window's right edge, so the file tree hugs that edge
@@ -393,14 +396,19 @@ final class CodeServerManager: @unchecked Sendable {
     /// moment the file must be on disk. Markdown opens straight into the RENDERED preview
     /// (`workbench.editorAssociations` → the built-in `vscode.markdown.preview.editor`): in this
     /// panel markdown is read (README, docs, agent output), not authored — a reader who wants the
-    /// source is one "Open Source" click away, the inverse default costs a chord per file.
+    /// source is one "Open Source" click away, the inverse default costs a chord per file. That
+    /// preview renders mermaid fences as diagrams on Code 1.121+, where the built-in
+    /// `mermaid-markdown-features` extension landed (code-server 4.121+ — docs/46 records the
+    /// install); nothing is seeded for it, since its default theme already follows the workbench
+    /// colours. Below that the fence stays a code block: the panel still works, it just reads the
+    /// diagram as source.
     /// File icons are the Material Icon Theme (v15, user-directed 2026-08-03) — the
     /// ``bundledMarketplaceExtensions`` install that precedes the first spawn, so the id resolves
     /// on the very first boot.
     /// The reading aids come on (v16, user-directed 2026-08-04): indentation guides pinned
     /// explicitly (default-on today, but the named ask deserves a named key), the ACTIVE bracket
     /// pair's guide (`editor.guides.bracketPairs: "active"` — the full rainbow is noise at this
-    /// panel width), sticky scroll (shipped default is OFF — verified in the 4.112 bundle), and
+    /// panel width), sticky scroll (shipped default is OFF — verified in the 4.131 bundle), and
     /// trailing-whitespace rendering. The file tree matches: indent guides always visible (stock
     /// only shows them on hover) over a 16px indent — the default 8px barely steps a deep Swift
     /// tree.
@@ -409,6 +417,7 @@ final class CodeServerManager: @unchecked Sendable {
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
+        "chat.disableAIFeatures": true,
         "workbench.colorTheme": "Monokai Pro",
         "window.autoDetectColorScheme": true,
         "workbench.preferredDarkColorTheme": "Monokai Pro",
@@ -939,6 +948,51 @@ final class CodeServerManager: @unchecked Sendable {
             "workbench.secondarySideBar.defaultVisibility": "hidden",
             "window.menuBarVisibility": "hidden",
             "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v17 — the last seed written for a Code-OSS workbench with no chat in it. code-server
+        // 4.113+ bundles the Copilot chat extension, which brings `chat.disableAIFeatures` back
+        // into the schema (v7 had to drop it as unregistered), so v18 turns the AI surfaces off
+        // again — the register this panel has always been seeded in.
+        """
+        {
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
             "workbench.editor.empty.hint": "hidden",
             "workbench.editor.decorations.badges": false,
             "window.commandCenter": false,

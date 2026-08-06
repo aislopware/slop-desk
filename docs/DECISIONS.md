@@ -6902,3 +6902,38 @@ and stayed because the strip read it; with the title bar clipped off client-side
 left, v17 drops the key and lets the workbench keep its default (v16 joins `obsoleteSeeds`, so
 pristine hosts upgrade in place). Nothing renders a title in this panel now — the honest shape
 for a string nobody displays is no string at all.
+
+## The code panel moves to code-server 4.131 so mermaid renders itself (2026-08-06)
+
+The panel opens `*.md` in the built-in preview, and a fenced ```mermaid``` block came out as its
+own source — the one place the preview-first default read as a downgrade. Two routes were
+measured against the real thing, not argued.
+
+`bierner.markdown-mermaid` installs and works on the 4.112 workbench (verified: the preview
+editor renders one `<svg>` per fence; the same fixture also showed it disabled — diagram silently
+back to source — in a restricted workspace, since its manifest declares no
+`capabilities.untrustedWorkspaces`). It is also DEPRECATED: VS Code 1.121 merged it in as the
+built-in `mermaid-markdown-features`, and having both installed breaks rendering
+(microsoft/vscode#317870). Installing a deprecated extension to get a feature the platform now
+ships, and booby-trapping the next upgrade with it, is the worse trade.
+
+So the host requires code-server ≥ 4.121 and runs 4.131 (Code 1.131). Homebrew cannot supply it —
+the formula froze at 4.112 and is deprecated ("uses non-FOSS @github/copilot since 4.113.0") — so
+the install is the standalone tarball under `~/.local/lib` with a `~/.local/bin` symlink, and
+`HostServiceProcess.fallbackBinDirectories` now leads with `~/.local/bin` (a hand-managed copy is
+the one an operator meant; hostd is `nohup`'d, so its `PATH` is not a login shell's). The built-in
+extension is MIT, `untrustedWorkspaces: supported`, and its default theme follows the workbench
+colours — nothing is seeded for mermaid itself.
+
+Two things the newer workbench moved, both measured on a fixture profile carrying the real seed:
+
+The web title bar is **30px**, not 35 — `CodeSidebarWebView.clippedTitleBarHeight` would have
+clipped 5px into the editor tab row. The number is not a CSS constant to grep (the workbench grid
+positions its parts with inline geometry); the honest measurement is the laid-out box, and the
+comment now says so, because this constant will move again.
+
+Chat came back. 4.113+ bundles the Copilot chat extension, which re-registers
+`chat.disableAIFeatures` — the key v7 had to drop as unregistered on Code-OSS. Seed **v18** turns
+it on again (v17 joins `obsoleteSeeds`, so pristine hosts upgrade in place): the AI surfaces stay
+off, as they have been seeded since v2. Verified on a fresh profile: chat panel empty and its
+secondary side bar closed, title bar 30px, tab row 35px, mermaid rendered.

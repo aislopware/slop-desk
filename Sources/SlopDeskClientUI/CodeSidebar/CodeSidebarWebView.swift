@@ -768,11 +768,17 @@ struct CodeSidebarWebView: NSViewRepresentable {
     let projectRoot: String
     let url: URL
 
-    /// The web workbench title bar's CSS height (35px at zoom 1 — VS Code's fixed titlebar
-    /// metric, pixel-verified against 4.112). The webview overhangs the container by this much;
-    /// see ``CodeSidebarClippedContainer``. Coupled to seed v12's `activityBar.location: "top"` —
-    /// a seed that stops forcing the title bar should retire this to 0.
-    static let clippedTitleBarHeight: CGFloat = 35
+    /// The web workbench title bar's laid-out height at zoom 1 (30px on Code 1.131). The webview
+    /// overhangs the container by this much; see ``CodeSidebarClippedContainer``. Coupled to seed
+    /// v12's `activityBar.location: "top"` — a seed that stops forcing the title bar should retire
+    /// this to 0.
+    ///
+    /// It is NOT a CSS constant to grep: the workbench grid positions its parts with inline
+    /// geometry, so the honest measurement is the laid-out box —
+    /// `document.querySelector('#workbench\\.parts\\.titlebar').getBoundingClientRect().height`
+    /// against a real workbench. It went 35 → 30 across Code 1.112 → 1.131; re-measure on every
+    /// code-server bump, because being wrong here clips the editor tab row instead.
+    static let clippedTitleBarHeight: CGFloat = 30
 
     private var topOverhang: CGFloat { Self.clippedTitleBarHeight }
 
