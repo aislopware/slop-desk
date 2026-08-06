@@ -14,7 +14,9 @@ SWIFT_PATHS  := Sources Tests Apps
 # Format (SwiftFormat) also covers the package manifest; the SwiftLint scope stays
 # Sources/Tests/Apps (Package.swift is config, not linted).
 SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
-SHELL_FILES  := $(shell git ls-files '*.sh' | grep -v '^ThirdParty/')
+# ThirdParty/ghostty/ only: that tree is the vendored libghostty build recipe, carried close to
+# upstream's own shape. ThirdParty/tools/provision.sh is OURS and meets the same bar as scripts/.
+SHELL_FILES  := $(shell git ls-files '*.sh' | grep -v '^ThirdParty/ghostty/')
 PY_FILES     := $(shell git ls-files '*.py')
 SHFMT_FLAGS  := -i 2 -ci -sr
 
@@ -107,7 +109,21 @@ golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
 	bash scripts/golden-check.sh
 
 # ---------------------------------------------------------------------------- #
+.PHONY: provision provision-check
+# The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
+# ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and
+# tests headless without any of them, and provisioning downloads ~250 MB.
+provision: ## Fetch + verify the pinned host-side runtime deps into ThirdParty/tools/.prefix
+	bash ThirdParty/tools/provision.sh
+
+provision-check: ## Report which pinned deps are present; download nothing
+	bash ThirdParty/tools/provision.sh --check
+
+# ---------------------------------------------------------------------------- #
 .PHONY: install-tools hooks
+# DEV tooling only (linters + hooks) — deliberately still brew. These shape the gates, not the
+# product: a formula drifting a minor version changes a lint message, it does not put the panel on
+# a workbench three releases old. The deps that DO decide product behaviour are in `provision`.
 install-tools: hooks ## Install all required tools (brew) and the git hooks
 	brew install swiftlint swiftformat shellcheck shfmt ruff prek
 

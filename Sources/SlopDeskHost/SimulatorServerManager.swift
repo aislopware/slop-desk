@@ -177,8 +177,9 @@ final class SimulatorServerManager: @unchecked Sendable {
 
     // MARK: - Production seams
 
-    /// `SLOPDESK_SIMULATOR_SERVER_BIN` override, else a `PATH` walk plus the Homebrew prefixes
-    /// `PATH` misses when hostd is launched outside a login shell.
+    /// `SLOPDESK_SIMULATOR_SERVER_BIN` override, else the ``HostServiceProcess/searchDirectories``
+    /// walk — the version pinned in `ThirdParty/tools/tools.lock` first, then `PATH` and the
+    /// prefixes `PATH` misses when hostd is launched outside a login shell.
     static let defaultBinaryLocator: BinaryLocator = {
         HostServiceProcess.locate("baguette", overrideVariable: "SLOPDESK_SIMULATOR_SERVER_BIN")
     }

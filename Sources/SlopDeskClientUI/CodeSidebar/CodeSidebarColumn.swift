@@ -309,7 +309,11 @@ struct CodeSidebarColumn: View {
             placeholder(
                 symbol: .shippingbox,
                 title: "code-server not found on host",
-                detail: "brew install code-server",
+                // The provision script, not `brew install`: the panel is written against the
+                // `code-server` version pinned in `ThirdParty/tools/tools.lock`, and the Homebrew
+                // formula froze at 4.112 (below the Code 1.121 floor this panel needs) before being
+                // deprecated outright. Sending someone to `brew` here hands them the broken one.
+                detail: "bash ThirdParty/tools/provision.sh",
                 detailIsCommand: true,
             )
         case .offline:
@@ -361,7 +365,7 @@ struct CodeSidebarColumn: View {
                 placeholder(
                     symbol: .iphoneSlash,
                     title: "baguette not found on host",
-                    detail: "brew install baguette",
+                    detail: "bash ThirdParty/tools/provision.sh",
                     detailIsCommand: true,
                 )
             case .offline:
@@ -496,11 +500,13 @@ struct CodeSidebarColumn: View {
                 placeholder(
                     symbol: .cableConnectorSlash,
                     title: "adb not found on host",
-                    // The platform tools, not `scrcpy`: `adb` is the one piece without which there is
-                    // nothing to list. A missing `scrcpy-server` still lists and boots devices and
-                    // reports itself when a mirror is asked for, which is where it can name itself
-                    // against the action that wanted it.
-                    detail: "brew install --cask android-platform-tools",
+                    // `adb` is the one piece without which there is nothing to list. A missing
+                    // `scrcpy-server` still lists and boots devices and reports itself when a mirror
+                    // is asked for, which is where it can name itself against the action that wanted
+                    // it — and it is committed to the repo now, so it is present in any checkout.
+                    // The emulator is deliberately not provisioned (system images are gigabytes
+                    // behind a licence accept), so a host that wants AVDs still needs its own SDK.
+                    detail: "bash ThirdParty/tools/provision.sh",
                     detailIsCommand: true,
                 )
             case .offline:

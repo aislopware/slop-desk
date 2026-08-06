@@ -26,9 +26,9 @@ protocol HostServiceProcessHandle: AnyObject, Sendable {
 }
 
 enum HostServiceProcess {
-    /// Locates `name` on the host: `overrideVariable` wins when it names an executable, else a
-    /// `PATH` walk plus ``fallbackBinDirectories``. `nil` ⇒ the service is not installed (the panel
-    /// renders its install hint rather than failing).
+    /// Locates `name` on the host: `overrideVariable` wins when it names an executable, else the
+    /// ``searchDirectories`` walk. `nil` ⇒ the service is not installed (the panel renders its
+    /// install hint rather than failing).
     ///
     /// An override that is SET but not executable resolves to `nil` rather than falling through to
     /// the search: an operator who named a binary meant that one, and silently running a different
@@ -37,25 +37,47 @@ enum HostServiceProcess {
         _ name: String, overrideVariable: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
+        vendoredBinDirectory: String? = VendoredTools.binDirectory,
     ) -> String? {
         if let override = environment[overrideVariable], !override.isEmpty {
             return fileManager.isExecutableFile(atPath: override) ? override : nil
         }
-        var directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        directories.append(contentsOf: fallbackBinDirectories)
-        for directory in directories {
+        for directory in searchDirectories(
+            environment: environment, vendoredBinDirectory: vendoredBinDirectory,
+        ) {
             let candidate = directory + "/" + name
             if fileManager.isExecutableFile(atPath: candidate) { return candidate }
         }
         return nil
     }
 
-    /// The bin directories appended to every `PATH` walk — hostd is launched by `nohup`/launchd,
-    /// not a login shell, so its inherited `PATH` routinely misses all of them. `~/.local/bin`
-    /// comes FIRST and Homebrew after: a service installed there is the hand-managed, newer copy
-    /// (code-server ships standalone that way, and its Homebrew formula froze at 4.112), so when
-    /// both exist the hand-managed one is the one the operator meant. Apple-silicon prefix leads
-    /// the Homebrew pair.
+    /// The full search order, most authoritative first.
+    ///
+    /// **The vendored prefix leads**, ahead of even `PATH`. That inverts the usual "the operator's
+    /// `PATH` wins" instinct on purpose: the version in `ThirdParty/tools/tools.lock` is the one
+    /// this checkout's panel code was written and measured against, and it is the one whose bump is
+    /// a reviewed change with a documented tail (the code panel's clip height and settings seed both
+    /// key off the workbench version). A stale Homebrew copy silently winning is the exact failure
+    /// this layer exists to end. `SLOPDESK_*_BIN` is still the escape hatch, and it is checked
+    /// before any of this.
+    ///
+    /// Then `PATH`, then ``fallbackBinDirectories``: hostd is launched by `nohup`/launchd, not a
+    /// login shell, so its inherited `PATH` routinely misses all of them.
+    static func searchDirectories(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        vendoredBinDirectory: String? = VendoredTools.binDirectory,
+    ) -> [String] {
+        var directories: [String] = []
+        if let vendoredBinDirectory { directories.append(vendoredBinDirectory) }
+        directories.append(contentsOf: (environment["PATH"] ?? "").split(separator: ":").map(String.init))
+        directories.append(contentsOf: fallbackBinDirectories)
+        return directories
+    }
+
+    /// The bin directories appended after the `PATH` walk, for a host with no provisioned prefix.
+    /// `~/.local/bin` comes FIRST and Homebrew after: a service installed there is the hand-managed
+    /// copy, so when both exist that is the one the operator meant. Apple-silicon prefix leads the
+    /// Homebrew pair.
     static let fallbackBinDirectories = [
         NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin",
     ]

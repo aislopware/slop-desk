@@ -198,8 +198,10 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// resource (one `adb` server, one set of AVDs), not a project-scoped one.
     ///
     /// Response payload: ``MetadataCodec/ServiceEndpoint``, the same shape and the same never-wait
-    /// contract as verbs 18 and 21. `unavailable` here means the host is missing `adb` or the
-    /// `scrcpy-server` jar (`brew install scrcpy`), and the panel shows that install hint.
+    /// contract as verbs 18 and 21. `unavailable` here means the host is missing `adb` (pinned in
+    /// `ThirdParty/tools/tools.lock`, provisioned by `ThirdParty/tools/provision.sh`), and the panel
+    /// shows that hint. The `scrcpy-server` jar is committed to the repo, so it is present wherever
+    /// hostd runs from a checkout.
     ///
     /// Unlike 18 and 21 the bridge is NOT a child process serving a web UI — it is an `NWListener`
     /// inside hostd that speaks a line-delimited JSON handshake and then pumps a `scrcpy-server`

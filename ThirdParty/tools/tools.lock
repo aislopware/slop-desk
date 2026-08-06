@@ -1,0 +1,66 @@
+# tools.lock — the pinned host-side runtime dependencies of the right panel.
+#
+# Every surface in the right panel stands on a third-party program that is NOT part of this repo's
+# build: the code panel runs `code-server`, the simulator panel runs `baguette serve`, the Android
+# panel runs `adb` and pushes `scrcpy-server`. Before this file they were whatever Homebrew had
+# installed, which is how the code panel spent months on Code 1.112: the `code-server` formula froze
+# at 4.112 and was deprecated, and nothing in the repo recorded — or could enforce — which version
+# the panel was actually written against.
+#
+# So the version lives here, pinned by URL and SHA-256, and `provision.sh` materialises it under
+# `.prefix/` (gitignored). This is the same bargain `ThirdParty/ghostty/` already strikes: the
+# RECIPE is committed, the ARTIFACT is not.
+#
+# What is deliberately NOT here, because it cannot be:
+#   * iOS simulator runtimes and `simctl` — they ship inside Xcode under Apple's licence. `baguette`
+#     is the vendorable half; the simulators it drives are the host's.
+#   * The Android emulator and its system images — `sdkmanager` gates them behind an interactive
+#     licence accept and they run to gigabytes per API level. `adb` is the vendorable half.
+# For both, the panel keeps its existing host-discovery path (Xcode / the SDK roots in
+# `AndroidToolchain.sdkRoots`) and reports unavailable when the host has none.
+#
+# FORMAT — one record per line, `|`-separated, no spaces around the separator:
+#
+#   name | version | kind | binary | url | sha256
+#
+#   name     the provisioned command; becomes `.prefix/bin/<name>`. Also what the Swift locators
+#            search for, so it must match the program's real invocation name.
+#   version  the upstream release. Also the directory under `.prefix/<name>/`, so two versions can
+#            sit side by side and a rollback is a relink rather than a re-download.
+#   kind     `tar.gz`, `zip`, or `file` (committed under `vendor/`, never downloaded).
+#   binary   path to the executable INSIDE the extracted tree, after its single top-level directory
+#            is stripped. For `file`, the path under `vendor/`.
+#   url      the exact release asset. Never a `latest` alias — an unpinnable URL is the bug this
+#            file exists to fix.
+#   sha256   verified on every provision. A mismatch deletes the download and fails; it is never
+#            "probably fine".
+#
+# CHANGING A PIN is a deliberate act with a tail. For `code-server` specifically, a version bump
+# also means re-measuring `CodeSidebarWebView.clippedTitleBarHeight` against the new workbench and
+# re-checking the seed against the new settings schema — `docs/46-gates-env-paths.md` has the
+# procedure, `docs/DECISIONS.md` has why.
+
+# code-server — the code panel's workbench (verb 18). The floor is 4.121: Code 1.121 is where the
+# built-in `mermaid-markdown-features` extension landed, and the panel renders mermaid fences
+# through it rather than through the deprecated `bierner.markdown-mermaid`.
+code-server|4.131.0|tar.gz|bin/code-server|https://github.com/coder/code-server/releases/download/v4.131.0/code-server-4.131.0-macos-arm64.tar.gz|f7ebe8ac986ab0b89eb5882a5c804ad15c2999ad58a13c042f7645fa85124e5d
+
+# baguette — the simulator panel's server (verb 21). Ships the executable as `Baguette` (capital B)
+# next to the `Baguette_Baguette.bundle` it loads its web assets from, so `binary` is the bare name
+# and the two stay siblings inside the versioned directory. The `.prefix/bin/baguette` symlink was
+# checked to still resolve that bundle — `serve` binds and serves through it — so no wrapper is
+# needed; re-check on a version bump if the panel ever comes up blank.
+baguette|0.1.88|tar.gz|Baguette|https://github.com/tddworks/baguette/releases/download/v0.1.88/baguette_v0.1.88_macOS_arm64.tar.gz|81752085712ccb6b6075ccbb6f6c298e190c0080060b9c5f11244ec101b1e967
+
+# adb — the Android panel's device channel (verb 22). Google publishes the versioned zip alongside a
+# SHA-1 in `repository2-3.xml`; that SHA-1 was checked against this download, and the SHA-256 below
+# is ours, so the pin verifies with the same one-way function as every other record here.
+adb|37.0.1|zip|adb|https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip|ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d
+
+# scrcpy-server — pushed to the device by the Android bridge. `kind=file`: at 716 KB it is the one
+# dependency small enough to live in git outright, and it is the only one that is not an executable
+# (a jar the device's own `app_process` runs), so it carries no signing, quarantine or
+# architecture concern. Committed at `vendor/scrcpy-server`; the SHA-256 is upstream's own, from the
+# v4.1 `SHA256SUMS.txt`, and is verified against the committed bytes so a corrupted checkout is
+# caught rather than pushed to a phone.
+scrcpy-server|4.1|file|scrcpy-server|https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-server-v4.1|deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae

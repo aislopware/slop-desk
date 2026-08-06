@@ -23,7 +23,7 @@ enum CodeSidebarPhase: Equatable {
     /// The host is booting (or probing) the project's code-server — spinner, keep polling.
     case starting
     /// No code-server binary on the host — render the install hint. Still polled (slowly): a
-    /// `brew install code-server` mid-session is picked up without a restart.
+    /// `ThirdParty/tools/provision.sh` run mid-session is picked up without a restart.
     case unavailable
     /// The workbench is reachable — load `url` in the webview and stop polling. Carries the
     /// project root the URL was built FOR: on a project switch the column re-renders before the

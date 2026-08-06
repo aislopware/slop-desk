@@ -226,7 +226,9 @@ final class AndroidScrcpySession: @unchecked Sendable {
 enum AndroidBridgeError: String, Error, Sendable {
     case adbMissing = "No adb on this host. Install the Android SDK platform-tools."
     case emulatorMissing = "No emulator binary on this host — only attached devices can be listed."
-    case scrcpyServerMissing = "No scrcpy-server on this host. Install it with `brew install scrcpy`."
+    // The jar is committed at `ThirdParty/tools/vendor/scrcpy-server`, so reaching this now means
+    // hostd is running from outside a checkout — naming the checkout is the actionable part.
+    case scrcpyServerMissing = "No scrcpy-server jar reachable. Run hostd from a SlopDesk checkout, or set SLOPDESK_ANDROID_SERVER_JAR."
     case pushFailed = "Could not copy the mirror server onto the device."
     case forwardFailed = "adb refused to open a tunnel to the device."
     case launchFailed = "Could not start the mirror server on the device."

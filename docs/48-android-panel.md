@@ -325,7 +325,7 @@ crash`) are exactly what someone reading a crash is looking for.
 |---|---|
 | `SLOPDESK_ADB_BIN` | overrides `adb`. Absent ⇒ located under the SDK's `platform-tools`; without it there is no panel at all (`unavailable`) |
 | `SLOPDESK_ANDROID_EMULATOR_BIN` | overrides the `emulator` binary. Missing is NOT `unavailable` — a host with a phone plugged in still has devices to list |
-| `SLOPDESK_ANDROID_SERVER_JAR` | overrides `scrcpy-server`. Located under Homebrew's `share/scrcpy` otherwise. **The jar is not in this repo** and the host never downloads one: the user runs `brew install scrcpy`. Missing ⇒ devices list and boot, nothing mirrors |
+| `SLOPDESK_ANDROID_SERVER_JAR` | overrides `scrcpy-server`. **The jar IS in this repo now** — committed at `ThirdParty/tools/vendor/scrcpy-server` (716 KB), pinned in `ThirdParty/tools/tools.lock` against upstream's own v4.1 digest, which `VendoredToolsTests` re-verifies. It is the one dependency small enough to commit and the only one that is not an executable (the device's `app_process` runs it), so it carries no signing or architecture concern. Homebrew's `share/scrcpy` stays as the fallback for a hostd running outside a checkout. The HOST still never downloads one — `provision.sh` verifies the committed bytes. Missing ⇒ devices list and boot, nothing mirrors |
 | `SLOPDESK_ANDROID_EMULATOR_ARGS` | extra flags appended to the emulator launch, for a host whose GPU needs them |
 | `SLOPDESK_ANDROID_HW` | `=1` enables the hardware tests (`AndroidBridgeHardwareTests`), which need a booted device, an `adb` and the jar. Off ⇒ every one of them is a no-op, so a clean checkout stays green on a machine that has never seen the Android SDK |
 

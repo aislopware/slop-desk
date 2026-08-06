@@ -20,6 +20,7 @@ SlopDesk = low-latency remote coding (macOS host, macOS/iOS clients). Swift owns
 - **Client-UI dimensions go through `Slate` tokens** — raw `.font(.system(size:))` / `cornerRadius:` literals under `Sources/SlopDeskClientUI` fail `make lint`.
 - **No `.keyboardShortcut` in `WorkspaceCommands.swift`** — `WorkspaceKeyDispatcher`'s NSEvent monitor owns chords (a menu shortcut double-fires and eats prefix follow-ups).
 - **Multi-client sync has NO toggle** — workspace document and PTY fan-out are unconditional; do not reintroduce `SLOPDESK_WORKSPACE_DOC` / `SLOPDESK_PANE_FANOUT`.
+- **Panel runtime deps are PINNED, not brewed** — `code-server`/`baguette`/`adb`/`scrcpy-server` in `ThirdParty/tools/tools.lock` (URL + SHA-256), `make provision` → `.prefix/bin`, which outranks `PATH`. hostd only ever STATS — it never downloads. The `scrcpy-server` jar is COMMITTED (`ThirdParty/tools/vendor/`, reversing the old "never in this repo" rule). iOS simulators and the Android emulator are NOT vendorable (Xcode / `sdkmanager` licence, GB-scale) — do not try. `docs/46`.
 
 ## Traps
 

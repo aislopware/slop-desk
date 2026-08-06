@@ -2,15 +2,23 @@
 // one of them that answers questions.
 //
 // **Why locating is harder here than for `baguette`.** ``HostServiceProcess/locate(_:overrideVariable:)``
-// walks `PATH` plus the Homebrew prefixes, which is the whole story for a Homebrew formula. The
-// Android SDK is not a Homebrew formula: it is a directory tree that Android Studio, `sdkmanager`,
-// `mise`, `asdf` and Nix each put somewhere different, and whose `platform-tools` end up on `PATH`
-// only if the user edited a shell profile — which hostd, launched outside a login shell, never reads
-// anyway. So the search walks the SDK roots as well, in the order of how authoritative each is.
+// walks the vendored prefix, `PATH` and the Homebrew prefixes, which is the whole story for a single
+// pinned binary. The Android SDK is not one binary: it is a directory tree that Android Studio,
+// `sdkmanager`, `mise`, `asdf` and Nix each put somewhere different, and whose `platform-tools` end
+// up on `PATH` only if the user edited a shell profile — which hostd, launched outside a login
+// shell, never reads anyway. So the search walks the SDK roots as well, in the order of how
+// authoritative each is.
 //
-// **`scrcpy-server` is a jar, not an executable**, so it cannot go through the same locator at all:
-// `isExecutableFile` is false for it. It is looked up as a readable file under Homebrew's
-// `share/scrcpy`, which is where the formula installs it.
+// **Only `adb` is vendored, on purpose.** It is a standalone versioned download from Google. The
+// `emulator` is not: it comes from `sdkmanager` and is useless without a system image, and those run
+// to gigabytes per API level behind an interactive licence accept. So `adb` pins and the emulator
+// stays a host install — a machine that wants AVDs brings its own SDK, and one with a phone plugged
+// in needs nothing.
+//
+// **`scrcpy-server` is a jar, not an executable**, so it cannot go through a binary locator at all:
+// `isExecutableFile` is false for it. It is the one dependency committed to this repo outright
+// (716 KB, at `ThirdParty/tools/vendor/scrcpy-server`), with Homebrew's `share/scrcpy` kept as the
+// fallback for a hostd running outside a checkout.
 //
 // Hang-safety: every `run` here spawns a real process. Unit tests exercise the PARSERS
 // (``AndroidDeviceCatalog``) against captured output and never reach this file.
@@ -35,31 +43,47 @@ struct AndroidToolchain: Sendable {
     static func locate(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
+        vendoredBinDirectory: String? = VendoredTools.binDirectory,
+        vendoredScrcpyServerJar: String? = VendoredTools.scrcpyServerJar,
     ) -> Self? {
         guard let adb = locateSDKTool(
             "adb", subdirectory: "platform-tools", overrideVariable: "SLOPDESK_ADB_BIN",
             environment: environment, fileManager: fileManager,
+            vendoredBinDirectory: vendoredBinDirectory,
         ) else { return nil }
         return Self(
             adb: adb,
             emulator: locateSDKTool(
                 "emulator", subdirectory: "emulator", overrideVariable: "SLOPDESK_ANDROID_EMULATOR_BIN",
                 environment: environment, fileManager: fileManager,
+                // Deliberately NOT vendored. `emulator` is not a standalone download: it comes from
+                // `sdkmanager`, is useless without a system image, and those run to gigabytes per
+                // API level behind an interactive licence accept. `adb` is the half that pins.
+                vendoredBinDirectory: nil,
             ),
-            scrcpyServerJar: locateScrcpyServerJar(environment: environment, fileManager: fileManager),
+            scrcpyServerJar: locateScrcpyServerJar(
+                environment: environment, fileManager: fileManager,
+                vendoredJar: vendoredScrcpyServerJar,
+            ),
         )
     }
 
-    /// `PATH` first (an operator who put the SDK on the path meant that one), then every SDK root
-    /// this host might have, each probed at `<root>/<subdirectory>/<name>`.
+    /// The vendored prefix first when the tool is pinned there (see
+    /// ``HostServiceProcess/searchDirectories`` for why it outranks `PATH`), then `PATH`, then every
+    /// SDK root this host might have, each probed at `<root>/<subdirectory>/<name>`.
     static func locateSDKTool(
         _ name: String, subdirectory: String, overrideVariable: String,
         environment: [String: String], fileManager: FileManager,
+        vendoredBinDirectory: String?,
     ) -> String? {
         if let override = environment[overrideVariable], !override.isEmpty {
             // Same contract as ``HostServiceProcess/locate``: a named-but-broken override is an
             // error, not a reason to go looking for a different binary.
             return fileManager.isExecutableFile(atPath: override) ? override : nil
+        }
+        if let vendoredBinDirectory {
+            let candidate = vendoredBinDirectory + "/" + name
+            if fileManager.isExecutableFile(atPath: candidate) { return candidate }
         }
         for directory in (environment["PATH"] ?? "").split(separator: ":").map(String.init) {
             let candidate = directory + "/" + name
@@ -93,15 +117,26 @@ struct AndroidToolchain: Sendable {
         return roots
     }
 
-    /// The `scrcpy-server` jar. Not an executable and not on `PATH` — it ships in the formula's
-    /// `share/scrcpy`, and `SLOPDESK_ANDROID_SERVER_JAR` overrides for anyone running scrcpy from a
-    /// build tree.
+    /// The `scrcpy-server` jar. Not an executable and not on `PATH`, so it never went through a
+    /// binary locator at all.
+    ///
+    /// It is the one dependency committed to this repo outright — 716 KB, and the device's own
+    /// `app_process` runs it, so it carries no signing, quarantine or architecture concern that
+    /// would make a checked-in binary a liability. `ThirdParty/tools/provision.sh` verifies those
+    /// committed bytes against upstream's published digest rather than downloading them.
+    ///
+    /// Homebrew's `share/scrcpy` stays in the search below it: a hostd running outside a checkout
+    /// (the binary copied elsewhere) has no vendored jar, and a `brew install scrcpy` host should
+    /// keep mirroring rather than regress. `SLOPDESK_ANDROID_SERVER_JAR` overrides both, for anyone
+    /// running scrcpy from a build tree.
     static func locateScrcpyServerJar(
         environment: [String: String], fileManager: FileManager,
+        vendoredJar: String? = VendoredTools.scrcpyServerJar,
     ) -> String? {
         if let override = environment["SLOPDESK_ANDROID_SERVER_JAR"], !override.isEmpty {
             return fileManager.isReadableFile(atPath: override) ? override : nil
         }
+        if let vendoredJar, fileManager.isReadableFile(atPath: vendoredJar) { return vendoredJar }
         for prefix in ["/opt/homebrew", "/usr/local"] {
             let candidate = prefix + "/share/scrcpy/scrcpy-server"
             if fileManager.isReadableFile(atPath: candidate) { return candidate }

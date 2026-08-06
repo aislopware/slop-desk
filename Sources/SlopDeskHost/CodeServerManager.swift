@@ -1615,8 +1615,10 @@ final class CodeServerManager: @unchecked Sendable {
         seedBridgeExtension(into: extensions)
     }
 
-    /// `SLOPDESK_CODE_SERVER_BIN` override, else a `PATH` walk plus the Homebrew/npm homes `PATH`
-    /// misses when hostd is launched outside a login shell.
+    /// `SLOPDESK_CODE_SERVER_BIN` override, else the ``HostServiceProcess/searchDirectories`` walk —
+    /// the version pinned in `ThirdParty/tools/tools.lock` first, then `PATH` and the homes `PATH`
+    /// misses when hostd is launched outside a login shell. The pinned copy leading matters most
+    /// here: everything this file seeds is keyed to a workbench version.
     static let defaultBinaryLocator: BinaryLocator = {
         HostServiceProcess.locate("code-server", overrideVariable: "SLOPDESK_CODE_SERVER_BIN")
     }

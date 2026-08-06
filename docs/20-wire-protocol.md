@@ -374,7 +374,7 @@ never offers or falls back to another version.
     the lifecycles are identical) — state `0` starting (poll again), `1` ready (the panel then talks
     to the server DIRECTLY at that mesh address — device list over HTTP, frames + gestures over one
     websocket; the whole foreign dialect is `docs/47-simulator-panel.md`), `2` unavailable (no
-    `baguette` binary on the host → the tab shows the `brew install baguette` hint). `port` is meaningful ONLY when ready (the child
+    `baguette` binary on the host → the tab shows the `make provision` hint; the version is pinned in `ThirdParty/tools/tools.lock`). `port` is meaningful ONLY when ready (the child
     is spawned with `--port 0` and the real port is learned from its own listening line); an unknown
     future state byte reads *starting* client-side and a trailing payload byte is tolerated, exactly
     as for 18. **Host-global** (the one child serves every pane, project and client; a child that
@@ -394,8 +394,8 @@ never offers or falls back to another version.
     `[UInt8 state][UInt16 BE port]` `ServiceEndpoint` payload as 18 and 21 — `0` starting, `1` ready
     (the panel then talks to the bridge DIRECTLY at that mesh address: device list, boot/shutdown,
     logcat and mirror frames, all over ITS OWN line-JSON-then-bytes dialect, `docs/48-android-panel.md`),
-    `2` unavailable (no `adb` on the host → the tab shows the
-    `brew install --cask android-platform-tools` hint). Unlike 21 the bridge is **in hostd**, not a
+    `2` unavailable (no `adb` on the host → the tab shows the `make provision` hint; `adb` is pinned
+    in `ThirdParty/tools/tools.lock`, the emulator deliberately is not). Unlike 21 the bridge is **in hostd**, not a
     child process: there is no third-party server to spawn, because the panel speaks
     `scrcpy-server`'s protocol itself and the bridge exists only to RELAY (`adb forward` binds
     127.0.0.1 only, so a mesh client cannot reach the device socket without it). **No auth token** —

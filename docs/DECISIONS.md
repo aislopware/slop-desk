@@ -6937,3 +6937,52 @@ Chat came back. 4.113+ bundles the Copilot chat extension, which re-registers
 it on again (v17 joins `obsoleteSeeds`, so pristine hosts upgrade in place): the AI surfaces stay
 off, as they have been seeded since v2. Verified on a fresh profile: chat panel empty and its
 secondary side bar closed, title bar 30px, tab row 35px, mermaid rendered.
+
+## The panel's runtime deps are pinned in-repo, not brewed (2026-08-06)
+
+The mermaid round above cost a day for a reason worth naming: the panel had been running Code 1.112
+for months, and nothing in the repo recorded — or could enforce — which workbench version its
+surgery was written against. `code-server` was "whatever Homebrew installed", the formula froze at
+4.112 and was then deprecated, and no gate could see any of it. That is a supply problem, not a
+mermaid problem, and it applied equally to `baguette`, `adb` and the `scrcpy-server` jar.
+
+So the four host-side programs the right panel stands on are pinned by URL + SHA-256 in
+`ThirdParty/tools/tools.lock` and provisioned by `ThirdParty/tools/provision.sh` (`make provision`)
+into `ThirdParty/tools/.prefix/bin`, which `HostServiceProcess.searchDirectories` consults **before
+`PATH`**. Inverting the usual "the operator's `PATH` wins" is the entire point: the pinned version
+is the one this checkout was measured against, and its bump is a reviewed change with a documented
+tail. `SLOPDESK_*_BIN` still outranks the pin, so bisecting a candidate build is unaffected.
+
+Same bargain `ThirdParty/ghostty/` already struck — the recipe is committed, the artifact is not
+(`.prefix/` is ~730 MB, gitignored). `VendoredTools` locates the prefix by walking up from the
+running binary looking for `tools.lock` rather than baking in `#filePath`, which would record the
+machine that COMPILED hostd; a binary copied out of the tree resolves nothing and falls through to
+the host's own installs, which is the right answer there.
+
+**hostd never provisions.** Nothing on the runtime path downloads or writes — it stats. A coding
+host must not reach the network because someone opened a panel.
+
+Two deliberate exceptions to "everything is fetched":
+
+The **`scrcpy-server` jar is committed** (`ThirdParty/tools/vendor/`, 716 KB), reversing the earlier
+"the jar is NEVER in this repo" rule. It is small, and it is the only dependency that is not an
+executable — the device's own `app_process` runs it — so it carries no signing, quarantine or
+architecture concern. `provision.sh` and `VendoredToolsTests` verify those committed bytes against
+upstream's published digest instead of downloading them, which also catches the corrupt-checkout
+case that would otherwise surface as a phone problem.
+
+**iOS simulators and the Android emulator are not vendored, and cannot be.** Simulator runtimes and
+`simctl` ship inside Xcode under Apple's licence; emulator system images come from `sdkmanager`
+behind an interactive licence accept at gigabytes per API level. What IS vendorable is the tooling
+that drives them — `baguette` and `adb` — and that is what is pinned. Both panels keep their
+existing host-discovery path (Xcode, `AndroidToolchain.sdkRoots`) and report unavailable otherwise.
+`AndroidToolchain` passes `vendoredBinDirectory: nil` for the emulator on purpose: a prefix that
+accidentally shadowed it would break AVD booting everywhere while looking like it worked.
+
+Dev tooling (swiftlint, swiftformat, shellcheck, shfmt, ruff, prek, xcodegen) stays on Homebrew.
+Those shape the gates, not the product — a formula drifting a minor version changes a lint message,
+it does not put the panel on a workbench three releases old.
+
+Verified end to end: with Homebrew's 4.112 and a hand-installed `~/.local/bin` copy both still
+present on the host, a restarted hostd spawned its workbench from
+`ThirdParty/tools/.prefix/code-server/4.131.0/` (read off the child's own `lsof` txt map).

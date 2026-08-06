@@ -37,6 +37,11 @@ Apps/**/*.xcodeproj
 # .toolchain/ = downloaded pinned Zig (~80 MB extracted).
 # .work/      = shallow clone of pinned ghostty fork + Zig caches.
 # *.xcframework/ = assembled XCFramework (built artifact; fork emits "GhosttyKit").
+# Vendored host-side runtime deps — the PIN (tools.lock), the recipe (provision.sh) and the
+# one small committed artifact (vendor/scrcpy-server, 716 KB) are the deliverable; the provisioned
+# tree is not. .prefix/ runs to ~730 MB extracted (code-server carries its own Node).
+ThirdParty/tools/.prefix/
+
 ThirdParty/ghostty/.toolchain/
 ThirdParty/ghostty/.work/
 ThirdParty/ghostty/build/

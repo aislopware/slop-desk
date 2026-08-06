@@ -32,7 +32,7 @@ enum SimulatorSidebarPhase: Equatable {
     /// The host is booting (or probing) the simulator server — spinner, keep polling.
     case starting
     /// No `baguette` binary on the host — render the install hint. Still polled (slowly): a
-    /// `brew install baguette` mid-session is picked up without a restart.
+    /// `ThirdParty/tools/provision.sh` run mid-session is picked up without a restart.
     case unavailable
     /// The server is reachable at this address. Everything else the panel does hangs off it.
     case ready(host: String, port: UInt16)
