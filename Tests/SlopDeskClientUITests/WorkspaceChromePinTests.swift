@@ -44,15 +44,20 @@ final class WorkspaceChromePinTests: XCTestCase {
         XCTAssertFalse(Defaults[.codeSidebarCollapsed], "revealCodeSidebar persists the expand")
     }
 
-    /// The code panel's OPEN GATE state: a fresh chrome (≙ a relaunch) has admitted NO project —
+    /// The code panel's OPEN GATE state: a chrome with nothing persisted has admitted NO project —
     /// the panel greets every root with the gate, never a booting workbench — and `openCodeProject`
-    /// admits exactly the root it was given, for the rest of the session. Deliberately NOT
-    /// persisted: this asserts against a fresh instance precisely because a relaunch must come back
-    /// gated (the pre-gate behavior — a restored session booting a workbench on first focus — is
-    /// what the gate removed, user-directed 2026-08-07).
-    func testOpenedCodeProjectsStartEmptyAndAdmitPerRoot() {
+    /// admits exactly the root it was given. PERSISTED (user-directed 2026-08-07, re-scoping the
+    /// same-day session-scoped decision): a fresh `WorkspaceChromeState` (≙ a relaunch) seeds from
+    /// `Defaults[.openedCodeProjects]`, so a project whose workbench was opened once comes back
+    /// booting instead of re-gated — the startup path must not charge a click plus a cold boot
+    /// for a surface the user already asked for. (Per-pid XCTest defaults suite; restored below.)
+    func testOpenedCodeProjectsStartEmptyAndAdmitPerRootPersistently() {
+        let original = Defaults[.openedCodeProjects]
+        defer { Defaults[.openedCodeProjects] = original }
+        Defaults[.openedCodeProjects] = []
+
         let chrome = WorkspaceChromeState()
-        XCTAssertTrue(chrome.openedCodeProjects.isEmpty, "a fresh session has opened no workbench")
+        XCTAssertTrue(chrome.openedCodeProjects.isEmpty, "nothing persisted ⇒ no workbench admitted")
 
         chrome.openCodeProject("/Users/x/proj-a")
         XCTAssertTrue(chrome.openedCodeProjects.contains("/Users/x/proj-a"))
@@ -64,9 +69,9 @@ final class WorkspaceChromePinTests: XCTestCase {
         chrome.openCodeProject("/Users/x/proj-a") // idempotent — a re-open is not an error
         XCTAssertEqual(chrome.openedCodeProjects.count, 1)
 
-        XCTAssertTrue(
-            WorkspaceChromeState().openedCodeProjects.isEmpty,
-            "a relaunch (fresh chrome) is gated again — the set is session-scoped by design",
+        XCTAssertEqual(
+            WorkspaceChromeState().openedCodeProjects, ["/Users/x/proj-a"],
+            "a relaunch (fresh chrome) restores the admitted set — an opened project is never re-gated",
         )
     }
 

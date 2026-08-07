@@ -368,6 +368,15 @@ public enum SettingsKey {
     /// `Key` suffix frees the bare ``codeSidebarWidth`` name for the typed accessor.
     public static let codeSidebarWidthKey = "shell.codeSidebarWidth"
 
+    /// The project roots admitted through the code panel's open gate
+    /// (`shell.openedCodeProjects`), default empty. PERSISTED (like the panel's collapse flag, and
+    /// re-scoping the original session-scoped set): opening a project's workbench is a workstyle
+    /// choice, and a relaunch or reconnect that re-gates an already-opened project costs the user a
+    /// click plus a cold workbench boot for a surface they already asked for. Read once into
+    /// ``WorkspaceChromeState`` at init; written back on every gate admit. `Key` suffix frees the
+    /// bare ``openedCodeProjects`` name for the typed accessor.
+    public static let openedCodeProjectsKey = "shell.openedCodeProjects"
+
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
     /// (`inherit` / `home` / an absolute path). Read at the new-window fire-site.
@@ -925,6 +934,9 @@ public extension Defaults.Keys {
     // The RIGHT code panel's last dragged width (points) — persisted like its collapse flag;
     // `0` = never dragged (open at the minimum).
     static let codeSidebarWidth = Key<Double>(slopDesk: SettingsKey.codeSidebarWidthKey, default: 0)
+    // The code panel's admitted project roots — persisted so a relaunch skips the open gate for
+    // projects whose workbench the user already opened (see the key's doc).
+    static let openedCodeProjects = Key<Set<String>>(slopDesk: SettingsKey.openedCodeProjectsKey, default: [])
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
     static let workingDirectoryNewWindow = Key<String>(

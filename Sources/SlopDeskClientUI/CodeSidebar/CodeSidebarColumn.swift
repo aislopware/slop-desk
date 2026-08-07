@@ -2,9 +2,10 @@
 // pooled WKWebView). Project-scoped means the ACTIVE pane picks the project (its host-pushed
 // `projectKey` — the same key the left panel's sections group by), and every pane of that project
 // shares the ONE workbench opened at the project root; focusing a pane of another project swaps the
-// warm webview for THAT project back in (see `CodeSidebarWebViewPool`). A project's FIRST workbench
-// of the session is gated behind an explicit open (``CodeOpenGate`` — user-directed 2026-08-07):
-// focus changes are free, and the boot is paid only when asked for.
+// warm webview for THAT project back in (see `CodeSidebarWebViewPool`). A project's FIRST-EVER
+// workbench is gated behind an explicit open (``CodeOpenGate`` — user-directed 2026-08-07): focus
+// changes are free, and the boot is paid only when asked for. The admission persists
+// (`Defaults[.openedCodeProjects]`), so a relaunch boots straight back into known projects.
 //
 // The column is macOS-only chrome hosted in its own plain `NSSplitViewItem` (a THIRD column beside
 // navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
@@ -260,11 +261,11 @@ struct CodeSidebarColumn: View {
     }
 
     /// The workbench surface below the strip — phase-switched per the active project. A root the
-    /// user has not opened this session renders the OPEN GATE instead of mounting anything: no
-    /// ensure poll, no proxy bind, no webview — a project switch costs nothing until the workbench
-    /// is asked for (user-directed 2026-08-07). Once admitted (`chrome.openedCodeProjects`) the
-    /// root keeps its old behavior for the rest of the session: returning to it is the warm swap
-    /// it always was.
+    /// user has never opened renders the OPEN GATE instead of mounting anything: no ensure poll,
+    /// no proxy bind, no webview — a project switch costs nothing until the workbench is asked
+    /// for (user-directed 2026-08-07). Once admitted (`chrome.openedCodeProjects` — persisted, so
+    /// relaunches skip the gate too) the root keeps the old behavior: returning to it is the warm
+    /// swap it always was.
     private var surface: some View {
         Group {
             if let root = activeProjectRoot, !chrome.openedCodeProjects.contains(root) {
@@ -691,7 +692,7 @@ struct CodeSidebarColumn: View {
     }
 }
 
-/// The open gate — what a project shows before its first workbench open of the session
+/// The open gate — what a project shows before its first-ever workbench open
 /// (user-directed 2026-08-07). Same anatomy as the panel's placeholder surfaces (dim glyph, one
 /// primary line, secondary detail) so the panel keeps one empty-state voice; the detail line is the
 /// FULL root in the instrument face because the title alone — the last path component — cannot tell

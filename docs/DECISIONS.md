@@ -7050,3 +7050,21 @@ session — returning to it is the warm swap it always was. The reload plate hid
 Session-scoped on purpose, like the panel's tab selection: a relaunch comes back gated (pinned by
 test), so a restored many-project session never boots a workbench until asked. The strip, the
 ensure RPC, and the host are untouched — the gate is one membership check in front of the surface.
+
+## The open gate's admitted set persists across relaunch (2026-08-07, re-scoping the entry above)
+
+The same-day session-scoped choice lasted one session of real use. In practice the gate charged the
+wrong moment twice: every client relaunch (and every reconnect that goes through one) greeted the
+projects the user works in daily with the gate again — a click plus a cold workbench boot on the
+startup path, for surfaces that had already been explicitly asked for. The whole startup pass
+(prewarm at hostd boot, no idle-timeout, poll ramp) exists to make that path fast; re-gating known
+projects handed part of the win back.
+
+`WorkspaceChromeState.openedCodeProjects` now seeds from `Defaults[.openedCodeProjects]`
+(`shell.openedCodeProjects`, the panel's third persisted flag beside collapse and width) and
+`openCodeProject` writes the set back. A project opened once boots straight back into its
+workbench on the next launch; a root never opened still gets the gate — the gate's job was always
+"never boot what was never asked for", not "ask again every morning". The set is client-side and
+grows by explicit opens only; there is no eviction, because a stale root costs nothing until its
+project is focused again (the membership check is the only reader). The pin test flipped from
+asserting a fresh chrome is empty to asserting the round-trip restores the admitted root.
