@@ -27,9 +27,10 @@ struct ContentColumn: View {
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
-    /// The OS-resolved scheme — what the hover titlebar reads while it floats over CHROME (the
-    /// empty state); over the island it flips to the glass polarity instead.
-    @Environment(\.colorScheme) private var osColorScheme
+    /// The inherited CHROME scheme (the split subtree's frame-polarity pin) — what the hover
+    /// titlebar reads while it floats over chrome (the empty state); over the island it flips to
+    /// the glass polarity instead.
+    @Environment(\.colorScheme) private var chromeColorScheme
 
     var body: some View {
         content
@@ -51,7 +52,7 @@ struct ContentColumn: View {
             // directly (the kind chooser is retired — non-terminal kinds have their own shortcuts).
             .overlay(alignment: .top) {
                 SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
-                    .environment(\.colorScheme, hasActiveTab ? Slate.glassColorScheme : osColorScheme)
+                    .environment(\.colorScheme, hasActiveTab ? Slate.glassColorScheme : chromeColorScheme)
             }
         #endif
             // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay

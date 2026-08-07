@@ -266,14 +266,20 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 
     /// Refresh the window-level chrome. The window carries NO pin of its own (`appearance = nil`):
-    /// since the whole-app theme round (user-directed 2026-08-07) the pin lives at the APP level —
-    /// `ThemeStore.pinAppAppearance` sets `NSApp.appearance` from the active theme's polarity, and
-    /// every window (this one, Settings, overlays) inherits it. Only the split view's divider layer
-    /// needs an explicit refresh here.
+    /// since the whole-app theme round (user-directed 2026-08-07) the APP-level pin
+    /// (`ThemeStore.pinAppAppearance`) wears the theme's GLASS polarity, and every window
+    /// (this one, Settings, overlays) inherits it. The FRAME chrome is the one exception, pinned
+    /// here on the split's own view: the three hosted columns stand on the authored frame floor,
+    /// whose polarity is the CHROME's — inverted against the glass on a frame profile
+    /// (user-directed 2026-08-07, Dracula round). The islands are immune to this pin (each forces
+    /// the glass scheme locally), so it reaches exactly the floor-standing chrome — while the
+    /// window-root overlay layer (palette, toasts, sheets) sits OUTSIDE this subtree and keeps the
+    /// app-level identity polarity.
     private func pinWindowAppearance() {
         // Clear any historic per-window pin (an upgraded install's window may still carry one) so
         // the app-level pin is the one voice.
         view.window?.appearance = nil
+        view.appearance = NSAppearance(named: Slate.theme.chromeIsLight ? .aqua : .darkAqua)
         // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
         // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both wear the

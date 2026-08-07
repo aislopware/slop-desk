@@ -9,8 +9,10 @@
 //     a SEMANTIC system colour (`labelColor` tiers, `separatorColor`, the system fill ladder,
 //     `windowBackgroundColor`/`underPageBackgroundColor`). Semantic colours resolve per-appearance at
 //     draw time — and since the whole-app theme round (user-directed 2026-08-07) the appearance they
-//     resolve against is PINNED to the active theme's polarity (`ThemeStore.pinAppAppearance`): pick a
-//     dark theme and the whole app is dark, chrome included. No invented chrome hex.
+//     resolve against is pinned in TWO rings: `NSApp.appearance` wears the theme's GLASS polarity
+//     (Settings, palette, sheets — pick a dark theme and the app is dark), while the split's column
+//     subtree wears the CHROME polarity (`SlopDeskSplitViewController.pinWindowAppearance`) — the
+//     inverted frame's light chrome, without lighting up every auxiliary window. No invented chrome hex.
 //   - THE TERMINAL GLASS carries the theme's deliberate fixed palette — the ``SlateTheme`` TERMINAL
 //     PROFILE. The whole split tree renders as ONE floating island (JetBrains Islands): a single
 //     rounded glass card on the system chrome, panes divided INSIDE it by subtle lines on the glass.
@@ -46,11 +48,14 @@ struct SlateTheme: Equatable {
     /// scheme (``Slate/glassColorScheme``): text drawn ON the glass resolves against the glass, not
     /// against the OS or the chrome.
     let isLight: Bool
-    /// Whether the CHROME (floor, sidebar, titlebar — everything semantic) is light — the polarity
-    /// `ThemeStore.pinAppAppearance` pins `NSApp.appearance` to. Equal to ``isLight`` for a STEPPED
-    /// profile (one polarity, the whole-app theme round). An INVERTED profile (the Canario frame,
-    /// user-directed 2026-08-07 modern round) flips it: a mid-light frame floor around dark glass
-    /// means light chrome standing on the frame while the glass keeps its own dark scheme.
+    /// Whether the CHROME (floor, sidebar, titlebar — everything semantic standing on the frame)
+    /// is light — the polarity `SlopDeskSplitViewController.pinWindowAppearance` pins the split's
+    /// COLUMN subtree to. NOT the app-level pin: `NSApp.appearance` wears ``isLight`` (the theme's
+    /// identity — Settings, palette, sheets follow the glass), because pinning the flip app-wide
+    /// lit Settings up under Dracula (user-directed 2026-08-07). Equal to ``isLight`` for a
+    /// STEPPED profile. An INVERTED profile (the Canario frame, user-directed 2026-08-07 modern
+    /// round) flips it: a mid-light frame floor around dark glass means light chrome standing on
+    /// the frame while the glass keeps its own dark scheme.
     let chromeIsLight: Bool
 
     // The glass surfaces
