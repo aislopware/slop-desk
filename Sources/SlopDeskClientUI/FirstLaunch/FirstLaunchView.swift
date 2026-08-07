@@ -181,18 +181,16 @@ private struct FirstLaunchThemeStep: View {
 
     /// The built-ins offered in the first-launch grid (light-then-dark ordering, curated).
     private let choices: [(ThemeChoice, String)] = [
-        (.monokaiProClassicLight, "Monokai Light"),
-        (.monokaiProClassic, "Monokai Classic"),
-        (.monokaiProOctagon, "Octagon"),
-        (.monokaiProMachine, "Machine"),
-        (.monokaiProRistretto, "Ristretto"),
-        (.monokaiProSpectrum, "Spectrum"),
+        (.foundryEmberLight, "Ember Light"),
+        (.foundryEmber, "Ember"),
+        (.foundryDusk, "Dusk"),
+        (.foundryGraphite, "Graphite"),
     ]
 
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: Slate.Metric.space2)]
 
     private var selected: ThemeChoice {
-        store.appearance.theme ?? .monokaiProClassic
+        store.appearance.theme ?? .foundryEmber
     }
 
     var body: some View {

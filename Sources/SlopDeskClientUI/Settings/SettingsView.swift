@@ -86,7 +86,7 @@ public struct SlopDeskSettingsScene: Scene {
                 .workspaceStore(workspace)
             // SYSTEM chrome, end to end: no colour scheme is pinned, so the window follows the OS
             // appearance like System Settings does. Pinning it to the terminal theme used to put a
-            // Monokai-dark preferences window on a light Mac. Controls take the app's one neutral
+            // dark-themed preferences window on a light Mac. Controls take the app's one neutral
             // accent (the AccentColor asset) with no per-scene override. See `SettingsInk`.
         }
     }
@@ -1499,12 +1499,12 @@ private struct AppearanceSettingsTab: View {
 
     /// Bridge the picker selection to one theme SLOT's model field (`theme` for the light/primary slot,
     /// `themeDark` for the dark slot). An unset slot reads as its default (unset light ⇒ `.system`, unset
-    /// dark ⇒ Monokai Pro Classic). Writing always sets an explicit choice so the user's pick persists.
+    /// dark ⇒ Foundry Ember). Writing always sets an explicit choice so the user's pick persists.
     private func themeSelectionBinding(forDarkSlot dark: Bool) -> Binding<ThemeChoice> {
         Binding(
             get: {
                 let choice = dark ? store.appearance.themeDark : store.appearance.theme
-                return choice ?? (dark ? .monokaiProClassic : .system)
+                return choice ?? (dark ? .foundryEmber : .system)
             },
             set: { choice in
                 // Mutate a local copy and assign ONCE so the store's `appearance` didSet (which re-applies the

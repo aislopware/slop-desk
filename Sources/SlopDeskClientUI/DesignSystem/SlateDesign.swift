@@ -2,7 +2,7 @@
 //
 // A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
 // `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`. Source of truth for the tokens:
-// the theme structs below, the Monokai Pro filter seeds, and `Slate.Anim`'s timing curves (no
+// the theme structs below, the FOUNDRY seeds, and `Slate.Anim`'s timing curves (no
 // springs anywhere).
 //
 // Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5:
@@ -17,9 +17,12 @@
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
-// MULTI-THEME: `SlateTheme` ships the six Monokai Pro filters and NOTHING ELSE (`.monokaiProClassic` — the
-// DEFAULT — plus Light / Octagon / Machine / Ristretto / Spectrum). `Slate.*` accessors
-// read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default `.monokaiProClassic`)
+// MULTI-THEME: `SlateTheme` ships the four FOUNDRY seeds and NOTHING ELSE (`.foundryEmber` — the
+// DEFAULT — plus Ember Light / Dusk / Graphite). Every seed is generated OFFLINE by the FOUNDRY theme
+// engine (OKLCH specs + APCA-W3 audit; generator of record lives with `.impeccable/design.json`'s
+// `themeEngine` block) — no hex below was hand-picked, and a colour the engine cannot generate does not
+// ship (DESIGN.md, the Seeded-Engine Rule). `Slate.*` accessors
+// read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default `.foundryEmber`)
 // so runtime switching repoints every token live. Each theme carries the
 // `terminalBackgroundHex`/`terminalForegroundHex` that pin the libghostty cells to the same flat palette.
 // SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross the AppKit split-controller boundary into
@@ -36,18 +39,23 @@ import AppKit
 import UIKit
 #endif
 
-/// A full colour theme (every chrome role). Every shipped instance is a Monokai Pro filter, built from a
-/// ``MonokaiSeed`` — so every theme has the SAME six chromatics available, which is what lets chrome reach
-/// past the status quartet (see ``Slate/Chroma``) without inventing a colour some theme cannot supply.
+/// A full colour theme (every chrome role). Every shipped instance is a FOUNDRY seed, built from a
+/// ``FoundrySeed`` — so every theme has the SAME eight chromatics and eight identity hues available, which
+/// is what lets chrome reach past the status quartet (see ``Slate/Chroma``) and colour a project fleet
+/// (see ``Slate/Identity``) without inventing a colour some theme cannot supply.
 struct SlateTheme: Equatable {
-    // Surfaces — the 3-rung ladder (MERIDIAN C1). Exactly three names, each REAL in every theme (a rung
+    // Surfaces — the 5-rung FOUNDRY ladder. Exactly five names, each REAL in every theme (a rung
     // that collapses to another gets DELETED, not kept as aspirational vocabulary):
-    //   ground → chrome housing: sidebar column + auxiliary windows (Settings / overlays' backdrop)
+    //   void   → deepest chrome: the 1px seams between panes + auxiliary-window backdrops
+    //   ground → chrome housing: sidebar column
     //   face   → the lit pane surface: terminal cells, the content column, sheet/popover grounds
     //   raised → one step lifted: active row card, popover panels, inset controls (search / kbd / chips)
+    //   lift   → hover/pressed on raised, the terminal selection fill, ANSI slot 0
+    let void: Color
     let ground: Color
     let face: Color
     let raised: Color
+    let lift: Color
 
     // Text
     let textPrimary: Color
@@ -80,16 +88,27 @@ struct SlateTheme: Equatable {
     let statusErr: Color
     let statusInfo: Color
 
-    // The two remaining filter chromatics. Every Monokai Pro filter ships six chromatics; the status
-    // quartet spends four (green / yellow / red / cyan) and these are the other two. They reached only
-    // the terminal's ANSI palette before — surfaced here so chrome that needs a fifth or sixth
-    // DISTINGUISHABLE hue (the sidebar's git readout) can take one from the filter instead of inventing
-    // a colour outside it. Not statuses: no urgency attaches to them, the consumer assigns the meaning.
+    // The chromatics outside the status quartet. Every FOUNDRY seed ships eight equal-loudness
+    // chromatics; the status quartet spends three (green / amber / red — info rides the accent) and
+    // these are the rest — surfaced here so chrome that needs another DISTINGUISHABLE hue (the
+    // sidebar's git readout) can take one from the seed instead of inventing a colour outside it.
+    // Not statuses: no urgency attaches to them, the consumer assigns the meaning.
     let chromaOrange: Color
     let chromaPurple: Color
+    let chromaBlue: Color
+    let chromaMagenta: Color
+
+    /// The accent's deep band — the fill/badge variant (darker, more chromatic) for surfaces where the
+    /// text-sized accent would be a pastel wash (filled pills, progress fills).
+    let accentDeep: Color
+
+    /// The IDENTITY register — 8 equal-weight project hues (one lightness, one chroma, engine-spaced).
+    /// A project keeps its hue for life; spent ONLY as a 2px spine + a ≤5% wash (DESIGN.md, the
+    /// Three-Registers Rule) — never per-row plates, never text recolouring.
+    let identity: [Color]
 
     /// Stable identity for change-detection — distinguishes a real theme switch from an idempotent re-apply
-    /// so a SAME-LIGHTNESS variant change (e.g. Monokai Classic → Spectrum) still posts the cross-boundary
+    /// so a SAME-LIGHTNESS variant change (e.g. Ember → Graphite) still posts the cross-boundary
     /// repaint. Pure discriminator, never a colour.
     let id: String
 
@@ -112,52 +131,59 @@ struct SlateTheme: Equatable {
     /// Glyph-under-cursor colour (`cursor-text`), 6-hex no `#`; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    // MARK: - Monokai Pro filters (palette from monokai.pro/contribute; cross-verified across 4 ports)
+    // MARK: - FOUNDRY seeds (generated: OKLCH specs + APCA-W3 audit — see .impeccable/design.json `themeEngine`)
 
-    /// The seed colours a Monokai Pro filter contributes; every other chrome role is DERIVED from these with
-    /// the shared structure opacities, so all variants have identical chrome geometry — only the hues change.
-    /// MERIDIAN L5: `content == card == background` (the lit pane face) while `window == sidebar` (the
-    /// dimmed chrome housing) — one luminance step, no divider, no floating card, no corner radius.
-    private struct MonokaiSeed {
+    /// The colours a FOUNDRY seed contributes; every other chrome role is DERIVED from these with the
+    /// shared structure opacities, so all seeds have identical chrome geometry — only temperature and
+    /// accent voice change. Values are GENERATED (pinned OKLCH lightness/chroma per role, gamut-clipped by
+    /// chroma only, APCA-audited: ink ≥ 84, secondary ≥ 52, chromatics ≥ 57 on `face`) — never hand-edited.
+    private struct FoundrySeed {
         let name: String
-        let background: UInt32 // window + content + card (the one flat background)
-        let sidebar: UInt32 // bg-dimmed-1 — the navigator panel, a touch off the backdrop
-        let elevated: UInt32 // active-tab card + inset controls (dimmed-5 dark / white light)
-        let foreground: UInt32 // primary text
-        let secondary: UInt32 // dimmed-2 — secondary text + icons
-        let tertiary: UInt32 // dimmed-3 — tertiary text + section headers
-        let accent: UInt32 // active-state accent (the filter's blue/cyan) — ANSI cyan (idx 6/14)
-        let ok: UInt32 // status OK (green) — ANSI green (idx 2/10)
-        let warn: UInt32 // status warn (yellow) — ANSI yellow (idx 3/11)
-        let err: UInt32 // status error (red) — ANSI red (idx 1/9)
-        let info: UInt32 // status info (blue) — usually == accent
-        let orange: UInt32 // the filter's orange — Monokai's ANSI "blue" slot (idx 4/12)
-        let purple: UInt32 // the filter's purple — ANSI magenta (idx 5/13)
+        let void: UInt32 // deepest chrome: pane seams + aux-window backdrops
+        let ground: UInt32 // sidebar housing
+        let face: UInt32 // the lit pane (terminal cells + content column)
+        let raised: UInt32 // cards, popovers, active rows, inset controls
+        let lift: UInt32 // hover/pressed on raised, terminal selection, ANSI 0
+        let ink: UInt32 // primary text (Lc ~85 on face — moderate by design)
+        let ink2: UInt32 // secondary text + icons
+        let ink3: UInt32 // tertiary text + section headers + drained state
+        let accent: UInt32 // the single interaction accent (text-sized band)
+        let accentDeep: UInt32 // the accent's fill/badge band
+        let red: UInt32 // status err
+        let orange: UInt32
+        let amber: UInt32 // status warn — the HAZARD register
+        let green: UInt32 // status ok
+        let cyan: UInt32
+        let blue: UInt32
+        let purple: UInt32
+        let magenta: UInt32
+        let identity: [UInt32] // 8 project hues (spine + wash duty)
+        let ansi: [UInt32] // the full 16-slot terminal palette, engine-mapped
         let isLight: Bool
     }
 
-    /// Build a full ``SlateTheme`` from a Monokai ``MonokaiSeed`` — structural opacities (borders / hover /
+    /// Build a full ``SlateTheme`` from a ``FoundrySeed`` — structural opacities (borders / hover /
     /// selection) are shared and keyed only on light/dark; the colour roles come from the seed.
-    private static func monokai(_ s: MonokaiSeed) -> Self {
+    private static func foundry(_ s: FoundrySeed) -> Self {
         // Structure tints (divider / borders / hover / selection) DERIVE from the palette, not a hardcoded
-        // black/white: a DARK filter seeds them from its FOREGROUND so every variant's hairline carries that
-        // filter's own hue (teal-white Machine, warm-rose Ristretto, cool-violet Spectrum) instead of a flat
-        // `Color.white` shared by all five, which would read as a hardcoded white divider regardless of the
-        // filter. Light filters keep a near-black structure line.
-        let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
+        // black/white: a DARK seed tints them from its INK so every seed's hairline carries its own
+        // temperature (warm Ember, mauve Dusk, cool Graphite) instead of a flat `Color.white`. Light seeds
+        // keep a near-black structure line.
+        let line = Color(slateHex: s.isLight ? 0x000000 : s.ink)
         return Self(
-            // MERIDIAN L5 (depth by light, not lines): chrome `ground` (sidebar column; auxiliary windows)
-            // recedes onto the seed's dimmed `sidebar` tone while the PANE surface (`face` / terminal bg)
-            // keeps the brighter seed `background`. The workspace CONTENT column paints `face`, not `ground`
+            void: Color(slateHex: s.void),
+            // Depth by light, not lines: chrome `ground` (sidebar column) recedes one rung below the PANE
+            // surface (`face` / terminal bg). The workspace CONTENT column paints `face`, not `ground`
             // (see ContentColumn).
-            ground: Color(slateHex: s.sidebar),
-            face: Color(slateHex: s.background),
-            raised: Color(slateHex: s.elevated),
-            textPrimary: Color(slateHex: s.foreground),
-            textSecondary: Color(slateHex: s.secondary),
-            textTertiary: Color(slateHex: s.tertiary),
-            icon: Color(slateHex: s.secondary),
-            // Dark filters carry the fg tint one step brighter than the other structure lines —
+            ground: Color(slateHex: s.ground),
+            face: Color(slateHex: s.face),
+            raised: Color(slateHex: s.raised),
+            lift: Color(slateHex: s.lift),
+            textPrimary: Color(slateHex: s.ink),
+            textSecondary: Color(slateHex: s.ink2),
+            textTertiary: Color(slateHex: s.ink3),
+            icon: Color(slateHex: s.ink2),
+            // Dark seeds carry the ink tint one step brighter than the other structure lines —
             // at 0.07 the seam sat barely above the ground tone, more shadow than line
             // (user-flagged, 2026-08-03). 0.10 keeps it a quiet hairline that still reads LIGHT.
             divider: line.opacity(s.isLight ? 0.08 : 0.10),
@@ -166,34 +192,33 @@ struct SlateTheme: Equatable {
             borderActive: line.opacity(0.15),
             hover: line.opacity(s.isLight ? 0.045 : 0.05),
             selected: line.opacity(s.isLight ? 0.07 : 0.09),
-            header: Color(slateHex: s.tertiary),
+            header: Color(slateHex: s.ink3),
             accent: Color(slateHex: s.accent),
             accentHex: hex6(s.accent),
             accentMuted: line.opacity(s.isLight ? 0.06 : 0.10),
             panelShadow: Color.black.opacity(s.isLight ? 0.12 : 0.40),
             isLight: s.isLight,
-            statusOK: Color(slateHex: s.ok),
-            statusWarn: Color(slateHex: s.warn),
-            statusErr: Color(slateHex: s.err),
-            statusInfo: Color(slateHex: s.info),
+            statusOK: Color(slateHex: s.green),
+            statusWarn: Color(slateHex: s.amber),
+            statusErr: Color(slateHex: s.red),
+            statusInfo: Color(slateHex: s.accent),
             chromaOrange: Color(slateHex: s.orange),
             chromaPurple: Color(slateHex: s.purple),
-            id: "monokai-\(s.name)",
-            terminalBackgroundHex: hex6(s.background),
-            terminalForegroundHex: hex6(s.foreground),
-            // Canonical Monokai Pro terminal palette: color0 = background (Monokai's quirk), the 6 filter
-            // chromatics in ANSI order (red/green/yellow, then orange in the "blue" slot, purple, cyan),
-            // white = foreground; the bright row 8–15 repeats the chromatics with bright-black = dimmed grey.
-            ansiPalette: [
-                hex6(s.background), hex6(s.err), hex6(s.ok), hex6(s.warn),
-                hex6(s.orange), hex6(s.purple), hex6(s.accent), hex6(s.foreground),
-                hex6(s.tertiary), hex6(s.err), hex6(s.ok), hex6(s.warn),
-                hex6(s.orange), hex6(s.purple), hex6(s.accent), hex6(s.foreground),
-            ],
-            // Solid elevated fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
+            chromaBlue: Color(slateHex: s.blue),
+            chromaMagenta: Color(slateHex: s.magenta),
+            accentDeep: Color(slateHex: s.accentDeep),
+            identity: s.identity.map { Color(slateHex: $0) },
+            id: "foundry-\(s.name)",
+            terminalBackgroundHex: hex6(s.face),
+            terminalForegroundHex: hex6(s.ink),
+            // The engine-mapped 16-slot palette: dark seeds put `lift` in slot 0 (visible against face) and
+            // the ink tiers in 7/8/15; light seeds invert (ink in 0, near-white surfaces in 7/15). Slots
+            // 1–6 are the chromatic set with blue leaned toward cyan for on-face readability.
+            ansiPalette: s.ansi.map { hex6($0) },
+            // Solid lift fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
             // selection-foreground=cell-foreground so this is a highlight, not an invert.
-            selectionBackgroundHex: hex6(s.elevated),
-            cursorHex: hex6(s.foreground),
+            selectionBackgroundHex: hex6(s.lift),
+            cursorHex: hex6(s.ink),
             cursorTextHex: nil,
         )
     }
@@ -208,65 +233,81 @@ struct SlateTheme: Equatable {
         return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
-    /// Monokai Pro (Classic) — the DEFAULT theme (dark). bg #2D2A2E, the canonical Monokai Pro filter.
-    static let monokaiProClassic = monokai(MonokaiSeed(
-        name: "classic", background: 0x2D2A2E, sidebar: 0x221F22, elevated: 0x403E41,
-        foreground: 0xFCFCFA, secondary: 0x939293, tertiary: 0x727072,
-        accent: 0x78DCE8, ok: 0xA9DC76, warn: 0xFFD866, err: 0xFF6188, info: 0x78DCE8,
-        orange: 0xFC9867, purple: 0xAB9DF2, isLight: false,
+    /// Foundry Ember — the DEFAULT theme (dark). Warm graphite (OKLCH hue 55) with a teal accent chosen to
+    /// sit maximally far from the hazard amber. face #27221E.
+    static let foundryEmber = foundry(FoundrySeed(
+        name: "ember",
+        void: 0x171310, ground: 0x201B17, face: 0x27221E, raised: 0x322C29, lift: 0x3E3833,
+        ink: 0xE6DED6, ink2: 0xADA8A3, ink3: 0x7C7874,
+        accent: 0x60CDCD, accentDeep: 0x009898,
+        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
+        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
+        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+        ansi: [
+            0x3A3431, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA8A3,
+            0x7C7874, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE6DED6,
+        ],
+        isLight: false,
     ))
 
-    // navigator `sidebar` is brighter and a hair warmer than the seed's raw dimmed tone would give — kept
-    // HUE-PRESERVING (the seed's rose R>G>B ratio, closer to `background`) so it reads as warm paper, not
-    // grey/cool. Only `sidebar` carries this nudge; `background` / `elevated` (flat backdrop + active-tab
-    // card) stay untouched, so no other surface ripples.
-    /// Monokai Pro Light (Classic Light) — the warm off-white light filter.
-    static let monokaiProClassicLight = monokai(MonokaiSeed(
-        name: "classic-light", background: 0xFAF4F2, sidebar: 0xF1EBE8, elevated: 0xFFFFFF,
-        foreground: 0x29242A, secondary: 0x918C8E, tertiary: 0xA59FA0,
-        accent: 0x1C8CA8, ok: 0x269D69, warn: 0xCC7A0A, err: 0xE14775, info: 0x1C8CA8,
-        orange: 0xD4572B, purple: 0x7058BE, isLight: true,
+    /// Foundry Ember Light — warm paper, the normal-polarity Ember for the follow-OS light slot.
+    /// face #F6F0ED, ink #36312C (Lc ~91 — normal polarity lands naturally firmer).
+    static let foundryEmberLight = foundry(FoundrySeed(
+        name: "ember-light",
+        void: 0xDDD8D4, ground: 0xEBE5E1, face: 0xF6F0ED, raised: 0xFFF9F5, lift: 0xFFFEFE,
+        ink: 0x36312C, ink2: 0x756F69, ink3: 0x9A938D,
+        accent: 0x007272, accentDeep: 0x004D4D,
+        red: 0xB43249, orange: 0xA35303, amber: 0x8E6A00, green: 0x357A3A,
+        cyan: 0x00787D, blue: 0x006A9D, purple: 0x6E4FB1, magenta: 0x9A3A8A,
+        identity: [0xAB5B56, 0xA2662F, 0x857720, 0x4B864E, 0x008883, 0x277FAB, 0x6470B3, 0x91619C],
+        ansi: [
+            0x36312C, 0xB43249, 0x357A3A, 0x8E6A00, 0x006E8C, 0x6E4FB1, 0x00787D, 0xFFFEFE,
+            0x9A938D, 0xC93450, 0x34893C, 0x9C7500, 0x007A9B, 0x7B57C8, 0x00858A, 0xFFF9F5,
+        ],
+        isLight: true,
     ))
 
-    /// Monokai Pro (Filter Octagon) — cool blue-purple dark filter. bg #282A3A.
-    static let monokaiProOctagon = monokai(MonokaiSeed(
-        name: "octagon", background: 0x282A3A, sidebar: 0x1E1F2B, elevated: 0x3A3D4B,
-        foreground: 0xEAF2F1, secondary: 0x888D94, tertiary: 0x696D77,
-        accent: 0x9CD1BB, ok: 0xBAD761, warn: 0xFFD76D, err: 0xFF657A, info: 0x9CD1BB,
-        orange: 0xFF9B5E, purple: 0xC39AC9, isLight: false,
+    /// Foundry Dusk — cool mauve (OKLCH hue 300), the Catppuccin / Rosé Pine temperature family
+    /// contrast-corrected to the FOUNDRY targets; iris accent. face #242129.
+    static let foundryDusk = foundry(FoundrySeed(
+        name: "dusk",
+        void: 0x151219, ground: 0x1D1A21, face: 0x242129, raised: 0x2F2C35, lift: 0x3A3741,
+        ink: 0xE5DCE9, ink2: 0xADA7AF, ink3: 0x7B777D,
+        accent: 0xB3B1FC, accentDeep: 0x7F77D9,
+        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
+        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
+        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+        ansi: [
+            0x36343C, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA7AF,
+            0x7B777D, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE5DCE9,
+        ],
+        isLight: false,
     ))
 
-    /// Monokai Pro (Filter Machine) — teal-green dark filter. bg #273136.
-    static let monokaiProMachine = monokai(MonokaiSeed(
-        name: "machine", background: 0x273136, sidebar: 0x1D2528, elevated: 0x3A4449,
-        foreground: 0xF2FFFC, secondary: 0x8B9798, tertiary: 0x6B7678,
-        accent: 0x7CD5F1, ok: 0xA2E57B, warn: 0xFFED72, err: 0xFF6D7E, info: 0x7CD5F1,
-        orange: 0xFFB270, purple: 0xBAA0F8, isLight: false,
-    ))
-
-    /// Monokai Pro (Filter Ristretto) — warm coffee dark filter. bg #2C2525.
-    static let monokaiProRistretto = monokai(MonokaiSeed(
-        name: "ristretto", background: 0x2C2525, sidebar: 0x211C1C, elevated: 0x403838,
-        foreground: 0xFFF1F3, secondary: 0x948A8B, tertiary: 0x72696A,
-        accent: 0x85DACC, ok: 0xADDA78, warn: 0xF9CC6C, err: 0xFD6883, info: 0x85DACC,
-        orange: 0xF38D70, purple: 0xA8A9EB, isLight: false,
-    ))
-
-    /// Monokai Pro (Filter Spectrum) — neutral near-black dark filter. bg #222222.
-    static let monokaiProSpectrum = monokai(MonokaiSeed(
-        name: "spectrum", background: 0x222222, sidebar: 0x191919, elevated: 0x363537,
-        foreground: 0xF7F1FF, secondary: 0x8B888F, tertiary: 0x69676C,
-        accent: 0x5AD4E6, ok: 0x7BD88F, warn: 0xFCE566, err: 0xFC618D, info: 0x5AD4E6,
-        orange: 0xFD9353, purple: 0x948AE3, isLight: false,
+    /// Foundry Graphite — near-neutral precision (OKLCH hue 270, barely-cool cast); electric cyan accent.
+    /// face #222325.
+    static let foundryGraphite = foundry(FoundrySeed(
+        name: "graphite",
+        void: 0x131416, ground: 0x1B1C1E, face: 0x222325, raised: 0x2D2E30, lift: 0x38393C,
+        ink: 0xDFDFE3, ink2: 0xA9A9AC, ink3: 0x78787B,
+        accent: 0x61C9E7, accentDeep: 0x0094B3,
+        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
+        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
+        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+        ansi: [
+            0x343537, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xA9A9AC,
+            0x78787B, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xDFDFE3,
+        ],
+        isLight: false,
     ))
 }
 
-/// Static token namespace. Colours read the active `theme` (default Monokai Pro Classic); metrics/anim are
+/// Static token namespace. Colours read the active `theme` (default Foundry Ember); metrics/anim are
 /// theme-free.
 enum Slate {
     /// The active theme. Indirected through ``ThemeStore/shared`` (D3) so runtime theme switching repoints
     /// every token live — `@MainActor` because the store is, and every read site is a SwiftUI `body` /
-    /// AppKit lifecycle hook (all MainActor). ``ThemeStore``'s default (`.monokaiProClassic`) means a
+    /// AppKit lifecycle hook (all MainActor). ``ThemeStore``'s default (`.foundryEmber`) means a
     /// headless / no-store render still resolves a real, deterministic palette.
     @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
 
@@ -275,13 +316,16 @@ enum Slate {
 
     // The colour namespaces are `@MainActor` because they read the runtime ``ThemeStore`` via
     // ``Slate/theme`` (D3) — every read site is a SwiftUI `body` / AppKit lifecycle hook (all MainActor).
-    /// The 3-rung surface ladder (MERIDIAN C1) — the ONLY surface vocabulary view code speaks:
-    /// `ground` (chrome housing) → `face` (the lit pane) → `raised` (one step lifted).
+    /// The 5-rung FOUNDRY surface ladder — the ONLY surface vocabulary view code speaks:
+    /// `void` (seams + aux backdrops) → `ground` (chrome housing) → `face` (the lit pane) →
+    /// `raised` (one step lifted) → `lift` (hover/pressed on raised, selection fills).
     @MainActor
     enum Surface {
+        static var void: Color { Slate.theme.void }
         static var ground: Color { Slate.theme.ground }
         static var face: Color { Slate.theme.face }
         static var raised: Color { Slate.theme.raised }
+        static var lift: Color { Slate.theme.lift }
     }
 
     @MainActor
@@ -314,14 +358,40 @@ enum Slate {
         static var cardShadow: Color { Slate.theme.isLight ? .black.opacity(0.04) : .clear }
     }
 
-    /// The two filter chromatics outside the status quartet — a fifth and sixth hue for chrome that needs
-    /// more DISTINGUISHABLE inks than `ok`/`warn`/`err`/`info` provide, taken from the active filter so a
+    /// The seed chromatics outside the status quartet — extra DISTINGUISHABLE hues for chrome that needs
+    /// more inks than `ok`/`warn`/`err`/`info` provide, taken from the active seed so a
     /// theme swap repoints them like every other token. Carries no urgency of its own: unlike ``Status``,
     /// the meaning lives entirely at the call site.
     @MainActor
     enum Chroma {
         static var orange: Color { Slate.theme.chromaOrange }
         static var purple: Color { Slate.theme.chromaPurple }
+        static var blue: Color { Slate.theme.chromaBlue }
+        static var magenta: Color { Slate.theme.chromaMagenta }
+    }
+
+    /// The IDENTITY register — a project's own hue, held for life and spent ONLY as a 2px spine plus a
+    /// ≤5% wash on its active row (DESIGN.md, the Three-Registers Rule): never per-row plates, never
+    /// recoloured text, never identity-tinted icons. The hue is derived from the project's stable key
+    /// (FNV-1a over UTF-8, mod 8) so every client resolves the same hue with no synced state.
+    @MainActor
+    enum Identity {
+        /// The 8 engine-generated identity hues of the active theme (one lightness, one chroma).
+        static var hues: [Color] { Slate.theme.identity }
+
+        /// The identity hue for a project's stable key (its workspace path / project id).
+        static func hue(for key: String) -> Color { hues[index(for: key)] }
+
+        /// Stable key → hue index. FNV-1a 64-bit over UTF-8, folded mod 8 — deterministic across
+        /// processes and clients (never `Hasher`, which is seeded per-process).
+        nonisolated static func index(for key: String) -> Int {
+            var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+            for byte in key.utf8 {
+                hash ^= UInt64(byte)
+                hash = hash &* 0x0000_0100_0000_01B3
+            }
+            return Int(hash % 8)
+        }
     }
 
     @MainActor
@@ -333,8 +403,8 @@ enum Slate {
 
         /// FIXED security-blue — theme-INDEPENDENT (NOT derived from `Slate.theme`), unlike ``info``. The
         /// secure-input pill must read as the SAME vivid royal-blue on every theme so it can never be confused
-        /// with the theme accent: under the default Monokai Pro seed `statusInfo` collapses to the cyan accent
-        /// (`info == accent == 0x78DCE8`), which would make a theme-derived security badge indistinguishable
+        /// with the theme accent: under every FOUNDRY seed `statusInfo` IS the accent (`info == accent`),
+        /// which would make a theme-derived security badge indistinguishable
         /// from the accent. Pinned to `secure-input.png`'s royal-blue (#2D6FE8) — a mid royal-blue that keeps
         /// white pill text legible on BOTH light and dark themes. Never re-route this through the theme.
         static let secureInput = Color(slateHex: 0x2D6FE8)
@@ -342,7 +412,7 @@ enum Slate {
         /// FIXED sync-amber — theme-INDEPENDENT, same rationale as ``secureInput``: the `⚠ SYNC INPUT`
         /// pill flags a MODE where every keystroke fans into multiple shells, so it must read as the
         /// same unmistakable amber on every theme and never collapse into a theme accent (the default
-        /// Monokai Pro seed's `statusWarn` yellow sits in the accent family). A mid amber keeps white
+        /// hazard amber `statusWarn` is reserved for the agent-needs-you register). A mid amber keeps white
         /// pill text legible on BOTH light and dark themes. Never re-route this through the theme.
         static let syncInput = Color(slateHex: 0xD97A1F)
     }
@@ -438,6 +508,14 @@ enum Slate {
         static let hairline: CGFloat = 1
         static let cardBorderWidth: CGFloat = 1
         static let dividerHoverWidth: CGFloat = 2
+        /// The IDENTITY spine — the 2px project-hue bar standing at the leading edge of a sidebar
+        /// project group (the identity register's entire footprint besides the active row's wash).
+        static let identitySpineWidth: CGFloat = 2
+        /// The active row's identity WASH opacity — the register's ceiling (DESIGN.md caps it at 5%).
+        static let identityWashOpacity: CGFloat = 0.05
+        /// A DRAINED spine segment's opacity (the Heat-Is-Life Rule: done/disconnected keeps the hue
+        /// at 28% — the past desaturates in place rather than vanishing).
+        static let identitySpineDrainedOpacity: CGFloat = 0.28
         /// Active-pane focus marker: leg length (points) of the small FILLED accent triangle in the focused
         /// pane's TOP-LEFT corner (Warp-style), not a box/bracket/underline/dot/top-bar outline and not
         /// dimming the unfocused panes — a small corner mark signals focus without adding a border to the

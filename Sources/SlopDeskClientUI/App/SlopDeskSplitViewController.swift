@@ -91,7 +91,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
         splitView.dividerStyle = .thin
         // FLAT DIVIDER: the default `.thin` NSSplitView draws its divider PURE BLACK in `drawDivider(in:)`,
-        // a harsh blacked-out seam on the lighter Monokai chrome. We cannot subclass `NSSplitView` via `loadView`
+        // a harsh blacked-out seam on the lighter theme chrome. We cannot subclass `NSSplitView` via `loadView`
         // (it traps `_setupSplitView` during the controller's constraint setup — see the OBSERVE note below),
         // so we let the controller build its default split view, then ISA-SWIZZLE that fully-set-up instance
         // to a subclass that ONLY overrides `drawDivider(in:)` to fill the divider with the flat theme

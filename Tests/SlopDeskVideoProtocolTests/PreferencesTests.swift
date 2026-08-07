@@ -77,15 +77,15 @@ final class PreferencesTests: XCTestCase {
     }
 
     func testAppearancePreferencesRoundTrip() throws {
-        // Every theme choice (System, the six Monokai Pro filters, and legacy Paper/Dark) round-trips.
+        // Every theme choice (System and the four FOUNDRY seeds) round-trips.
         for theme in ThemeChoice.allCases {
             let prefs = AppearancePreferences(theme: theme, density: "comfortable")
             XCTAssertEqual(try roundTrip(prefs), prefs)
         }
-        // The default Monokai Pro Classic choice persists explicitly.
-        XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .monokaiProClassic)).theme, .monokaiProClassic)
+        // The default Foundry Ember choice persists explicitly.
+        XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .foundryEmber)).theme, .foundryEmber)
         // A partially-set model round-trips too (density unset).
-        let partial = AppearancePreferences(theme: .monokaiProSpectrum)
+        let partial = AppearancePreferences(theme: .foundryGraphite)
         XCTAssertEqual(try roundTrip(partial), partial)
         XCTAssertNil(try roundTrip(partial).density)
     }

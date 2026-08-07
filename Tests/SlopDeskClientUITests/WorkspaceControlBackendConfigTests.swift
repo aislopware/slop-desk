@@ -53,7 +53,7 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
             // relies on to drive the running app.
             AppearanceApplier.apply = { ThemeStore.shared.apply(appearance: $0) }
             // Deterministic OS-appearance probe (no NSApp in a test). Dark ⇒ the unset/default slot resolves to
-            // Monokai Pro Classic — the product default the finding expects `config get theme` to report.
+            // Foundry Ember — the product default the finding expects `config get theme` to report.
             ThemeStore.shared.osIsDark = { true }
             ThemeStore.shared.apply(appearance: AppearancePreferences()) // reset to the default theme
         }
@@ -75,42 +75,42 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
     func testConfigSetThemeChangesActiveTheme() {
         let h = makeHarness(#function)
 
-        // Default live theme = Monokai Pro Classic, NOT the catalog default "System".
-        XCTAssertEqual(h.backend.configGet(key: "theme"), "monokai-classic")
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-classic")
+        // Default live theme = Foundry Ember, NOT the catalog default "System".
+        XCTAssertEqual(h.backend.configGet(key: "theme"), "foundry-ember")
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-ember")
 
         // A built-in id (as listed by `theme list`) switches the ACTIVE theme + round-trips via `config get`.
-        let lightID = "monokai-classic-light"
+        let lightID = "foundry-ember-light"
         XCTAssertTrue(h.backend.configSet(key: "theme", value: lightID, transient: false))
         XCTAssertEqual(ThemeStore.shared.active.id, lightID, "config set theme retints the running app")
         XCTAssertEqual(h.backend.configGet(key: "theme"), lightID, "config get theme reflects the live theme")
         XCTAssertEqual(
-            h.preferences.appearance.theme, .monokaiProClassicLight,
+            h.preferences.appearance.theme, .foundryEmberLight,
             "the selection is persisted to the typed model",
         )
 
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-spectrum")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-graphite")
     }
 
     func testConfigSetThemeAcceptsAChoiceRawValueAndRejectsUnknown() {
         let h = makeHarness(#function)
-        // The ThemeChoice raw value also resolves (e.g. an explicit Monokai filter by its raw name).
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokaiProOctagon", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-octagon")
+        // The ThemeChoice raw value also resolves (e.g. an explicit Foundry seed by its raw name).
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundryDusk", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-dusk")
 
         // An unknown theme name is an HONEST error (false), not a silent success, and leaves the theme put.
         XCTAssertFalse(h.backend.configSet(key: "theme", value: "Dracula", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-octagon", "a rejected theme set does not change it")
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-dusk", "a rejected theme set does not change it")
     }
 
     func testConfigUnsetThemeRestoresDefault() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-spectrum")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-graphite")
 
         XCTAssertTrue(h.backend.configUnset(key: "theme", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-classic", "unset restores the default theme")
+        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-ember", "unset restores the default theme")
     }
 
     // MARK: - render keys + honest rejection of non-live keys
@@ -131,12 +131,12 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     func testConfigShowReportsLiveValues() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
         XCTAssertTrue(h.backend.configSet(key: "font-size", value: "15", transient: false))
 
         let shown = h.backend.configShow()
         XCTAssertEqual(
-            shown.first { $0.key == "theme" }?.value, "monokai-spectrum",
+            shown.first { $0.key == "theme" }?.value, "foundry-graphite",
             "config show reflects the live theme",
         )
         XCTAssertEqual(shown.first { $0.key == "font-size" }?.value, "15", "config show reflects the live size")

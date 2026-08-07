@@ -94,7 +94,7 @@ struct ReadOnlyPill: View {
 /// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Slate.Status.secureInput`
 /// (#2D6FE8) — a theme-INDEPENDENT token, NOT the theme-derived `Slate.Status.info`. The pill must stay a
 /// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped default
-/// Monokai Pro seed has `info == accent == cyan`, which would make a theme-derived security badge invisible
+/// Foundry Ember seed has `info == accent == teal`, which would make a theme-derived security badge invisible
 /// against the accent (the screenshot is the green-accent Paper theme yet the pill is the same blue).
 /// Carries a WHITE filled lock-shield + the uppercase `SECURE INPUT` label in white.
 ///
@@ -107,7 +107,7 @@ struct SecureInputPill: View {
     /// The pill's FIXED fill — the theme-INDEPENDENT security-blue `Slate.Status.secureInput` (#2D6FE8), NOT
     /// the theme-derived `Slate.Status.info`. Exposed as a single source so the view and its colour test read
     /// the SAME token (mirroring `ToastStackView.tint(for:)`): a regression that re-routed the fill back through
-    /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the Monokai accent.
+    /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the theme accent.
     static var fillColor: Color { Slate.Status.secureInput }
 
     var body: some View {

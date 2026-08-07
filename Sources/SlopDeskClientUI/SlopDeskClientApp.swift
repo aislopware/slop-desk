@@ -650,7 +650,7 @@ public struct SlopDeskClientApp: App {
                         automationActive: Self.hasAutomationEnvironment(),
                     )
                 }
-                // The app chrome is a PINNED palette (default Monokai Pro Classic — flat dark filter).
+                // The app chrome is a PINNED palette (default Foundry Ember — flat warm-graphite seed).
                 // Pin the window's colour scheme to the active theme so every system semantic colour we don't
                 // tokenize resolves with the right contrast. Stock controls take NO tint override: the app
                 // ships one NEUTRAL accent (the AccentColor asset — see project.yml), so buttons, focus
@@ -1045,15 +1045,14 @@ public struct SlopDeskClientApp: App {
 
     /// The next built-in theme after `current` for the palette "Switch Theme"
     /// verb — advances the primary slot through the shipped built-ins (Settings → Appearance order), wrapping. A
-    /// `nil` / `.system` / custom-slug current resolves to the compile-time default (Monokai Pro Classic) and
+    /// `nil` / `.system` / custom-slug current resolves to the compile-time default (Foundry Ember) and
     /// advances from there, so the FIRST "Switch Theme" is always a visible change rather than a no-op. PURE (no
     /// GUI dependency) — mirrors ``ThemeCatalog/builtinThemes`` order via the matching ``ThemeChoice`` cases.
     private static func nextBuiltinTheme(after current: ThemeChoice?) -> ThemeChoice {
         let order: [ThemeChoice] = [
-            .monokaiProClassic, .monokaiProClassicLight, .monokaiProOctagon, .monokaiProMachine,
-            .monokaiProRistretto, .monokaiProSpectrum,
+            .foundryEmber, .foundryEmberLight, .foundryDusk, .foundryGraphite,
         ]
-        let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .monokaiProClassic
+        let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .foundryEmber
         let idx = order.firstIndex(of: resolved) ?? 0
         return order[(idx + 1) % order.count]
     }

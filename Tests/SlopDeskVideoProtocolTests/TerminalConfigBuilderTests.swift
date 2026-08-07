@@ -24,9 +24,9 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(map["font-family"], "SF Mono")
         XCTAssertEqual(map["font-size"], "13") // integral → no decimal
         XCTAssertEqual(map["font-style"], "regular")
-        XCTAssertEqual(map["theme"], "SlopDesk Dark")
-        XCTAssertEqual(map["background"], "FCFBF9") // default light background — overrides the (unbundled) named theme
-        XCTAssertEqual(map["foreground"], "37352F")
+        XCTAssertNil(map["theme"], "the default empty theme is skipped — bg/fg/palette lines are the whole theme")
+        XCTAssertEqual(map["background"], "27221E") // default Foundry Ember face
+        XCTAssertEqual(map["foreground"], "E6DED6") // Ember's primary ink
         XCTAssertEqual(map["cursor-style"], "block")
         // The default cursor blink is the TRI-STATE `.default` (defer to DEC mode 12), which SKIPS the
         // `cursor-style-blink` line entirely (libghostty's optional-bool null). Pre-fix this emitted `true`.
@@ -103,8 +103,10 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertNil(empty["background"], "an empty background is omitted, not emitted blank")
         XCTAssertNil(empty["foreground"], "an empty foreground is omitted")
 
-        // Order: background/foreground come AFTER theme so they override the named theme.
-        let lines = TerminalConfigBuilder.string(for: TerminalPreferences()).split(separator: "\n").map(String.init)
+        // Order: background/foreground come AFTER theme so they override the named theme. The default theme
+        // is empty (no line), so an explicit named theme carries the ordering probe.
+        let lines = TerminalConfigBuilder.string(for: TerminalPreferences(theme: "Light"))
+            .split(separator: "\n").map(String.init)
         guard let themeIdx = lines.firstIndex(where: { $0.hasPrefix("theme = ") }),
               let bgIdx = lines.firstIndex(where: { $0.hasPrefix("background = ") })
         else {
@@ -118,12 +120,12 @@ final class TerminalConfigBuilderTests: XCTestCase {
         // The theme-driven override REPLACES the pref's own bg/fg — the flat-design seam that pins the
         // terminal cells to the active chrome palette.
         let overridden = parse(TerminalConfigBuilder.string(
-            for: TerminalPreferences(background: "FCFBF9", foreground: "37352F"),
-            backgroundOverride: "2D2A2E",
-            foregroundOverride: "FCFCFA",
+            for: TerminalPreferences(background: "F6F0ED", foreground: "36312C"),
+            backgroundOverride: "27221E",
+            foregroundOverride: "E6DED6",
         ))
-        XCTAssertEqual(overridden["background"], "2D2A2E", "the theme override wins over the pref background")
-        XCTAssertEqual(overridden["foreground"], "FCFCFA", "the theme override wins over the pref foreground")
+        XCTAssertEqual(overridden["background"], "27221E", "the theme override wins over the pref background")
+        XCTAssertEqual(overridden["foreground"], "E6DED6", "the theme override wins over the pref foreground")
 
         // An empty / nil override transparently KEEPS the pref's own colour (so existing callers are unchanged).
         let kept = parse(TerminalConfigBuilder.string(
@@ -176,9 +178,8 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "font-size = 13",
             "font-style = regular",
             "font-feature = -calt,-liga,-dlig",
-            "theme = SlopDesk Dark",
-            "background = FCFBF9",
-            "foreground = 37352F",
+            "background = 27221E",
+            "foreground = E6DED6",
             "selection-foreground = cell-foreground",
             "cursor-style = block",
             "scrollback-limit = 2560000",

@@ -745,7 +745,7 @@ private struct SlateShowcase: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Slate.Surface.face) // flush paper terminal surface (#FCFBF9), not a brighter-white card
+        .background(Slate.Surface.face) // flush theme terminal surface (`face`), not a brighter-white card
     }
 
     private func terminalPane(promptPath: String, command: String?) -> some View {

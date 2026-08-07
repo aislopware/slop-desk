@@ -647,7 +647,7 @@ public enum AllSettingsCatalog {
             defaultText: "System",
             bucket: .hasDedicatedTab,
             targetSection: "appearance",
-            keywords: "theme appearance colour color palette monokai dark light",
+            keywords: "theme appearance colour color palette foundry ember dark light",
         ),
         SettingEntry(
             key: SettingsKey.density,

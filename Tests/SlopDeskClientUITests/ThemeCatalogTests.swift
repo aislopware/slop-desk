@@ -20,10 +20,7 @@ final class ThemeCatalogTests: XCTestCase {
     func testBuiltinThemeListPinned() {
         XCTAssertEqual(
             ThemeCatalog.builtinThemes.map(\.id),
-            [
-                "monokai-classic", "monokai-classic-light", "monokai-octagon", "monokai-machine",
-                "monokai-ristretto", "monokai-spectrum",
-            ],
+            ["foundry-ember", "foundry-ember-light", "foundry-dusk", "foundry-graphite"],
         )
     }
 }

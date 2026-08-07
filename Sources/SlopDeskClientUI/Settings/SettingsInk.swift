@@ -1,11 +1,11 @@
 // SettingsInk / SettingsType — the SYSTEM colour + type vocabulary the Settings surface is drawn in.
 //
 // WHY THIS EXISTS: Settings used to paint itself from `Slate.*`, which resolves through `ThemeStore` to
-// whichever Monokai Pro filter the TERMINAL is wearing. That is right for the workspace — the pane, the rail
+// whichever FOUNDRY seed the TERMINAL is wearing. That is right for the workspace — the pane, the rail
 // and the chrome around them are one instrument, and the theme is their subject. It is wrong for Settings.
 // Settings is a stock `Settings` scene in a system-chromed window full of native `Form` / `Toggle` / `Picker` /
 // `Stepper` controls: those draw themselves from the OS appearance and the system accent no matter what, so a
-// Monokai-tinted label beside a system-blue switch reads as two apps in one window. A preferences window is
+// theme-tinted label beside a system-blue switch reads as two apps in one window. A preferences window is
 // OS chrome, not product surface — it should look like System Settings.
 //
 // So every ink here comes from AppKit/UIKit semantic colours (which already track light/dark, increased

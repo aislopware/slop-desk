@@ -15,12 +15,12 @@ import Foundation
 /// GOLDEN-SAFE: this resolver is pure client-chrome routing — it never touches the wire / `EnvConfig` /
 /// sidecar (it just selects which built-in `SlateTheme` the chrome + terminal cells adopt).
 public enum ThemeResolution {
-    /// The compile-time default DARK built-in id (Monokai Pro Classic) — the OS-dark fallback for an unset
-    /// slot OR the `.system` choice (both follow the OS). MIRRORS `SlateTheme.monokaiProClassic.id`.
-    public static let defaultDarkID = "monokai-classic"
-    /// The compile-time default LIGHT built-in id (Monokai Pro Classic Light) — the OS-light fallback for an
-    /// unset slot OR the `.system` choice. MIRRORS `SlateTheme.monokaiProClassicLight.id`.
-    public static let defaultLightID = "monokai-classic-light"
+    /// The compile-time default DARK built-in id (Foundry Ember) — the OS-dark fallback for an unset
+    /// slot OR the `.system` choice (both follow the OS). MIRRORS `SlateTheme.foundryEmber.id`.
+    public static let defaultDarkID = "foundry-ember"
+    /// The compile-time default LIGHT built-in id (Foundry Ember Light) — the OS-light fallback for an
+    /// unset slot OR the `.system` choice. MIRRORS `SlateTheme.foundryEmberLight.id`.
+    public static let defaultLightID = "foundry-ember-light"
 
     /// Resolve the active built-in theme id for `appearance` under the current OS appearance.
     ///

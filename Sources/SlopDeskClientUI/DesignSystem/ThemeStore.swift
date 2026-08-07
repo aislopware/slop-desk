@@ -9,8 +9,8 @@
 // re-reads the tokens, AND (b) re-inject each `NSHostingController` + re-pin `NSWindow.appearance`
 // (handled in `SlopDeskSplitViewController`) — otherwise the window half-repaints.
 //
-// DEFAULT `.monokaiProClassic`: a headless / no-store render resolves `Slate.theme` to the Monokai Pro
-// Classic palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
+// DEFAULT `.foundryEmber`: a headless / no-store render resolves `Slate.theme` to the Foundry Ember
+// palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
 // (appearance is pure client chrome, never folded into `EnvConfig`/the sidecar).
 //
 // DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
@@ -25,7 +25,7 @@ import SlopDeskVideoProtocol
 import SwiftUI
 
 /// The single live owner of the active ``SlateTheme``. Read by ``Slate/theme`` (so every token resolves the
-/// runtime theme) and repointed by the appearance apply path. Default `.monokaiProClassic` ⇒ byte-identical
+/// runtime theme) and repointed by the appearance apply path. Default `.foundryEmber` ⇒ byte-identical
 /// headless.
 @MainActor
 @Observable
@@ -38,9 +38,9 @@ final class ThemeStore {
     /// `@Observable` observation does not reach.
     static let didChangeNotification = Notification.Name("SlopDeskThemeStoreDidChange")
 
-    /// The active theme. Default Monokai Pro Classic (dark) — the product default; a no-store / headless
-    /// render resolves the same Classic palette.
-    var active: SlateTheme = .monokaiProClassic
+    /// The active theme. Default Foundry Ember (dark) — the product default; a no-store / headless
+    /// render resolves the same Ember palette.
+    var active: SlateTheme = .foundryEmber
 
     /// The appearance prefs last applied — re-resolved on an OS-appearance flip so a dual-slot / `.system`
     /// user follows the system colour scheme LIVE. `nil` until the first ``apply(appearance:)`` (the OS
@@ -72,7 +72,7 @@ final class ThemeStore {
     /// Apply a bare ``ThemeChoice`` (the legacy single-slot selection). A thin convenience over
     /// ``apply(appearance:)`` — wraps the choice in a primary-slot-only ``AppearancePreferences`` so it routes
     /// through the SAME dual-slot resolution (`.system` still follows the OS, `nil` ⇒ the compile-time default
-    /// Monokai Pro Classic).
+    /// Foundry Ember).
     func apply(_ choice: ThemeChoice?) {
         apply(appearance: AppearancePreferences(theme: choice))
     }
@@ -90,7 +90,7 @@ final class ThemeStore {
     /// An unknown built-in id gracefully falls back to the default theme — never a crash.
     private func applyResolved(for appearance: AppearancePreferences) {
         let id = ThemeResolution.activeBuiltinID(appearance: appearance, osIsDark: osIsDark())
-        setActive(Self.builtin(id: id) ?? .monokaiProClassic)
+        setActive(Self.builtin(id: id) ?? .foundryEmber)
     }
 
     /// Repoint ``active`` and post the cross-boundary repaint notification on any theme CONTENT change (not
@@ -112,12 +112,10 @@ final class ThemeStore {
     /// `ThemeChoice` → id mapping; the end-to-end `ThemeStoreTests` round-trip pins both halves.
     static func builtin(id: String) -> SlateTheme? {
         switch id {
-        case "monokai-classic": .monokaiProClassic
-        case "monokai-classic-light": .monokaiProClassicLight
-        case "monokai-octagon": .monokaiProOctagon
-        case "monokai-machine": .monokaiProMachine
-        case "monokai-ristretto": .monokaiProRistretto
-        case "monokai-spectrum": .monokaiProSpectrum
+        case "foundry-ember": .foundryEmber
+        case "foundry-ember-light": .foundryEmberLight
+        case "foundry-dusk": .foundryDusk
+        case "foundry-graphite": .foundryGraphite
         default: nil
         }
     }
@@ -134,10 +132,10 @@ final class ThemeStore {
         #endif
     }
 
-    /// Resolve the OS appearance to an ``SlateTheme`` (Dark mode ⇒ Monokai Pro Classic, else Monokai Pro Light).
+    /// Resolve the OS appearance to an ``SlateTheme`` (Dark mode ⇒ Foundry Ember, else Foundry Ember Light).
     /// Kept for the legacy `.system` built-in resolution path / any non-dual-slot caller.
     static func systemTheme() -> SlateTheme {
-        systemIsDark() ? .monokaiProClassic : .monokaiProClassicLight
+        systemIsDark() ? .foundryEmber : .foundryEmberLight
     }
 
     /// Install the live macOS OS-appearance observer (idempotent). On a system light/dark switch it

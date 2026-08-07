@@ -1,6 +1,6 @@
 // ThemeStore tests — the runtime theme holder that defeats the STATIC `Slate.theme` across the
-// AppKit `NSSplitViewController` boundary. Pure logic only: `apply(_:)` mapping, the default Monokai Pro
-// Classic invariant, and the IDENTITY-keyed cross-boundary change notification (so a same-lightness variant
+// AppKit `NSSplitViewController` boundary. Pure logic only: `apply(_:)` mapping, the default Foundry
+// Ember invariant, and the IDENTITY-keyed cross-boundary change notification (so a same-lightness variant
 // switch still repaints). NO SCStream/VT/Metal/VideoWindowView is touched.
 
 #if canImport(SwiftUI)
@@ -10,54 +10,54 @@ import XCTest
 
 @MainActor
 final class ThemeStoreTests: XCTestCase {
-    /// The default theme is Monokai Pro Classic (dark) — the product default.
-    func testDefaultIsMonokaiProClassic() {
+    /// The default theme is Foundry Ember (dark) — the product default.
+    func testDefaultIsFoundryEmber() {
         let store = ThemeStore()
-        XCTAssertFalse(store.active.isLight, "the default theme is the dark Monokai Pro Classic")
-        XCTAssertEqual(store.active.id, "monokai-classic")
+        XCTAssertFalse(store.active.isLight, "the default theme is the dark Foundry Ember")
+        XCTAssertEqual(store.active.id, "foundry-ember")
     }
 
     func testApplyMapsThemeChoiceToTheTheme() {
         let store = ThemeStore()
-        store.apply(.monokaiProClassic)
-        XCTAssertEqual(store.active.id, "monokai-classic")
-        XCTAssertFalse(store.active.isLight, "Monokai Pro Classic is dark")
-        store.apply(.monokaiProClassicLight)
-        XCTAssertEqual(store.active.id, "monokai-classic-light")
-        XCTAssertTrue(store.active.isLight, "Monokai Pro Light is light")
-        store.apply(.monokaiProSpectrum)
-        XCTAssertEqual(store.active.id, "monokai-spectrum")
-        store.apply(.monokaiProClassic)
-        XCTAssertFalse(store.active.isLight, "Monokai Pro Classic maps to the dark theme")
-        store.apply(.monokaiProClassicLight)
-        XCTAssertTrue(store.active.isLight, "Monokai Pro Light maps to the light theme")
+        store.apply(.foundryEmber)
+        XCTAssertEqual(store.active.id, "foundry-ember")
+        XCTAssertFalse(store.active.isLight, "Foundry Ember is dark")
+        store.apply(.foundryEmberLight)
+        XCTAssertEqual(store.active.id, "foundry-ember-light")
+        XCTAssertTrue(store.active.isLight, "Foundry Ember Light is light")
+        store.apply(.foundryGraphite)
+        XCTAssertEqual(store.active.id, "foundry-graphite")
+        store.apply(.foundryEmber)
+        XCTAssertFalse(store.active.isLight, "Foundry Ember maps to the dark theme")
+        store.apply(.foundryEmberLight)
+        XCTAssertTrue(store.active.isLight, "Foundry Ember Light maps to the light theme")
         // nil (appearance reset/unset) now FOLLOWS the OS — the picker presents an unset slot as "System": dark
         // OS → the dark default, light OS → the light default. The probe is stubbed for determinism.
         store.osIsDark = { true }
-        store.active = .monokaiProClassicLight
+        store.active = .foundryEmberLight
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "monokai-classic", "nil in dark mode → the dark default")
+        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the dark default")
         store.osIsDark = { false }
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "monokai-classic-light", "nil in light mode → the light default")
+        XCTAssertEqual(store.active.id, "foundry-ember-light", "nil in light mode → the light default")
     }
 
     /// Each theme carries the libghostty terminal bg/fg matching its chrome window colour (flat design): a
     /// dark variant's terminal background must equal its chrome window hex. Guards the chrome↔terminal sync.
     func testTerminalBackgroundMatchesChromeWindow() {
-        // Monokai Classic chrome window is #2D2A2E ⇒ the terminal background hex is the same, no `#`.
-        XCTAssertEqual(SlateTheme.monokaiProClassic.terminalBackgroundHex, "2D2A2E")
-        XCTAssertEqual(SlateTheme.monokaiProClassic.terminalForegroundHex, "FCFCFA")
-        XCTAssertEqual(SlateTheme.monokaiProSpectrum.terminalBackgroundHex, "222222")
-        XCTAssertEqual(SlateTheme.monokaiProClassicLight.terminalBackgroundHex, "FAF4F2")
+        // Foundry Ember chrome face is #27221E ⇒ the terminal background hex is the same, no `#`.
+        XCTAssertEqual(SlateTheme.foundryEmber.terminalBackgroundHex, "27221E")
+        XCTAssertEqual(SlateTheme.foundryEmber.terminalForegroundHex, "E6DED6")
+        XCTAssertEqual(SlateTheme.foundryGraphite.terminalBackgroundHex, "222325")
+        XCTAssertEqual(SlateTheme.foundryEmberLight.terminalBackgroundHex, "F6F0ED")
     }
 
     /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme IDENTITY —
-    /// so even a SAME-lightness variant switch (Classic → Spectrum, both dark) posts; an idempotent re-apply
+    /// so even a SAME-lightness variant switch (Ember → Graphite, both dark) posts; an idempotent re-apply
     /// of the SAME theme does NOT.
     func testApplyPostsChangeNotificationOnIdentityChange() {
         let store = ThemeStore.shared
-        store.active = .monokaiProClassic
+        store.active = .foundryEmber
 
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
@@ -65,13 +65,13 @@ final class ThemeStoreTests: XCTestCase {
         ) { _ in posts.bump() }
         defer { NotificationCenter.default.removeObserver(token) }
 
-        store.apply(.monokaiProClassic) // no change → no post
+        store.apply(.foundryEmber) // no change → no post
         XCTAssertEqual(posts.value, 0)
-        store.apply(.monokaiProSpectrum) // SAME lightness, different variant → one post
+        store.apply(.foundryGraphite) // SAME lightness, different variant → one post
         XCTAssertEqual(posts.value, 1)
-        store.apply(.monokaiProSpectrum) // idempotent → no post
+        store.apply(.foundryGraphite) // idempotent → no post
         XCTAssertEqual(posts.value, 1)
-        store.apply(.monokaiProClassicLight) // dark → light → one more post
+        store.apply(.foundryEmberLight) // dark → light → one more post
         XCTAssertEqual(posts.value, 2)
     }
 
@@ -84,15 +84,15 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
+            theme: .foundryEmberLight, themeDark: .foundryGraphite, useSeparateDarkTheme: true,
         ))
-        XCTAssertEqual(store.active.id, "monokai-classic-light", "OS light → the primary/light slot")
+        XCTAssertEqual(store.active.id, "foundry-ember-light", "OS light → the primary/light slot")
         dark = true
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "monokai-spectrum", "OS dark → the dark slot, live")
+        XCTAssertEqual(store.active.id, "foundry-graphite", "OS dark → the dark slot, live")
         dark = false
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "monokai-classic-light", "flip back to light, live")
+        XCTAssertEqual(store.active.id, "foundry-ember-light", "flip back to light, live")
     }
 
     /// An OS flip posts the cross-boundary repaint EXACTLY when the resolved theme actually changes (a
@@ -102,7 +102,7 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
+            theme: .foundryEmberLight, themeDark: .foundryGraphite, useSeparateDarkTheme: true,
         ))
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
@@ -123,7 +123,7 @@ final class ThemeStoreTests: XCTestCase {
         let store = ThemeStore()
         var dark = false
         store.osIsDark = { dark }
-        store.apply(appearance: AppearancePreferences(theme: .monokaiProClassic))
+        store.apply(appearance: AppearancePreferences(theme: .foundryEmber))
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
             forName: ThemeStore.didChangeNotification, object: store, queue: nil,
@@ -133,7 +133,7 @@ final class ThemeStoreTests: XCTestCase {
         dark = true
         store.reresolveForOSAppearance()
         XCTAssertEqual(posts.value, 0, "a fixed (non-follow-OS) theme doesn't change on an OS flip")
-        XCTAssertEqual(store.active.id, "monokai-classic")
+        XCTAssertEqual(store.active.id, "foundry-ember")
     }
 
     /// The legacy `.system` single choice follows the OS through `apply(appearance:)` + the live re-resolve.
@@ -141,10 +141,10 @@ final class ThemeStoreTests: XCTestCase {
         let store = ThemeStore()
         store.osIsDark = { true }
         store.apply(appearance: AppearancePreferences(theme: .system))
-        XCTAssertEqual(store.active.id, "monokai-classic", "OS dark → Monokai Pro Classic")
+        XCTAssertEqual(store.active.id, "foundry-ember", "OS dark → Foundry Ember")
         store.osIsDark = { false }
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "monokai-classic-light", "OS light → Monokai Pro Classic Light, live")
+        XCTAssertEqual(store.active.id, "foundry-ember-light", "OS light → Foundry Ember Light, live")
     }
 
     /// CROSS-MODULE PIN: every concrete ``ThemeChoice``'s `builtinID` (in the leaf) round-trips to a built-in
@@ -160,10 +160,10 @@ final class ThemeStoreTests: XCTestCase {
             XCTAssertNotNil(theme, "\(choice) id \(id) must resolve to a built-in SlateTheme")
             XCTAssertEqual(theme?.id, id, "round-trip: ThemeChoice.builtinID ⇄ SlateTheme.id")
         }
-        // The leaf's default ids match the shipped Classic / Classic-Light themes.
-        XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.monokaiProClassic.id)
+        // The leaf's default ids match the shipped Ember / Ember-Light themes.
+        XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.foundryEmber.id)
         XCTAssertEqual(
-            ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.monokaiProClassicLight.id,
+            ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.foundryEmberLight.id,
         )
     }
 }

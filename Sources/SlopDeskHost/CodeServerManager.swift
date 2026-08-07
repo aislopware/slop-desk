@@ -375,9 +375,9 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Monokai Pro` / `Monokai Pro Light` from the seeded extension below, which ships
-    /// ALL EIGHT stock Monokai Pro variants with only the seam borders retinted; the seeded pair
-    /// is the two filters the client chrome itself runs on;
+    /// theme (`Foundry Ember` / `Foundry Ember Light` from the seeded `slopdesk-foundry`
+    /// extension, generated from the exact OKLCH palettes the client chrome runs on; the vendored
+    /// Monokai Pro family stays seeded beside it as ⌘K ⌘T picker options;
     /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
     /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
     /// light client gets a light editor while a dark client on the same host stays dark, from the
@@ -444,10 +444,10 @@ final class CodeServerManager: @unchecked Sendable {
     static let seededUserSettings = """
     {
         "chat.disableAIFeatures": true,
-        "workbench.colorTheme": "Monokai Pro",
+        "workbench.colorTheme": "Foundry Ember",
         "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Monokai Pro",
-        "workbench.preferredLightColorTheme": "Monokai Pro Light",
+        "workbench.preferredDarkColorTheme": "Foundry Ember",
+        "workbench.preferredLightColorTheme": "Foundry Ember Light",
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1045,6 +1045,51 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v18 — the Monokai Pro era's last seed. v19 selects the FOUNDRY pair instead (the app's
+        // own generated themes from the `slopdesk-foundry` extension — the chrome's exact
+        // palettes; user-directed 2026-08-07). The Monokai family stays seeded as picker options.
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -1477,6 +1522,99 @@ final class CodeServerManager: @unchecked Sendable {
         return wrote
     }
 
+    // MARK: - Foundry theme extension seed
+
+    /// The FOUNDRY theme extension's identity — the app's OWN generated themes (unlike the
+    /// vendored Monokai Pro data above): `scripts/foundry-code-theme-gen.mjs` emits one JSON per
+    /// seed from the same OKLCH palettes the client chrome runs on (DESIGN.md, the Seeded-Engine
+    /// Rule), so the workbench, the terminal panes and the rail all speak one colour world. The
+    /// Monokai extension stays seeded beside it as picker options; the SETTINGS seed selects the
+    /// Foundry pair.
+    static let foundryExtensionName = "slopdesk-foundry"
+    static let foundryExtensionVersion = "1.0.0"
+
+    /// `publisher.name-version` — same re-seed-on-bump contract as
+    /// ``themeExtensionDirectoryName``.
+    static let foundryExtensionDirectoryName =
+        "\(themeExtensionPublisher).\(foundryExtensionName)-\(foundryExtensionVersion)"
+
+    /// Every FOUNDRY seed the generator emits — the same single-source contract as
+    /// ``themeExtensionThemes``: the manifest is generated from this table and the seeder writes
+    /// one resource per row. The labels MIRROR the app's built-in `SlateTheme` names.
+    static let foundryExtensionThemes: [(label: String, dark: Bool, resource: String)] = [
+        ("Foundry Ember", true, "foundry-ember"),
+        ("Foundry Ember Light", false, "foundry-ember-light"),
+        ("Foundry Dusk", true, "foundry-dusk"),
+        ("Foundry Graphite", true, "foundry-graphite"),
+    ]
+
+    /// The Foundry extension's manifest — generated from ``foundryExtensionThemes``.
+    static let foundryExtensionManifest: String = {
+        let themes = foundryExtensionThemes.map { theme in
+            """
+                        {
+                            "label": "\(theme.label)",
+                            "uiTheme": "\(theme.dark ? "vs-dark" : "vs")",
+                            "path": "./themes/\(theme.resource).json"
+                        }
+            """
+        }.joined(separator: ",\n")
+        return """
+        {
+            "name": "\(foundryExtensionName)",
+            "displayName": "Foundry (SlopDesk)",
+            "description": "The SlopDesk FOUNDRY themes — generated from the app's own OKLCH seed palettes.",
+            "publisher": "\(themeExtensionPublisher)",
+            "version": "\(foundryExtensionVersion)",
+            "engines": { "vscode": "^1.0.0" },
+            "categories": ["Themes"],
+            "contributes": {
+                "themes": [
+        \(themes)
+                ]
+            }
+        }
+        """
+    }()
+
+    /// Writes the Foundry theme extension under `extensionsDir` and registers it — the same
+    /// overwrite-on-drift terms as ``seedThemeExtension(into:themeData:fileManager:)`` (the folder
+    /// is namespaced `slopdesk.*`, so it is ours to keep current).
+    @discardableResult
+    static func seedFoundryThemeExtension(
+        into extensionsDir: URL,
+        themeData: (String) -> Data? = { themeExtensionThemeData(resource: $0) },
+        fileManager: FileManager = .default,
+    ) -> Bool {
+        let root = extensionsDir.appendingPathComponent(foundryExtensionDirectoryName)
+        var files: [(URL, Data)] = [
+            (root.appendingPathComponent("package.json"), Data(foundryExtensionManifest.utf8)),
+        ]
+        for theme in foundryExtensionThemes {
+            guard let data = themeData(theme.resource) else { return false }
+            files.append((root.appendingPathComponent("themes/\(theme.resource).json"), data))
+        }
+        var wrote = false
+        for (url, data) in files where (try? Data(contentsOf: url)) != data {
+            do {
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                )
+                try data.write(to: url)
+                wrote = true
+            } catch {
+                return wrote
+            }
+        }
+        let registered = registerExtension(
+            id: "\(themeExtensionPublisher).\(foundryExtensionName)",
+            version: foundryExtensionVersion,
+            directoryName: foundryExtensionDirectoryName,
+            in: extensionsDir,
+        )
+        return wrote || registered
+    }
+
     /// Registers the seeded theme folder in the profile registry (`extensions.json`) beside it.
     /// The registry — not the directory scan — is the workbench's source of truth once the file
     /// exists: code-server writes an EMPTY `[]` on first boot, and from then on a folder-dropped
@@ -1633,10 +1771,13 @@ final class CodeServerManager: @unchecked Sendable {
     // MARK: - Production seams
 
     /// The production ``SettingsSeeder``: ``seedUserSettings(at:)`` on the resolved settings path,
-    /// plus the ``seedThemeExtension(into:themeData:fileManager:)`` the seeded theme name refers to.
+    /// plus the theme extensions — ``seedFoundryThemeExtension(into:themeData:fileManager:)`` (the
+    /// pair the seeded settings select) and ``seedThemeExtension(into:themeData:fileManager:)``
+    /// (the vendored Monokai Pro family, kept as picker options).
     static let defaultSettingsSeeder: SettingsSeeder = {
         seedUserSettings(at: userSettingsURL())
         let extensions = dataDirURL().appendingPathComponent("extensions")
+        seedFoundryThemeExtension(into: extensions)
         seedThemeExtension(into: extensions)
         seedBridgeExtension(into: extensions)
     }

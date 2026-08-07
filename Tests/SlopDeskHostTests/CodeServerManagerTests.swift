@@ -836,7 +836,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
         XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
         // Every non-font key rides through untouched.
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Foundry Ember")
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
         // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
         // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
@@ -896,7 +896,7 @@ final class CodeServerManagerTests: XCTestCase {
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
         let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Foundry Ember")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
         // The lean pass: title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
@@ -992,6 +992,30 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
             XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
         }
+        // The folder name pins the manifest identity (publisher.name-version).
+        let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
+            + "-\(manifest["version"] as? String ?? "")"
+        XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
+    }
+
+    // MARK: Foundry theme extension seed
+
+    func testFoundryExtensionManifestAgreesWithTheSeededSettings() throws {
+        let manifest = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(CodeServerManager.foundryExtensionManifest.utf8),
+            ) as? [String: Any],
+        )
+        let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
+        let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
+        // One theme per app seed — the generated manifest mirrors the source-of-truth table.
+        XCTAssertEqual(themes.count, CodeServerManager.foundryExtensionThemes.count)
+        XCTAssertEqual(themes.count, 4)
+        for (entry, expected) in zip(themes, CodeServerManager.foundryExtensionThemes) {
+            XCTAssertEqual(entry["label"] as? String, expected.label)
+            XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
+            XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
+        }
         // The settings seed selects the themes BY LABEL — a drift here is a silent stock-theme
         // boot. Dark is the base `workbench.colorTheme` AND the preferred-dark; light is the
         // preferred-light the seeded `window.autoDetectColorScheme` flips to on a light client.
@@ -1000,17 +1024,89 @@ final class CodeServerManagerTests: XCTestCase {
                 with: Data(CodeServerManager.seededUserSettings.utf8),
             ) as? [String: Any],
         )
-        let labels = CodeServerManager.themeExtensionThemes.map(\.label)
-        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Monokai Pro")
+        let labels = CodeServerManager.foundryExtensionThemes.map(\.label)
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Foundry Ember")
         XCTAssertEqual(seeded["window.autoDetectColorScheme"] as? Bool, true)
-        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Monokai Pro")
-        XCTAssertEqual(seeded["workbench.preferredLightColorTheme"] as? String, "Monokai Pro Light")
-        XCTAssertTrue(labels.contains("Monokai Pro"))
-        XCTAssertTrue(labels.contains("Monokai Pro Light"))
+        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Foundry Ember")
+        XCTAssertEqual(seeded["workbench.preferredLightColorTheme"] as? String, "Foundry Ember Light")
+        XCTAssertTrue(labels.contains("Foundry Ember"))
+        XCTAssertTrue(labels.contains("Foundry Ember Light"))
         // The folder name pins the manifest identity (publisher.name-version).
         let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
             + "-\(manifest["version"] as? String ?? "")"
-        XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
+        XCTAssertEqual(identity, CodeServerManager.foundryExtensionDirectoryName)
+    }
+
+    func testEveryFoundryThemeResourceParsesWithAppPaletteSurfaces() throws {
+        // One generated resource per manifest row (`scripts/foundry-code-theme-gen.mjs`), each
+        // carrying the app seed's own `face` as the editor surface, the seed's ANSI ramp for the
+        // integrated terminal, and only valid colour values.
+        let faces = [
+            "foundry-ember": "#27221E", "foundry-ember-light": "#F6F0ED",
+            "foundry-dusk": "#242129", "foundry-graphite": "#222325",
+        ]
+        for theme in CodeServerManager.foundryExtensionThemes {
+            let data = try XCTUnwrap(
+                CodeServerManager.themeExtensionThemeData(resource: theme.resource),
+                "\(theme.resource).json must resolve from the bundle",
+            )
+            let parsed = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(parsed["name"] as? String, theme.label)
+            XCTAssertEqual(parsed["type"] as? String, theme.dark ? "dark" : "light")
+            let colors = try XCTUnwrap(parsed["colors"] as? [String: Any])
+            XCTAssertEqual(colors["editor.background"] as? String, faces[theme.resource], theme.label)
+            XCTAssertNotNil(colors["terminal.ansiBrightWhite"], theme.label)
+            // The same seam-border contract as the Monokai seed: the workbench's structural
+            // borders ride the app's divider tint (ink @ 0.10 dark / black @ 0.08 light).
+            for key in Self.seamBorderKeys {
+                let seam = try XCTUnwrap(colors[key] as? String, "\(theme.label) \(key)")
+                XCTAssertEqual(seam.count, 9, "\(theme.label) \(key) must be alpha-form")
+                XCTAssertTrue(seam.hasSuffix(theme.dark ? "1A" : "14"), "\(theme.label) \(key)")
+            }
+            try assertEveryColorValueIsValidHex(colors)
+            XCTAssertFalse(
+                try XCTUnwrap(parsed["tokenColors"] as? [Any]).isEmpty,
+                "syntax rules ride along (\(theme.label))",
+            )
+        }
+    }
+
+    func testSeedFoundryThemeExtensionWritesOnceThenRepairsDriftAndRegisters() throws {
+        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
+        let fakeThemes: (String) -> Data? = { Data("{\"is\": \"\($0)\"}".utf8) }
+        XCTAssertTrue(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: fakeThemes))
+        let extensionRoot = dir.appendingPathComponent(CodeServerManager.foundryExtensionDirectoryName)
+        for theme in CodeServerManager.foundryExtensionThemes {
+            XCTAssertEqual(
+                try Data(contentsOf: extensionRoot.appendingPathComponent("themes/\(theme.resource).json")),
+                fakeThemes(theme.resource),
+            )
+        }
+
+        // Byte-identical ⇒ idempotent no-op.
+        XCTAssertFalse(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: fakeThemes))
+
+        // OUR file drifted ⇒ repaired (the namespaced folder is ours to keep current).
+        let themeFile = extensionRoot.appendingPathComponent("themes/foundry-ember.json")
+        try Data("stale".utf8).write(to: themeFile)
+        XCTAssertTrue(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: fakeThemes))
+        XCTAssertEqual(try Data(contentsOf: themeFile), fakeThemes("foundry-ember"))
+
+        // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
+        XCTAssertFalse(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: { _ in nil }))
+
+        // And the profile registry carries the entry (same contract as the Monokai seeder).
+        let registry = dir.appendingPathComponent("extensions.json")
+        let entries = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
+        )
+        let ours = try XCTUnwrap(entries.first {
+            (($0["identifier"] as? [String: Any])?["id"] as? String) == "slopdesk.slopdesk-foundry"
+        })
+        XCTAssertEqual(ours["version"] as? String, CodeServerManager.foundryExtensionVersion)
+        XCTAssertEqual(
+            ours["relativeLocation"] as? String, CodeServerManager.foundryExtensionDirectoryName,
+        )
     }
 
     /// The seven structural part borders — the workbench's own seams. These are the ONLY colour

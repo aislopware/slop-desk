@@ -529,7 +529,7 @@ final class ClientControlDispatcherTests: XCTestCase {
 
     func testConfigShowOrderedEntries() {
         backend.configShowReturn = [
-            ClientConfigEntry(key: "theme", value: "Monokai"),
+            ClientConfigEntry(key: "theme", value: "Foundry"),
             ClientConfigEntry(key: "font-size", value: "14"),
         ]
         let entries = result(run(ClientControlProtocol.Method.configShow))["config"] as? [[String: Any]]

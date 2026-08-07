@@ -186,19 +186,19 @@ final class PreferencesStoreApplyTests: XCTestCase {
         // appearance change does NOT re-touch it.
         let sidecarBefore = try? Data(contentsOf: sidecar)
 
-        store.appearance = AppearancePreferences(theme: .monokaiProSpectrum, density: "compact")
+        store.appearance = AppearancePreferences(theme: .foundryGraphite, density: "compact")
 
         // 1) Repoints the theme (via the AppearanceApplier hook → ThemeStore.shared in the GUI layer) — the
         //    WHOLE model is handed over so the GUI resolves the dual-slot / custom-slug / follow-OS selection.
         XCTAssertEqual(
-            appliedAppearance, AppearancePreferences(theme: .monokaiProSpectrum, density: "compact"),
+            appliedAppearance, AppearancePreferences(theme: .foundryGraphite, density: "compact"),
             "appearance apply hands the GUI layer the whole model",
         )
         // 2) Persists under settings.appearance.v1.
         let blob = defaults.data(forKey: "settings.appearance.v1")
         XCTAssertNotNil(blob)
         let decoded = try? JSONDecoder().decode(AppearancePreferences.self, from: blob ?? Data())
-        XCTAssertEqual(decoded, AppearancePreferences(theme: .monokaiProSpectrum, density: "compact"))
+        XCTAssertEqual(decoded, AppearancePreferences(theme: .foundryGraphite, density: "compact"))
         // 3) Writes SettingsKey.density.
         XCTAssertEqual(defaults.string(forKey: SettingsKey.density), "compact")
         // 4) Does NOT mutate the env overlay …
@@ -227,8 +227,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
         appliedAppearance = nil
 
         let dualSlot = AppearancePreferences(
-            theme: .monokaiProClassicLight,
-            themeDark: .monokaiProSpectrum,
+            theme: .foundryEmberLight,
+            themeDark: .foundryGraphite,
             useSeparateDarkTheme: true,
             themeFonts: ["dark": "Fira Code"],
         )
@@ -250,7 +250,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
     func testResetAllResetsAppearance() {
         let defaults = makeIsolatedDefaults()
         let store = PreferencesStore(defaults: defaults, sidecarURL: nil)
-        store.appearance = AppearancePreferences(theme: .monokaiProSpectrum, density: "compact")
+        store.appearance = AppearancePreferences(theme: .foundryGraphite, density: "compact")
         XCTAssertNotEqual(store.appearance, AppearancePreferences())
         store.resetAll()
         XCTAssertEqual(store.appearance, AppearancePreferences(), "resetAll restores the default appearance")

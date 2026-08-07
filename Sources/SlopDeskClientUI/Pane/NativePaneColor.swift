@@ -17,7 +17,8 @@ enum NativePaneColor {
     /// The terminal / editable content surface background — the floating card surface.
     static var terminalBackground: Color { Slate.Surface.face }
 
-    /// The hairline separator colour — the Slate divider.
-    static var separator: Color { Slate.Line.divider }
+    /// The pane-seam hairline — the `void` rung (FOUNDRY's Depth-By-Light: the 1px gap between
+    /// panes reads as the dark BEHIND the lit workspace, not as an ink stroke on it).
+    static var separator: Color { Slate.Surface.void }
 }
 #endif

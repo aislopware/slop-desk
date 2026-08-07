@@ -348,7 +348,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
         ThemeStore.shared.active.id
     }
 
-    /// Switch the active theme by NAME — a built-in theme id (from `theme list`, e.g. `monokai-classic`) or
+    /// Switch the active theme by NAME — a built-in theme id (from `theme list`, e.g. `foundry-ember`) or
     /// a ``ThemeChoice`` raw value (e.g. `system`) — routed through ``PreferencesStore/appearance`` so the
     /// chrome retints + the terminal cells repaint LIVE (and the choice persists). Sets the PRIMARY (light /
     /// single) slot, the slot every OS appearance resolves to unless the user separately enabled a dark-slot

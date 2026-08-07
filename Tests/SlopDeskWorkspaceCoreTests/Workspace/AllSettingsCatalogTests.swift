@@ -200,7 +200,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     func testResetAdvancedOnlyPreservesAppearanceFontKeybindings() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
-        store.appearance = AppearancePreferences(theme: .monokaiProSpectrum)
+        store.appearance = AppearancePreferences(theme: .foundryGraphite)
         store.keybindings = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "e", command: true)])
         store.video = VideoPreferences(qpSharp: 30)
         store.agent = AgentPreferences(preventSleep: true)
@@ -222,7 +222,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         XCTAssertTrue(store.rawOverrides.isEmpty)
         // Font / theme / keybindings preserved.
         XCTAssertEqual(store.terminal.fontSize, 18)
-        XCTAssertEqual(store.appearance.theme, .monokaiProSpectrum)
+        XCTAssertEqual(store.appearance.theme, .foundryGraphite)
         XCTAssertEqual(store.keybindings.overrides["pane.splitRight"]?.key, "e")
         // Tab-reachable toggles PRESERVED — the data-loss fix. None of these is advanced-only.
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled, "Controls toggle survives Reset-Advanced-Only")
@@ -236,7 +236,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     func testResetAllRestoresOrphanToggleToDefault() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
-        store.appearance = AppearancePreferences(theme: .monokaiProSpectrum)
+        store.appearance = AppearancePreferences(theme: .foundryGraphite)
         SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts) // flip OFF the default-ON toggle
         XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
 

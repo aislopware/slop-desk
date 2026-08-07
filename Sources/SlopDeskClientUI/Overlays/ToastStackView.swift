@@ -125,7 +125,7 @@ struct ToastStackView: View {
     /// fixed this mapping — "green = an unread finish, **amber = a question waiting**, red = failed"
     /// (``StatusDot``) — so an agent waiting on a human must be the same colour here as it is on its own
     /// sidebar row, or the app contradicts itself about what amber means. The second is that the accent was
-    /// not even distinguishable: every Monokai seed sets `info == accent`, so `.attention` (needs input, the
+    /// not even distinguishable: every FOUNDRY seed sets `info == accent`, so `.attention` (needs input, the
     /// highest-signal event) and `.default` (a routine OSC notice) rendered in the SAME cyan, which is the
     /// one pair that most needs to differ. Amber also leaves the accent free for its single job — active
     /// state — and spends the status quartet's unused fourth rung on the case it was minted for.

@@ -15,13 +15,13 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     public var fontSize: Double
     /// Font weight token (libghostty `font-style`, e.g. "regular" / "bold").
     public var fontWeight: String
-    /// Theme name / palette (libghostty `theme`).
+    /// Theme name / palette (libghostty `theme`). Default EMPTY ⇒ no `theme` line: named themes are
+    /// not bundled, so the explicit `background`/`foreground`/palette lines are the whole theme.
     public var theme: String
-    /// Terminal background colour (libghostty `background`, 6-hex). Defaults to a warm "Paper"
-    /// off-white so the terminal surface matches the Paper chrome (named themes are not bundled, so an
-    /// explicit colour — applied AFTER `theme` — is what actually pins the surface light).
+    /// Terminal background colour (libghostty `background`, 6-hex). Defaults to the Foundry Ember
+    /// `face` so the terminal surface matches the chrome even before the ``ThemeStore`` overrides land.
     public var background: String
-    /// Terminal foreground / text colour (libghostty `foreground`, 6-hex). The primary text colour on Paper.
+    /// Terminal foreground / text colour (libghostty `foreground`, 6-hex). Ember's primary ink.
     public var foreground: String
 
     /// Cursor style (libghostty `cursor-style`). Four styles: Block,
@@ -120,9 +120,9 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         fontFamily: String = "SF Mono",
         fontSize: Double = 13,
         fontWeight: String = "regular",
-        theme: String = "SlopDesk Dark",
-        background: String = "FCFBF9",
-        foreground: String = "37352F",
+        theme: String = "",
+        background: String = "27221E",
+        foreground: String = "E6DED6",
         cursorStyle: CursorStyle = .block,
         cursorBlink: CursorBlink = .default,
         scrollbackLines: Int = 10000,

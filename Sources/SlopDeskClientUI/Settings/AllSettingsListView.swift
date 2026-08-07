@@ -428,12 +428,10 @@ struct AllSettingsListView: View {
     private func themeLabel(_ theme: ThemeChoice) -> String {
         switch theme {
         case .system: "System"
-        case .monokaiProClassic: "Monokai Pro (Classic)"
-        case .monokaiProClassicLight: "Monokai Pro Light"
-        case .monokaiProOctagon: "Monokai Pro Octagon"
-        case .monokaiProMachine: "Monokai Pro Machine"
-        case .monokaiProRistretto: "Monokai Pro Ristretto"
-        case .monokaiProSpectrum: "Monokai Pro Spectrum"
+        case .foundryEmber: "Foundry Ember"
+        case .foundryEmberLight: "Foundry Ember Light"
+        case .foundryDusk: "Foundry Dusk"
+        case .foundryGraphite: "Foundry Graphite"
         }
     }
 }
