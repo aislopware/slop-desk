@@ -1,0 +1,670 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-07T15:00:00Z",
+  "title": "Design System: SlopDesk (FOUNDRY / Foundry Ember)",
+  "extensions": {
+    "colorMeta": {
+      "surface-void": {
+        "role": "neutral",
+        "displayName": "Void",
+        "canonical": "#171310",
+        "tonalRamp": [
+          "#171310",
+          "#3F3936",
+          "#5A5450",
+          "#76706C",
+          "#948E89",
+          "#B3ACA8",
+          "#CDC6C1",
+          "#E4DCD8"
+        ]
+      },
+      "surface-ground": {
+        "role": "neutral",
+        "displayName": "Ground",
+        "canonical": "#201B17",
+        "tonalRamp": [
+          "#201B17",
+          "#3F3936",
+          "#5A5450",
+          "#76706C",
+          "#948E89",
+          "#B3ACA8",
+          "#CDC6C1",
+          "#E4DCD8"
+        ]
+      },
+      "surface-face": {
+        "role": "neutral",
+        "displayName": "Face",
+        "canonical": "#27221E",
+        "tonalRamp": [
+          "#27221E",
+          "#3F3936",
+          "#5A5450",
+          "#76706C",
+          "#948E89",
+          "#B3ACA8",
+          "#CDC6C1",
+          "#E4DCD8"
+        ]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "canonical": "#322C29",
+        "tonalRamp": [
+          "#322C29",
+          "#3F3935",
+          "#5A5450",
+          "#77706C",
+          "#958E89",
+          "#B4ACA7",
+          "#CDC6C1",
+          "#E4DCD7"
+        ]
+      },
+      "surface-lift": {
+        "role": "neutral",
+        "displayName": "Lift",
+        "canonical": "#3E3833",
+        "tonalRamp": [
+          "#26201C",
+          "#3E3833",
+          "#5B544F",
+          "#77706B",
+          "#958D88",
+          "#B4ACA7",
+          "#CEC5C0",
+          "#E5DCD7"
+        ]
+      },
+      "ink-primary": {
+        "role": "neutral",
+        "displayName": "Primary Ink",
+        "canonical": "#E6DED6",
+        "tonalRamp": [
+          "#26211A",
+          "#3F3933",
+          "#5A544D",
+          "#777069",
+          "#958E86",
+          "#B4ADA5",
+          "#CDC6BE",
+          "#E6DED6"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Secondary Ink",
+        "canonical": "#ADA8A3",
+        "tonalRamp": [
+          "#25211D",
+          "#3E3A35",
+          "#59544F",
+          "#75716B",
+          "#938E89",
+          "#ADA8A3",
+          "#CCC6C0",
+          "#E2DDD7"
+        ]
+      },
+      "ink-tertiary": {
+        "role": "neutral",
+        "displayName": "Tertiary Ink",
+        "canonical": "#7C7874",
+        "tonalRamp": [
+          "#24211E",
+          "#3D3A36",
+          "#585551",
+          "#7C7874",
+          "#928E8A",
+          "#B1ADA9",
+          "#CBC6C2",
+          "#E1DDD8"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Ember Teal",
+        "canonical": "#60CDCD",
+        "tonalRamp": [
+          "#002828",
+          "#004444",
+          "#006262",
+          "#008282",
+          "#2CA2A2",
+          "#60CDCD",
+          "#6FDCDB",
+          "#87F3F2"
+        ]
+      },
+      "accent-deep": {
+        "role": "primary",
+        "displayName": "Ember Teal (deep fill band)",
+        "canonical": "#009898",
+        "tonalRamp": [
+          "#002828",
+          "#004444",
+          "#006262",
+          "#008282",
+          "#009898",
+          "#00C7C7",
+          "#12E3E3",
+          "#46FBFB"
+        ]
+      },
+      "chroma-red": {
+        "role": "tertiary",
+        "displayName": "Red",
+        "canonical": "#FB939C",
+        "tonalRamp": [
+          "#460011",
+          "#6D1025",
+          "#8D313E",
+          "#AE4F5A",
+          "#D06D76",
+          "#FB939C",
+          "#FFAEB3",
+          "#FFD1D3"
+        ]
+      },
+      "chroma-orange": {
+        "role": "tertiary",
+        "displayName": "Orange",
+        "canonical": "#F2A56F",
+        "tonalRamp": [
+          "#381800",
+          "#5C2C00",
+          "#834100",
+          "#A45D25",
+          "#C57B45",
+          "#F2A56F",
+          "#FFB481",
+          "#FFD4B8"
+        ]
+      },
+      "chroma-amber": {
+        "role": "tertiary",
+        "displayName": "Hazard Amber",
+        "canonical": "#E5BD66",
+        "tonalRamp": [
+          "#2D1F00",
+          "#4C3700",
+          "#6D5000",
+          "#906B00",
+          "#AF892E",
+          "#CFA851",
+          "#E5BD66",
+          "#FFD988"
+        ]
+      },
+      "chroma-green": {
+        "role": "tertiary",
+        "displayName": "Green",
+        "canonical": "#8DCD8E",
+        "tonalRamp": [
+          "#002B05",
+          "#00480E",
+          "#26652B",
+          "#448247",
+          "#62A164",
+          "#80C182",
+          "#8DCD8E",
+          "#B0F2B1"
+        ]
+      },
+      "chroma-cyan": {
+        "role": "tertiary",
+        "displayName": "Cyan",
+        "canonical": "#66CCD1",
+        "tonalRamp": [
+          "#00282A",
+          "#004447",
+          "#006266",
+          "#008287",
+          "#36A0A6",
+          "#66CCD1",
+          "#75DAE0",
+          "#8DF1F7"
+        ]
+      },
+      "chroma-blue": {
+        "role": "tertiary",
+        "displayName": "Blue",
+        "canonical": "#78BEEF",
+        "tonalRamp": [
+          "#00243A",
+          "#003F60",
+          "#085B87",
+          "#3179A6",
+          "#5197C6",
+          "#78BEEF",
+          "#8DD0FF",
+          "#BEE4FF"
+        ]
+      },
+      "chroma-purple": {
+        "role": "tertiary",
+        "displayName": "Purple",
+        "canonical": "#BCAAF4",
+        "tonalRamp": [
+          "#27104D",
+          "#402C6A",
+          "#5A4789",
+          "#7664A8",
+          "#9482C8",
+          "#BCAAF4",
+          "#CBBBFF",
+          "#E0D8FF"
+        ]
+      },
+      "chroma-magenta": {
+        "role": "tertiary",
+        "displayName": "Magenta",
+        "canonical": "#E399D3",
+        "tonalRamp": [
+          "#3E0036",
+          "#5C1D52",
+          "#7B396E",
+          "#9A568C",
+          "#BA73AB",
+          "#E399D3",
+          "#F6ABE5",
+          "#FFCBF2"
+        ]
+      },
+      "identity-0": {
+        "role": "tertiary",
+        "displayName": "Identity 0 (project hue)",
+        "canonical": "#E7958E",
+        "tonalRamp": [
+          "#460105",
+          "#65201E",
+          "#843C38",
+          "#A45953",
+          "#C57670",
+          "#E7958E",
+          "#FFB0A8",
+          "#FFD1CD"
+        ]
+      },
+      "identity-1": {
+        "role": "tertiary",
+        "displayName": "Identity 1 (project hue)",
+        "canonical": "#DD9F6B",
+        "tonalRamp": [
+          "#361900",
+          "#592E00",
+          "#7D460B",
+          "#9C622F",
+          "#BC804D",
+          "#DD9F6B",
+          "#F8B884",
+          "#FFD5B3"
+        ]
+      },
+      "identity-2": {
+        "role": "tertiary",
+        "displayName": "Identity 2 (project hue)",
+        "canonical": "#BDB062",
+        "tonalRamp": [
+          "#282200",
+          "#443B00",
+          "#625600",
+          "#7F7221",
+          "#9D9043",
+          "#BDB062",
+          "#D6C97B",
+          "#EDE091"
+        ]
+      },
+      "identity-3": {
+        "role": "tertiary",
+        "displayName": "Identity 3 (project hue)",
+        "canonical": "#85BF86",
+        "tonalRamp": [
+          "#002B05",
+          "#0C4714",
+          "#2C6330",
+          "#49814C",
+          "#679F69",
+          "#85BF86",
+          "#9ED99F",
+          "#B5F0B5"
+        ]
+      },
+      "identity-4": {
+        "role": "tertiary",
+        "displayName": "Identity 4 (project hue)",
+        "canonical": "#55C2BC",
+        "tonalRamp": [
+          "#002826",
+          "#004441",
+          "#00635F",
+          "#00837E",
+          "#2FA29D",
+          "#55C2BC",
+          "#71DCD6",
+          "#89F4ED"
+        ]
+      },
+      "identity-5": {
+        "role": "tertiary",
+        "displayName": "Identity 5 (project hue)",
+        "canonical": "#6AB8E4",
+        "tonalRamp": [
+          "#002537",
+          "#00405B",
+          "#005D82",
+          "#287AA3",
+          "#4A99C3",
+          "#6AB8E4",
+          "#84D2FF",
+          "#BAE5FF"
+        ]
+      },
+      "identity-6": {
+        "role": "tertiary",
+        "displayName": "Identity 6 (project hue)",
+        "canonical": "#9BA9ED",
+        "tonalRamp": [
+          "#161850",
+          "#2D336E",
+          "#464F8C",
+          "#616CAC",
+          "#7D8ACC",
+          "#9BA9ED",
+          "#B7C4FF",
+          "#D4DCFF"
+        ]
+      },
+      "identity-7": {
+        "role": "tertiary",
+        "displayName": "Identity 7 (project hue)",
+        "canonical": "#CA99D6",
+        "tonalRamp": [
+          "#350A3E",
+          "#51265A",
+          "#6D4177",
+          "#8B5D96",
+          "#AA7BB5",
+          "#CA99D6",
+          "#E5B2F0",
+          "#F6CEFF"
+        ]
+      },
+      "secure-input-blue": {
+        "role": "tertiary",
+        "displayName": "Secure-Input Royal Blue (theme-independent)",
+        "canonical": "#2D6FE8",
+        "tonalRamp": [
+          "#0A1D42",
+          "#122E64",
+          "#1A4189",
+          "#2255AF",
+          "#2762CC",
+          "#2D6FE8",
+          "#6D9BF0",
+          "#B0C9F7"
+        ]
+      },
+      "sync-input-amber": {
+        "role": "tertiary",
+        "displayName": "Sync-Input Amber (theme-independent)",
+        "canonical": "#D97A1F",
+        "tonalRamp": [
+          "#3E2107",
+          "#5E340C",
+          "#7F4811",
+          "#A15D16",
+          "#BD6B1A",
+          "#D97A1F",
+          "#E69E5C",
+          "#F2C79E"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Empty-state and placeholder glyphs only (40px)."
+      },
+      "title": {
+        "displayName": "Card Title",
+        "purpose": "A floating card's title; the only overlay size that outranks its content."
+      },
+      "instrument": {
+        "displayName": "Instrument Voice",
+        "purpose": "JetBrains Mono for every number, caps micro-label (tracking 1.2px), keycap, cwd/git/telemetry line, and the sidebar rail. Data speaks mono; prose speaks system."
+      }
+    },
+    "shadows": [
+      {
+        "name": "glass-panel",
+        "value": "0 4px 12px rgba(0,0,0,0.40)",
+        "purpose": "The single floating-card shadow (dark seeds). Light seeds: rgba(0,0,0,0.12). Every overlay shares it — one altitude."
+      },
+      {
+        "name": "active-card-light-only",
+        "value": "0 1px 2px rgba(0,0,0,0.04)",
+        "purpose": "The active tab card on LIGHT seeds only. Dark seeds cast no at-rest shadows anywhere."
+      }
+    ],
+    "motion": [
+      {
+        "name": "standard",
+        "value": "cubic-bezier(0.42, 0, 0.58, 1) 200ms",
+        "purpose": "Relayout, panel, tab-select."
+      },
+      {
+        "name": "fade-slide-in",
+        "value": "cubic-bezier(0, 0, 0.58, 1) 180ms",
+        "purpose": "Animate-in, row reflow."
+      },
+      {
+        "name": "reveal",
+        "value": "cubic-bezier(0, 0, 0.58, 1) 150ms",
+        "purpose": "Hover reveal."
+      },
+      {
+        "name": "fade-out",
+        "value": "cubic-bezier(0.42, 0, 1, 1) 140ms",
+        "purpose": "Animate-out."
+      },
+      {
+        "name": "small-fade",
+        "value": "cubic-bezier(0, 0, 0.58, 1) 120ms",
+        "purpose": "Scroll fade, hover plate."
+      },
+      {
+        "name": "divider-hover",
+        "value": "cubic-bezier(0.42, 0, 0.58, 1) 160ms",
+        "purpose": "Divider and plate hover."
+      },
+      {
+        "name": "needle",
+        "value": "cubic-bezier(0.2, 0, 0, 1) 240ms",
+        "purpose": "The mechanical settle — reserved for the connect handshake, the one orchestrated moment. Fast attack, long decel, no overshoot. No springs anywhere in the system."
+      },
+      {
+        "name": "stack-reflow",
+        "value": "cubic-bezier(0.4, 0, 0.2, 1) 280ms",
+        "purpose": "A whole column reflowing (toast spine expand/collapse)."
+      }
+    ],
+    "themeEngine": {
+      "model": "oklch",
+      "generator": "theme-forge (scratchpad tooling; specs recorded here are normative)",
+      "defaultSeed": "ember",
+      "seeds": {
+        "ember": {
+          "baseHue": 55,
+          "baseC": 0.01,
+          "accent": {
+            "H": 195,
+            "L": 0.785,
+            "C": 0.1
+          }
+        },
+        "dusk": {
+          "baseHue": 300,
+          "baseC": 0.014,
+          "accent": {
+            "H": 285,
+            "L": 0.79,
+            "C": 0.105
+          }
+        },
+        "graphite": {
+          "baseHue": 270,
+          "baseC": 0.004,
+          "accent": {
+            "H": 220,
+            "L": 0.785,
+            "C": 0.105
+          }
+        }
+      },
+      "apcaTargets": {
+        "inkOnFace": 84,
+        "ink2OnFace": 52,
+        "ink3OnFace": 28,
+        "chromaticsOnFace": 57,
+        "accentOnFace": 57,
+        "identityOnFace": 50
+      },
+      "stance": "Moderate contrast by design: primary ink Lc ~ 85, between APCA's 75 minimum and 90 preferred. No pure black surfaces, no pure white text."
+    }
+  },
+  "components": [
+    {
+      "name": "Fleet Row (identity spine + agent marks)",
+      "kind": "card",
+      "refersTo": "list-row",
+      "description": "The typographic roster row under a 2px project-identity spine. Active = raised fill + 5% identity wash; drained = spine at 28% + tertiary ink. Marks: working pulse (accent), awaiting (amber), done (drained check).",
+      "html": "<div><div class=\"ds-row ds-row--active\"><span class=\"ds-row-spine\" style=\"background:#55C2BC\"></span><span class=\"ds-row-mark ds-mark-working\">✻</span><span class=\"ds-row-title\">claude · slop-desk</span><span class=\"ds-row-meta\">2m</span></div><div class=\"ds-row\"><span class=\"ds-row-spine\" style=\"background:#9BA9ED\"></span><span class=\"ds-row-mark ds-mark-await\">●</span><span class=\"ds-row-title\">claude · herdr</span><span class=\"ds-row-meta\">needs you</span></div><div class=\"ds-row ds-row--drained\"><span class=\"ds-row-spine\" style=\"background:#55C2BC;opacity:.28\"></span><span class=\"ds-row-mark ds-mark-done\">✓</span><span class=\"ds-row-title\">zsh</span></div></div>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 0; border-radius: 6px; background: transparent; color: #ADA8A3; font-family: -apple-system, 'SF Pro Text', sans-serif; font-size: 12px; transition: background 120ms cubic-bezier(0, 0, 0.58, 1); } .ds-row:hover { background: rgba(230, 222, 214, 0.05); } .ds-row--active { background: rgba(85, 194, 188, 0.05); color: #E6DED6; } .ds-row--drained { color: #7C7874; } .ds-row-spine { width: 2px; align-self: stretch; border-radius: 1px; margin-right: 10px; flex: none; } .ds-row-mark { width: 14px; text-align: center; flex: none; font-family: 'JetBrains Mono', 'SF Mono', monospace; } .ds-mark-working { color: #60CDCD; } .ds-mark-await { color: #E5BD66; } .ds-mark-done { color: #7C7874; } .ds-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-row-meta { margin-left: auto; font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 10px; color: #7C7874; }"
+    },
+    {
+      "name": "Plate Icon Button",
+      "kind": "button",
+      "refersTo": "plate-icon-button",
+      "description": "24px square icon plate; hover = 5% plate; latched expresses with ink and weight, never the accent.",
+      "html": "<button class=\"ds-plate-btn\" aria-label=\"Split right\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 13 13\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\"><rect x=\"1\" y=\"1.5\" width=\"11\" height=\"10\" rx=\"1.5\"/><line x1=\"6.5\" y1=\"1.5\" x2=\"6.5\" y2=\"11.5\"/></svg></button>",
+      "css": ".ds-plate-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 6px; background: transparent; color: #ADA8A3; cursor: pointer; transition: background 120ms cubic-bezier(0, 0, 0.58, 1); } .ds-plate-btn:hover { background: rgba(230, 222, 214, 0.05); color: #E6DED6; } .ds-plate-btn:focus-visible { outline: 1px solid rgba(230, 222, 214, 0.15); outline-offset: 1px; }"
+    },
+    {
+      "name": "Popover",
+      "kind": "custom",
+      "refersTo": "popover-row",
+      "description": "260px popover: caps micro-label section header (instrument voice, 1.2px tracking), 24px rows with trailing chord.",
+      "html": "<div class=\"ds-popover\"><div class=\"ds-popover-section\">PANE</div><div class=\"ds-popover-row\">Split Right<span class=\"ds-popover-chord\">⌘D</span></div><div class=\"ds-popover-row\">Split Down<span class=\"ds-popover-chord\">⌘⇧D</span></div><div class=\"ds-popover-divider\"></div><div class=\"ds-popover-row\">Close Pane<span class=\"ds-popover-chord\">⌘W</span></div></div>",
+      "css": ".ds-popover { width: 260px; padding: 6px; background: #322C29; border: 1px solid rgba(230, 222, 214, 0.07); border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.40); font-family: -apple-system, 'SF Pro Text', sans-serif; } .ds-popover-section { padding: 4px 8px; font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 10px; letter-spacing: 1.2px; color: #7C7874; } .ds-popover-row { display: flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: #E6DED6; cursor: default; } .ds-popover-row:hover { background: rgba(230, 222, 214, 0.05); } .ds-popover-chord { margin-left: auto; font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 10px; color: #7C7874; } .ds-popover-divider { height: 1px; margin: 4px 8px; background: rgba(230, 222, 214, 0.1); }"
+    },
+    {
+      "name": "Glass Overlay Card",
+      "kind": "card",
+      "refersTo": "toast-card",
+      "description": "The one floating material: glass card at 12px radius with the shared shadow. Hosts switcher, palette, connect, toasts.",
+      "html": "<div class=\"ds-glass-card\"><div class=\"ds-glass-row\"><span class=\"ds-glass-title\">mac-studio · slop-desk</span><span class=\"ds-glass-sub\">~/Workspace/oss/slop-desk</span></div></div>",
+      "css": ".ds-glass-card { padding: 8px; background: rgba(39, 34, 30, 0.82); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); border: 1px solid rgba(230, 222, 214, 0.07); border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.40); } .ds-glass-row { display: flex; flex-direction: column; justify-content: center; height: 48px; padding: 0 12px; border-radius: 6px; } .ds-glass-row:hover { background: rgba(230, 222, 214, 0.05); } .ds-glass-title { font-family: -apple-system, 'SF Pro Text', sans-serif; font-size: 13px; color: #E6DED6; } .ds-glass-sub { font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 11px; color: #ADA8A3; }"
+    },
+    {
+      "name": "Toast Card",
+      "kind": "card",
+      "refersTo": "toast-card",
+      "description": "320px uniform notification card: leading state-register mark, headline voice. No progress bars, no countdowns.",
+      "html": "<div class=\"ds-toast\"><span class=\"ds-toast-mark\">✓</span><div class=\"ds-toast-body\"><div class=\"ds-toast-headline\">Agent finished</div><div class=\"ds-toast-detail\">claude · fec kernel — 214 tests passed</div></div></div>",
+      "css": ".ds-toast { display: flex; gap: 10px; align-items: flex-start; width: 320px; padding: 10px 12px; background: rgba(39, 34, 30, 0.82); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); border: 1px solid rgba(230, 222, 214, 0.07); border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.40); font-family: -apple-system, 'SF Pro Text', sans-serif; } .ds-toast-mark { color: #8DCD8E; font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 13px; line-height: 1.4; } .ds-toast-headline { font-size: 13px; font-weight: 600; color: #E6DED6; } .ds-toast-detail { font-size: 11px; color: #ADA8A3; margin-top: 2px; }"
+    },
+    {
+      "name": "Overlay Input Strip",
+      "kind": "input",
+      "refersTo": "list-row",
+      "description": "The 48px search/command input strip that heads palette, navigator, global search, and open-quickly overlays.",
+      "html": "<div class=\"ds-input-strip\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 13 13\" fill=\"none\" stroke=\"#ADA8A3\" stroke-width=\"1.3\"><circle cx=\"5.5\" cy=\"5.5\" r=\"4\"/><line x1=\"8.5\" y1=\"8.5\" x2=\"12\" y2=\"12\"/></svg><input class=\"ds-input-field\" placeholder=\"Search tabs…\" /></div>",
+      "css": ".ds-input-strip { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 14px; background: #322C29; border-bottom: 1px solid rgba(230, 222, 214, 0.1); border-radius: 12px 12px 0 0; } .ds-input-field { flex: 1; border: none; outline: none; background: transparent; color: #E6DED6; font-family: -apple-system, 'SF Pro Text', sans-serif; font-size: 13px; } .ds-input-field::placeholder { color: #7C7874; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Foundry Floor",
+    "overview": "A machine hall at night: warm graphite housings, and light on the floor means exactly one thing — work in progress. Each project wears its own enamel tag colour as a 2px spine; the material glows where an agent works, holds an amber lamp where it needs a hand, and cools to drained gray when the work stops. FOUNDRY keeps every purge law of its predecessor (no at-rest ornament, depth by light, closed ladders, mono instrument voice) and widens the vocabulary where the product grew: five surface rungs instead of three, and chroma readmitted as information only, in three budgeted registers. Every colour is generated from an OKLCH seed and audited with APCA; Foundry Ember (warm graphite, teal accent) is the default seed.",
+    "keyCharacteristics": [
+      "Heat is life: working = colour, waiting = amber, past = drained gray; chrome at rest is warm graphite structure",
+      "Three chroma registers with hard budgets: IDENTITY (8 project hues, spine + wash), STATE (closed agent-state machine), HAZARD (one amber, one meaning)",
+      "Five surface rungs (void → ground → face → raised → lift); flat square panes cut by 1px void seams",
+      "Moderate contrast by design: primary ink APCA Lc ~ 85; no pure black surfaces, no pure white text",
+      "One engine, many seeds: a theme is an OKLCH seed swap, never a per-theme redesign"
+    ],
+    "rules": [
+      {
+        "name": "The Heat-Is-Life Rule",
+        "body": "Colour is state, temperature is structure. A surface at rest is warm graphite; it takes chroma only while something is alive on it and drains to gray the moment the signal stops.",
+        "section": "colors"
+      },
+      {
+        "name": "The Three-Registers Rule",
+        "body": "Chroma is spent from exactly three budgets. IDENTITY: 2px spine + at most 5% wash, never per-row plates or recoloured text. STATE: the closed agent-state machine (working/awaiting/done/idle). HAZARD: one amber, one meaning — an agent needs you.",
+        "section": "colors"
+      },
+      {
+        "name": "The Seeded-Engine Rule",
+        "body": "No hand-picked hexes. Every colour is generated from the OKLCH seed at pinned L/C and audited with APCA (ink >= 84, secondary >= 52, chromatics >= 57 on face). A colour the engine cannot generate does not ship.",
+        "section": "colors"
+      },
+      {
+        "name": "The Moderate-Contrast Rule",
+        "body": "Primary ink targets Lc ~ 85 — above APCA's 75 floor, deliberately below the 90 preferred — because the app is stared at for hours. Raising contrast to fix readability is a bug; fix size or weight instead.",
+        "section": "colors"
+      },
+      {
+        "name": "The Instrument-Voice Rule",
+        "body": "Data speaks mono; prose speaks system. Measurements, paths, chords, and status words render in the instrument face — sentences and menus never do.",
+        "section": "typography"
+      },
+      {
+        "name": "The Closed-Scale Rule",
+        "body": "No raw font-size literals in view code — every size is a named rung, lint-enforced.",
+        "section": "typography"
+      },
+      {
+        "name": "The Density-Registers Rule",
+        "body": "Every surface declares one of three registers — glance, work, supervise — and takes its rhythm from it. A surface may not mix registers.",
+        "section": "layout"
+      },
+      {
+        "name": "The Fixed-Width Rule",
+        "body": "Recurring surfaces have one width each, decided by role, not content: popovers 260, toasts 320, form cards 460, settings cards 116, device cards 180.",
+        "section": "layout"
+      },
+      {
+        "name": "The Depth-By-Light Rule",
+        "body": "Surfaces separate by luminance rung, never by border-plus-shadow stacks.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One-Altitude Rule",
+        "body": "All floating cards hover at the same height; only the glass family floats at all.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do pick a rung from the closed ladders (height, radius, type, spacing) — lint fails raw literals.",
+      "Do route every animation through the cubic-bezier tokens (0.12–0.28s); the needle settle is reserved for the connect handshake. No springs.",
+      "Do drain, don't hide: anything not live desaturates in place (stalled video with an age caption; done agents' spines dim to 28%).",
+      "Do spend identity from the register: spine + wash from the project hue, nothing else recoloured.",
+      "Do keep the terminal and chrome one flat field: libghostty's background/foreground/ANSI-16 pin to the same generated hexes.",
+      "Do run any new colour through the engine and its APCA audit before it ships."
+    ],
+    "donts": [
+      "Don't add at-rest ornament: no grain, no gradients, no glow, no springs, no at-rest motion, no dark-theme shadows.",
+      "Don't animate text, ever (marks may pulse; glyph strings may not move).",
+      "Don't let identity leak past its budget: no per-row colour plates, no recoloured titles, no identity-tinted icons.",
+      "Don't borrow the hazard amber for anything but an agent needing you — other warnings are ink weight, not hue.",
+      "Don't give a command outcome a mark; the mark column is the agent's. Outcomes are word colour only.",
+      "Don't use .sheet for overlays or vary a floating card's shadow — one glass family, one altitude.",
+      "Don't hand-tune a hex or push contrast past the moderate stance (no #FFFFFF text, no #000000 surfaces)."
+    ]
+  }
+}
