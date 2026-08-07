@@ -1,8 +1,8 @@
 // ContentColumn — the centre content area. Renders the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab),
-// with a hover-reveal titlebar floating as a TOP overlay. The titlebar lives here (not at window level)
-// so its controls sit over the content area for free, and the terminal extends under it
-// for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
+// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab).
+// The old hover-reveal titlebar overlay is GONE (user-directed 2026-08-07, rail round): its
+// controls all found anchored homes — the sidebar toggle in the sidebar/rail strip, the panel
+// reopen as the trailing `PanelEdgeHandle`, the connection cluster in the sidebar footer / rail.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -27,8 +27,8 @@ struct ContentColumn: View {
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
-    /// The inherited CHROME scheme (the split subtree's frame-polarity pin) — what the hover
-    /// titlebar reads while it floats over chrome (the empty state); over the island it flips to
+    /// The inherited CHROME scheme (the split subtree's frame-polarity pin) — what the edge
+    /// handle reads while it floats over chrome (the empty state); over the island it flips to
     /// the glass polarity instead.
     @Environment(\.colorScheme) private var chromeColorScheme
 
@@ -44,19 +44,22 @@ struct ContentColumn: View {
             // uninterrupted ground.
             .background(Slate.Surface.field)
         #if os(macOS)
-            // The hover-reveal titlebar floats as a TOP overlay — OVER the island's top margin now
-            // that the island runs to the window top (no reserved band, user-directed 2026-08-07).
-            // It adopts the GLASS scheme while an island is under it, so its title/plates resolve
-            // against the dark glass rather than the OS appearance; over the chrome empty state it
-            // keeps the OS scheme. New-pane gestures (`+` / title-menu split) mint a terminal pane
-            // directly (the kind chooser is retired — non-terminal kinds have their own shortcuts).
-            .overlay(alignment: .top) {
-                SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
-                    .environment(\.colorScheme, hasActiveTab ? Slate.glassColorScheme : chromeColorScheme)
+            // The collapsed RIGHT panel's reopen affordance — an EDGE HANDLE hugging the window's
+            // trailing edge (user-directed 2026-08-07, rail round). The floating titlebar reopen
+            // plates are GONE with the titlebar itself: the left toggle lives in the sidebar/rail
+            // strip now, and a drawer pull fused to the edge it opens from is the one placement
+            // that cannot read as adrift over the glass. Glass scheme while an island is under it.
+            .overlay(alignment: .trailing) {
+                if chrome.codeSidebarCollapsed {
+                    PanelEdgeHandle { chrome.toggleCodeSidebar() }
+                        .environment(
+                            \.colorScheme, hasActiveTab ? Slate.glassColorScheme : chromeColorScheme,
+                        )
+                }
             }
         #endif
-            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay
-            // too. This column lives in its OWN NSHostingView inside the AppKit split, and the
+            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the edge-handle
+            // overlay too. This column lives in its OWN NSHostingView inside the AppKit split, and the
             // floating overlay layer lives in the window root's — so a card floating over this
             // column does NOT occlude its hover tracking: AppKit tracking areas are rect-based and
             // keep firing under the card, and the hover-reveal titlebar (and any row hover) lit up
@@ -68,8 +71,7 @@ struct ContentColumn: View {
     }
 
     /// The pane area fills the whole column — the island runs FULL top→bottom (Canario; no
-    /// reserved titlebar band, user-directed 2026-08-07). The hover-reveal titlebar floats over
-    /// the island's top edge and shows nothing at rest.
+    /// reserved titlebar band, user-directed 2026-08-07). Nothing floats over its top edge.
     private var content: some View {
         paneArea
     }

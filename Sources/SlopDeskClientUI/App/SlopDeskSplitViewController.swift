@@ -49,6 +49,17 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
 
+    /// The sidebar's expanded-state ceiling (divider drag range while expanded).
+    static let sidebarMaxWidth: CGFloat = 360
+
+    /// Whether the sidebar currently wears the RAIL width (`nil` before the first apply). The rail
+    /// replaces the collapse (user-directed 2026-08-07): `applySidebarRail` slides the item's width
+    /// between the rail and the expanded band instead of toggling `isCollapsed`.
+    private var sidebarRailActive: Bool?
+    /// The expanded width to come back to — captured when the rail takes over, so a hand-widened
+    /// panel re-expands where the user left it (session-scoped, like the width itself).
+    private var lastExpandedSidebarWidth: CGFloat = SlopDeskSplitViewController.defaultSidebarWidth
+
     /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
 
@@ -114,8 +125,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         ).overlayCoordinator(overlay))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
-        sidebarItem.maximumThickness = 360
-        sidebarItem.canCollapse = true
+        sidebarItem.maximumThickness = Self.sidebarMaxWidth
+        // NEVER truly collapsed (user-directed 2026-08-07, rail round): "collapsing" the tabs
+        // panel now NARROWS it to the rail (`applySidebarRail`) so the traffic lights keep a
+        // column under them and the projects stay visible — a fully removed sidebar left the
+        // window controls floating over the island.
+        sidebarItem.canCollapse = false
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
 
         // 2) Content — the pane grid (terminal / desktop / remote window) + the hover-reveal titlebar
@@ -290,10 +305,11 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
         // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        // The floor is a FIXED colour per profile (no appearance-dependent resolution), so this
-        // `.cgColor` cannot go stale on an appearance flip — it only needs re-assigning when the
-        // PROFILE changes, which is exactly when this method runs (`themeDidChange`).
-        splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
+        // CLEAR, not the floor tone (liquid-glass trial, user-directed 2026-08-07): the floor
+        // tint must stack over the behind-window material EXACTLY ONCE per region. The columns
+        // and `drawDivider` each paint the tint themselves; an opaque (or tinted) layer here
+        // would both hide the material and double-tint the column regions against the gap.
+        splitView.layer?.backgroundColor = NSColor.clear.cgColor
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
@@ -314,10 +330,70 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 
     /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
-    /// a real change so a steady-state update doesn't re-trigger the animation).
+    /// a real change so a steady-state update doesn't re-trigger the animation). The LEFT
+    /// sidebar's "collapse" is the RAIL (a width slide, never a removed item); the right code
+    /// panel still collapses away entirely.
     func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
-        applyItemCollapse(sidebarItem, collapsed: sidebarCollapsed)
+        applySidebarRail(sidebarCollapsed)
         applyItemCollapse(codeSidebarItem, collapsed: codeSidebarCollapsed)
+    }
+
+    /// Slide the sidebar between the RAIL width and the expanded band (user-directed 2026-08-07,
+    /// rail round). The item's thickness constraints are opened to span BOTH endpoints for the
+    /// slide, then pinned at the destination — `min == max` at the rail, the normal drag band
+    /// while expanded — so the divider is honestly immovable in rail mode and freely draggable
+    /// when open. First apply (launch, window not yet attached) jumps without animating.
+    private func applySidebarRail(_ rail: Bool) {
+        guard sidebarRailActive != rail, let item = sidebarItem else { return }
+        let firstApply = sidebarRailActive == nil
+        sidebarRailActive = rail
+        // Same LOST-PROMPT ordering as `applyItemCollapse`: suspend BEFORE the first frame moves.
+        resizeForwardingSuspended = true
+        store.setTerminalResizeSuspended(true)
+        if rail, let current = splitView.arrangedSubviews.first?.frame.width,
+           current > Slate.Metric.railWidth
+        {
+            lastExpandedSidebarWidth = current
+        }
+        let target = rail
+            ? Slate.Metric.railWidth
+            : CGFloat.maximum(
+                CGFloat.minimum(lastExpandedSidebarWidth, Self.sidebarMaxWidth),
+                Self.defaultSidebarWidth,
+            )
+        item.minimumThickness = Slate.Metric.railWidth
+        item.maximumThickness = Self.sidebarMaxWidth
+        if firstApply || view.window == nil {
+            splitView.setPosition(target, ofDividerAt: 0)
+            pinSidebarBand(rail: rail)
+            // No animation ⇒ possibly no resize notification burst to run the settle timer; resume
+            // directly (idempotent through `setResizeSuspended`'s guard).
+            resizeForwardingSuspended = false
+            store.setTerminalResizeSuspended(false)
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.allowsImplicitAnimation = true
+                splitView.setPosition(target, ofDividerAt: 0)
+                splitView.layoutSubtreeIfNeeded()
+            } completionHandler: { [weak self] in
+                // Fires on the main thread; the handler's type is just not annotated.
+                MainActor.assumeIsolated { self?.pinSidebarBand(rail: rail) }
+            }
+        }
+    }
+
+    /// Pin the sidebar's thickness band at the destination the slide just reached — `min == max`
+    /// at the rail, the normal drag band while expanded. Skipped when a newer toggle superseded
+    /// this slide (the completion of a cancelled animation must not fight the live one).
+    private func pinSidebarBand(rail: Bool) {
+        guard sidebarRailActive == rail, let item = sidebarItem else { return }
+        if rail {
+            item.maximumThickness = Slate.Metric.railWidth
+        } else {
+            item.minimumThickness = Self.defaultSidebarWidth
+        }
+        // The pinned band changed what the divider can do — the hover cursor must agree.
+        view.window?.invalidateCursorRects(for: splitView)
     }
 
     private func applyItemCollapse(_ item: NSSplitViewItem?, collapsed: Bool) {
@@ -333,7 +409,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         store.setTerminalResizeSuspended(true)
         // The code panel re-expands at its persisted width — applied in the animation's completion
         // (a `setPosition` mid-animation is overridden by the collapse animation's final frame).
-        // The left sidebar restores nothing: its width is capped/session-scoped by design.
+        // (Only the code panel routes through here now — the left sidebar rides `applySidebarRail`.)
         if item === codeSidebarItem, !collapsed {
             NSAnimationContext.runAnimationGroup { _ in
                 item.animator().isCollapsed = collapsed
@@ -361,19 +437,18 @@ private final class FlatDividerSplitView: NSSplitView {
     /// their own; the layer does not).
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
+        // Clear, matching `pinWindowAppearance` — the divider gap's tint comes from
+        // `drawDivider` alone over the behind-window material (liquid-glass trial).
+        layer?.backgroundColor = NSColor.clear.cgColor
         needsDisplay = true
         layer?.setNeedsDisplay()
     }
 
-    override func drawDivider(in rect: NSRect) {
-        // NO drawn seam (user-directed 2026-08-07, islands round): every column paints the SAME
-        // field tone and the islands float on it — a hard hairline between columns would cut the
-        // window back into boxes. The divider strip wears that same field colour (resolved in the
-        // view's current appearance), so the gap is literally invisible: three columns, one
-        // uninterrupted floor.
-        Slate.Surface.fieldNSColor.setFill()
-        NSBezierPath(rect: rect).fill()
+    override func drawDivider(in _: NSRect) {
+        // NOTHING (liquid-glass trial, user-directed 2026-08-07): the floor is one window-root
+        // gradient behind the whole split, the columns paint clear, and this gap must too — any
+        // fill here would restart the gradient inside the 1px seam. Overridden (not inherited)
+        // because AppKit's default draws the divider pure black.
     }
 
     /// The CODE-panel divider (content | code) is dragged by hand, not by AppKit's built-in
@@ -481,6 +556,18 @@ private final class FlatDividerSplitView: NSSplitView {
         }
         for i in 0..<max(arrangedSubviews.count - 1, 0) {
             if items[i].isCollapsed || items[i + 1].isCollapsed { continue }
+            // A divider pinned in BOTH directions gets no rect at all — the rail's divider
+            // (min == max, user-directed 2026-08-07) is honestly immovable, and a resize arrow
+            // over it would promise a drag that cannot happen. The plain arrow is the truth.
+            let movability = SlopDeskSplitViewController.dividerMovability(
+                leadingWidth: arrangedSubviews[i].frame.width,
+                leadingMin: items[i].minimumThickness,
+                leadingMax: items[i].maximumThickness,
+                trailingWidth: arrangedSubviews[i + 1].frame.width,
+                trailingMin: items[i + 1].minimumThickness,
+                trailingMax: items[i + 1].maximumThickness,
+            )
+            if !movability.left, !movability.right { continue }
             addCursorRect(
                 dividerEffectiveRect(at: i).insetBy(dx: -2, dy: 0),
                 cursor: dividerCursor(at: i),

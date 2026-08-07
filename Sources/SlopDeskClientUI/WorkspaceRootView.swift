@@ -3,10 +3,10 @@
 // macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
 // `SlopDeskSplitViewController` (sidebar | content `NSSplitViewController` items, each an
 // `NSHostingController` over a SwiftUI column; modelled on CodeEdit's split shell). The window runs
-// `.hiddenTitleBar` — NO system toolbar; the workspace's own hover-reveal titlebar (`SlateTitlebar`, a
-// top overlay in `ContentColumn`) IS the chrome (sidebar toggle, "New Tab", centred title menu). iOS: a
-// stock `NavigationSplitView` over the same two columns + its own toolbar. (Right-hand inspector /
-// Details column REMOVED — keyboard-centric.)
+// `.hiddenTitleBar` — NO system toolbar and no titlebar overlay either (user-directed 2026-08-07,
+// rail round): the chrome controls live in the sidebar/rail strip and the trailing edge handle.
+// iOS: a stock `NavigationSplitView` over the same two columns + its own toolbar. (Right-hand
+// inspector / Details column REMOVED — keyboard-centric.)
 //
 // NO custom design-system / token target: SYSTEM semantic colours + fonts + SF Symbols.
 
@@ -128,13 +128,24 @@ public struct WorkspaceRootView: View {
 
     public var body: some View {
         #if os(macOS)
-        // No system toolbar — the window runs `.hiddenTitleBar`; its own hover-reveal titlebar
-        // (`SlateTitlebar`, inside `ContentColumn`) IS the chrome.
+        // No system toolbar — the window runs `.hiddenTitleBar`; the chrome controls live in the
+        // sidebar/rail strip and the trailing edge handle (rail round, user-directed 2026-08-07).
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
             preferences: preferencesStore, paneDrag: paneDrag,
         )
         .ignoresSafeArea()
+        // The liquid-glass ground (trial, user-directed 2026-08-07): one behind-window material
+        // under the WHOLE frame, tinted ONCE by the profile's floor gradient — the columns and
+        // the divider gap paint clear, so the gradient runs unbroken across the window while the
+        // desktop blurs through the frame and the islands stay opaque.
+        .background {
+            ZStack {
+                LiquidGlassFloor()
+                Slate.Surface.floorGlassGradient
+            }
+            .ignoresSafeArea()
+        }
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
         // composes above the AppKit split (SwiftUI overlays compose over an `NSViewControllerRepresentable`).
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks real visibility.

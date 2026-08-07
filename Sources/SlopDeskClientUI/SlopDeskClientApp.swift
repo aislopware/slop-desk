@@ -823,7 +823,7 @@ public struct SlopDeskClientApp: App {
         }
         #if os(macOS)
         // The app has NO system unified toolbar: hide the titlebar (the window keeps traffic lights + a
-        // full-size content view) so its own hover-reveal titlebar (`SlateTitlebar`) is the only chrome.
+        // full-size content view); the chrome controls live in the sidebar/rail strip + edge handle.
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.automatic)
         // `.remember` seeds the CREATION geometry from the saved frame so the window never paints a
@@ -1261,10 +1261,12 @@ public struct SlopDeskClientApp: App {
             width: window.frame.size.width - window.contentLayoutRect.size.width,
             height: window.frame.size.height - window.contentLayoutRect.size.height,
         )
-        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width
-        // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
+        // In-window non-terminal overhead for `grid` mode: the sidebar's width — the RAIL width
+        // while minimized (the column never fully disappears since the rail round, user-directed
+        // 2026-08-07), the full panel width while expanded. (No vertical cost — no titlebar band,
+        // no horizontal tab bar.)
         let overheadWidth =
-            chrome.sidebarCollapsed ? 0 : SlopDeskSplitViewController.defaultSidebarWidth
+            chrome.sidebarCollapsed ? Slate.Metric.railWidth : SlopDeskSplitViewController.defaultSidebarWidth
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

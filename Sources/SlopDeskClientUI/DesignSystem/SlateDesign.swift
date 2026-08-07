@@ -75,6 +75,11 @@ struct SlateTheme: Equatable {
     /// second world). Stored as the raw hex too because the AppKit split view resolves it as an
     /// `NSColor`.
     let floorHexValue: UInt32
+    /// The floor's DEEP pole (liquid-glass trial, user-directed 2026-08-07): the bottom stop of
+    /// the floor gradient — the same hue family a step deeper, so the frame gains depth without a
+    /// hue drift. Equal to ``floorHexValue`` on a profile without an authored gradient (the
+    /// gradient then collapses to the flat floor).
+    let floorDeepHexValue: UInt32
     /// ``floorHexValue`` as the SwiftUI colour every column background reads.
     var floor: Color { Color(slateHex: floorHexValue) }
 
@@ -112,16 +117,19 @@ struct SlateTheme: Equatable {
         ansi: [UInt32],
         floorFraction: Double? = nil,
         frame: UInt32? = nil,
+        frameDeep: UInt32? = nil,
     ) -> Self {
-        Self(
+        let floor = frame
+            ?? blendHex(face, toward: ink, fraction: floorFraction ?? (isLight ? 0.17 : 0.22))
+        return Self(
             id: id,
             isLight: isLight,
             chromeIsLight: frame == nil ? isLight : !isLight,
             terminal: Color(slateHex: face),
             terminalEdge: Color(slateHex: edge),
             terminalRaised: Color(slateHex: edge),
-            floorHexValue: frame
-                ?? blendHex(face, toward: ink, fraction: floorFraction ?? (isLight ? 0.17 : 0.22)),
+            floorHexValue: floor,
+            floorDeepHexValue: frameDeep ?? floor,
             terminalInk: Color(slateHex: ink),
             terminalInk2: Color(slateHex: ink2),
             terminalAccent: Color(slateHex: accent),
@@ -181,7 +189,11 @@ struct SlateTheme: Equatable {
             0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,
             0x7970A9, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xFFFFFF,
         ],
-        frame: 0x9993CD,
+        // The lavender frame gradient (user-directed 2026-08-07): both stops are the Pro-band
+        // plate #C3BAF0 pulled toward the deep accent #6B4BD6 — 22% at the top, 35% at the bottom
+        // — a clearly violet frame that stays brighter and cleaner than the original #9993CD.
+        frame: 0xB0A2EA,
+        frameDeep: 0xA493E7,
     )
 
     /// Alucard — Dracula Pro's official light theme (public spec hexes verbatim): cream glass
@@ -248,8 +260,28 @@ enum Slate {
         /// colour per profile, which also retires the CGColor-snapshot family of traps — there is
         /// no appearance-dependent resolution left to go stale. Exposed as an `NSColor` too
         /// because the AppKit split view (divider gap + layer) paints the same floor.
-        static var fieldNSColor: NSColor { NSColor(slateHex: Slate.theme.floorHexValue) }
-        static var field: Color { Slate.theme.floor }
+        /// The floor's LIQUID GLASS tint alpha (trial, user-directed 2026-08-07): the authored
+        /// floor gradient is painted at this alpha over the behind-window material
+        /// (``LiquidGlassFloor``), so the frame keeps its colour while the desktop glows through.
+        static let floorGlassAlpha: Double = 0.65
+        /// The ONE floor paint: the profile's floor→deep gradient, applied ONCE as the window-root
+        /// background (over the material, under every column). A per-column tint would restart the
+        /// gradient at each column edge — so the columns paint ``field`` = clear instead, and the
+        /// divider gap draws nothing.
+        static var floorGlassGradient: LinearGradient {
+            LinearGradient(
+                colors: [
+                    Color(slateHex: Slate.theme.floorHexValue).opacity(floorGlassAlpha),
+                    Color(slateHex: Slate.theme.floorDeepHexValue).opacity(floorGlassAlpha),
+                ],
+                startPoint: .top, endPoint: .bottom,
+            )
+        }
+
+        /// CLEAR since the gradient round: the floor is painted once at the window root
+        /// (``floorGlassGradient``); the columns keep their `.background(field)` anchors but
+        /// contribute no paint of their own.
+        static let field = Color.clear
         #else
         static let void = Color(uiColor: .secondarySystemBackground)
         static let ground = Color(uiColor: .secondarySystemBackground)
@@ -507,6 +539,18 @@ enum Slate {
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
         static let titlebarHeight: CGFloat = heightStrip
         static let sidebarWidth: CGFloat = 220
+        /// The MINIMIZED sidebar — the rail (user-directed 2026-08-07, rail round): collapsing the
+        /// tabs panel narrows it to this instead of removing it, so the window controls keep a
+        /// column under them and the projects stay one glance away. Wide enough that the system
+        /// traffic lights (which end ~74pt in) sit inside it with air to spare.
+        static let railWidth: CGFloat = 80
+        /// One rail project chip — the roomy-row rung, a square the folder mark centres in.
+        static let railChip: CGFloat = heightRowTall
+        /// The collapsed right panel's EDGE HANDLE (the drawer pull on the window's trailing edge):
+        /// its long side. Two control rungs, so the pull reads as a handle, not a button.
+        static let edgeHandleLength: CGFloat = heightControl * 2
+        /// The edge handle's short side — slim enough to hug the edge, wide enough to hit.
+        static let edgeHandleThickness: CGFloat = 20
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
         static let settingsSidebarWidth: CGFloat = 260
