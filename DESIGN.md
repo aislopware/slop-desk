@@ -55,8 +55,8 @@ spacing:
   space4: "16px"
 components:
   field:
-    backgroundColor: "Slate.Surface.field — windowBackgroundColor blended a step toward its opposite pole (8% black light / 9% white dark)"
-    note: "the ONE floor colour every column and divider gap paints; no materials, no vibrancy, no drawn seams. Derived, not hex: raw windowBackgroundColor is pure white in light (kills the chip) and darker than the glass in dark (inverts the island relationship)"
+    backgroundColor: "Slate.Surface.field — the PROFILE's derived floor: glass face blended toward the profile ink (22% dark / 17% light). Ember → #514B46, Ember Light → #DAD8D4"
+    note: "the ONE floor colour every column and divider gap paints; no materials, no vibrancy, no drawn seams. Derived from the active profile, never authored hex: the floor shares the glass's temperature (Canario's frame/tile kinship) and stands a real step off the islands (1.83:1 dark / 1.37:1 light — the earlier windowBackground blend was neutral-against-warm at ~1.2:1 and read as close-but-clashing)"
   sidebar:
     backgroundColor: "the field (flat — no material)"
     textColor: "semantic label tiers"
@@ -113,9 +113,15 @@ content field read as "a mess", not a floor). On that floor float exactly two gl
 terminal (centre) and the right panel (whose tab strip lives INSIDE its island). Islands wear NO
 border and NO shadow — JetBrains ships island borders equal to the island fill; the field gap and
 the radius are the whole separation. The left sidebar stays FLAT; its one floating object is the
-active row's solid chip (Canario's white active tab). The field↔island tone relationship follows
-the reference in both modes: islands lighter than the field in light, darker in dark, deliberately
-subtle.
+active row's solid chip (Canario's white active tab). The floor is the PROFILE's own derived tone
+(contrast round, user-directed 2026-08-07): the glass face blended toward the profile ink — 22% on
+dark profiles (Ember → `#514B46`, 1.83:1 against the glass), 17% on light (Ember Light →
+`#DAD8D4`, 1.37:1). Two things the earlier `windowBackgroundColor` blend could not do: the floor
+carries the glass's TEMPERATURE (Canario's frame reads as one world with its near-black tiles —
+8.9:1 measured — because they share a hue family; a neutral system grey beside the warm glass read
+as two worlds pushed together), and the island↔floor step is decisive instead of the reference's
+~1.2:1 whisper, which vanished on these tones. Direction still follows JetBrains in both modes:
+islands lighter than the floor in light, darker in dark.
 
 ## The two worlds — one polarity
 
@@ -147,7 +153,8 @@ palette.
   the opposite pole — a light chip with dark text on the dark floor, a dark chip with light text
   on the light floor. Selection is stated by INVERSION (the ANSI reverse-video / Canario
   contrast-flip gesture), still entirely semantic — no invented hex.
-- **Surfaces** (`Slate.Surface`): `field` → the derived floor tone (see above), `void`/`ground` →
+- **Surfaces** (`Slate.Surface`): `field` → the profile's derived floor (see above — the ONE
+  chrome colour that reads the theme, and it is derived, not authored), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
 - **Text** (`Slate.Text`): the semantic label tiers (`labelColor` → `tertiaryLabelColor`). Never a
@@ -166,7 +173,8 @@ palette.
   Trap: a `CGColor` assigned from a dynamic `NSColor` is a snapshot — resolve it inside
   `effectiveAppearance.performAsCurrentDrawingAppearance` and re-resolve in
   `viewDidChangeEffectiveAppearance`, or a theme flip leaves stale-pole pixels (the divider-gap
-  line).
+  line). The floor itself no longer carries this risk — it is a fixed colour per profile — but any
+  OTHER dynamic `NSColor` reaching a layer does.
 
 ## The one brand colour
 
@@ -193,11 +201,11 @@ system's.
   washes) resolves against the glass, not the OS appearance. Satellite pane windows are glass
   edge-to-edge and adopt the same forced scheme.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
-- Focus = the small filled accent corner triangle (top-left, split tabs only). No dimming siblings
-  WITHIN an island — but BETWEEN the two islands, the unfocused one wears `Slate.Surface.veil`
-  (the field tone at 8% — JetBrains dims inactive islands at 0.56 alpha; ours is the same idea at
-  a whisper). The veil follows `NSWindow.firstResponder` (terminal column ↔ panel column;
-  anything else leaves the last answer standing so a palette summon never dims both).
+- Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — not of
+  sibling panes, and not of the other island: the unfocused-island veil shipped in the polish round
+  and was REMOVED the same day (user-directed 2026-08-07, contrast round — "drop the island
+  dimming"). Do not reintroduce island dimming/veiling in any strength; focus is stated by the
+  corner mark alone.
 - **The panel island** (the right column) is the second glass card, same anatomy: glass fill,
   forced glass scheme, island radius, no ring — but NO leading margin (the terminal island's
   trailing margin is the shared inter-island channel; two margins there read as "too far apart",
@@ -226,9 +234,11 @@ The Settings gallery ("Terminal Theme") previews each profile as a miniature of 
 A profile choice is a WHOLE-APP choice (polish round): its `isLight` polarity pins the app
 appearance, so picking Ember darkens the entire window and picking Ember Light lightens it. The
 "System" choice (and the fresh-install default) follows the OS through the Ember pair — OS dark →
-Ember, OS light → Ember Light — flipping live on an OS switch. Ember Light's glass is NEAR-WHITE,
-a step LIGHTER than the derived light floor (the JetBrains light relationship: white islands on
-grey). The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside every palette,
+Ember, OS light → Ember Light — flipping live on an OS switch. Every profile also DERIVES the
+chrome floor the app stands on (`SlateTheme.floorHexValue` — face blended toward ink), so a
+profile switch retunes the whole window's ground without any authored chrome colour. Ember Light's
+glass is NEAR-WHITE, a step LIGHTER than its derived floor (the JetBrains light relationship:
+white islands on grey). The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside every palette,
 system and profile alike.
 
 ## Structure, type, motion (unchanged ladders)
@@ -264,4 +274,6 @@ system and profile alike.
   scheme).
 - DON'T introduce a second selection language: selected = reverse-video inversion (sidebar chip,
   strip micro-chip). No accent-tinted plates, no underlines for selection.
+- DON'T dim, veil, or fade an island (or any column) to state focus — tried and removed
+  2026-08-07; focus is the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.

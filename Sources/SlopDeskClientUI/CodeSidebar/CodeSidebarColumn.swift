@@ -112,15 +112,6 @@ struct CodeSidebarColumn: View {
         }
         .background(Slate.Surface.terminal)
         .environment(\.colorScheme, Slate.glassColorScheme)
-        // The UNFOCUSED-island veil — the terminal card's twin (see `ContentColumn`): while key
-        // focus lives in a PANE, a breath of the floor tone lies over this card; clicking into
-        // the panel lifts it. Hit-test-transparent so the click that moves focus here lands.
-        .overlay {
-            if chrome.focusedIsland == .terminal {
-                Slate.Surface.veil.allowsHitTesting(false)
-            }
-        }
-        .animation(Slate.Anim.standard, value: chrome.focusedIsland == .terminal)
         .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
         .padding([.top, .bottom, .trailing], Slate.Metric.islandMargin)
         // The one window field behind the island — the same floor every column paints.

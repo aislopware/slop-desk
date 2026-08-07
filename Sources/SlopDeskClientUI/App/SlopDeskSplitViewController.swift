@@ -86,13 +86,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     private var resizeSettleWork: DispatchWorkItem?
     private let resizeSettleDelay: TimeInterval = 0.1
 
-    /// The window first-responder observation feeding ``WorkspaceChromeState/focusedIsland`` — which
-    /// glass island (terminal card / right panel card) holds key focus, for the unfocused island's
-    /// veil (user-directed 2026-08-07, polish round). KVO on `NSWindow.firstResponder` because focus
-    /// moves through AppKit here (terminal NSViews, the panel's WKWebView), where SwiftUI's focus
-    /// system never sees it.
-    private var responderObservation: NSKeyValueObservation?
-
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -249,31 +242,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // thickness is session state AppKit never saves. (An expand-toggle mid-session restores via
         // `applyItemCollapse`'s completion instead.) Here the window frame is final.
         restoreCodeSidebarWidth()
-        observeIslandFocus()
-    }
-
-    /// Install the first-responder → ``WorkspaceChromeState/focusedIsland`` bridge (idempotent; the
-    /// window exists only from `viewDidAppear`). A responder inside the CONTENT column reads as the
-    /// terminal island, one inside the CODE column as the panel island; anywhere else (sidebar,
-    /// field editors, overlay windows' own responders never land here) leaves the last island
-    /// answer standing — a palette summon must not dim both cards.
-    private func observeIslandFocus() {
-        guard responderObservation == nil, let window = view.window else { return }
-        responderObservation = window.observe(\.firstResponder) { [weak self] window, _ in
-            MainActor.assumeIsolated {
-                guard let self, let responder = window.firstResponder as? NSView else { return }
-                if let panel = self.codeSidebarItem?.viewController.viewIfLoaded,
-                   responder.isDescendant(of: panel)
-                {
-                    self.chrome.focusedIsland = .panel
-                } else if let content = self.splitViewItems.dropFirst().first?.viewController
-                    .viewIfLoaded,
-                    responder.isDescendant(of: content)
-                {
-                    self.chrome.focusedIsland = .terminal
-                }
-            }
-        }
     }
 
     /// Re-apply the persisted code-panel width (`Defaults[.codeSidebarWidth]`, written when a
@@ -316,12 +284,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
         // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        // Resolve the dynamic NSColor under the view's EFFECTIVE appearance: `.cgColor` snapshots
-        // against the thread's current drawing appearance, which outside a draw pass may still be
-        // the pre-pin appearance.
-        splitView.effectiveAppearance.performAsCurrentDrawingAppearance {
-            splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
-        }
+        // The floor is a FIXED colour per profile (no appearance-dependent resolution), so this
+        // `.cgColor` cannot go stale on an appearance flip — it only needs re-assigning when the
+        // PROFILE changes, which is exactly when this method runs (`themeDidChange`).
+        splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
@@ -382,17 +348,14 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 /// so the sidebar/content seam blends into the flat chrome instead of AppKit's default pure-black
 /// hairline. Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
-    /// Re-resolve the divider gap's layer colour when the OS appearance flips. The layer
-    /// `backgroundColor` set in `pinWindowAppearance` is a CGColor SNAPSHOT — a dynamic NSColor
-    /// resolved once, in whatever appearance was current at assignment — so without this hook a
-    /// light→dark switch left the 1px gaps painted in the LIGHT field tone (measured: `#EFEFEF`
-    /// stripes across a `#3A3A3A` floor). The drawn divider content is appearance-correct on its
-    /// next draw; it just needs the invalidation.
+    /// Re-assign the divider gap's layer colour when the OS appearance flips. The floor colour is
+    /// FIXED per profile now, so the assignment itself cannot resolve stale — but under the System
+    /// theme an OS flip re-resolves ``ThemeStore/active`` to the other Ember, and this hook is the
+    /// AppKit-side nudge that re-reads the new profile's floor (the SwiftUI columns re-render on
+    /// their own; the layer does not).
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
-        }
+        layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
         needsDisplay = true
         layer?.setNeedsDisplay()
     }

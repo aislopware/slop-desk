@@ -56,6 +56,20 @@ struct SlateTheme: Equatable {
     /// A lifted plate ON the glass (chips, handles) — the selection fill.
     let terminalRaised: Color
 
+    /// The chrome FLOOR this profile stands its islands on — the ONE tone every window column and
+    /// divider gap paints. DERIVED, never authored: the glass face blended toward the profile's own
+    /// ink (22% on dark profiles, 17% on light — tuned against the references, user-directed
+    /// 2026-08-07 contrast round). Deriving from the profile rather than from
+    /// `windowBackgroundColor` does two things the semantic blend could not: the floor carries the
+    /// profile's TEMPERATURE (Canario's frame reads as one world with its tiles because they share
+    /// a hue family — a neutral system grey against the warm Ember glass read as two worlds pushed
+    /// together), and the island↔floor step is a real one (glass 1.83:1 dark / 1.37:1 light,
+    /// against the ~1.2:1 whisper that made the islands vanish into the ground). Stored as the raw
+    /// hex too because the AppKit split view resolves it as an `NSColor`.
+    let floorHexValue: UInt32
+    /// ``floorHexValue`` as the SwiftUI colour every column background reads.
+    var floor: Color { Color(slateHex: floorHexValue) }
+
     // The on-glass ink
     /// Primary on-glass ink — the profile foreground.
     let terminalInk: Color
@@ -90,6 +104,7 @@ struct SlateTheme: Equatable {
             terminal: Color(slateHex: face),
             terminalEdge: Color(slateHex: edge),
             terminalRaised: Color(slateHex: edge),
+            floorHexValue: blendHex(face, toward: ink, fraction: isLight ? 0.17 : 0.22),
             terminalInk: Color(slateHex: ink),
             terminalInk2: Color(slateHex: ink2),
             terminalAccent: Color(slateHex: accent),
@@ -102,6 +117,18 @@ struct SlateTheme: Equatable {
             cursorHex: hex6(ink),
             cursorTextHex: nil,
         )
+    }
+
+    /// Per-channel linear blend of two 24-bit RGB literals — the floor derivation's arithmetic.
+    /// Plain rounded channel math (no colour-space trip): the fractions were TUNED on the rendered
+    /// result, so the blend that produced the picked swatches is the blend that ships.
+    private static func blendHex(_ a: UInt32, toward b: UInt32, fraction: Double) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            let av = Double((a >> shift) & 0xFF)
+            let bv = Double((b >> shift) & 0xFF)
+            return UInt32((av + (bv - av) * fraction).rounded()) & 0xFF
+        }
+        return channel(16) << 16 | channel(8) << 8 | channel(0)
     }
 
     /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty config value format.
@@ -204,42 +231,26 @@ enum Slate {
         /// whisper their theme ships, from a semantic colour instead of invented hex.
         static let chip = Color(nsColor: .controlBackgroundColor)
         /// THE FLOOR — the one colour every window column and divider gap paints (user-directed
-        /// 2026-08-07, islands round). NOT the raw `windowBackgroundColor`: on current macOS that
-        /// resolves to PURE WHITE in light and to a tone DARKER than the Ember glass in dark
-        /// (#1E1E1E vs #27221E — measured), which flattens the white active chip into the floor
-        /// and inverts the reference's dark-mode relationship. JetBrains Islands runs the field a
-        /// deliberate step OFF the island tones in each mode — darker than the islands in light,
-        /// lighter in dark, ~1.2:1. This dynamic colour derives that step from semantics at draw
-        /// time: the window background blended a few points toward its opposite pole. Exposed as
-        /// an `NSColor` too because the AppKit split view (divider gap + layer) paints the same
-        /// floor.
-        static let fieldNSColor = NSColor(
-            name: nil,
-            dynamicProvider: { appearance in
-                let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                let base = NSColor.windowBackgroundColor
-                return base.blended(withFraction: dark ? 0.09 : 0.08, of: dark ? .white : .black)
-                    ?? base
-            },
-        )
-        static let field = Color(nsColor: fieldNSColor)
-        /// The UNFOCUSED-island veil — a whisper of the floor tone laid OVER the island that does
-        /// not hold focus (user-directed 2026-08-07, polish round; JetBrains Islands dims inactive
-        /// islands to 0.56 alpha — far too loud here, so this is the same idea at a whisper). The
-        /// veil recedes the island toward the floor instead of touching the island's own layer
-        /// alpha, which keeps the Metal-backed terminal compositing untouched.
-        static let veil = field.opacity(0.08)
+        /// 2026-08-07, islands round). Since the contrast round (user-directed 2026-08-07) it is
+        /// the PROFILE's own derived floor (``SlateTheme/floorHexValue`` — the glass face blended
+        /// toward the profile ink), not a blend of `windowBackgroundColor`: the semantic blend was
+        /// neutral grey against the warm glass and only ~1.2–1.4:1 off the island tones, and the
+        /// two read as "close but clashing" rather than as a frame around its tiles. A FIXED
+        /// colour per profile, which also retires the CGColor-snapshot family of traps — there is
+        /// no appearance-dependent resolution left to go stale. Exposed as an `NSColor` too
+        /// because the AppKit split view (divider gap + layer) paints the same floor.
+        static var fieldNSColor: NSColor { NSColor(slateHex: Slate.theme.floorHexValue) }
+        static var field: Color { Slate.theme.floor }
         #else
         static let void = Color(uiColor: .secondarySystemBackground)
         static let ground = Color(uiColor: .secondarySystemBackground)
         static let face = Color(uiColor: .systemBackground)
         static let raised = Color(uiColor: .quaternarySystemFill)
         static let lift = Color(uiColor: .tertiarySystemFill)
-        /// See the AppKit notes — the solid active-row chip and the window floor; the grouped
-        /// pair is iOS's own "cell on a field" idiom, so no blend is needed here.
+        /// See the AppKit notes — the solid active-row chip; the floor is the profile's derived
+        /// tone on iOS too, so both platforms stand the islands on the same ground.
         static let chip = Color(uiColor: .secondarySystemGroupedBackground)
-        static let field = Color(uiColor: .systemGroupedBackground)
-        static let veil = field.opacity(0.08)
+        static var field: Color { Slate.theme.floor }
         #endif
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }

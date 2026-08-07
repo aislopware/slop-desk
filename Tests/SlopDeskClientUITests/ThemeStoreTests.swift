@@ -57,6 +57,20 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(SlateTheme.foundryEmberLight.terminalBackgroundHex, "FCFAF7")
     }
 
+    /// Every profile DERIVES the chrome floor it stands on — the glass face blended toward the
+    /// profile ink, 22% on dark profiles / 17% on light (user-directed 2026-08-07, contrast
+    /// round). Pinned values lock the blend arithmetic: a rounding change here silently retunes
+    /// the whole window's ground.
+    func testDerivedFloorTones() {
+        XCTAssertEqual(SlateTheme.foundryEmber.floorHexValue, 0x514B46, "Ember floor: warm stone")
+        XCTAssertEqual(
+            SlateTheme.foundryEmberLight.floorHexValue, 0xDAD8D4, "Ember Light floor: warm grey",
+        )
+        // The dark step outweighs the light one by design (dark-on-dark contrast compresses).
+        XCTAssertEqual(SlateTheme.foundryDusk.floorHexValue, 0x4E4A53, "Dusk floor: cool mauve grey")
+        XCTAssertEqual(SlateTheme.foundryGraphite.floorHexValue, 0x4C4C4F, "Graphite floor: neutral")
+    }
+
     /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme IDENTITY —
     /// so even a SAME-lightness variant switch (Ember → Graphite, both dark) posts; an idempotent re-apply
     /// of the SAME theme does NOT.
