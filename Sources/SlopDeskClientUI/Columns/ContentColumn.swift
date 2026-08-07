@@ -87,6 +87,17 @@ struct ContentColumn: View {
                 // wore re-boxed the card against the flat floor.
                 SplitContainer(store: store, paneDrag: paneDrag)
                     .environment(\.colorScheme, Slate.glassColorScheme)
+                    // The UNFOCUSED-island veil (user-directed 2026-08-07, polish round — the
+                    // JetBrains Islands focus mechanic at a whisper): while key focus lives in the
+                    // PANEL island, a breath of the floor tone lies over this card, receding it;
+                    // focus back in a pane lifts it. Hit-test-transparent — the veil must never
+                    // eat the click that moves focus back here.
+                    .overlay {
+                        if chrome.focusedIsland == .panel {
+                            Slate.Surface.veil.allowsHitTesting(false)
+                        }
+                    }
+                    .animation(Slate.Anim.standard, value: chrome.focusedIsland == .panel)
                     .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
                     .padding(.vertical, Slate.Metric.islandMargin)
                     .padding(.leading, Slate.Metric.islandMargin)

@@ -1017,9 +1017,10 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
         }
         // The settings seed selects the theme BY LABEL — a drift here is a silent stock-theme
-        // boot. The workbench is PINNED to the dark Foundry Ember (no `window.autoDetectColorScheme`):
-        // under the split-tone Ember the editor is dark glass beside the terminal while the client
-        // chrome is light, so appearance-following would flip the glass light (v20).
+        // boot. Since the whole-app theme (user-directed 2026-08-07, polish round) the workbench
+        // FOLLOWS each client's appearance: the client pins its whole appearance to the theme
+        // polarity, the webview inherits it, and the auto-detect trio maps dark → Ember,
+        // light → Ember Light (v21 — restores what v20 dropped for the split-tone era).
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.seededUserSettings.utf8),
@@ -1027,9 +1028,14 @@ final class CodeServerManagerTests: XCTestCase {
         )
         let labels = CodeServerManager.foundryExtensionThemes.map(\.label)
         XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Foundry Ember")
-        XCTAssertNil(seeded["window.autoDetectColorScheme"], "v20 pins the dark glass workbench")
-        XCTAssertNil(seeded["workbench.preferredDarkColorTheme"])
-        XCTAssertNil(seeded["workbench.preferredLightColorTheme"])
+        XCTAssertEqual(
+            seeded["window.autoDetectColorScheme"] as? Bool, true,
+            "v21: the workbench follows the client's pinned appearance",
+        )
+        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Foundry Ember")
+        XCTAssertEqual(
+            seeded["workbench.preferredLightColorTheme"] as? String, "Foundry Ember Light",
+        )
         XCTAssertTrue(labels.contains("Foundry Ember"))
         XCTAssertTrue(labels.contains("Foundry Ember Light"))
         // The folder name pins the manifest identity (publisher.name-version).
@@ -1043,7 +1049,7 @@ final class CodeServerManagerTests: XCTestCase {
         // carrying the app seed's own `face` as the editor surface, the seed's ANSI ramp for the
         // integrated terminal, and only valid colour values.
         let faces = [
-            "foundry-ember": "#27221E", "foundry-ember-light": "#F6F0ED",
+            "foundry-ember": "#27221E", "foundry-ember-light": "#FCFAF7",
             "foundry-dusk": "#242129", "foundry-graphite": "#222325",
         ]
         for theme in CodeServerManager.foundryExtensionThemes {

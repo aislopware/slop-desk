@@ -86,6 +86,13 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     private var resizeSettleWork: DispatchWorkItem?
     private let resizeSettleDelay: TimeInterval = 0.1
 
+    /// The window first-responder observation feeding ``WorkspaceChromeState/focusedIsland`` — which
+    /// glass island (terminal card / right panel card) holds key focus, for the unfocused island's
+    /// veil (user-directed 2026-08-07, polish round). KVO on `NSWindow.firstResponder` because focus
+    /// moves through AppKit here (terminal NSViews, the panel's WKWebView), where SwiftUI's focus
+    /// system never sees it.
+    private var responderObservation: NSKeyValueObservation?
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -242,6 +249,31 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // thickness is session state AppKit never saves. (An expand-toggle mid-session restores via
         // `applyItemCollapse`'s completion instead.) Here the window frame is final.
         restoreCodeSidebarWidth()
+        observeIslandFocus()
+    }
+
+    /// Install the first-responder → ``WorkspaceChromeState/focusedIsland`` bridge (idempotent; the
+    /// window exists only from `viewDidAppear`). A responder inside the CONTENT column reads as the
+    /// terminal island, one inside the CODE column as the panel island; anywhere else (sidebar,
+    /// field editors, overlay windows' own responders never land here) leaves the last island
+    /// answer standing — a palette summon must not dim both cards.
+    private func observeIslandFocus() {
+        guard responderObservation == nil, let window = view.window else { return }
+        responderObservation = window.observe(\.firstResponder) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                guard let self, let responder = window.firstResponder as? NSView else { return }
+                if let panel = self.codeSidebarItem?.viewController.viewIfLoaded,
+                   responder.isDescendant(of: panel)
+                {
+                    self.chrome.focusedIsland = .panel
+                } else if let content = self.splitViewItems.dropFirst().first?.viewController
+                    .viewIfLoaded,
+                    responder.isDescendant(of: content)
+                {
+                    self.chrome.focusedIsland = .terminal
+                }
+            }
+        }
     }
 
     /// Re-apply the persisted code-panel width (`Defaults[.codeSidebarWidth]`, written when a
@@ -265,12 +297,14 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         splitView.setPosition(target, ofDividerAt: 1)
     }
 
-    /// Refresh the window-level chrome. The window FOLLOWS the OS appearance (`appearance = nil` —
-    /// user-directed 2026-08-07; semantic tokens resolve per-appearance at draw time, so no pin) and
-    /// keeps the system window background; only the split view's divider layer needs an explicit
-    /// refresh here.
+    /// Refresh the window-level chrome. The window carries NO pin of its own (`appearance = nil`):
+    /// since the whole-app theme round (user-directed 2026-08-07) the pin lives at the APP level —
+    /// `ThemeStore.pinAppAppearance` sets `NSApp.appearance` from the active theme's polarity, and
+    /// every window (this one, Settings, overlays) inherits it. Only the split view's divider layer
+    /// needs an explicit refresh here.
     private func pinWindowAppearance() {
-        // Clear any historic pin (an upgraded install's window may still carry one).
+        // Clear any historic per-window pin (an upgraded install's window may still carry one) so
+        // the app-level pin is the one voice.
         view.window?.appearance = nil
         // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
@@ -282,7 +316,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
         // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
+        // Resolve the dynamic NSColor under the view's EFFECTIVE appearance: `.cgColor` snapshots
+        // against the thread's current drawing appearance, which outside a draw pass may still be
+        // the pre-pin appearance.
+        splitView.effectiveAppearance.performAsCurrentDrawingAppearance {
+            splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
+        }
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()

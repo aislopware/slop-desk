@@ -12,12 +12,14 @@
 //     surface it hides). The `sidebar.*` glyph pair stays: otty's `inset.filled.*third.square`
 //     pair was tried and user-rejected 2026-08-03. The connection cluster shows here ONLY while
 //     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
-// The WHOLE strip is HOVER-REVEALED (user-directed 2026-08-07, islands round): at rest the strip
-// shows NOTHING — the terminal island runs to the window top (Canario keeps no title band).
-// Pointer-in-strip fades in the connection cluster and the reopen plates together (`HoverSensor` —
-// hit-test-transparent, so the strip stays draggable/clickable). The reopen button flips the shared
-// `WorkspaceChromeState` flag that the split representable reads to collapse the matching
-// `NSSplitViewItem` — same machinery the old toolbar drove.
+// The REOPEN PLATES are ALWAYS VISIBLE while their panel is collapsed (user-directed 2026-08-07,
+// polish round — the Canario pattern: its sidebar toggle is a small permanent titlebar control,
+// and the hover-revealed plates read as "not quite right" toggles). Only the connection CLUSTER
+// stays hover-revealed (`HoverSensor` — hit-test-transparent, so the strip stays
+// draggable/clickable): it is telemetry, not a control, and its resting home is the sidebar
+// footer. The reopen button flips the shared `WorkspaceChromeState` flag that the split
+// representable reads to collapse the matching `NSSplitViewItem` — same machinery the old
+// toolbar drove.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -47,23 +49,24 @@ struct SlateTitlebar: View {
         // strip.
         let rowTop: CGFloat = 3
         return ZStack(alignment: .top) {
-            // Left: sidebar REOPEN only while collapsed AND the top strip is hovered. On reveal-by-collapse
-            // fade in after the slide settles (never ride it, x 80→300); on reveal-by-hover just small-fade.
+            // Left: sidebar REOPEN — a PERMANENT control while the sidebar is collapsed
+            // (user-directed 2026-08-07, polish round: the Canario always-visible toggle; the
+            // hover-reveal gate came off). On reveal-by-collapse it fades in after the slide
+            // settles (never rides it, x 80→300).
             PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                .opacity(!sidebarVisible && topHover ? 1 : 0)
-                .allowsHitTesting(!sidebarVisible && topHover)
+                .opacity(sidebarVisible ? 0 : 1)
+                .allowsHitTesting(!sidebarVisible)
                 .padding(.leading, 80)
                 .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
-                .animation(Slate.Anim.smallFade, value: topHover)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, rowTop)
+                .help("Show the tabs panel")
 
-            // Right: the RIGHT-panel REOPEN — only while the panel is COLLAPSED and the top strip
-            // is hovered (user-directed 2026-08-03: the expanded-state hide toggle moved into the
-            // panel's own strip, so this slot mirrors the left sidebar's reopen exactly). On
-            // reveal-by-collapse fade in after the slide settles; on reveal-by-hover just
-            // small-fade. The slot is ALWAYS reserved (hidden ⇒ transparent, not absent) so the
-            // connection cluster never shifts — the zero-shift rule.
+            // Right: the RIGHT-panel REOPEN — a PERMANENT control while the panel is collapsed
+            // (the same Canario treatment as the left plate; the expanded-state hide toggle lives
+            // in the panel's own strip, user-directed 2026-08-03). On reveal-by-collapse it fades
+            // in after the slide settles. The slot is ALWAYS reserved (hidden ⇒ transparent, not
+            // absent) so the connection cluster never shifts — the zero-shift rule.
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -80,13 +83,12 @@ struct SlateTitlebar: View {
                     .animation(Slate.Anim.smallFade, value: topHover)
                 }
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
-                    .opacity(!codeSidebarVisible && topHover ? 1 : 0)
-                    .allowsHitTesting(!codeSidebarVisible && topHover)
+                    .opacity(codeSidebarVisible ? 0 : 1)
+                    .allowsHitTesting(!codeSidebarVisible)
                     .animation(
                         codeSidebarVisible ? nil : Slate.Anim.standard.delay(0.15),
                         value: codeSidebarVisible,
                     )
-                    .animation(Slate.Anim.smallFade, value: topHover)
                     .help("Show the right panel")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)

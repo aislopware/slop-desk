@@ -8,12 +8,13 @@
 //   - CHROME IS THE OPERATING SYSTEM'S. Every chrome surface, text tier, hairline and fill resolves to
 //     a SEMANTIC system colour (`labelColor` tiers, `separatorColor`, the system fill ladder,
 //     `windowBackgroundColor`/`underPageBackgroundColor`). Semantic colours resolve per-appearance at
-//     draw time, so the chrome follows the OS light/dark switch, window activation and vibrancy the
-//     way a native app does — behaviours a static hex palette can never fake. No invented chrome hex.
-//   - THE TERMINAL IS THE CONTENT EXCEPTION (the Pages pattern): the pane area keeps a deliberate
-//     fixed palette — the ``SlateTheme`` TERMINAL PROFILE — the way a printed page stays white in a
-//     dark window. The whole split tree renders as ONE floating island (JetBrains Islands): a single
+//     draw time — and since the whole-app theme round (user-directed 2026-08-07) the appearance they
+//     resolve against is PINNED to the active theme's polarity (`ThemeStore.pinAppAppearance`): pick a
+//     dark theme and the whole app is dark, chrome included. No invented chrome hex.
+//   - THE TERMINAL GLASS carries the theme's deliberate fixed palette — the ``SlateTheme`` TERMINAL
+//     PROFILE. The whole split tree renders as ONE floating island (JetBrains Islands): a single
 //     rounded glass card on the system chrome, panes divided INSIDE it by subtle lines on the glass.
+//     Glass and chrome share one polarity now; the profile still owns the glass's exact colours.
 //   - ONE brand accent: the fixed Ember teal (light `#007272`, lifted for dark appearances). It is the
 //     only chrome colour that is ours; everything else is the system's.
 //   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
@@ -41,8 +42,10 @@ import UIKit
 struct SlateTheme: Equatable {
     /// Stable identity for change-detection + persistence (`ThemeChoice.builtinID`).
     let id: String
-    /// Whether the GLASS is light — the profile's own polarity, independent of the OS appearance
-    /// (a dark glass in a light window is the product default).
+    /// Whether the GLASS is light — the profile's own polarity. Since the whole-app theme round
+    /// (user-directed 2026-08-07) this ALSO drives the app-wide appearance pin
+    /// (`ThemeStore.pinAppAppearance`): a dark profile means an all-dark app, a light one an
+    /// all-light app — chrome and glass share one polarity, never the split-tone half-and-half.
     let isLight: Bool
 
     // The glass surfaces
@@ -125,10 +128,14 @@ struct SlateTheme: Equatable {
         ],
     )
 
-    /// Ember Light — warm paper glass, the light-polarity Ember.
+    /// Ember Light — warm paper glass, the light-polarity Ember. The face is NEAR-WHITE, a
+    /// deliberate step LIGHTER than the light chrome floor (user-directed 2026-08-07, polish round):
+    /// the old `#F6F0ED` face sat ~1.03:1 against the derived grey field, and the island vanished
+    /// into it — the reference relationship (JetBrains light: white islands on a grey floor) needs
+    /// the glass above the floor, not beside it.
     static let foundryEmberLight = profile(
         id: "foundry-ember-light", isLight: true,
-        face: 0xF6F0ED, ink: 0x36312C, ink2: 0x756F69, edge: 0xE3DCD7, accent: 0x007272,
+        face: 0xFCFAF7, ink: 0x36312C, ink2: 0x756F69, edge: 0xE9E2DC, accent: 0x007272,
         ansi: [
             0x36312C, 0xB43249, 0x357A3A, 0x8E6A00, 0x006E8C, 0x6E4FB1, 0x00787D, 0xFFFEFE,
             0x9A938D, 0xC93450, 0x34893C, 0x9C7500, 0x007A9B, 0x7B57C8, 0x00858A, 0xFFF9F5,
@@ -216,6 +223,12 @@ enum Slate {
             },
         )
         static let field = Color(nsColor: fieldNSColor)
+        /// The UNFOCUSED-island veil — a whisper of the floor tone laid OVER the island that does
+        /// not hold focus (user-directed 2026-08-07, polish round; JetBrains Islands dims inactive
+        /// islands to 0.56 alpha — far too loud here, so this is the same idea at a whisper). The
+        /// veil recedes the island toward the floor instead of touching the island's own layer
+        /// alpha, which keeps the Metal-backed terminal compositing untouched.
+        static let veil = field.opacity(0.08)
         #else
         static let void = Color(uiColor: .secondarySystemBackground)
         static let ground = Color(uiColor: .secondarySystemBackground)
@@ -226,6 +239,7 @@ enum Slate {
         /// pair is iOS's own "cell on a field" idiom, so no blend is needed here.
         static let chip = Color(uiColor: .secondarySystemGroupedBackground)
         static let field = Color(uiColor: .systemGroupedBackground)
+        static let veil = field.opacity(0.08)
         #endif
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }

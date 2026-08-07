@@ -32,16 +32,18 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertFalse(store.active.isLight, "Graphite stays dark glass")
         store.apply(.foundryEmber)
         XCTAssertEqual(store.active.id, "foundry-ember")
-        // nil (appearance reset/unset) resolves to the Ember default under EITHER OS appearance —
-        // the glass does not follow the OS (the Pages pattern). The probe is stubbed for determinism.
+        // nil (appearance reset/unset) FOLLOWS the OS (whole-app theme, user-directed 2026-08-07):
+        // OS dark → Ember, OS light → Ember Light. The probe is stubbed for determinism.
         store.osIsDark = { true }
         store.active = .foundryEmberLight
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the Ember default")
+        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the dark Ember default")
         store.osIsDark = { false }
-        store.active = .foundryEmberLight
+        store.active = .foundryEmber
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "foundry-ember", "nil in light mode → the Ember default")
+        XCTAssertEqual(
+            store.active.id, "foundry-ember-light", "nil in light mode → the light Ember default",
+        )
     }
 
     /// Each profile carries the libghostty terminal bg/fg for its glass — the pinned cell colours.
@@ -50,7 +52,9 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(SlateTheme.foundryEmber.terminalBackgroundHex, "27221E")
         XCTAssertEqual(SlateTheme.foundryEmber.terminalForegroundHex, "E6DED6")
         XCTAssertEqual(SlateTheme.foundryGraphite.terminalBackgroundHex, "222325")
-        XCTAssertEqual(SlateTheme.foundryEmberLight.terminalBackgroundHex, "F6F0ED")
+        // Ember Light's face is NEAR-WHITE — a step LIGHTER than the light chrome floor, so the
+        // island stands above it (user-directed 2026-08-07, polish round).
+        XCTAssertEqual(SlateTheme.foundryEmberLight.terminalBackgroundHex, "FCFAF7")
     }
 
     /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme IDENTITY —
@@ -137,8 +141,8 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(store.active.id, "foundry-ember")
     }
 
-    /// The legacy `.system` single choice resolves to the Ember default through `apply(appearance:)`
-    /// and stays there across an OS flip (both per-appearance defaults are the one signature glass).
+    /// The legacy `.system` single choice FOLLOWS the OS through `apply(appearance:)` — the whole-app
+    /// Ember pair flips live on an OS switch (user-directed 2026-08-07, whole-app theme).
     func testSystemChoiceFollowsOSThroughApplyAppearance() {
         let store = ThemeStore()
         store.osIsDark = { true }
@@ -146,7 +150,7 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(store.active.id, "foundry-ember", "OS dark → Ember")
         store.osIsDark = { false }
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "foundry-ember", "OS light → still Ember (glass ignores the OS)")
+        XCTAssertEqual(store.active.id, "foundry-ember-light", "OS light → Ember Light (follow-OS)")
     }
 
     /// CROSS-MODULE PIN: every concrete ``ThemeChoice``'s `builtinID` (in the leaf) round-trips to a built-in
@@ -162,10 +166,10 @@ final class ThemeStoreTests: XCTestCase {
             XCTAssertNotNil(theme, "\(choice) id \(id) must resolve to a built-in SlateTheme")
             XCTAssertEqual(theme?.id, id, "round-trip: ThemeChoice.builtinID ⇄ SlateTheme.id")
         }
-        // Both leaf default ids resolve to the shipped Ember glass (one signature default).
+        // The leaf default ids resolve to the whole-app Ember pair (dark → Ember, light → Ember Light).
         XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.foundryEmber.id)
         XCTAssertEqual(
-            ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.foundryEmber.id,
+            ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.foundryEmberLight.id,
         )
     }
 }

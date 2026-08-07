@@ -102,11 +102,13 @@ struct SlatePlateStyle: ButtonStyle {
 ///
 /// The pill descends from the resurrected inspector tab (`InspectorColumn.tabButton`, deleted in
 /// `6de70aa`, dug back up user-directed 2026-08-03 after two animation redesigns were rejected —
-/// round 1's opacity fades read as cheap, round 2's width morph as stuttery). Since 2026-08-07
-/// (single-island round) it is a CAPSULE chip filled at rest — the JetBrains Islands tab
-/// treatment: a small raised island standing on the flat chrome, with selection as the tint on
-/// top. At full width it never changes SIZE between states, which is what those animation rounds
-/// were fighting over.
+/// round 1's opacity fades read as cheap, round 2's width morph as stuttery). Since the polish
+/// round (user-directed 2026-08-07) the tabs are GHOSTS at rest — no resting fill; the filled-at-
+/// rest chips read as dated plates — and the SELECTED tab is the INVERTED MICRO-CHIP: the theme's
+/// own ink as the fill with the glass face as the text, the same reverse-video selection language
+/// the sidebar's active row speaks, scaled down to a tab. On the glass the inversion is
+/// theme-native (ink↔face swap from the profile), not an appearance flip. At full width a tab
+/// never changes SIZE between states, which is what those animation rounds were fighting over.
 ///
 /// There are NO `.animation` modifiers on the selection path. The ONE animation there is the
 /// caller's `withAnimation(Slate.Anim.standard)` transaction around the selection write, which
@@ -157,10 +159,9 @@ struct PanelTabPlate: View {
     var body: some View {
         Button(action: action) {
             plate
-                .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-                // A PILL chip, filled at rest (user-directed 2026-08-07, single-island round —
-                // the JetBrains Islands tab treatment): each tab is a small raised rounded chip
-                // standing on the flat chrome, not a rectangle that only lights up on selection.
+                // Selected = the inverted micro-chip's own text: the GLASS FACE on the ink fill
+                // (reverse video, theme-native). Unselected rests on the icon ink.
+                .foregroundStyle(selected ? Slate.Surface.terminal : Slate.Text.icon)
                 .background(fill, in: .capsule)
                 .contentShape(.capsule)
         }
@@ -210,12 +211,13 @@ struct PanelTabPlate: View {
         }
     }
 
-    /// The chip ladder: RAISED at rest (the chip must exist before the pointer finds it — that is
-    /// what makes it read as a small island), one rung up (`lift`) under the pointer, and the
-    /// selection tint for the latched tab — the same rung every other latched control uses.
+    /// The ladder (user-directed 2026-08-07, polish round): GHOST at rest — the strip is quiet
+    /// glass until the pointer or the selection says otherwise — a faint wash under the pointer,
+    /// and the theme INK as the selected fill (the inverted micro-chip; its text is the glass
+    /// face, set in `body`). The old filled-at-rest chip row read as dated plates.
     private var fill: Color {
-        if selected { return Slate.State.selected }
-        return hovering ? Slate.Surface.lift : Slate.Surface.raised
+        if selected { return Slate.Terminal.ink }
+        return hovering ? Slate.Surface.raised : .clear
     }
 }
 

@@ -67,8 +67,8 @@ components:
     height: "32px"
     padding: "0 12px"
   list-row-active:
-    backgroundColor: "controlBackgroundColor (solid chip — white in light, a step darker than the field in dark)"
-    textColor: "labelColor"
+    backgroundColor: "reverse video — the row flips its colorScheme environment, so the chip (controlBackgroundColor) and every ink inside resolve at the OPPOSITE pole: near-white chip + dark text on a dark floor, near-black chip + light text on a light floor"
+    textColor: "labelColor (under the flipped scheme)"
     rounded: "{rounded.control}"
     height: "32px"
     padding: "0 12px"
@@ -85,7 +85,7 @@ components:
     border: "none"
     note: "the right panel — its tab strip lives INSIDE the island, on the glass"
   panel-tab-chip:
-    backgroundColor: "quaternarySystemFill at rest; {colors.accent} @ 15% selected (on-glass resolution)"
+    backgroundColor: "ghost (clear) at rest; raised wash on hover; selected = inverted micro-chip — glass INK fill with glass FACE text, the strip's reverse-video echo of the sidebar chip"
     rounded: "capsule"
     height: "24px"
 ---
@@ -117,23 +117,36 @@ active row's solid chip (Canario's white active tab). The field↔island tone re
 the reference in both modes: islands lighter than the field in light, darker in dark, deliberately
 subtle.
 
-## The two worlds
+## The two worlds — one polarity
 
-| World | Where | Colour source | Follows OS appearance? |
-|---|---|---|---|
-| **Chrome** | the window field, sidebar, hover titlebar (empty state), overlays, Settings, empty states | Semantic system colours | **Yes** — light/dark, active/inactive |
-| **Glass** | the terminal island, the panel island (strip + surfaces), satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) | **No** — the glass keeps its own polarity (Pages pattern) |
+| World | Where | Colour source |
+|---|---|---|
+| **Chrome** | the window field, sidebar, hover titlebar (empty state), overlays, Settings, empty states | Semantic system colours, resolved under the app's pinned appearance |
+| **Glass** | the terminal island, the panel island (strip + surfaces), satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) |
 
-Nothing may straddle the boundary: a view is either ON the chrome (semantic tokens) or ON the glass
-(profile tokens, or semantic tokens under the island's forced colour scheme — see below). The three
-dead chrome rounds died precisely because chrome and glass shared one invented palette.
+**Whole-app theme** (user-directed 2026-08-07, polish round): the theme choice drives the ENTIRE
+window. `ThemeStore` pins `NSApp.appearance` to the active theme's polarity, so a dark theme is an
+all-dark app and a light theme an all-light one — never half-and-half. The "System" choice follows
+the OS by resolving to the per-OS Ember pair (dark → Ember, light → Ember Light); a concrete choice
+ignores the OS. The embedded workbench follows the same pin: the webview inherits the app
+appearance and the seeded `window.autoDetectColorScheme` + preferred-theme pair map it to
+Foundry Ember / Foundry Ember Light per client.
+
+Nothing may straddle the chrome/glass boundary: a view is either ON the chrome (semantic tokens)
+or ON the glass (profile tokens, or semantic tokens under the island's forced colour scheme — see
+below). The three dead chrome rounds died precisely because chrome and glass shared one invented
+palette.
 
 ## Chrome — the system's, verbatim
 
 - **Sidebar** = FLAT on the shared window field — no material, no vibrancy (the `.sidebar`
   `NSVisualEffectView` round gave the column its own tone and a visible seam; removed 2026-08-07).
-  The active row's solid chip (`Slate.Surface.chip` → `controlBackgroundColor`) is the column's one
-  raised object.
+  The active row is the column's one raised object, and it is **reverse video** (polish round,
+  user-directed 2026-08-07): the row flips its `colorScheme` environment, so the chip fill
+  (`Slate.Surface.chip` → `controlBackgroundColor`) and every semantic ink inside re-resolve at
+  the opposite pole — a light chip with dark text on the dark floor, a dark chip with light text
+  on the light floor. Selection is stated by INVERSION (the ANSI reverse-video / Canario
+  contrast-flip gesture), still entirely semantic — no invented hex.
 - **Surfaces** (`Slate.Surface`): `field` → the derived floor tone (see above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
@@ -146,9 +159,14 @@ dead chrome rounds died precisely because chrome and glass shared one invented p
 - **Status** (`Slate.Status`): `systemGreen` / `systemOrange` / `systemRed`; info rides the accent.
 - **Identity** (`Slate.Identity`): the 8 system hues (red → purple), FNV-1a keyed per project — the
   Finder-tag dialect. Spent as spines/washes only, never row plates or text recolouring.
-- **No forced appearance anywhere**: no `.preferredColorScheme`, no `NSWindow.appearance` pin, no
-  per-control appearance pin. Semantic colours resolve per-appearance at draw time, which also
-  dissolves the old D3 cross-`NSHostingController` repaint problem for chrome.
+- **One appearance pin, owned by the theme**: `ThemeStore.pinAppAppearance` sets `NSApp.appearance`
+  from the active theme's polarity (the whole-app theme); windows carry NO pin of their own and
+  inherit it. No other `.preferredColorScheme` / per-control pin exists. Semantic colours still
+  resolve per-appearance at draw time — but the appearance they resolve under is the theme's.
+  Trap: a `CGColor` assigned from a dynamic `NSColor` is a snapshot — resolve it inside
+  `effectiveAppearance.performAsCurrentDrawingAppearance` and re-resolve in
+  `viewDidChangeEffectiveAppearance`, or a theme flip leaves stale-pole pixels (the divider-gap
+  line).
 
 ## The one brand colour
 
@@ -162,11 +180,12 @@ system's.
 
 - The WHOLE split tree of the content column is **one rounded glass card** (`radiusIsland` 12pt
   continuous, `islandMargin` 8pt of field around it, NO ring, NO shadow)
-  running the FULL window height — there is no reserved titlebar band (Canario); the hover-reveal
-  titlebar floats OVER the island's top edge and shows NOTHING at rest (the connection cluster and
-  reopen plates fade in on strip hover, under the forced glass scheme while the island is up; the
-  centred title menu was REMOVED — the sidebar's active row names the pane, user-directed
-  2026-08-07).
+  running the FULL window height — there is no reserved titlebar band (Canario); the titlebar
+  floats OVER the island's top edge. The column REOPEN plates are ALWAYS visible while their
+  column is collapsed (Canario's small permanent titlebar toggles — hover-reveal toggles failed
+  discoverability, user-directed 2026-08-07 polish round); only the connection cluster stays
+  hover-reveal. The centred title menu was REMOVED — the sidebar's active row names the pane
+  (user-directed 2026-08-07).
   Panes are FLUSH inside it; splits are divided by the profile's `terminalEdge` line — a subtle line
   ON the glass (JetBrains Islands), never a chrome-coloured gap, never per-pane cards or shadows.
 - The island subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
@@ -174,14 +193,21 @@ system's.
   washes) resolves against the glass, not the OS appearance. Satellite pane windows are glass
   edge-to-edge and adopt the same forced scheme.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
-- Focus = the small filled accent corner triangle (top-left, split tabs only). No dimming siblings.
+- Focus = the small filled accent corner triangle (top-left, split tabs only). No dimming siblings
+  WITHIN an island — but BETWEEN the two islands, the unfocused one wears `Slate.Surface.veil`
+  (the field tone at 8% — JetBrains dims inactive islands at 0.56 alpha; ours is the same idea at
+  a whisper). The veil follows `NSWindow.firstResponder` (terminal column ↔ panel column;
+  anything else leaves the last answer standing so a palette summon never dims both).
 - **The panel island** (the right column) is the second glass card, same anatomy: glass fill,
   forced glass scheme, island radius, no ring — but NO leading margin (the terminal island's
   trailing margin is the shared inter-island channel; two margins there read as "too far apart",
   user-directed 2026-08-07 — every field gutter in the window is ONE margin wide). Its TAB STRIP
   sits INSIDE the island — the capsule chips, reload plate and hide toggle all resolve on the
   glass — and the surfaces below (workbench webview, simulator/emulator stages, placeholders) fill
-  the card to its clipped corners.
+  the card to its clipped corners. The SELECTED strip chip is the **inverted micro-chip** (polish
+  round): glass-ink fill with glass-face text — the same reverse-video language as the sidebar
+  chip, so the whole app has ONE way of saying "selected". At rest a tab is a ghost (no plate);
+  hover is the raised wash.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -192,14 +218,18 @@ historic `foundry-` prefix so persisted choices resolve):
 | Profile | Glass | Ink | Edge | On-glass accent |
 |---|---|---|---|---|
 | **Ember** (default) | `#27221E` | `#E6DED6` | `#3E3833` | `#66CCD1` |
-| Ember Light | `#F6F0ED` | `#36312C` | `#E3DCD7` | `#007272` |
+| Ember Light | `#FCFAF7` | `#36312C` | `#E9E2DC` | `#007272` |
 | Dusk | `#242129` | `#E5DCE9` | `#36343C` | `#B3B1FC` |
 | Graphite | `#222325` | `#DFDFE3` | `#343537` | `#61C9E7` |
 
 The Settings gallery ("Terminal Theme") previews each profile as a miniature of its own terminal.
-The default is Ember under BOTH OS appearances — the glass does not follow the OS; Ember Light is an
-explicit choice (or the dark-mode dual-slot). The FIXED pills (secure blue `#2D6FE8`, sync amber
-`#D97A1F`) sit outside every palette, system and profile alike.
+A profile choice is a WHOLE-APP choice (polish round): its `isLight` polarity pins the app
+appearance, so picking Ember darkens the entire window and picking Ember Light lightens it. The
+"System" choice (and the fresh-install default) follows the OS through the Ember pair — OS dark →
+Ember, OS light → Ember Light — flipping live on an OS switch. Ember Light's glass is NEAR-WHITE,
+a step LIGHTER than the derived light floor (the JetBrains light relationship: white islands on
+grey). The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside every palette,
+system and profile alike.
 
 ## Structure, type, motion (unchanged ladders)
 
@@ -229,6 +259,9 @@ explicit choice (or the dark-mode dual-slot). The FIXED pills (secure blue `#2D6
   border ring or shadow.
 - DON'T give any column its own material or background tone — the floor is ONE colour
   (`Slate.Surface.field`) or the composition collapses back into boxes.
-- DON'T force a colour scheme on chrome; DON'T let OS-appearance semantics leak INSIDE the island
-  (use the forced glass scheme).
+- DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
+  per-control); DON'T let OS-appearance semantics leak INSIDE the island (use the forced glass
+  scheme).
+- DON'T introduce a second selection language: selected = reverse-video inversion (sidebar chip,
+  strip micro-chip). No accent-tinted plates, no underlines for selection.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.

@@ -15,15 +15,14 @@ import Foundation
 /// GOLDEN-SAFE: this resolver is pure client-chrome routing — it never touches the wire / `EnvConfig` /
 /// sidecar (it just selects which built-in `SlateTheme` the chrome + terminal cells adopt).
 public enum ThemeResolution {
-    /// The compile-time default built-in id for BOTH OS appearances (Foundry Ember). The split-tone
-    /// Ember (light warm chrome around dark terminal glass — user-directed 2026-08-07) is the product's
-    /// one signature look and reads correctly under either OS mode, so an unset slot / `.system` no
-    /// longer swaps to a per-appearance variant. MIRRORS `SlateTheme.foundryEmber.id`.
+    /// The compile-time default built-in id for the OS-DARK appearance (Foundry Ember).
+    /// MIRRORS `SlateTheme.foundryEmber.id`.
     public static let defaultDarkID = "foundry-ember"
-    /// The OS-light fallback — the SAME split-tone Ember (see ``defaultDarkID``). Kept as a distinct
-    /// constant so the dual-slot resolver and the picker's "System" card stay expressed in light/dark
-    /// terms; Ember Light remains an explicit picker choice only.
-    public static let defaultLightID = "foundry-ember"
+    /// The OS-light default — Ember LIGHT (user-directed 2026-08-07, polish round: the theme choice
+    /// now drives the WHOLE app's appearance, chrome included, so a follow-OS user gets an all-light
+    /// app under OS light and an all-dark one under OS dark — never the split-tone half-and-half).
+    /// MIRRORS `SlateTheme.foundryEmberLight.id`.
+    public static let defaultLightID = "foundry-ember-light"
 
     /// Resolve the active built-in theme id for `appearance` under the current OS appearance.
     ///
@@ -40,8 +39,8 @@ public enum ThemeResolution {
 
     /// The built-in ``SlateTheme`` id for a (possibly `nil` / `.system`) ``ThemeChoice`` under `osIsDark`:
     ///   - `nil` (unset slot — the FRESH-INSTALL default) ⇒ the OS-appearance default (dark →
-    ///     ``defaultDarkID``, light → ``defaultLightID``) — both currently the one split-tone Ember, so a
-    ///     fresh install shows the signature look under either OS appearance;
+    ///     ``defaultDarkID``, light → ``defaultLightID``) — the whole-app Ember pair, so a fresh
+    ///     install follows the OS with an all-dark or all-light app;
     ///   - `.system` ⇒ likewise the OS-appearance default;
     ///   - any concrete choice ⇒ its fixed `SlateTheme.id` (via ``ThemeChoice/builtinID``).
     public static func builtinID(for choice: ThemeChoice?, osIsDark: Bool) -> String {

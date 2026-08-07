@@ -39,7 +39,9 @@ const SEEDS = [
     },
     {
         file: "foundry-ember-light", label: "Foundry Ember Light", light: true,
-        void_: "#DDD8D4", ground: "#EBE5E1", face: "#F6F0ED", raised: "#FFF9F5", lift: "#FFFEFE",
+        // face lifted to near-white (user-directed 2026-08-07, polish round) — the island glass
+        // must sit LIGHTER than the app's grey chrome floor; mirrors SlateTheme.foundryEmberLight.
+        void_: "#DDD8D4", ground: "#EBE5E1", face: "#FCFAF7", raised: "#FFFDFB", lift: "#FFFFFF",
         ink: "#36312C", ink2: "#756F69", ink3: "#9A938D",
         accent: "#007272", accentDeep: "#004D4D",
         chroma: {

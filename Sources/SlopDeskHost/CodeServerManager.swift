@@ -376,12 +376,13 @@ final class CodeServerManager: @unchecked Sendable {
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
     /// theme (`Foundry Ember` from the seeded `slopdesk-foundry` extension, generated from the
-    /// exact OKLCH palettes the client chrome runs on; the vendored Monokai Pro family and
-    /// `Foundry Ember Light` stay seeded beside it as ⌘K ⌘T picker options; the theme is PINNED
-    /// dark — no `window.autoDetectColorScheme` — because under the split-tone Ember
-    /// (user-directed 2026-08-07) the editor is a DARK GLASS surface beside the terminal while
-    /// the CLIENT chrome is light, so appearance-following would flip the glass light exactly
-    /// when the signature theme is active) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
+    /// exact OKLCH palettes the client chrome runs on; the vendored Monokai Pro family stays
+    /// seeded beside it as ⌘K ⌘T picker options; `window.autoDetectColorScheme` + the
+    /// preferred-theme pair make the workbench FOLLOW each client's appearance — since the
+    /// whole-app theme (user-directed 2026-08-07, polish round) the client pins its entire
+    /// appearance to the theme's polarity and the webview inherits that pin, so a dark-theme
+    /// client gets Ember glass and a light-theme client Ember Light, per webview, no wire
+    /// involved) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.131, the v6-era observation): it
@@ -445,6 +446,9 @@ final class CodeServerManager: @unchecked Sendable {
     {
         "chat.disableAIFeatures": true,
         "workbench.colorTheme": "Foundry Ember",
+        "window.autoDetectColorScheme": true,
+        "workbench.preferredDarkColorTheme": "Foundry Ember",
+        "workbench.preferredLightColorTheme": "Foundry Ember Light",
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1087,19 +1091,18 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
-        // v19 — the Foundry pair with `window.autoDetectColorScheme` flipping the workbench to
-        // Ember Light on a light client. The split-tone Ember (user-directed 2026-08-07) makes the
-        // editor a DARK GLASS surface beside the terminal regardless of the client's appearance —
-        // its chrome went light, so appearance-following would flip the glass light exactly when
-        // the signature theme is active. v20 pins the dark workbench and drops the auto-detect
-        // trio; Ember Light remains a ⌘K ⌘T picker option.
+        // v20 — the pinned-dark seed: the split-tone Ember (dark glass beside light chrome)
+        // dropped v19's `window.autoDetectColorScheme` trio so appearance-following could not
+        // flip the glass light. The whole-app theme (user-directed 2026-08-07, polish round)
+        // reversed that rationale — the client pins its WHOLE appearance to the theme polarity
+        // and the webview inherits it — so the current seed (v21) restores the trio, landing
+        // byte-identical to v19. v19 therefore CANNOT stay in this list (the current seed in the
+        // obsolete list would rewrite every font-synced host on each boot); a pristine v19 file
+        // needs no upgrade anyway, because it already equals the current seed.
         """
         {
             "chat.disableAIFeatures": true,
             "workbench.colorTheme": "Foundry Ember",
-            "window.autoDetectColorScheme": true,
-            "workbench.preferredDarkColorTheme": "Foundry Ember",
-            "workbench.preferredLightColorTheme": "Foundry Ember Light",
             "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {

@@ -29,6 +29,19 @@ final class WorkspaceChromeState {
     /// floating window, so the flag is inert there (documented no-op, never a dead toggle).
     var pinned = false
 
+    /// Which of the two glass ISLANDS holds key focus — the terminal card or the right panel card.
+    /// Drives the unfocused island's floor-tone veil (user-directed 2026-08-07, polish round; the
+    /// JetBrains Islands focus mechanic — dim the island that is not speaking — at a whisper).
+    /// Written by the macOS split shell's first-responder observation; focus landing anywhere else
+    /// (sidebar, overlays) leaves the last island answer standing, so a palette summon never dims
+    /// both cards at once. Pure view state — terminal resting (a fresh window focuses a pane).
+    enum FocusedIsland {
+        case terminal
+        case panel
+    }
+
+    var focusedIsland: FocusedIsland = .terminal
+
     /// Auto-hide-tabs-panel: set whenever the user MANUALLY toggles the TABS panel — on macOS ⌘⇧L,
     /// the titlebar button, and the palette row all flip the flag through ``toggleSidebar()``; on iPad a swipe of
     /// the leading column routes through `WorkspaceRootView.applySidebarVisibility`, the SECOND manual entry

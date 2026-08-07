@@ -801,6 +801,10 @@ struct CodeSidebarWebView: NSViewRepresentable {
 
     func updateNSView(_ container: NSView, context _: Context) {
         let webView = CodeSidebarWebViewPool.shared.webView(for: projectRoot, url: url)
+        // Re-apply the theme backdrop on every update: the pooled webview outlives a theme
+        // switch, and the creation-time snapshot would otherwise flash the OLD theme's tone on
+        // scroll bounce (an appearance flip re-runs this via the colorScheme environment change).
+        webView.underPageBackgroundColor = NSColor(slateBackdropHex: Slate.theme.terminalBackgroundHex)
         guard webView.superview !== container else { return }
         container.subviews.forEach { $0.removeFromSuperview() }
         webView.translatesAutoresizingMaskIntoConstraints = false

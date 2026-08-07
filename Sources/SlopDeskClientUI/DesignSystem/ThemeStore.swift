@@ -23,6 +23,9 @@ import Foundation
 import Observation
 import SlopDeskVideoProtocol
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// The single live owner of the active ``SlateTheme``. Read by ``Slate/theme`` (so every token resolves the
 /// runtime theme) and repointed by the appearance apply path. Default `.foundryEmber` ⇒ byte-identical
@@ -56,6 +59,14 @@ final class ThemeStore {
     /// observer leaks per test. Unconditional (NSObjectProtocol exists on every platform) to keep the
     /// `@Observable` body free of a `#if`-conditional stored property; iOS leaves it `nil`.
     @ObservationIgnored private var osObserverToken: NSObjectProtocol?
+
+    /// One-shot `NSApplication.didFinishLaunching` token: the launch-time appearance apply runs in
+    /// `App.init`, BEFORE `NSApplicationMain` creates `NSApp`, so the app-level pin silently no-ops
+    /// there. This observer re-pins once the application object exists — without it a persisted
+    /// theme launches into the OS appearance (dark glass under light chrome, the half-and-half the
+    /// whole-app theme forbids). Unconditional stored property for the same `@Observable` reason as
+    /// ``osObserverToken``.
+    @ObservationIgnored private var launchRepinToken: NSObjectProtocol?
 
     init() {}
 
@@ -100,10 +111,52 @@ final class ThemeStore {
     private func setActive(_ resolved: SlateTheme) {
         let changed = resolved != active
         active = resolved
+        pinAppAppearance(isLight: resolved.isLight)
         if changed {
             NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
         }
     }
+
+    /// Pin the WHOLE APP's appearance to the active theme's polarity (user-directed 2026-08-07,
+    /// polish round): the theme choice drives every window — workspace chrome, Settings, overlays —
+    /// so a dark theme is an all-dark app and a light theme an all-light one, never the split-tone
+    /// half-and-half. `NSApp.appearance` (not per-window pins) so auxiliary windows inherit it too.
+    /// Follow-OS users still follow the OS: the resolver flips the theme on an OS switch and this
+    /// re-pins to match. Singleton-only — a test instance must not restyle the test-runner app.
+    private func pinAppAppearance(isLight: Bool) {
+        #if os(macOS)
+        guard self === Self.shared else { return }
+        guard let app = NSApp else {
+            // The launch-time apply (`PreferencesStore` init inside `App.init`) runs before
+            // `NSApplicationMain` — no `NSApp` yet. Defer to a one-shot didFinishLaunching re-pin;
+            // dropping the pin here would leave the chrome on the OS appearance while the glass
+            // wears the persisted theme.
+            installLaunchRepinIfNeeded()
+            return
+        }
+        app.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
+        #endif
+    }
+
+    #if os(macOS)
+    /// Install the one-shot launch re-pin (idempotent). Fires after `NSApp` exists, re-pins the
+    /// CURRENT theme polarity, and removes itself — later re-pins ride the normal apply path.
+    private func installLaunchRepinIfNeeded() {
+        guard launchRepinToken == nil else { return }
+        launchRepinToken = NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: nil,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let token = self.launchRepinToken {
+                    NotificationCenter.default.removeObserver(token)
+                    self.launchRepinToken = nil
+                }
+                self.pinAppAppearance(isLight: self.active.isLight)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Built-in lookup
 
@@ -122,11 +175,15 @@ final class ThemeStore {
 
     // MARK: - OS appearance
 
-    /// Whether the OS is currently in dark mode (macOS: `NSApp.effectiveAppearance`; other platforms: `false`).
-    /// The default backing for ``osIsDark``; a test overrides the closure instead of touching `NSApp`.
+    /// Whether the OS is currently in dark mode. NOT `NSApp.effectiveAppearance`: the app pins its own
+    /// appearance to the theme's polarity (``pinAppAppearance(isLight:)``), so once pinned the app-level
+    /// probe reports the PIN, not the OS — a follow-OS user's next OS flip would then re-resolve against
+    /// the stale answer. The `AppleInterfaceStyle` defaults key is the OS-level truth the pin cannot
+    /// shadow (`"Dark"` when dark, absent when light). The default backing for ``osIsDark``; a test
+    /// overrides the closure instead.
     static func systemIsDark() -> Bool {
         #if os(macOS)
-        return NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
         #else
         return false
         #endif
