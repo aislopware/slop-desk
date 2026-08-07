@@ -53,7 +53,7 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
             // relies on to drive the running app.
             AppearanceApplier.apply = { ThemeStore.shared.apply(appearance: $0) }
             // Deterministic OS-appearance probe (no NSApp in a test). Dark ⇒ the unset/default slot resolves to
-            // Foundry Ember — the product default the finding expects `config get theme` to report.
+            // Dracula — the product default the finding expects `config get theme` to report.
             ThemeStore.shared.osIsDark = { true }
             ThemeStore.shared.apply(appearance: AppearancePreferences()) // reset to the default theme
         }
@@ -75,42 +75,46 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
     func testConfigSetThemeChangesActiveTheme() {
         let h = makeHarness(#function)
 
-        // Default live theme = Foundry Ember, NOT the catalog default "System".
-        XCTAssertEqual(h.backend.configGet(key: "theme"), "foundry-ember")
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-ember")
+        // Default live theme = Dracula, NOT the catalog default "System".
+        XCTAssertEqual(h.backend.configGet(key: "theme"), "dracula")
+        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
 
         // A built-in id (as listed by `theme list`) switches the ACTIVE theme + round-trips via `config get`.
-        let lightID = "foundry-ember-light"
+        let lightID = "alucard"
         XCTAssertTrue(h.backend.configSet(key: "theme", value: lightID, transient: false))
         XCTAssertEqual(ThemeStore.shared.active.id, lightID, "config set theme retints the running app")
         XCTAssertEqual(h.backend.configGet(key: "theme"), lightID, "config get theme reflects the live theme")
         XCTAssertEqual(
-            h.preferences.appearance.theme, .foundryEmberLight,
+            h.preferences.appearance.theme, .alucard,
             "the selection is persisted to the typed model",
         )
 
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-graphite")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "dracula", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
     }
 
     func testConfigSetThemeAcceptsAChoiceRawValueAndRejectsUnknown() {
         let h = makeHarness(#function)
-        // The ThemeChoice raw value also resolves (e.g. an explicit Foundry seed by its raw name).
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundryDusk", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-dusk")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "alucard")
 
         // An unknown theme name is an HONEST error (false), not a silent success, and leaves the theme put.
-        XCTAssertFalse(h.backend.configSet(key: "theme", value: "Dracula", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-dusk", "a rejected theme set does not change it")
+        XCTAssertFalse(h.backend.configSet(key: "theme", value: "Foundry Ember", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "alucard", "a rejected theme set does not change it")
+
+        // A ThemeChoice raw value that is NOT a built-in id also resolves: "system" follows the
+        // stubbed dark OS to the dark default.
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "system", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
     }
 
     func testConfigUnsetThemeRestoresDefault() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-graphite")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "alucard")
 
         XCTAssertTrue(h.backend.configUnset(key: "theme", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "foundry-ember", "unset restores the default theme")
+        XCTAssertEqual(ThemeStore.shared.active.id, "dracula", "unset restores the default theme")
     }
 
     // MARK: - render keys + honest rejection of non-live keys
@@ -131,12 +135,12 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     func testConfigShowReportsLiveValues() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "foundry-graphite", transient: false))
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
         XCTAssertTrue(h.backend.configSet(key: "font-size", value: "15", transient: false))
 
         let shown = h.backend.configShow()
         XCTAssertEqual(
-            shown.first { $0.key == "theme" }?.value, "foundry-graphite",
+            shown.first { $0.key == "theme" }?.value, "alucard",
             "config show reflects the live theme",
         )
         XCTAssertEqual(shown.first { $0.key == "font-size" }?.value, "15", "config show reflects the live size")

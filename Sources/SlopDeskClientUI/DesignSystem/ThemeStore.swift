@@ -9,8 +9,8 @@
 // re-reads the tokens, AND (b) re-inject each `NSHostingController` + re-pin `NSWindow.appearance`
 // (handled in `SlopDeskSplitViewController`) — otherwise the window half-repaints.
 //
-// DEFAULT `.foundryEmber`: a headless / no-store render resolves `Slate.theme` to the Foundry Ember
-// palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
+// DEFAULT `.dracula`: a headless / no-store render resolves `Slate.theme` to the Dracula palette.
+// The golden corpus is unaffected — chrome colour never crosses into the wire vectors
 // (appearance is pure client chrome, never folded into `EnvConfig`/the sidecar).
 //
 // DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
@@ -28,7 +28,7 @@ import AppKit
 #endif
 
 /// The single live owner of the active ``SlateTheme``. Read by ``Slate/theme`` (so every token resolves the
-/// runtime theme) and repointed by the appearance apply path. Default `.foundryEmber` ⇒ byte-identical
+/// runtime theme) and repointed by the appearance apply path. Default `.dracula` ⇒ byte-identical
 /// headless.
 @MainActor
 @Observable
@@ -41,9 +41,9 @@ final class ThemeStore {
     /// `@Observable` observation does not reach.
     static let didChangeNotification = Notification.Name("SlopDeskThemeStoreDidChange")
 
-    /// The active theme. Default Foundry Ember (dark) — the product default; a no-store / headless
-    /// render resolves the same Ember palette.
-    var active: SlateTheme = .foundryEmber
+    /// The active theme. Default Dracula (dark) — the product default; a no-store / headless
+    /// render resolves the same Dracula palette.
+    var active: SlateTheme = .dracula
 
     /// The appearance prefs last applied — re-resolved on an OS-appearance flip so a dual-slot / `.system`
     /// user follows the system colour scheme LIVE. `nil` until the first ``apply(appearance:)`` (the OS
@@ -83,7 +83,7 @@ final class ThemeStore {
     /// Apply a bare ``ThemeChoice`` (the legacy single-slot selection). A thin convenience over
     /// ``apply(appearance:)`` — wraps the choice in a primary-slot-only ``AppearancePreferences`` so it routes
     /// through the SAME dual-slot resolution (`.system` still follows the OS, `nil` ⇒ the compile-time default
-    /// Foundry Ember).
+    /// Dracula).
     func apply(_ choice: ThemeChoice?) {
         apply(appearance: AppearancePreferences(theme: choice))
     }
@@ -101,7 +101,7 @@ final class ThemeStore {
     /// An unknown built-in id gracefully falls back to the default theme — never a crash.
     private func applyResolved(for appearance: AppearancePreferences) {
         let id = ThemeResolution.activeBuiltinID(appearance: appearance, osIsDark: osIsDark())
-        setActive(Self.builtin(id: id) ?? .foundryEmber)
+        setActive(Self.builtin(id: id) ?? .dracula)
     }
 
     /// Repoint ``active`` and post the cross-boundary repaint notification on any theme CONTENT change (not
@@ -111,7 +111,9 @@ final class ThemeStore {
     private func setActive(_ resolved: SlateTheme) {
         let changed = resolved != active
         active = resolved
-        pinAppAppearance(isLight: resolved.isLight)
+        // CHROME polarity, not glass polarity: an inverted (frame) profile pins light chrome
+        // around dark glass — the Canario structure (user-directed 2026-08-07, modern round).
+        pinAppAppearance(isLight: resolved.chromeIsLight)
         if changed {
             NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
         }
@@ -152,7 +154,7 @@ final class ThemeStore {
                     NotificationCenter.default.removeObserver(token)
                     self.launchRepinToken = nil
                 }
-                self.pinAppAppearance(isLight: self.active.isLight)
+                self.pinAppAppearance(isLight: self.active.chromeIsLight)
             }
         }
     }
@@ -165,10 +167,8 @@ final class ThemeStore {
     /// `ThemeChoice` → id mapping; the end-to-end `ThemeStoreTests` round-trip pins both halves.
     static func builtin(id: String) -> SlateTheme? {
         switch id {
-        case "foundry-ember": .foundryEmber
-        case "foundry-ember-light": .foundryEmberLight
-        case "foundry-dusk": .foundryDusk
-        case "foundry-graphite": .foundryGraphite
+        case "dracula": .dracula
+        case "alucard": .alucard
         default: nil
         }
     }
@@ -189,10 +189,10 @@ final class ThemeStore {
         #endif
     }
 
-    /// Resolve the OS appearance to an ``SlateTheme`` (Dark mode ⇒ Foundry Ember, else Foundry Ember Light).
+    /// Resolve the OS appearance to an ``SlateTheme`` (Dark mode ⇒ Dracula, else Alucard).
     /// Kept for the legacy `.system` built-in resolution path / any non-dual-slot caller.
     static func systemTheme() -> SlateTheme {
-        systemIsDark() ? .foundryEmber : .foundryEmberLight
+        systemIsDark() ? .dracula : .alucard
     }
 
     /// Install the live macOS OS-appearance observer (idempotent). On a system light/dark switch it

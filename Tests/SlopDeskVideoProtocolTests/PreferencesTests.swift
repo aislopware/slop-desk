@@ -82,10 +82,10 @@ final class PreferencesTests: XCTestCase {
             let prefs = AppearancePreferences(theme: theme, density: "comfortable")
             XCTAssertEqual(try roundTrip(prefs), prefs)
         }
-        // The default Foundry Ember choice persists explicitly.
-        XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .foundryEmber)).theme, .foundryEmber)
+        // The default Dracula choice persists explicitly.
+        XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .dracula)).theme, .dracula)
         // A partially-set model round-trips too (density unset).
-        let partial = AppearancePreferences(theme: .foundryGraphite)
+        let partial = AppearancePreferences(theme: .dracula)
         XCTAssertEqual(try roundTrip(partial), partial)
         XCTAssertNil(try roundTrip(partial).density)
     }

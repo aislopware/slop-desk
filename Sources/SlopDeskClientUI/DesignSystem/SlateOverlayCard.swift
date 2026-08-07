@@ -23,8 +23,8 @@
 //
 // ⚠️ THE INK IS NEUTRAL, NOT THE TERMINAL'S. `Slate` supplies every DIMENSION here (raw font/radius/height
 // literals fail `scripts/check-ds-leaks.sh`) and the mono FACE, but none of its colour. A floating card is
-// not part of the workspace's world: FOUNDRY's greys are tinted — Ember's are warm umber, Dusk's are
-// mauve — and a dialog wearing them reads as a stained panel rather than as a neutral surface hovering
+// not part of the workspace's world: the theme's greys are tinted (the Dracula pair's are violet),
+// and a dialog wearing them reads as a stained panel rather than as a neutral surface hovering
 // over coloured work. So the family's ink comes from the SYSTEM's semantic colours (``SlateOverlayInk``),
 // which are neutral by construction and follow light/dark on their own. The workspace keeps the filter; the
 // things that float above it do not.

@@ -1,7 +1,7 @@
 // ThemeStore tests — the runtime theme holder that defeats the STATIC `Slate.theme` across the
-// AppKit `NSSplitViewController` boundary. Pure logic only: `apply(_:)` mapping, the default Foundry
-// Ember invariant, and the IDENTITY-keyed cross-boundary change notification (so a same-lightness variant
-// switch still repaints). NO SCStream/VT/Metal/VideoWindowView is touched.
+// AppKit `NSSplitViewController` boundary. Pure logic only: `apply(_:)` mapping, the default Dracula
+// invariant, and the IDENTITY-keyed cross-boundary change notification. NO
+// SCStream/VT/Metal/VideoWindowView is touched.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -10,73 +10,64 @@ import XCTest
 
 @MainActor
 final class ThemeStoreTests: XCTestCase {
-    /// The default terminal profile is Ember — the dark glass product default. `isLight` is the
-    /// GLASS's own polarity (chrome is not themable — it follows the OS appearance), so Ember reads
-    /// FALSE: dark cells regardless of the window appearance around them.
-    func testDefaultIsFoundryEmber() {
+    /// The default terminal profile is Dracula — the dark glass product default. `isLight` is the
+    /// GLASS's own polarity; the CHROME polarity is the frame's (inverted — the Canario structure
+    /// both shipped profiles wear, round-8 verdict, user-directed 2026-08-07).
+    func testDefaultIsDracula() {
         let store = ThemeStore()
-        XCTAssertFalse(store.active.isLight, "Ember is dark glass ⇒ isLight is false")
-        XCTAssertEqual(store.active.id, "foundry-ember")
+        XCTAssertFalse(store.active.isLight, "Dracula is dark glass ⇒ isLight is false")
+        XCTAssertEqual(store.active.id, "dracula")
     }
 
     func testApplyMapsThemeChoiceToTheTheme() {
         let store = ThemeStore()
-        store.apply(.foundryEmber)
-        XCTAssertEqual(store.active.id, "foundry-ember")
-        XCTAssertFalse(store.active.isLight, "Ember: dark glass")
-        store.apply(.foundryEmberLight)
-        XCTAssertEqual(store.active.id, "foundry-ember-light")
-        XCTAssertTrue(store.active.isLight, "Ember Light is light glass")
-        store.apply(.foundryGraphite)
-        XCTAssertEqual(store.active.id, "foundry-graphite")
-        XCTAssertFalse(store.active.isLight, "Graphite stays dark glass")
-        store.apply(.foundryEmber)
-        XCTAssertEqual(store.active.id, "foundry-ember")
+        store.apply(.dracula)
+        XCTAssertEqual(store.active.id, "dracula")
+        XCTAssertFalse(store.active.isLight, "Dracula: dark glass")
+        store.apply(.alucard)
+        XCTAssertEqual(store.active.id, "alucard")
+        XCTAssertTrue(store.active.isLight, "Alucard is light glass")
         // nil (appearance reset/unset) FOLLOWS the OS (whole-app theme, user-directed 2026-08-07):
-        // OS dark → Ember, OS light → Ember Light. The probe is stubbed for determinism.
+        // OS dark → Dracula, OS light → Alucard. The probe is stubbed for determinism.
         store.osIsDark = { true }
-        store.active = .foundryEmberLight
+        store.active = .alucard
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the dark Ember default")
+        XCTAssertEqual(store.active.id, "dracula", "nil in dark mode → the dark default")
         store.osIsDark = { false }
-        store.active = .foundryEmber
+        store.active = .dracula
         store.apply(nil)
-        XCTAssertEqual(
-            store.active.id, "foundry-ember-light", "nil in light mode → the light Ember default",
-        )
+        XCTAssertEqual(store.active.id, "alucard", "nil in light mode → the light default")
     }
 
-    /// Each profile carries the libghostty terminal bg/fg for its glass — the pinned cell colours.
-    func testTerminalBackgroundMatchesChromeWindow() {
-        // Foundry Ember terminal glass stays the pinned dark #27221E, no `#`.
-        XCTAssertEqual(SlateTheme.foundryEmber.terminalBackgroundHex, "27221E")
-        XCTAssertEqual(SlateTheme.foundryEmber.terminalForegroundHex, "E6DED6")
-        XCTAssertEqual(SlateTheme.foundryGraphite.terminalBackgroundHex, "222325")
-        // Ember Light's face is NEAR-WHITE — a step LIGHTER than the light chrome floor, so the
-        // island stands above it (user-directed 2026-08-07, polish round).
-        XCTAssertEqual(SlateTheme.foundryEmberLight.terminalBackgroundHex, "FCFAF7")
+    /// Each profile carries the libghostty terminal bg/fg for its glass — the pinned cell colours:
+    /// the Dracula Pro glass verbatim, and Alucard's cream from the public spec.
+    func testTerminalBackgroundMatchesPublishedPalette() {
+        XCTAssertEqual(SlateTheme.dracula.terminalBackgroundHex, "22212C")
+        XCTAssertEqual(SlateTheme.dracula.terminalForegroundHex, "F8F8F2")
+        XCTAssertEqual(SlateTheme.alucard.terminalBackgroundHex, "FFFBEB")
+        XCTAssertEqual(SlateTheme.alucard.terminalForegroundHex, "1F1F1F")
     }
 
-    /// Every profile DERIVES the chrome floor it stands on — the glass face blended toward the
-    /// profile ink, 22% on dark profiles / 17% on light (user-directed 2026-08-07, contrast
-    /// round). Pinned values lock the blend arithmetic: a rounding change here silently retunes
-    /// the whole window's ground.
-    func testDerivedFloorTones() {
-        XCTAssertEqual(SlateTheme.foundryEmber.floorHexValue, 0x514B46, "Ember floor: warm stone")
-        XCTAssertEqual(
-            SlateTheme.foundryEmberLight.floorHexValue, 0xDAD8D4, "Ember Light floor: warm grey",
-        )
-        // The dark step outweighs the light one by design (dark-on-dark contrast compresses).
-        XCTAssertEqual(SlateTheme.foundryDusk.floorHexValue, 0x4E4A53, "Dusk floor: cool mauve grey")
-        XCTAssertEqual(SlateTheme.foundryGraphite.floorHexValue, 0x4C4C4F, "Graphite floor: neutral")
+    /// Both shipped profiles are INVERTED (the Canario frame, round-8 verdict): the floor is the
+    /// authored frame pole (opposite polarity, the glass's hue family) and the CHROME polarity is
+    /// the flip of the glass polarity. Pinned values lock the picked frame depths — the trial's
+    /// paler #AFACD2 was rejected as washed (user-directed 2026-08-07).
+    func testFrameStructure() {
+        // Dracula: dark glass, mid-light violet frame, light chrome standing on it.
+        XCTAssertFalse(SlateTheme.dracula.isLight, "the glass stays dark")
+        XCTAssertTrue(SlateTheme.dracula.chromeIsLight, "the chrome flips light onto the frame")
+        XCTAssertEqual(SlateTheme.dracula.floorHexValue, 0x9993CD, "the picked dark-theme frame")
+        // Alucard: cream glass, deep violet frame, dark chrome standing on it.
+        XCTAssertTrue(SlateTheme.alucard.isLight, "the glass is light")
+        XCTAssertFalse(SlateTheme.alucard.chromeIsLight, "the chrome flips dark onto the frame")
+        XCTAssertEqual(SlateTheme.alucard.floorHexValue, 0x4C4869, "the picked light-theme frame")
     }
 
-    /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme IDENTITY —
-    /// so even a SAME-lightness variant switch (Ember → Graphite, both dark) posts; an idempotent re-apply
-    /// of the SAME theme does NOT.
+    /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme
+    /// IDENTITY; an idempotent re-apply of the SAME theme does NOT.
     func testApplyPostsChangeNotificationOnIdentityChange() {
         let store = ThemeStore.shared
-        store.active = .foundryEmber
+        store.active = .dracula
 
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
@@ -84,13 +75,13 @@ final class ThemeStoreTests: XCTestCase {
         ) { _ in posts.bump() }
         defer { NotificationCenter.default.removeObserver(token) }
 
-        store.apply(.foundryEmber) // no change → no post
+        store.apply(.dracula) // no change → no post
         XCTAssertEqual(posts.value, 0)
-        store.apply(.foundryGraphite) // SAME lightness, different variant → one post
+        store.apply(.alucard) // different identity → one post
         XCTAssertEqual(posts.value, 1)
-        store.apply(.foundryGraphite) // idempotent → no post
+        store.apply(.alucard) // idempotent → no post
         XCTAssertEqual(posts.value, 1)
-        store.apply(.foundryEmberLight) // different identity → one more post
+        store.apply(.dracula) // back → one more post
         XCTAssertEqual(posts.value, 2)
     }
 
@@ -103,15 +94,15 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .foundryEmberLight, themeDark: .foundryGraphite, useSeparateDarkTheme: true,
+            theme: .alucard, themeDark: .dracula, useSeparateDarkTheme: true,
         ))
-        XCTAssertEqual(store.active.id, "foundry-ember-light", "OS light → the primary/light slot")
+        XCTAssertEqual(store.active.id, "alucard", "OS light → the primary/light slot")
         dark = true
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "foundry-graphite", "OS dark → the dark slot, live")
+        XCTAssertEqual(store.active.id, "dracula", "OS dark → the dark slot, live")
         dark = false
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "foundry-ember-light", "flip back to light, live")
+        XCTAssertEqual(store.active.id, "alucard", "flip back to light, live")
     }
 
     /// An OS flip posts the cross-boundary repaint EXACTLY when the resolved theme actually changes (a
@@ -121,7 +112,7 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .foundryEmberLight, themeDark: .foundryGraphite, useSeparateDarkTheme: true,
+            theme: .alucard, themeDark: .dracula, useSeparateDarkTheme: true,
         ))
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
@@ -142,7 +133,7 @@ final class ThemeStoreTests: XCTestCase {
         let store = ThemeStore()
         var dark = false
         store.osIsDark = { dark }
-        store.apply(appearance: AppearancePreferences(theme: .foundryEmber))
+        store.apply(appearance: AppearancePreferences(theme: .alucard))
         let posts = PostCount()
         let token = NotificationCenter.default.addObserver(
             forName: ThemeStore.didChangeNotification, object: store, queue: nil,
@@ -152,19 +143,19 @@ final class ThemeStoreTests: XCTestCase {
         dark = true
         store.reresolveForOSAppearance()
         XCTAssertEqual(posts.value, 0, "a fixed (non-follow-OS) theme doesn't change on an OS flip")
-        XCTAssertEqual(store.active.id, "foundry-ember")
+        XCTAssertEqual(store.active.id, "alucard")
     }
 
-    /// The legacy `.system` single choice FOLLOWS the OS through `apply(appearance:)` — the whole-app
-    /// Ember pair flips live on an OS switch (user-directed 2026-08-07, whole-app theme).
+    /// The legacy `.system` single choice FOLLOWS the OS through `apply(appearance:)` — the built-in
+    /// pair flips live on an OS switch (user-directed 2026-08-07, whole-app theme).
     func testSystemChoiceFollowsOSThroughApplyAppearance() {
         let store = ThemeStore()
         store.osIsDark = { true }
         store.apply(appearance: AppearancePreferences(theme: .system))
-        XCTAssertEqual(store.active.id, "foundry-ember", "OS dark → Ember")
+        XCTAssertEqual(store.active.id, "dracula", "OS dark → Dracula")
         store.osIsDark = { false }
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "foundry-ember-light", "OS light → Ember Light (follow-OS)")
+        XCTAssertEqual(store.active.id, "alucard", "OS light → Alucard (follow-OS)")
     }
 
     /// CROSS-MODULE PIN: every concrete ``ThemeChoice``'s `builtinID` (in the leaf) round-trips to a built-in
@@ -180,11 +171,9 @@ final class ThemeStoreTests: XCTestCase {
             XCTAssertNotNil(theme, "\(choice) id \(id) must resolve to a built-in SlateTheme")
             XCTAssertEqual(theme?.id, id, "round-trip: ThemeChoice.builtinID ⇄ SlateTheme.id")
         }
-        // The leaf default ids resolve to the whole-app Ember pair (dark → Ember, light → Ember Light).
-        XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.foundryEmber.id)
-        XCTAssertEqual(
-            ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.foundryEmberLight.id,
-        )
+        // The leaf default ids resolve to the built-in pair (dark → Dracula, light → Alucard).
+        XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.dracula.id)
+        XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.alucard.id)
     }
 }
 #endif

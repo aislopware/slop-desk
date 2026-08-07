@@ -836,7 +836,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
         XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
         // Every non-font key rides through untouched.
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Foundry Ember")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Dracula")
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
         // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
         // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
@@ -896,7 +896,7 @@ final class CodeServerManagerTests: XCTestCase {
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
         let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Foundry Ember")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Dracula")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
         // The lean pass: title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
@@ -1009,35 +1009,33 @@ final class CodeServerManagerTests: XCTestCase {
         let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
         let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
         // One theme per app seed — the generated manifest mirrors the source-of-truth table.
+        // Exactly TWO since the round-8 verdict (user-directed 2026-08-07): Dracula + Alucard.
         XCTAssertEqual(themes.count, CodeServerManager.foundryExtensionThemes.count)
-        XCTAssertEqual(themes.count, 4)
+        XCTAssertEqual(themes.count, 2)
         for (entry, expected) in zip(themes, CodeServerManager.foundryExtensionThemes) {
             XCTAssertEqual(entry["label"] as? String, expected.label)
             XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
             XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
         }
         // The settings seed selects the theme BY LABEL — a drift here is a silent stock-theme
-        // boot. Since the whole-app theme (user-directed 2026-08-07, polish round) the workbench
-        // FOLLOWS each client's appearance: the client pins its whole appearance to the theme
-        // polarity, the webview inherits it, and the auto-detect trio maps dark → Ember,
-        // light → Ember Light (v21 — restores what v20 dropped for the split-tone era).
+        // boot. The workbench FOLLOWS each client's glass polarity: the client pins the webview's
+        // appearance and the auto-detect trio maps dark → Dracula, light → Alucard (v22 —
+        // re-points v21's trio at the round-8 pair).
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.seededUserSettings.utf8),
             ) as? [String: Any],
         )
         let labels = CodeServerManager.foundryExtensionThemes.map(\.label)
-        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Foundry Ember")
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Dracula")
         XCTAssertEqual(
             seeded["window.autoDetectColorScheme"] as? Bool, true,
-            "v21: the workbench follows the client's pinned appearance",
+            "the workbench follows the client's pinned appearance",
         )
-        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Foundry Ember")
-        XCTAssertEqual(
-            seeded["workbench.preferredLightColorTheme"] as? String, "Foundry Ember Light",
-        )
-        XCTAssertTrue(labels.contains("Foundry Ember"))
-        XCTAssertTrue(labels.contains("Foundry Ember Light"))
+        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Dracula")
+        XCTAssertEqual(seeded["workbench.preferredLightColorTheme"] as? String, "Alucard")
+        XCTAssertTrue(labels.contains("Dracula"))
+        XCTAssertTrue(labels.contains("Alucard"))
         // The folder name pins the manifest identity (publisher.name-version).
         let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
             + "-\(manifest["version"] as? String ?? "")"
@@ -1049,8 +1047,7 @@ final class CodeServerManagerTests: XCTestCase {
         // carrying the app seed's own `face` as the editor surface, the seed's ANSI ramp for the
         // integrated terminal, and only valid colour values.
         let faces = [
-            "foundry-ember": "#27221E", "foundry-ember-light": "#FCFAF7",
-            "foundry-dusk": "#242129", "foundry-graphite": "#222325",
+            "dracula": "#22212C", "alucard": "#FFFBEB",
         ]
         for theme in CodeServerManager.foundryExtensionThemes {
             let data = try XCTUnwrap(
@@ -1094,10 +1091,10 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertFalse(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: fakeThemes))
 
         // OUR file drifted ⇒ repaired (the namespaced folder is ours to keep current).
-        let themeFile = extensionRoot.appendingPathComponent("themes/foundry-ember.json")
+        let themeFile = extensionRoot.appendingPathComponent("themes/dracula.json")
         try Data("stale".utf8).write(to: themeFile)
         XCTAssertTrue(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: fakeThemes))
-        XCTAssertEqual(try Data(contentsOf: themeFile), fakeThemes("foundry-ember"))
+        XCTAssertEqual(try Data(contentsOf: themeFile), fakeThemes("dracula"))
 
         // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
         XCTAssertFalse(CodeServerManager.seedFoundryThemeExtension(into: dir, themeData: { _ in nil }))

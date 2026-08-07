@@ -428,10 +428,8 @@ struct AllSettingsListView: View {
     private func themeLabel(_ theme: ThemeChoice) -> String {
         switch theme {
         case .system: "System"
-        case .foundryEmber: "Foundry Ember"
-        case .foundryEmberLight: "Foundry Ember Light"
-        case .foundryDusk: "Foundry Dusk"
-        case .foundryGraphite: "Foundry Graphite"
+        case .dracula: "Dracula"
+        case .alucard: "Alucard"
         }
     }
 }

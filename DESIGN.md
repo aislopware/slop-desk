@@ -1,14 +1,16 @@
 ---
 name: SlopDesk
-description: Low-latency remote-coding workspace for Apple platforms — NATIVE chrome (semantic system colours + real materials) around one dark-glass terminal island; Slate token layer
+description: Low-latency remote-coding workspace for Apple platforms — the Dracula Pro colour world in the inverted-frame structure (light violet frame around dark terminal glass, and the reverse for Alucard); NATIVE semantic chrome standing on the frame; Slate token layer
 colors:
   # CHROME is semantic — it has no hex of its own. These entries are the only fixed colours the app owns.
-  accent: "#007272" # brand Ember teal, light appearances (dark appearances lift to #3DB8B8)
-  accent-deep: "#005555" # fill/badge band (dark appearances #0E6B6B)
-  glass-ember: "#27221E" # default terminal profile — cells / island ground
-  glass-ember-ink: "#E6DED6"
-  glass-ember-edge: "#3E3833" # island-internal divider + selection fill
-  glass-ember-accent: "#66CCD1" # on-glass accent (focus corner, drag line)
+  accent: "#644AC9" # brand Dracula purple, light appearances (dark appearances use the Pro #9580FF)
+  accent-deep: "#4B29A7" # fill/badge band (dark appearances #6B4BD6)
+  glass-dracula: "#22212C" # default terminal profile — the Dracula Pro glass, verbatim
+  glass-dracula-ink: "#F8F8F2"
+  glass-dracula-edge: "#454158" # island-internal divider + selection fill (the Pro selection)
+  glass-dracula-accent: "#9580FF" # on-glass accent (focus corner, drag line)
+  frame-dracula: "#9993CD" # the inverted frame floor around the dark glass (5.6:1 vs the glass)
+  frame-alucard: "#4C4869" # the inverted frame floor around Alucard's cream glass (8.3:1)
   secure-input-blue: "#2D6FE8" # fixed, never themed
   sync-input-amber: "#D97A1F" # fixed, never themed
 typography:
@@ -55,8 +57,8 @@ spacing:
   space4: "16px"
 components:
   field:
-    backgroundColor: "Slate.Surface.field — the PROFILE's derived floor: glass face blended toward the profile ink (22% dark / 17% light). Ember → #514B46, Ember Light → #DAD8D4"
-    note: "the ONE floor colour every column and divider gap paints; no materials, no vibrancy, no drawn seams. Derived from the active profile, never authored hex: the floor shares the glass's temperature (Canario's frame/tile kinship) and stands a real step off the islands (1.83:1 dark / 1.37:1 light — the earlier windowBackground blend was neutral-against-warm at ~1.2:1 and read as close-but-clashing)"
+    backgroundColor: "Slate.Surface.field — the PROFILE's authored FRAME floor, opposite polarity to the glass: Dracula → #9993CD, Alucard → #4C4869"
+    note: "the ONE floor colour every column and divider gap paints; no materials, no vibrancy, no drawn seams. The frame is the measured Canario structure (their frame stands 8.9:1 off their tiles): an opposite-polarity tone in the glass's own hue family, so frame and glass read as one world while the island↔floor step is decisive (the derived same-polarity floors of earlier rounds sat at ~1.2–1.8:1 and the islands sank)"
   sidebar:
     backgroundColor: "the field (flat — no material)"
     textColor: "semantic label tiers"
@@ -73,13 +75,13 @@ components:
     height: "32px"
     padding: "0 12px"
   terminal-island:
-    backgroundColor: "{colors.glass-ember}"
+    backgroundColor: "{colors.glass-dracula}"
     rounded: "{rounded.island}"
     margin: "{spacing.space2}"
     border: "none — separation is the field gap + radius (JetBrains Islands)"
     note: "full window height — no reserved titlebar band"
   panel-island:
-    backgroundColor: "{colors.glass-ember}"
+    backgroundColor: "{colors.glass-dracula}"
     rounded: "{rounded.island}"
     margin: "{spacing.space2} top/bottom/trailing; NO leading margin — the terminal island's trailing margin is the shared channel"
     border: "none"
@@ -90,53 +92,52 @@ components:
     height: "24px"
 ---
 
-# SlopDesk Design System — NATIVE / Islands
+# SlopDesk Design System — DRACULA / Inverted Frame
 
-North star: **the chrome is macOS's; the terminal is ours.** SlopDesk's window is a native macOS
-app — real sidebar material, semantic system colours, system hairlines, the OS light/dark switch —
-wrapped around one deliberate object: the terminal, a single dark-glass island floating on the
-system chrome. (Adopted 2026-08-07 after three invented-hex chrome worlds — dark graphite,
-split-tone clay, sampled salmon — all read as generic. The verdict from that cycle: *native is a
-dynamic system, not a palette.* Wallpaper tint, vibrancy, inactive-window dimming and the semantic
-label tiers cannot be faked with static hex; the only static palette that survives is the one inside
-the terminal glass, where fixed colour is the point.)
+North star: **the frame is the theme's, the chrome is macOS's, the glass is Dracula's.** SlopDesk's
+window is the measured Canario structure (round-8 verdict, user-directed 2026-08-07): a mid-light
+violet FRAME floor on which native semantic chrome stands, framing dark glass islands that wear the
+Dracula Pro palette verbatim — and the exact inverse for Alucard, the light theme (deep violet
+frame around cream glass). The colour world is Dracula Pro's published set: glass `#22212C`, ink
+`#F8F8F2`, selection `#454158`, comment `#7970A9`, and the normalized accent seven (S100/L75 —
+red `#FF9580` through pink `#FF80BF`); only the frame floors and the deep accent band are derived,
+all inside the Pro hue family (OKLCH H≈289). Chosen over three invented-hex chrome worlds AND the
+warm FOUNDRY Ember world, which read as dated beside the modern references (Dracula Pro,
+Catppuccin, Rosé Pine — all violet-band, accent-normalized).
 
-Reference points: Terminal.app / Ghostty (all chrome native, content deliberately dark — the Pages
-pattern), Panic Nova (native materials with a full-bodied sidebar/panel presence — the chosen craft
-bar), JetBrains Islands + Canario (ONE rounded card floating on flat chrome, full window height,
-no title band; splits divided inside it; tabs as small rounded chips).
+Reference points: Dracula PRO (the palette itself and its normalize-the-accents method), Canario
+(the inverted frame: a mid-light frame around near-black tiles, measured 8.9:1 — the "daring"
+structure the safe one-polarity floors lacked), JetBrains Islands (ONE rounded card floating on
+flat chrome, full window height, no title band; splits divided inside it; tabs as small rounded
+chips), Terminal.app / Ghostty (semantic chrome, content deliberately fixed-palette).
 
-**One floor, two islands.** The whole window floor is ONE flat colour — `Slate.Surface.field`,
+**One frame, two islands.** The whole window floor is ONE flat colour — `Slate.Surface.field`,
 painted identically by all three columns and the divider gaps, with no materials, no vibrancy and
-no drawn seams (user-directed 2026-08-07: a sidebar wearing its own material tone beside the flat
-content field read as "a mess", not a floor). On that floor float exactly two glass islands: the
-terminal (centre) and the right panel (whose tab strip lives INSIDE its island). Islands wear NO
-border and NO shadow — JetBrains ships island borders equal to the island fill; the field gap and
-the radius are the whole separation. The left sidebar stays FLAT; its one floating object is the
-active row's solid chip (Canario's white active tab). The floor is the PROFILE's own derived tone
-(contrast round, user-directed 2026-08-07): the glass face blended toward the profile ink — 22% on
-dark profiles (Ember → `#514B46`, 1.83:1 against the glass), 17% on light (Ember Light →
-`#DAD8D4`, 1.37:1). Two things the earlier `windowBackgroundColor` blend could not do: the floor
-carries the glass's TEMPERATURE (Canario's frame reads as one world with its near-black tiles —
-8.9:1 measured — because they share a hue family; a neutral system grey beside the warm glass read
-as two worlds pushed together), and the island↔floor step is decisive instead of the reference's
-~1.2:1 whisper, which vanished on these tones. Direction still follows JetBrains in both modes:
-islands lighter than the floor in light, darker in dark.
+no drawn seams. On that floor float exactly two glass islands: the terminal (centre) and the right
+panel (whose tab strip lives INSIDE its island). Islands wear NO border and NO shadow — the field
+gap and the radius are the whole separation. The left sidebar stays FLAT; its one floating object
+is the active row's solid chip. The floor is the profile's authored FRAME, opposite polarity to
+the glass: Dracula stands its dark glass in `#9993CD` (5.6:1 against the glass — the trial's paler
+`#AFACD2` was rejected as washed), Alucard stands its cream glass in `#4C4869` (8.3:1). The frame
+shares the glass's hue family, so frame and glass read as one world while the island↔floor step is
+decisive — the same-polarity derived floors of earlier rounds (1.2–1.8:1) sank the islands.
 
 ## The two worlds — one polarity
 
 | World | Where | Colour source |
 |---|---|---|
-| **Chrome** | the window field, sidebar, hover titlebar (empty state), overlays, Settings, empty states | Semantic system colours, resolved under the app's pinned appearance |
+| **Chrome** | the window field, sidebar, hover titlebar (empty state), overlays, Settings, empty states | Semantic system colours, resolved under the app's pinned CHROME polarity |
 | **Glass** | the terminal island, the panel island (strip + surfaces), satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) |
 
-**Whole-app theme** (user-directed 2026-08-07, polish round): the theme choice drives the ENTIRE
-window. `ThemeStore` pins `NSApp.appearance` to the active theme's polarity, so a dark theme is an
-all-dark app and a light theme an all-light one — never half-and-half. The "System" choice follows
-the OS by resolving to the per-OS Ember pair (dark → Ember, light → Ember Light); a concrete choice
-ignores the OS. The embedded workbench follows the same pin: the webview inherits the app
-appearance and the seeded `window.autoDetectColorScheme` + preferred-theme pair map it to
-Foundry Ember / Foundry Ember Light per client.
+**Whole-app theme, TWO polarities per profile** (round 8): a profile carries `isLight` (the GLASS's
+polarity — drives `Slate.glassColorScheme` and the webview appearance) and `chromeIsLight` (the
+CHROME's — what `ThemeStore.pinAppAppearance` pins `NSApp.appearance` to). Both shipped profiles
+are INVERTED: `chromeIsLight = !isLight`, so Dracula runs light chrome on its mid-light frame
+around dark glass, and Alucard dark chrome on its deep frame around cream glass. The "System"
+choice follows the OS by resolving to the pair (dark → Dracula, light → Alucard); a concrete
+choice ignores the OS. The embedded workbench follows the GLASS polarity: the client pins each
+webview's appearance to the glass, and the seeded `window.autoDetectColorScheme` + preferred-theme
+pair map it to Dracula / Alucard per webview.
 
 Nothing may straddle the chrome/glass boundary: a view is either ON the chrome (semantic tokens)
 or ON the glass (profile tokens, or semantic tokens under the island's forced colour scheme — see
@@ -153,8 +154,8 @@ palette.
   the opposite pole — a light chip with dark text on the dark floor, a dark chip with light text
   on the light floor. Selection is stated by INVERSION (the ANSI reverse-video / Canario
   contrast-flip gesture), still entirely semantic — no invented hex.
-- **Surfaces** (`Slate.Surface`): `field` → the profile's derived floor (see above — the ONE
-  chrome colour that reads the theme, and it is derived, not authored), `void`/`ground` →
+- **Surfaces** (`Slate.Surface`): `field` → the profile's authored frame floor (see above — the
+  ONE chrome colour that reads the theme; fixed hex per profile), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
 - **Text** (`Slate.Text`): the semantic label tiers (`labelColor` → `tertiaryLabelColor`). Never a
@@ -167,8 +168,10 @@ palette.
 - **Identity** (`Slate.Identity`): the 8 system hues (red → purple), FNV-1a keyed per project — the
   Finder-tag dialect. Spent as spines/washes only, never row plates or text recolouring.
 - **One appearance pin, owned by the theme**: `ThemeStore.pinAppAppearance` sets `NSApp.appearance`
-  from the active theme's polarity (the whole-app theme); windows carry NO pin of their own and
-  inherit it. No other `.preferredColorScheme` / per-control pin exists. Semantic colours still
+  from the active theme's CHROME polarity (`chromeIsLight`); windows carry NO pin of their own and
+  inherit it. The pooled workbench webviews carry the one exception — a per-webview pin to the
+  GLASS polarity, because they live inside an island. No other `.preferredColorScheme` /
+  per-control pin exists. Semantic colours still
   resolve per-appearance at draw time — but the appearance they resolve under is the theme's.
   Trap: a `CGColor` assigned from a dynamic `NSColor` is a snapshot — resolve it inside
   `effectiveAppearance.performAsCurrentDrawingAppearance` and re-resolve in
@@ -178,11 +181,11 @@ palette.
 
 ## The one brand colour
 
-**Ember teal**, fixed (user-directed over the system accent): light `#007272`, dark `#3DB8B8`
-(`Slate.State.accent`, an appearance-dynamic pair); deep fill band `#005555`/`#0E6B6B`
-(`Slate.Accent.deep`). Spent ONLY on: selection wash (15%), active tab, focus corner, divider drag
-line, link highlight, find-bar caret/toggles, info status. Everything else interactive is the
-system's.
+**Dracula purple**, fixed (user-directed over the system accent): light `#644AC9` (Alucard's
+purple), dark `#9580FF` (the Pro purple) — `Slate.State.accent`, an appearance-dynamic pair; deep
+fill band `#4B29A7`/`#6B4BD6` (`Slate.Accent.deep`, derived in-family). Spent ONLY on: selection
+wash (15%), active tab, focus corner, divider drag line, link highlight, find-bar caret/toggles,
+info status. Everything else interactive is the system's.
 
 ## Glass — the islands
 
@@ -220,26 +223,23 @@ system's.
 ## Terminal profiles (`SlateTheme`)
 
 A profile is Terminal.app-style: cells bg/fg, 16-slot ANSI, selection, caret, edge line, on-glass
-ink tiers and an on-glass accent. Chrome is untouched by profile switches. Built-ins (ids keep the
-historic `foundry-` prefix so persisted choices resolve):
+ink tiers, an on-glass accent — and, since round 8, the authored FRAME floor. Exactly TWO
+built-ins (round-8 verdict: "just dark and light, no variant zoo"):
 
-| Profile | Glass | Ink | Edge | On-glass accent |
-|---|---|---|---|---|
-| **Ember** (default) | `#27221E` | `#E6DED6` | `#3E3833` | `#66CCD1` |
-| Ember Light | `#FCFAF7` | `#36312C` | `#E9E2DC` | `#007272` |
-| Dusk | `#242129` | `#E5DCE9` | `#36343C` | `#B3B1FC` |
-| Graphite | `#222325` | `#DFDFE3` | `#343537` | `#61C9E7` |
+| Profile | Glass | Ink | Edge (selection) | On-glass accent | Frame |
+|---|---|---|---|---|---|
+| **Dracula** (default, dark glass) | `#22212C` | `#F8F8F2` | `#454158` | `#9580FF` | `#9993CD` |
+| Alucard (light glass) | `#FFFBEB` | `#1F1F1F` | `#CFCFDE` | `#644AC9` | `#4C4869` |
 
-The Settings gallery ("Terminal Theme") previews each profile as a miniature of its own terminal.
-A profile choice is a WHOLE-APP choice (polish round): its `isLight` polarity pins the app
-appearance, so picking Ember darkens the entire window and picking Ember Light lightens it. The
-"System" choice (and the fresh-install default) follows the OS through the Ember pair — OS dark →
-Ember, OS light → Ember Light — flipping live on an OS switch. Every profile also DERIVES the
-chrome floor the app stands on (`SlateTheme.floorHexValue` — face blended toward ink), so a
-profile switch retunes the whole window's ground without any authored chrome colour. Ember Light's
-glass is NEAR-WHITE, a step LIGHTER than its derived floor (the JetBrains light relationship:
-white islands on grey). The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside every palette,
-system and profile alike.
+ANSI: the Pro accent seven verbatim (no blue — the blue slot carries the purple, Dracula's own
+terminal convention); brights REPEAT the bases (the Pro accents are already lightness-normalized
+at the top of the band — a +L derivation only washes them); bright-black = the comment tone.
+The Settings gallery previews each profile as a miniature of its own terminal. A profile choice is
+a WHOLE-APP choice: glass polarity forces the island scheme, chrome polarity pins the app
+appearance (inverted — see above). The "System" choice (and the fresh-install default) follows the
+OS through the pair — OS dark → Dracula, OS light → Alucard — flipping live on an OS switch. The
+FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside every palette, system and
+profile alike.
 
 ## Structure, type, motion (unchanged ladders)
 
@@ -259,9 +259,10 @@ system and profile alike.
 - DO add new chrome colour needs as SEMANTIC system colours; if none fits, the design is wrong.
 - DO put profile-dependent colour behind `SlateTheme` / `Slate.Terminal.*` and keep it inside the
   island.
-- DON'T invent chrome hex. The three dead worlds (dark graphite, clay `#EFD0C2`, salmon `#C59B8B`)
-  are the anti-reference: any future "give the chrome a palette" proposal repeats a documented
-  failure.
+- DON'T invent chrome hex beyond the profile's frame floor. The three dead hex worlds (dark
+  graphite, clay `#EFD0C2`, salmon `#C59B8B`) and the warm FOUNDRY Ember world are the
+  anti-reference: any future "give the chrome its own palette" proposal repeats a documented
+  failure. New fixed colour enters ONLY as a `SlateTheme` field, derived in the Pro hue family.
 - DON'T float per-pane cards, add pane shadows, or re-tint the island per project.
 - DON'T add a THIRD island, and don't island the left sidebar — the composition is two glass
   islands on one flat floor, with the sidebar's active chip as the only other raised object.

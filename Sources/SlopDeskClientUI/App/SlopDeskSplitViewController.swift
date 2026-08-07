@@ -350,7 +350,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 private final class FlatDividerSplitView: NSSplitView {
     /// Re-assign the divider gap's layer colour when the OS appearance flips. The floor colour is
     /// FIXED per profile now, so the assignment itself cannot resolve stale — but under the System
-    /// theme an OS flip re-resolves ``ThemeStore/active`` to the other Ember, and this hook is the
+    /// theme an OS flip re-resolves ``ThemeStore/active`` to the other built-in, and this hook is the
     /// AppKit-side nudge that re-reads the new profile's floor (the SwiftUI columns re-render on
     /// their own; the layer does not).
     override func viewDidChangeEffectiveAppearance() {

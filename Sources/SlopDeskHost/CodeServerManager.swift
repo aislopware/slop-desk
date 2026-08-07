@@ -375,13 +375,12 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Foundry Ember` from the seeded `slopdesk-foundry` extension, generated from the
-    /// exact OKLCH palettes the client chrome runs on; the vendored Monokai Pro family stays
+    /// theme (`Dracula` from the seeded `slopdesk-foundry` extension, generated from the
+    /// exact palettes the client chrome runs on; the vendored Monokai Pro family stays
     /// seeded beside it as ⌘K ⌘T picker options; `window.autoDetectColorScheme` + the
-    /// preferred-theme pair make the workbench FOLLOW each client's appearance — since the
-    /// whole-app theme (user-directed 2026-08-07, polish round) the client pins its entire
-    /// appearance to the theme's polarity and the webview inherits that pin, so a dark-theme
-    /// client gets Ember glass and a light-theme client Ember Light, per webview, no wire
+    /// preferred-theme pair make the workbench FOLLOW each client's GLASS polarity — the client
+    /// pins the webview's appearance to the glass, so a dark-theme client gets Dracula and a
+    /// light-theme client Alucard, per webview, no wire
     /// involved) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
@@ -445,10 +444,10 @@ final class CodeServerManager: @unchecked Sendable {
     static let seededUserSettings = """
     {
         "chat.disableAIFeatures": true,
-        "workbench.colorTheme": "Foundry Ember",
+        "workbench.colorTheme": "Dracula",
         "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Foundry Ember",
-        "workbench.preferredLightColorTheme": "Foundry Ember Light",
+        "workbench.preferredDarkColorTheme": "Dracula",
+        "workbench.preferredLightColorTheme": "Alucard",
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1138,6 +1137,52 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v21 — the whole-app-theme seed: restored the autoDetectColorScheme trio around the
+        // Foundry Ember pair. The current seed (v22) re-points the trio at the Dracula /
+        // Alucard pair (round-8 verdict, user-directed 2026-08-07); everything else is
+        // unchanged.
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Foundry Ember",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Foundry Ember",
+            "workbench.preferredLightColorTheme": "Foundry Ember Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -1570,30 +1615,30 @@ final class CodeServerManager: @unchecked Sendable {
         return wrote
     }
 
-    // MARK: - Foundry theme extension seed
+    // MARK: - Built-in theme extension seed
 
-    /// The FOUNDRY theme extension's identity — the app's OWN generated themes (unlike the
+    /// The built-in theme extension's identity — the app's OWN generated themes (unlike the
     /// vendored Monokai Pro data above): `scripts/foundry-code-theme-gen.mjs` emits one JSON per
-    /// seed from the same OKLCH palettes the client chrome runs on (DESIGN.md, the Seeded-Engine
-    /// Rule), so the workbench, the terminal panes and the rail all speak one colour world. The
-    /// Monokai extension stays seeded beside it as picker options; the SETTINGS seed selects the
-    /// Foundry pair.
+    /// seed from the same palettes the client chrome runs on (DESIGN.md), so the workbench, the
+    /// terminal panes and the rail all speak one colour world. Since the round-8 verdict
+    /// (user-directed 2026-08-07) the contents are the Dracula Pro pair; the `slopdesk-foundry`
+    /// id STAYS — it anchors the registry entry, so the 2.0.0 bump cleanly replaces the old
+    /// four-theme folder instead of leaving it registered beside the new one. The Monokai
+    /// extension stays seeded beside it as picker options; the SETTINGS seed selects this pair.
     static let foundryExtensionName = "slopdesk-foundry"
-    static let foundryExtensionVersion = "1.0.0"
+    static let foundryExtensionVersion = "2.0.0"
 
     /// `publisher.name-version` — same re-seed-on-bump contract as
     /// ``themeExtensionDirectoryName``.
     static let foundryExtensionDirectoryName =
         "\(themeExtensionPublisher).\(foundryExtensionName)-\(foundryExtensionVersion)"
 
-    /// Every FOUNDRY seed the generator emits — the same single-source contract as
+    /// Every built-in seed the generator emits — the same single-source contract as
     /// ``themeExtensionThemes``: the manifest is generated from this table and the seeder writes
     /// one resource per row. The labels MIRROR the app's built-in `SlateTheme` names.
     static let foundryExtensionThemes: [(label: String, dark: Bool, resource: String)] = [
-        ("Foundry Ember", true, "foundry-ember"),
-        ("Foundry Ember Light", false, "foundry-ember-light"),
-        ("Foundry Dusk", true, "foundry-dusk"),
-        ("Foundry Graphite", true, "foundry-graphite"),
+        ("Dracula", true, "dracula"),
+        ("Alucard", false, "alucard"),
     ]
 
     /// The Foundry extension's manifest — generated from ``foundryExtensionThemes``.
@@ -1610,8 +1655,8 @@ final class CodeServerManager: @unchecked Sendable {
         return """
         {
             "name": "\(foundryExtensionName)",
-            "displayName": "Foundry (SlopDesk)",
-            "description": "The SlopDesk FOUNDRY themes — generated from the app's own OKLCH seed palettes.",
+            "displayName": "SlopDesk Themes",
+            "description": "The SlopDesk built-in themes (Dracula / Alucard) — generated from the app's own seed palettes.",
             "publisher": "\(themeExtensionPublisher)",
             "version": "\(foundryExtensionVersion)",
             "engines": { "vscode": "^1.0.0" },

@@ -181,16 +181,14 @@ private struct FirstLaunchThemeStep: View {
 
     /// The built-ins offered in the first-launch grid (light-then-dark ordering, curated).
     private let choices: [(ThemeChoice, String)] = [
-        (.foundryEmberLight, "Ember Light"),
-        (.foundryEmber, "Ember"),
-        (.foundryDusk, "Dusk"),
-        (.foundryGraphite, "Graphite"),
+        (.alucard, "Alucard"),
+        (.dracula, "Dracula"),
     ]
 
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: Slate.Metric.space2)]
 
     private var selected: ThemeChoice {
-        store.appearance.theme ?? .foundryEmber
+        store.appearance.theme ?? .dracula
     }
 
     var body: some View {

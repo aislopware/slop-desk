@@ -16,10 +16,8 @@ enum ThemeCatalog {
     /// Every shipped built-in theme, in the Theme-picker order. Pure list (the picker reads it for labels /
     /// preview; resolution goes through ``builtin(id:)`` / ``ThemeStore/builtin(id:)``).
     static let builtinThemes: [SlateTheme] = [
-        .foundryEmber,
-        .foundryEmberLight,
-        .foundryDusk,
-        .foundryGraphite,
+        .dracula,
+        .alucard,
     ]
 
     /// The shipped `SlateTheme` for a stable built-in id, or `nil` for an unknown id. Delegates to

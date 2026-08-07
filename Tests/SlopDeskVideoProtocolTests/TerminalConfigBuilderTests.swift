@@ -25,8 +25,8 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(map["font-size"], "13") // integral → no decimal
         XCTAssertEqual(map["font-style"], "regular")
         XCTAssertNil(map["theme"], "the default empty theme is skipped — bg/fg/palette lines are the whole theme")
-        XCTAssertEqual(map["background"], "27221E") // default Foundry Ember face
-        XCTAssertEqual(map["foreground"], "E6DED6") // Ember's primary ink
+        XCTAssertEqual(map["background"], "22212C") // default Dracula face
+        XCTAssertEqual(map["foreground"], "F8F8F2") // Dracula's primary ink
         XCTAssertEqual(map["cursor-style"], "block")
         // The default cursor blink is the TRI-STATE `.default` (defer to DEC mode 12), which SKIPS the
         // `cursor-style-blink` line entirely (libghostty's optional-bool null). Pre-fix this emitted `true`.
@@ -121,11 +121,11 @@ final class TerminalConfigBuilderTests: XCTestCase {
         // terminal cells to the active chrome palette.
         let overridden = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(background: "F6F0ED", foreground: "36312C"),
-            backgroundOverride: "27221E",
-            foregroundOverride: "E6DED6",
+            backgroundOverride: "22212C",
+            foregroundOverride: "F8F8F2",
         ))
-        XCTAssertEqual(overridden["background"], "27221E", "the theme override wins over the pref background")
-        XCTAssertEqual(overridden["foreground"], "E6DED6", "the theme override wins over the pref foreground")
+        XCTAssertEqual(overridden["background"], "22212C", "the theme override wins over the pref background")
+        XCTAssertEqual(overridden["foreground"], "F8F8F2", "the theme override wins over the pref foreground")
 
         // An empty / nil override transparently KEEPS the pref's own colour (so existing callers are unchanged).
         let kept = parse(TerminalConfigBuilder.string(
@@ -178,8 +178,8 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "font-size = 13",
             "font-style = regular",
             "font-feature = -calt,-liga,-dlig",
-            "background = 27221E",
-            "foreground = E6DED6",
+            "background = 22212C",
+            "foreground = F8F8F2",
             "selection-foreground = cell-foreground",
             "cursor-style = block",
             "scrollback-limit = 2560000",

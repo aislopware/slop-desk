@@ -93,8 +93,8 @@ struct ReadOnlyPill: View {
 /// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to
 /// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Slate.Status.secureInput`
 /// (#2D6FE8) — a theme-INDEPENDENT token, NOT the theme-derived `Slate.Status.info`. The pill must stay a
-/// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped default
-/// Foundry Ember seed has `info == accent == teal`, which would make a theme-derived security badge invisible
+/// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped themes
+/// have `info == accent`, which would make a theme-derived security badge invisible
 /// against the accent (the screenshot is the green-accent Paper theme yet the pill is the same blue).
 /// Carries a WHITE filled lock-shield + the uppercase `SECURE INPUT` label in white.
 ///

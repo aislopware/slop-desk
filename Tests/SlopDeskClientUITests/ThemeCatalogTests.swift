@@ -17,10 +17,11 @@ final class ThemeCatalogTests: XCTestCase {
     }
 
     /// The shipped list stays complete + ordered (the Theme-picker order) — guards an accidental drop.
+    /// Exactly TWO built-ins, dark then light (user-directed 2026-08-07, round-8 verdict).
     func testBuiltinThemeListPinned() {
         XCTAssertEqual(
             ThemeCatalog.builtinThemes.map(\.id),
-            ["foundry-ember", "foundry-ember-light", "foundry-dusk", "foundry-graphite"],
+            ["dracula", "alucard"],
         )
     }
 }

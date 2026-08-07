@@ -7,17 +7,17 @@ final class ThemeResolutionTests: XCTestCase {
     // MARK: Single / primary slot (useSeparateDarkTheme OFF or unset)
 
     /// The all-`nil` default appearance (FRESH INSTALL) FOLLOWS the OS (whole-app theme,
-    /// user-directed 2026-08-07): OS light → Ember Light (all-light app), OS dark → Ember
+    /// user-directed 2026-08-07): OS light → Alucard (all-light app), OS dark → Dracula
     /// (all-dark app) — never the split-tone half-and-half.
     func testDefaultAppearanceFollowsOS() {
         let def = AppearancePreferences()
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: false), "foundry-ember-light",
-            "fresh install in LIGHT mode → the light Ember default",
+            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: false), "alucard",
+            "fresh install in LIGHT mode → the light Alucard default",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: true), "foundry-ember",
-            "fresh install in DARK mode → the dark Ember default",
+            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: true), "dracula",
+            "fresh install in DARK mode → the dark Dracula default",
         )
     }
 
@@ -25,24 +25,24 @@ final class ThemeResolutionTests: XCTestCase {
     /// the OS. Revert-to-confirm: a `"dark"`-only resolver that ignored the toggle would still pass,
     /// so the dual-slot tests below carry the real follow-OS proof.
     func testSingleSlotConcreteChoiceIgnoresOS() {
-        let prefs = AppearancePreferences(theme: .foundryDusk)
+        let prefs = AppearancePreferences(theme: .alucard)
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "foundry-dusk",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "alucard",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "foundry-dusk",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "alucard",
         )
     }
 
-    /// The legacy `.system` single choice follows the OS like the unset default — the per-OS Ember
+    /// The legacy `.system` single choice follows the OS like the unset default — the per-OS built-in
     /// pair (whole-app theme, user-directed 2026-08-07).
     func testSystemChoiceResolvesToDefault() {
         let prefs = AppearancePreferences(theme: .system)
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "foundry-ember",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "dracula",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "foundry-ember-light",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "alucard",
         )
     }
 
@@ -52,24 +52,24 @@ final class ThemeResolutionTests: XCTestCase {
     /// This is the load-bearing follow-OS proof (the single-slot tests above would pass without it).
     func testSeparateDarkSelectsSlotByOS() {
         let prefs = AppearancePreferences(
-            theme: .foundryEmberLight, themeDark: .foundryGraphite, useSeparateDarkTheme: true,
+            theme: .alucard, themeDark: .dracula, useSeparateDarkTheme: true,
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "foundry-ember-light",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "alucard",
             "OS light → the primary/light slot",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "foundry-graphite",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "dracula",
             "OS dark → the dark slot",
         )
     }
 
     /// Separate-dark ON with an UNSET dark slot (no `themeDark`) falls back to the
-    /// compile-time default Foundry Ember in dark mode.
+    /// compile-time default Dracula in dark mode.
     func testSeparateDarkWithUnsetDarkSlotUsesDefault() {
-        let prefs = AppearancePreferences(theme: .foundryEmberLight, useSeparateDarkTheme: true)
+        let prefs = AppearancePreferences(theme: .alucard, useSeparateDarkTheme: true)
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "foundry-ember",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "dracula",
         )
     }
 
@@ -77,14 +77,14 @@ final class ThemeResolutionTests: XCTestCase {
 
     func testBuiltinIDMapping() {
         // An unset slot (nil) resolves like `.system` (the picker shows it as "System") — the
-        // per-OS Ember pair (whole-app theme, user-directed 2026-08-07).
-        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: true), "foundry-ember")
-        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "foundry-ember-light")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: true), "foundry-ember")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "foundry-ember-light")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .foundryGraphite, osIsDark: true), "foundry-graphite")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .foundryDusk, osIsDark: true), "foundry-dusk")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .foundryEmber, osIsDark: false), "foundry-ember")
+        // per-OS built-in pair (whole-app theme, user-directed 2026-08-07).
+        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: true), "dracula")
+        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "alucard")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: true), "dracula")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "alucard")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .dracula, osIsDark: true), "dracula")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .alucard, osIsDark: true), "alucard")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .dracula, osIsDark: false), "dracula")
     }
 
     /// Every concrete (non-`.system`) ``ThemeChoice`` exposes a stable `builtinID`; only `.system` is `nil`

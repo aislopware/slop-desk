@@ -437,6 +437,28 @@ final class CodeSidebarWebViewPool {
                 Self.shared.noteWindowUpdate(window)
             }
         })
+        // The webview is ON-GLASS content: its `prefers-color-scheme` must follow the GLASS
+        // polarity, not the app appearance pin — under an inverted (frame) profile the chrome is
+        // light while the panel island's glass stays dark, and without this pin the workbench
+        // would flip to its light theme inside a dark island (user-directed 2026-08-07, modern
+        // round). Re-pinned on every theme change; creation pins new webviews the same way.
+        keyWindowObservers.append(NotificationCenter.default.addObserver(
+            forName: ThemeStore.didChangeNotification, object: nil, queue: .main,
+        ) { _ in
+            MainActor.assumeIsolated {
+                Self.shared.pinPooledWebViewsToGlassPolarity()
+            }
+        })
+    }
+
+    /// Pin every pooled webview's effective appearance (and first-paint backdrop) to the active
+    /// profile's GLASS polarity — see the observer in `init` for why this is not the app appearance.
+    private func pinPooledWebViewsToGlassPolarity() {
+        for webView in webViews.values {
+            webView.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
+            webView.underPageBackgroundColor =
+                NSColor(slateBackdropHex: Slate.theme.terminalBackgroundHex)
+        }
     }
 
     /// Remember the current first responder as the keyboard's rightful owner when
@@ -495,6 +517,9 @@ final class CodeSidebarWebViewPool {
         // Paint the theme backdrop behind the page so the first load / a bounce never flashes white
         // against the dark chrome (the cmux `underPageBackgroundColor` trick).
         webView.underPageBackgroundColor = NSColor(slateBackdropHex: Slate.theme.terminalBackgroundHex)
+        // GLASS polarity, not app appearance — the workbench sits on the panel island's glass
+        // (see `pinPooledWebViewsToGlassPolarity`).
+        webView.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
         // WebKit's own base canvas is WHITE until the page's first paint — with a multi-second
         // workbench boot that is a visible flash between the dark chrome and the dark editor. There
         // is no public macOS API for it; the long-standing KVC key makes the canvas transparent so

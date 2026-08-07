@@ -15,8 +15,8 @@
 //     PROFILE. The whole split tree renders as ONE floating island (JetBrains Islands): a single
 //     rounded glass card on the system chrome, panes divided INSIDE it by subtle lines on the glass.
 //     Glass and chrome share one polarity now; the profile still owns the glass's exact colours.
-//   - ONE brand accent: the fixed Ember teal (light `#007272`, lifted for dark appearances). It is the
-//     only chrome colour that is ours; everything else is the system's.
+//   - ONE brand accent: the fixed Dracula purple (light `#644AC9`, the Pro `#9580FF` on dark). It is
+//     the only chrome colour that is ours; everything else is the system's.
 //   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 //
@@ -42,11 +42,16 @@ import UIKit
 struct SlateTheme: Equatable {
     /// Stable identity for change-detection + persistence (`ThemeChoice.builtinID`).
     let id: String
-    /// Whether the GLASS is light — the profile's own polarity. Since the whole-app theme round
-    /// (user-directed 2026-08-07) this ALSO drives the app-wide appearance pin
-    /// (`ThemeStore.pinAppAppearance`): a dark profile means an all-dark app, a light one an
-    /// all-light app — chrome and glass share one polarity, never the split-tone half-and-half.
+    /// Whether the GLASS is light — the profile's own polarity. Drives the forced on-glass colour
+    /// scheme (``Slate/glassColorScheme``): text drawn ON the glass resolves against the glass, not
+    /// against the OS or the chrome.
     let isLight: Bool
+    /// Whether the CHROME (floor, sidebar, titlebar — everything semantic) is light — the polarity
+    /// `ThemeStore.pinAppAppearance` pins `NSApp.appearance` to. Equal to ``isLight`` for a STEPPED
+    /// profile (one polarity, the whole-app theme round). An INVERTED profile (the Canario frame,
+    /// user-directed 2026-08-07 modern round) flips it: a mid-light frame floor around dark glass
+    /// means light chrome standing on the frame while the glass keeps its own dark scheme.
+    let chromeIsLight: Bool
 
     // The glass surfaces
     /// The terminal cell surface — the island's ground.
@@ -57,15 +62,13 @@ struct SlateTheme: Equatable {
     let terminalRaised: Color
 
     /// The chrome FLOOR this profile stands its islands on — the ONE tone every window column and
-    /// divider gap paints. DERIVED, never authored: the glass face blended toward the profile's own
-    /// ink (22% on dark profiles, 17% on light — tuned against the references, user-directed
-    /// 2026-08-07 contrast round). Deriving from the profile rather than from
-    /// `windowBackgroundColor` does two things the semantic blend could not: the floor carries the
-    /// profile's TEMPERATURE (Canario's frame reads as one world with its tiles because they share
-    /// a hue family — a neutral system grey against the warm Ember glass read as two worlds pushed
-    /// together), and the island↔floor step is a real one (glass 1.83:1 dark / 1.37:1 light,
-    /// against the ~1.2:1 whisper that made the islands vanish into the ground). Stored as the raw
-    /// hex too because the AppKit split view resolves it as an `NSColor`.
+    /// divider gap paints. FIXED per profile, never appearance-resolved (the CGColor-snapshot trap
+    /// family stays dead). The shipped pair authors it as an INVERTED FRAME (the measured Canario
+    /// structure, round-8 verdict): an opposite-polarity tone in the glass's own hue family, so the
+    /// frame and the glass read as one world while the island↔floor step stays a real one (the
+    /// derived-floor eras' ~1.2:1 whisper made the islands vanish; a neutral system grey read as a
+    /// second world). Stored as the raw hex too because the AppKit split view resolves it as an
+    /// `NSColor`.
     let floorHexValue: UInt32
     /// ``floorHexValue`` as the SwiftUI colour every column background reads.
     var floor: Color { Color(slateHex: floorHexValue) }
@@ -93,18 +96,27 @@ struct SlateTheme: Equatable {
     let cursorTextHex: String?
 
     /// Build a profile from 24-bit RGB values (single source for both the `Color` and hex forms).
+    /// STRUCTURE knobs (user-directed 2026-08-07 — the round-8 verdict shipped the frame):
+    ///   - `floorFraction` overrides the STEPPED floor's face→ink blend (default 22% dark / 17% light).
+    ///   - `frame` sets an INVERTED floor instead: an opposite-polarity frame pole in the glass's
+    ///     hue family (the measured Canario structure), which also flips the chrome polarity
+    ///     (`chromeIsLight = !isLight`) so the semantic chrome stands on the frame correctly.
     private static func profile(
         id: String, isLight: Bool,
         face: UInt32, ink: UInt32, ink2: UInt32, edge: UInt32, accent: UInt32,
         ansi: [UInt32],
+        floorFraction: Double? = nil,
+        frame: UInt32? = nil,
     ) -> Self {
         Self(
             id: id,
             isLight: isLight,
+            chromeIsLight: frame == nil ? isLight : !isLight,
             terminal: Color(slateHex: face),
             terminalEdge: Color(slateHex: edge),
             terminalRaised: Color(slateHex: edge),
-            floorHexValue: blendHex(face, toward: ink, fraction: isLight ? 0.17 : 0.22),
+            floorHexValue: frame
+                ?? blendHex(face, toward: ink, fraction: floorFraction ?? (isLight ? 0.17 : 0.22)),
             terminalInk: Color(slateHex: ink),
             terminalInk2: Color(slateHex: ink2),
             terminalAccent: Color(slateHex: accent),
@@ -141,52 +153,43 @@ struct SlateTheme: Equatable {
         return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
-    // MARK: - Built-in profiles
+    // MARK: - Built-in profiles (user-directed 2026-08-07, round 8 verdict: exactly TWO)
 
-    /// Ember — the DEFAULT: the warm dark glass the product has worn since FOUNDRY (#27221E cells,
-    /// the palette the user picked and kept through every chrome round). Ids keep their historic
-    /// `foundry-` prefix so persisted theme choices resolve unchanged.
-    static let foundryEmber = profile(
-        id: "foundry-ember", isLight: false,
-        face: 0x27221E, ink: 0xE6DED6, ink2: 0xADA8A3, edge: 0x3E3833, accent: 0x66CCD1,
+    //
+    // The app wears DRACULA PRO verbatim — the published Pro glass (#22212C face, #F8F8F2 ink,
+    // #454158 selection, #7970A9 comment) and the normalized accent seven (S100/L75 in HSL, hue
+    // rotated: the Pro method), plus its official light counterpart ALUCARD from the public spec.
+    // Only the pieces a desktop app needs beyond a syntax palette are DERIVED, all in the Pro hue
+    // band (OKLCH H≈289): the FRAME floor each glass island stands in, and the deep accent fill.
+    // Frame depths were picked from a rendered strip against the trial's #AFACD2 ("too pale"):
+    // dark #9993CD (5.6:1 vs the glass), light #4C4869 (8.3:1 vs the cream glass).
+    // Both profiles are INVERTED (Canario frame): light frame around dark glass and vice versa.
+
+    /// Dracula — the DEFAULT: Dracula Pro glass inside a mid-light violet frame.
+    /// ANSI note: the Pro seven has no blue — the blue slot carries the purple, per Dracula's own
+    /// terminal convention. Brights repeat the bases: the Pro accents are already
+    /// lightness-normalized at the top of the band, so a +L derivation only washes them out.
+    static let dracula = profile(
+        id: "dracula", isLight: false,
+        face: 0x22212C, ink: 0xF8F8F2, ink2: 0x7970A9, edge: 0x454158, accent: 0x9580FF,
         ansi: [
-            0x3A3431, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA8A3,
-            0x7C7874, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE6DED6,
+            0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,
+            0x7970A9, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xFFFFFF,
         ],
+        frame: 0x9993CD,
     )
 
-    /// Ember Light — warm paper glass, the light-polarity Ember. The face is NEAR-WHITE, a
-    /// deliberate step LIGHTER than the light chrome floor (user-directed 2026-08-07, polish round):
-    /// the old `#F6F0ED` face sat ~1.03:1 against the derived grey field, and the island vanished
-    /// into it — the reference relationship (JetBrains light: white islands on a grey floor) needs
-    /// the glass above the floor, not beside it.
-    static let foundryEmberLight = profile(
-        id: "foundry-ember-light", isLight: true,
-        face: 0xFCFAF7, ink: 0x36312C, ink2: 0x756F69, edge: 0xE9E2DC, accent: 0x007272,
+    /// Alucard — Dracula Pro's official light theme (public spec hexes verbatim): cream glass
+    /// inside a deep violet frame. Its accents are darkness-normalized for the light ground, so
+    /// brights repeat the bases here too.
+    static let alucard = profile(
+        id: "alucard", isLight: true,
+        face: 0xFFFBEB, ink: 0x1F1F1F, ink2: 0x6C664B, edge: 0xCFCFDE, accent: 0x644AC9,
         ansi: [
-            0x36312C, 0xB43249, 0x357A3A, 0x8E6A00, 0x006E8C, 0x6E4FB1, 0x00787D, 0xFFFEFE,
-            0x9A938D, 0xC93450, 0x34893C, 0x9C7500, 0x007A9B, 0x7B57C8, 0x00858A, 0xFFF9F5,
+            0x1F1F1F, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xCFCFDE,
+            0x6C664B, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xFFFBEB,
         ],
-    )
-
-    /// Dusk — cool mauve glass (the Catppuccin / Rosé Pine temperature family); iris accent.
-    static let foundryDusk = profile(
-        id: "foundry-dusk", isLight: false,
-        face: 0x242129, ink: 0xE5DCE9, ink2: 0xADA7AF, edge: 0x36343C, accent: 0xB3B1FC,
-        ansi: [
-            0x36343C, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA7AF,
-            0x7B777D, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE5DCE9,
-        ],
-    )
-
-    /// Graphite — near-neutral precision glass; electric cyan accent.
-    static let foundryGraphite = profile(
-        id: "foundry-graphite", isLight: false,
-        face: 0x222325, ink: 0xDFDFE3, ink2: 0xA9A9AC, edge: 0x343537, accent: 0x61C9E7,
-        ansi: [
-            0x343537, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xA9A9AC,
-            0x78787B, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xDFDFE3,
-        ],
+        frame: 0x4C4869,
     )
 }
 
@@ -195,7 +198,7 @@ struct SlateTheme: Equatable {
 enum Slate {
     /// The active TERMINAL PROFILE. Indirected through ``ThemeStore/shared`` (D3) so a runtime
     /// profile switch repoints the glass tokens live — `@MainActor` because the store is.
-    /// ``ThemeStore``'s default (`.foundryEmber`) means a headless render resolves a real palette.
+    /// ``ThemeStore``'s default (`.dracula`) means a headless render resolves a real palette.
     @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
 
     /// The colour scheme of the GLASS (the terminal profile's own polarity) — forced onto the island
@@ -205,12 +208,13 @@ enum Slate {
     /// dark-content-well idiom (a video player's letterbox, a dark artboard) applied to the terminal.
     @MainActor static var glassColorScheme: ColorScheme { theme.isLight ? .light : .dark }
 
-    /// The FIXED brand accent (Ember teal) as an appearance-dynamic pair: the picked `#007272` on
-    /// light appearances, lifted to stay legible on dark chrome. The ONLY chrome colour that is not
-    /// the system's — user-directed 2026-08-07 (fixed teal over the user-configurable system accent).
-    private static let accentTeal = Color(slateDynamicLight: 0x007272, dark: 0x3DB8B8)
+    /// The FIXED brand accent (Dracula purple) as an appearance-dynamic pair: Alucard's `#644AC9`
+    /// on light appearances, the Pro `#9580FF` on dark. The ONLY chrome colour that is not the
+    /// system's — user-directed 2026-08-07 (fixed brand accent over the user-configurable system
+    /// accent; purple replaced the Ember teal in the round-8 Dracula verdict).
+    private static let accentPurple = Color(slateDynamicLight: 0x644AC9, dark: 0x9580FF)
     /// The accent's fill/badge band (filled pills, progress fills — white text sits on it).
-    private static let accentTealDeep = Color(slateDynamicLight: 0x005555, dark: 0x0E6B6B)
+    private static let accentPurpleDeep = Color(slateDynamicLight: 0x4B29A7, dark: 0x6B4BD6)
 
     /// The chrome surface ladder — SEMANTIC system surfaces plus the one glass exception:
     /// `void` (aux-window backdrops) → `ground` (sidebar housing; on macOS the real sidebar material
@@ -309,9 +313,9 @@ enum Slate {
         static let hover = Color(uiColor: .quaternarySystemFill)
         #endif
         /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
-        static let selected = Slate.accentTeal.opacity(0.15)
-        static let accent = Slate.accentTeal
-        static let accentMuted = Slate.accentTeal.opacity(0.12)
+        static let selected = Slate.accentPurple.opacity(0.15)
+        static let accent = Slate.accentPurple
+        static let accentMuted = Slate.accentPurple.opacity(0.12)
         static let header = Text.secondary
         /// Floating-panel drop shadow — soft black, heavier on dark appearances.
         static let shadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45)
@@ -385,7 +389,7 @@ enum Slate {
         static let err = Color(uiColor: .systemRed)
         #endif
         /// Info rides the brand accent (the one non-system chrome colour).
-        static let info = Slate.accentTeal
+        static let info = Slate.accentPurple
 
         /// FIXED security-blue — appearance-INDEPENDENT: the secure-input pill must read as the SAME
         /// vivid royal-blue everywhere so it can never be confused with the accent. Pinned to
@@ -403,7 +407,7 @@ enum Slate {
     /// be a pastel wash (filled pills, progress fills).
     @MainActor
     enum Accent {
-        static let deep = Slate.accentTealDeep
+        static let deep = Slate.accentPurpleDeep
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.

@@ -31,7 +31,7 @@ final class ToastStateGalleryTests: XCTestCase {
         // The theme is process-wide (`ThemeStore.shared`), so a light-theme group must not leak into
         // whatever test runs next.
         // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
-        MainActor.assumeIsolated { ThemeStore.shared.active = .foundryEmber }
+        MainActor.assumeIsolated { ThemeStore.shared.active = .dracula }
         super.tearDown()
     }
 
@@ -160,7 +160,7 @@ final class ToastStateGalleryTests: XCTestCase {
     /// that only reads on dark is a broken card — the `raised`-over-`face` step and the four status hues
     /// both have to survive the swap.
     func testGalleryLightTheme() throws {
-        ThemeStore.shared.active = .foundryEmberLight
+        ThemeStore.shared.active = .alucard
         try dump("5-light", captioned: [
             ("light · agent attention", card(.agent, .attention, "Claude", "slop-desk ▸ api")),
             ("light · agent finished", card(.agent, .success, "Claude", "refactor the reducer")),

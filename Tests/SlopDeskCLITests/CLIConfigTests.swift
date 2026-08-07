@@ -96,7 +96,7 @@ final class CLIConfigTests: XCTestCase {
 
     func testValidateReportsEachBadLineNumber() {
         let errors = CLIConfig.validate(
-            "keybind = cmd+t:new_tab\ntheme = Foundry\nfont-size 14", isValidKeybindValue: isRealKeybind,
+            "keybind = cmd+t:new_tab\ntheme = Dracula\nfont-size 14", isValidKeybindValue: isRealKeybind,
         )
         XCTAssertEqual(errors.map(\.line), [2, 3])
     }

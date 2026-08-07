@@ -1501,12 +1501,12 @@ private struct AppearanceSettingsTab: View {
 
     /// Bridge the picker selection to one theme SLOT's model field (`theme` for the light/primary slot,
     /// `themeDark` for the dark slot). An unset slot reads as its default (unset light ⇒ `.system`, unset
-    /// dark ⇒ Foundry Ember). Writing always sets an explicit choice so the user's pick persists.
+    /// dark ⇒ Dracula). Writing always sets an explicit choice so the user's pick persists.
     private func themeSelectionBinding(forDarkSlot dark: Bool) -> Binding<ThemeChoice> {
         Binding(
             get: {
                 let choice = dark ? store.appearance.themeDark : store.appearance.theme
-                return choice ?? (dark ? .foundryEmber : .system)
+                return choice ?? (dark ? .dracula : .system)
             },
             set: { choice in
                 // Mutate a local copy and assign ONCE so the store's `appearance` didSet (which re-applies the

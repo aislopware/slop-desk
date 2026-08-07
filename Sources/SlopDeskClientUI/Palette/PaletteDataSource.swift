@@ -330,7 +330,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // palette category).
         PaletteItem(
             id: "action.switchTheme", icon: "paintpalette", title: "Switch Theme",
-            subtitle: nil, keywords: "theme switch appearance color scheme dark light foundry ember palette",
+            subtitle: nil, keywords: "theme switch appearance color scheme dark light dracula alucard palette",
             shortcut: nil, filter: .actions, category: .settings, action: .switchTheme,
         ),
         // The cheat sheet is also reachable by ⌘/; surfacing it here means the keyboard reference is

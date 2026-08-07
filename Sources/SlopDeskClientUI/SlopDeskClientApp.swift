@@ -1038,14 +1038,14 @@ public struct SlopDeskClientApp: App {
 
     /// The next built-in theme after `current` for the palette "Switch Theme"
     /// verb — advances the primary slot through the shipped built-ins (Settings → Appearance order), wrapping. A
-    /// `nil` / `.system` / custom-slug current resolves to the compile-time default (Foundry Ember) and
+    /// `nil` / `.system` / custom-slug current resolves to the compile-time default (Dracula) and
     /// advances from there, so the FIRST "Switch Theme" is always a visible change rather than a no-op. PURE (no
     /// GUI dependency) — mirrors ``ThemeCatalog/builtinThemes`` order via the matching ``ThemeChoice`` cases.
     private static func nextBuiltinTheme(after current: ThemeChoice?) -> ThemeChoice {
         let order: [ThemeChoice] = [
-            .foundryEmber, .foundryEmberLight, .foundryDusk, .foundryGraphite,
+            .dracula, .alucard,
         ]
-        let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .foundryEmber
+        let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .dracula
         let idx = order.firstIndex(of: resolved) ?? 0
         return order[(idx + 1) % order.count]
     }

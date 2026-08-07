@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// Generates the FOUNDRY VS Code colour themes seeded into the code panel's workbench
-// (`Sources/SlopDeskHost/Resources/foundry-*.json`, shipped by CodeServerManager's
-// `slopdesk-foundry` extension seed).
+// Generates the built-in VS Code colour themes seeded into the code panel's workbench
+// (`Sources/SlopDeskHost/Resources/{dracula,alucard}.json`, shipped by CodeServerManager's
+// `slopdesk-foundry` extension seed — the extension id is a stable anchor; the contents are
+// the Dracula Pro pair since the round-8 verdict, user-directed 2026-08-07).
 //
-// The palettes below MIRROR the FoundrySeed literals in
-// `Sources/SlopDeskClientUI/DesignSystem/SlateDesign.swift` (the OKLCH engine's output —
-// see DESIGN.md, the Seeded-Engine Rule, and `.impeccable/design.json` for the normative
-// specs). Edit the seeds there first, then re-run:
+// The palettes below MIRROR the `SlateTheme.dracula` / `.alucard` literals in
+// `Sources/SlopDeskClientUI/DesignSystem/SlateDesign.swift` (Dracula Pro's published glass +
+// normalized accents, and Alucard from the public spec; see DESIGN.md). Edit there first,
+// then re-run:
 //
 //   node scripts/foundry-code-theme-gen.mjs
 //
-// The token grammar is the Monokai Pro assignment shape (the family the app's palettes
-// descend from) recoloured with each seed's own chromatics, so the editor speaks the same
-// eight-hue register as the rest of the app.
+// The token grammar keeps the Monokai Pro assignment shape recoloured with each seed's own
+// chromatics, so the editor speaks the same register as the rest of the app. Surface-ladder
+// steps the published palettes do not define (void/ground/raised, tertiary ink) are DERIVED
+// in the Pro hue band; the anchor tones are verbatim.
 
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,59 +22,38 @@ import { fileURLToPath } from "node:url";
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "Sources", "SlopDeskHost", "Resources");
 
-const DARK_CHROMA = {
-    red: "#FB939C", orange: "#F2A56F", amber: "#E5BD66", green: "#8DCD8E",
-    cyan: "#66CCD1", blue: "#78BEEF", purple: "#BCAAF4", magenta: "#E399D3",
-};
-
 const SEEDS = [
     {
-        file: "foundry-ember", label: "Foundry Ember", light: false,
-        void_: "#171310", ground: "#201B17", face: "#27221E", raised: "#322C29", lift: "#3E3833",
-        ink: "#E6DED6", ink2: "#ADA8A3", ink3: "#7C7874",
-        accent: "#60CDCD", accentDeep: "#009898",
-        chroma: DARK_CHROMA,
-        ansi: [
-            "#3A3431", "#FB939C", "#8DCD8E", "#E5BD66", "#56B9DD", "#BCAAF4", "#66CCD1", "#ADA8A3",
-            "#7C7874", "#FFBBBF", "#ABE6AC", "#FCD78A", "#7CD1F3", "#D4C8FF", "#8CE4E9", "#E6DED6",
-        ],
-    },
-    {
-        file: "foundry-ember-light", label: "Foundry Ember Light", light: true,
-        // face lifted to near-white (user-directed 2026-08-07, polish round) — the island glass
-        // must sit LIGHTER than the app's grey chrome floor; mirrors SlateTheme.foundryEmberLight.
-        void_: "#DDD8D4", ground: "#EBE5E1", face: "#FCFAF7", raised: "#FFFDFB", lift: "#FFFFFF",
-        ink: "#36312C", ink2: "#756F69", ink3: "#9A938D",
-        accent: "#007272", accentDeep: "#004D4D",
+        // Anchors verbatim from Dracula Pro: face/ink/lift(selection)/ink2(comment) + the
+        // normalized accent seven. Blue slot carries the purple (the Pro set has no blue).
+        file: "dracula", label: "Dracula", light: false,
+        void_: "#17161D", ground: "#1C1B26", face: "#22212C", raised: "#333142", lift: "#454158",
+        ink: "#F8F8F2", ink2: "#7970A9", ink3: "#655E91",
+        accent: "#9580FF", accentDeep: "#6B4BD6",
         chroma: {
-            red: "#B43249", orange: "#A35303", amber: "#8E6A00", green: "#357A3A",
-            cyan: "#00787D", blue: "#006A9D", purple: "#6E4FB1", magenta: "#9A3A8A",
+            red: "#FF9580", orange: "#FFCA80", amber: "#FFFF80", green: "#8AFF80",
+            cyan: "#80FFEA", blue: "#9580FF", purple: "#9580FF", magenta: "#FF80BF",
         },
         ansi: [
-            "#36312C", "#B43249", "#357A3A", "#8E6A00", "#006E8C", "#6E4FB1", "#00787D", "#FFFEFE",
-            "#9A938D", "#C93450", "#34893C", "#9C7500", "#007A9B", "#7B57C8", "#00858A", "#FFF9F5",
+            "#454158", "#FF9580", "#8AFF80", "#FFFF80", "#9580FF", "#FF80BF", "#80FFEA", "#F8F8F2",
+            "#7970A9", "#FF9580", "#8AFF80", "#FFFF80", "#9580FF", "#FF80BF", "#80FFEA", "#FFFFFF",
         ],
     },
     {
-        file: "foundry-dusk", label: "Foundry Dusk", light: false,
-        void_: "#151219", ground: "#1D1A21", face: "#242129", raised: "#2F2C35", lift: "#3A3741",
-        ink: "#E5DCE9", ink2: "#ADA7AF", ink3: "#7B777D",
-        accent: "#B3B1FC", accentDeep: "#7F77D9",
-        chroma: DARK_CHROMA,
+        // Anchors verbatim from Alucard (Dracula Pro's official light theme, public spec):
+        // cream face, near-black ink, #CFCFDE selection, #6C664B comment, darkness-normalized
+        // accents. Blue slot carries the purple, matching the dark seed.
+        file: "alucard", label: "Alucard", light: true,
+        void_: "#E8E4D5", ground: "#F3EFDF", face: "#FFFBEB", raised: "#F5F2E4", lift: "#CFCFDE",
+        ink: "#1F1F1F", ink2: "#6C664B", ink3: "#938C6F",
+        accent: "#644AC9", accentDeep: "#4B29A7",
+        chroma: {
+            red: "#CB3A2A", orange: "#A34D14", amber: "#846E15", green: "#14710A",
+            cyan: "#036A96", blue: "#644AC9", purple: "#644AC9", magenta: "#A3144D",
+        },
         ansi: [
-            "#36343C", "#FB939C", "#8DCD8E", "#E5BD66", "#56B9DD", "#BCAAF4", "#66CCD1", "#ADA7AF",
-            "#7B777D", "#FFBBBF", "#ABE6AC", "#FCD78A", "#7CD1F3", "#D4C8FF", "#8CE4E9", "#E5DCE9",
-        ],
-    },
-    {
-        file: "foundry-graphite", label: "Foundry Graphite", light: false,
-        void_: "#131416", ground: "#1B1C1E", face: "#222325", raised: "#2D2E30", lift: "#38393C",
-        ink: "#DFDFE3", ink2: "#A9A9AC", ink3: "#78787B",
-        accent: "#61C9E7", accentDeep: "#0094B3",
-        chroma: DARK_CHROMA,
-        ansi: [
-            "#343537", "#FB939C", "#8DCD8E", "#E5BD66", "#56B9DD", "#BCAAF4", "#66CCD1", "#A9A9AC",
-            "#78787B", "#FFBBBF", "#ABE6AC", "#FCD78A", "#7CD1F3", "#D4C8FF", "#8CE4E9", "#DFDFE3",
+            "#1F1F1F", "#CB3A2A", "#14710A", "#846E15", "#644AC9", "#A3144D", "#036A96", "#CFCFDE",
+            "#6C664B", "#CB3A2A", "#14710A", "#846E15", "#644AC9", "#A3144D", "#036A96", "#FFFBEB",
         ],
     },
 ];
@@ -148,7 +129,7 @@ function workbenchColors(s) {
         "activityBar.inactiveForeground": s.ink3,
         "activityBar.border": divider,
         "activityBarBadge.background": s.accentDeep,
-        "activityBarBadge.foreground": s.light ? s.lift : s.ink,
+        "activityBarBadge.foreground": s.light ? "#FFFFFF" : s.ink,
         "statusBar.background": s.ground,
         "statusBar.foreground": s.ink2,
         "statusBar.border": divider,
@@ -156,7 +137,7 @@ function workbenchColors(s) {
         "statusBar.noFolderBorder": divider,
         "statusBar.debuggingBackground": s.ground,
         "statusBarItem.remoteBackground": s.accentDeep,
-        "statusBarItem.remoteForeground": s.light ? s.lift : s.ink,
+        "statusBarItem.remoteForeground": s.light ? "#FFFFFF" : s.ink,
         "titleBar.activeBackground": s.face,
         "titleBar.activeForeground": s.ink2,
         "titleBar.inactiveBackground": s.face,
@@ -199,11 +180,11 @@ function workbenchColors(s) {
         "checkbox.background": s.light ? s.raised : s.ground,
         "checkbox.border": divider,
         "button.background": s.accent,
-        "button.foreground": s.light ? s.lift : s.void_,
+        "button.foreground": s.light ? "#FFFFFF" : s.void_,
         "button.secondaryBackground": s.raised,
         "button.secondaryForeground": s.ink,
         "badge.background": s.accentDeep,
-        "badge.foreground": s.light ? s.lift : s.ink,
+        "badge.foreground": s.light ? "#FFFFFF" : s.ink,
         "progressBar.background": s.accent,
         "scrollbarSlider.background": alpha(s.ink, 0.1),
         "scrollbarSlider.hoverBackground": alpha(s.ink, 0.18),

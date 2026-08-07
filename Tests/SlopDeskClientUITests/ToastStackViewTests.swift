@@ -31,7 +31,7 @@ final class ToastStackViewTests: XCTestCase {
 
     /// All FOUR flavours must be pairwise distinct inks. This is the real invariant behind a flavour — a
     /// flavour that cannot be told apart from another conveys nothing — and it is the assertion the previous
-    /// pin deliberately WITHHELD: `.attention` used to resolve to `Slate.State.accent`, and every Foundry
+    /// pin deliberately WITHHELD: `.attention` used to resolve to `Slate.State.accent`, and every built-in
     /// seed sets `info == accent`, so needs-input and a routine notice rendered in the same hue. Routing
     /// `.attention` to the status quartet's unused amber rung is what makes this hold.
     func testEveryFlavorInkIsDistinct() {

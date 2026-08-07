@@ -5,7 +5,7 @@
 // the `ToastStackView.tint(for:)` pattern, so the rendered colour can't drift from the asserted contract.
 //
 // Revert-to-confirm-fail: re-routing the fill back to the theme-derived `Slate.Status.info`
-// makes `fillColor` equal the Foundry accent under the default theme → `testSecureInputPillIsFixedBlueNotAccent`
+// makes `fillColor` equal the theme accent under the default theme → `testSecureInputPillIsFixedBlueNotAccent`
 // fails on its `assertNotEqual(... accent)` leg. Headless / pure-token — no SCStream/VT/Metal touched.
 
 #if canImport(SwiftUI) && canImport(AppKit)
@@ -16,10 +16,10 @@ import XCTest
 @MainActor
 final class SecureInputPillColorTests: XCTestCase {
     /// The pill fill is the FIXED security-blue token (#2D6FE8), not the theme-derived info colour — and it
-    /// does NOT equal the Foundry accent under the shipped default theme (where `info == accent == teal`, the
+    /// does NOT equal the theme accent under the shipped default theme (where `info == accent`, the
     /// exact collapse that made a theme-derived security badge indistinguishable from the accent).
     func testSecureInputPillIsFixedBlueNotAccent() {
-        ThemeStore.shared.apply(.foundryEmber) // the shipped default seed: info == accent == 0x60CDCD
+        ThemeStore.shared.apply(.dracula) // the shipped default: info == accent (the Dracula purple)
 
         XCTAssertEqual(
             SecureInputPill.fillColor, Slate.Status.secureInput,
@@ -31,20 +31,20 @@ final class SecureInputPillColorTests: XCTestCase {
         )
         XCTAssertNotEqual(
             SecureInputPill.fillColor, Slate.State.accent,
-            "the security pill must NOT read as the Foundry accent (the teal that info collapses to)",
+            "the security pill must NOT read as the theme accent (the purple that info collapses to)",
         )
         XCTAssertNotEqual(
             SecureInputPill.fillColor, Slate.Status.info,
-            "the security pill is theme-INDEPENDENT — distinct from the theme-derived info colour under Foundry",
+            "the security pill is theme-INDEPENDENT — distinct from the theme-derived info colour",
         )
     }
 
     /// Theme-INDEPENDENT: the fixed token holds its value across a theme switch (so the badge is the same
     /// royal-blue on every theme), unlike the theme-derived `Slate.Status.info`, which moves with the theme.
     func testSecureInputTokenIsThemeIndependent() {
-        ThemeStore.shared.apply(.foundryEmber)
+        ThemeStore.shared.apply(.dracula)
         let darkValue = Slate.Status.secureInput
-        ThemeStore.shared.apply(.foundryEmberLight)
+        ThemeStore.shared.apply(.alucard)
         let lightValue = Slate.Status.secureInput
         XCTAssertEqual(darkValue, lightValue, "the security token does not move with the theme")
         XCTAssertEqual(lightValue, Color(slateHex: 0x2D6FE8), "still the fixed royal-blue on the light theme")

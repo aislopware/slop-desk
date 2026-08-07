@@ -155,15 +155,15 @@ final class CLIFormattingTests: XCTestCase {
     // MARK: - config
 
     func testConfigColumns() {
-        let rows: [[String: Any]] = [["key": "theme", "value": "Foundry"]]
+        let rows: [[String: Any]] = [["key": "theme", "value": "Dracula"]]
         XCTAssertEqual(
             CLIFormatting.config(rows, format: .text, noHeaders: false),
-            "KEY    VALUE\ntheme  Foundry",
+            "KEY    VALUE\ntheme  Dracula",
         )
     }
 
     func testConfigJSONMatchesRenderJSON() {
-        let rows: [[String: Any]] = [["key": "theme", "value": "Foundry"], ["key": "font-size", "value": "14"]]
+        let rows: [[String: Any]] = [["key": "theme", "value": "Dracula"], ["key": "font-size", "value": "14"]]
         XCTAssertEqual(
             CLIFormatting.config(rows, format: .json, noHeaders: false),
             CLIFormatting.renderJSON(rows),

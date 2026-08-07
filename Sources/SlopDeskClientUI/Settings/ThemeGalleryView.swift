@@ -27,8 +27,8 @@ import SwiftUI
 
 // MARK: - The gallery's option list (pure)
 
-/// The theme cards, in gallery order: System first (the follow-the-OS choice), then the four FOUNDRY
-/// seeds. Mirrors ``ThemeCatalog/builtinThemes`` order.
+/// The theme cards, in gallery order: System first (the follow-the-OS choice), then the two
+/// built-ins (dark, light). Mirrors ``ThemeCatalog/builtinThemes`` order.
 ///
 /// Pinned exhaustively against `ThemeChoice.allCases` (`SettingsOptionCatalogTests`): a new built-in theme that
 /// isn't added here would be silently unreachable, and unlike a dropdown a card grid gives no hint that
@@ -38,10 +38,8 @@ enum SettingsThemeGallery {
         // "Follows the OS" spelled short: HW review showed "Follows macOS" truncating to "Follows macO" in a
         // 96pt card. A caption that clips is worse than a terser one.
         SettingsOption(.system, "System", caption: "Follows OS"),
-        SettingsOption(.foundryEmber, "Ember", caption: "Foundry"),
-        SettingsOption(.foundryEmberLight, "Ember Light", caption: "Foundry"),
-        SettingsOption(.foundryDusk, "Dusk", caption: "Foundry"),
-        SettingsOption(.foundryGraphite, "Graphite", caption: "Foundry"),
+        SettingsOption(.dracula, "Dracula", caption: "Dark"),
+        SettingsOption(.alucard, "Alucard", caption: "Light"),
     ]
 }
 
