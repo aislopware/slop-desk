@@ -158,6 +158,21 @@ final class AndroidBridgeHardwareTests: XCTestCase {
         XCTAssertTrue(output.contains("OK"), "console said: \(output)")
     }
 
+    /// `open` for a serial `adb` has never heard of is refused BEFORE the scrcpy attempt, with the
+    /// sentence that says so. The preflight is what turns a mid-boot open from "push, forward, time
+    /// out, cryptic tunnel error" into an answer the panel's wait loop can act on.
+    func testOpenForAnUnknownSerialIsRefusedUpFront() throws {
+        try XCTSkipUnless(isEnabled, "SLOPDESK_ANDROID_HW=1 not set")
+        let bridge = try makeBridge()
+        defer { bridge.stop() }
+
+        let reply = try request(
+            ["op": "open", "serial": "emulator-9999", "maxSize": 1024], port: bridge.port,
+        )
+        XCTAssertEqual(reply["ok"] as? Bool, false)
+        XCTAssertEqual(reply["error"] as? String, AndroidBridgeError.unknownDevice.rawValue)
+    }
+
     /// A malformed first line is answered and the connection closed — never a trap, never a hang.
     func testMalformedRequestIsAnswered() throws {
         try XCTSkipUnless(isEnabled, "SLOPDESK_ANDROID_HW=1 not set")

@@ -177,7 +177,19 @@ final class AndroidBridgeServer: @unchecked Sendable {
             // A target that is `offline` or `unauthorized` cannot answer a shell, so it is recorded
             // from what `adb devices` alone said. Probing it would cost the poll its timeout.
             guard entry.state == "device" else {
-                running.append(AndroidDevice(serial: entry.serial, state: entry.state))
+                // A booting emulator can still say WHICH AVD it is: the guest's `adbd` answers
+                // nothing for the first ~21 s of a cold boot (measured 2026-08-07), but the QEMU
+                // console is up from process launch. Naming it here is what folds the transient
+                // `emulator-5554 · offline` row into the AVD row the user booted — one identity
+                // for the whole boot, so an early selection survives it.
+                let avdName = AndroidEmulatorConsole.port(forSerial: entry.serial) == nil
+                    ? nil
+                    : AndroidDeviceCatalog.parseConsoleAVDName(
+                        AndroidEmulatorConsole.run("avd name", serial: entry.serial),
+                    )
+                running.append(
+                    AndroidDevice(serial: entry.serial, avdName: avdName, state: entry.state),
+                )
                 continue
             }
             let probe = AndroidToolchain.adb(
@@ -408,6 +420,20 @@ final class AndroidBridgeServer: @unchecked Sendable {
             options.codec = codec
         }
 
+        // The device's state is asked of `adb` NOW rather than trusted from the panel's list, which
+        // is up to four seconds stale and misses every boot in progress. Without this, an `open`
+        // against a booting device dies inside `adb push` with a sentence about tunnels — measured
+        // 2026-08-07: a cold boot sits `offline` for ~21 s, and an open issued the moment it turns
+        // `device` can stall in push for ~15 s more. The client's reattempt loop absorbs the wait;
+        // this reply is what tells it the wait is worth making.
+        let listing = AndroidToolchain.adb(toolchain, ["devices"], timeout: 5) ?? ""
+        let state = AndroidDeviceCatalog.parseDevices(listing).first { $0.serial == serial }?.state
+        if let refusal = Self.openRefusal(forDeviceState: state) {
+            reply(client, ["ok": false, "error": refusal.rawValue])
+            client.close()
+            return
+        }
+
         let started = AndroidScrcpySession.start(
             toolchain: toolchain, serial: serial, options: options,
         )
@@ -448,6 +474,19 @@ final class AndroidBridgeServer: @unchecked Sendable {
             guard client.writeAll(chunk) else { break }
         }
         finish(session, client: client)
+    }
+
+    /// What `adb devices` says about the target → why an `open` cannot proceed, or `nil` for a
+    /// device ready to mirror. Pure. A `nil` state is a serial `adb` does not list at all.
+    static func openRefusal(forDeviceState state: String?) -> AndroidBridgeError? {
+        switch state {
+        case "device": nil
+        case nil: .unknownDevice
+        case "unauthorized": .deviceUnauthorized
+        // `offline`, `connecting`, `authorizing`, `bootloader`, `recovery`… — every other word is a
+        // device that exists but cannot take a mirror YET, and "yet" is the part the client needs.
+        default: .deviceStarting
+        }
     }
 
     private func finish(_ session: AndroidScrcpySession, client: AndroidSocket) {

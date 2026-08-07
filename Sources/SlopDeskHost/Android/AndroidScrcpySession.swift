@@ -234,5 +234,7 @@ enum AndroidBridgeError: String, Error, Sendable {
     case launchFailed = "Could not start the mirror server on the device."
     case serverDidNotStart = "The device accepted the connection but never answered."
     case unknownDevice = "That device is no longer attached."
+    case deviceStarting = "The device is still starting up."
+    case deviceUnauthorized = "Debugging has not been allowed on the device yet."
     case badRequest = "The bridge did not understand that request."
 }

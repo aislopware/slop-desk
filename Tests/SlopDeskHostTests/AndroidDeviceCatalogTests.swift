@@ -189,6 +189,87 @@ final class AndroidDeviceCatalogTests: XCTestCase {
         XCTAssertEqual(off.key, on.key)
     }
 
+    // MARK: - The boot window
+
+    /// The `avd name` console reply, captured 2026-08-07: the name, then a bare `OK`. This is the
+    /// only route to WHICH AVD a booting emulator is — the guest answers no shell for ~21 s of a
+    /// cold boot, while the QEMU console is up from process launch.
+    func testConsoleAVDNameIsTheLineBeforeTheVerdict() {
+        XCTAssertEqual(
+            AndroidDeviceCatalog.parseConsoleAVDName("Pixel_API36\r\nOK\r\n"), "Pixel_API36",
+        )
+    }
+
+    func testConsoleAVDNameRejectsRefusalsAndSilence() {
+        XCTAssertNil(AndroidDeviceCatalog.parseConsoleAVDName(nil))
+        XCTAssertNil(AndroidDeviceCatalog.parseConsoleAVDName("KO: unknown command\r\n"))
+        XCTAssertNil(AndroidDeviceCatalog.parseConsoleAVDName("OK\r\n"))
+    }
+
+    /// A booting emulator that knows its AVD name is ONE row, not two — and it carries the AVD's
+    /// declared facts, because the probe that would measure live ones gets no answer mid-boot.
+    func testABootingEmulatorFoldsIntoItsAVDRowWithDeclaredFacts() {
+        let booting = AndroidDevice(serial: "emulator-5554", avdName: "Pixel_API36", state: "offline")
+        let onDisk = AndroidDeviceCatalog.device(
+            avdName: "Pixel_API36",
+            config: ["hw.lcd.width": "1080", "hw.lcd.height": "2400", "tag.id": "google_apis"],
+        )
+        let merged = AndroidDeviceCatalog.merge(running: [booting], avds: [onDisk])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.serial, "emulator-5554")
+        XCTAssertEqual(merged.first?.state, "offline")
+        XCTAssertEqual(merged.first?.width, 1080)
+        XCTAssertEqual(merged.first?.height, 2400)
+    }
+
+    /// The first beat of a boot, observed live 2026-08-07: the serial registers with `adb` before
+    /// the QEMU console accepts, so for a poll or two the emulator cannot say WHICH AVD it is. That
+    /// nameless row is held back — with no `avdName` it would render as a physical phone that is
+    /// "Not responding" beside the AVD row the user just booted.
+    func testANamelessBootingEmulatorSerialIsHeldBackNotShownAsAPhone() {
+        let nameless = AndroidDevice(serial: "emulator-5554", state: "offline")
+        let onDisk = AndroidDeviceCatalog.device(avdName: "Pixel_API36", config: [:])
+        let merged = AndroidDeviceCatalog.merge(running: [nameless], avds: [onDisk])
+        XCTAssertEqual(merged.map(\.key), ["avd:Pixel_API36"])
+    }
+
+    /// The hold-back is for EMULATOR serials alone: an offline physical phone is a real state the
+    /// user can see and fix, and it has no console to wait on.
+    func testAnOfflinePhysicalDeviceStillLists() {
+        let phone = AndroidDevice(serial: "R58M123ABC", state: "offline")
+        let merged = AndroidDeviceCatalog.merge(running: [phone], avds: [])
+        XCTAssertEqual(merged.map(\.serial), ["R58M123ABC"])
+    }
+
+    /// Live facts win the fold — the declared definition fills gaps, never overwrites.
+    func testLiveFactsWinTheFold() {
+        let live = AndroidDeviceCatalog.device(
+            serial: "emulator-5554", state: "device",
+            properties: ["ro.boot.qemu.avd_name": "Pixel_API36"],
+            size: (width: 1080, height: 2400), density: 420,
+        )
+        let onDisk = AndroidDeviceCatalog.device(
+            avdName: "Pixel_API36", config: ["hw.lcd.width": "999", "hw.lcd.density": "160"],
+        )
+        let merged = AndroidDeviceCatalog.merge(running: [live], avds: [onDisk])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.width, 1080)
+        XCTAssertEqual(merged.first?.density, 420)
+    }
+
+    /// What `adb devices` says about a target → whether `open` may proceed. The refusals are the
+    /// sentences the client's wait loop leans on: a booting device says so, instead of dying inside
+    /// `adb push` with a sentence about tunnels (measured 2026-08-07: ~21 s of `offline` on a cold
+    /// boot).
+    func testOpenIsRefusedInWordsThatNameTheWait() {
+        XCTAssertNil(AndroidBridgeServer.openRefusal(forDeviceState: "device"))
+        XCTAssertEqual(AndroidBridgeServer.openRefusal(forDeviceState: "offline"), .deviceStarting)
+        XCTAssertEqual(
+            AndroidBridgeServer.openRefusal(forDeviceState: "unauthorized"), .deviceUnauthorized,
+        )
+        XCTAssertEqual(AndroidBridgeServer.openRefusal(forDeviceState: nil), .unknownDevice)
+    }
+
     // MARK: - Request decoding
 
     func testBridgeRequestRejectsMalformedInput() {

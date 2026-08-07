@@ -332,7 +332,9 @@ struct AndroidDeviceList: View {
     /// the panel's transition vocabulary lives on the surface that owns both depths
     /// (``CodeSidebarColumn``), and the views themselves declare no animation for it.
     private func enter(_ device: AndroidDevice) {
-        guard device.isRunning else { return }
+        // A booting emulator may be entered — the stage waits for it. See ``AndroidRunningCard``'s
+        // tap for why a physical device must actually be running.
+        guard device.isRunning || device.isEmulator && device.serial != nil else { return }
         withAnimation(Slate.Anim.standard) { model.select(device.key) }
     }
 

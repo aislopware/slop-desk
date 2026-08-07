@@ -193,7 +193,13 @@ struct AndroidStageView: View {
         if showsLoading {
             veil {
                 WorkingSpinner()
-                caption("Starting the mirror…")
+                // Two different waits with two different owners: a mirror the HOST is starting, and
+                // a device that is still booting — the model keeps the veil up through both, and the
+                // second can be tens of seconds, which is too long to blame on "the mirror".
+                caption(
+                    model.selectedDevice?.isRunning == false
+                        ? "Starting the device…" : "Starting the mirror…",
+                )
             }
         } else if isStalled {
             veil {

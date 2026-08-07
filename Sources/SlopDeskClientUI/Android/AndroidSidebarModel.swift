@@ -127,6 +127,16 @@ final class AndroidSidebarModel {
     /// Gives up on a stream that never starts. Held so selecting a second device cancels the first
     /// device's verdict rather than letting it land on the new selection.
     private var streamWatchdog: Task<Void, Never>?
+    /// The task chasing a device that cannot take a mirror yet — booting, or freshly booted with no
+    /// serial. One at a time, cancelled by re-selection and by ``settleStream()``.
+    private var reattempt: Task<Void, Never>?
+    /// When the current selection began waiting for video. Attempts share this one clock, so a
+    /// boot's worth of retries cannot extend the deadline forever. `nil` between campaigns.
+    private var awaitBegan: ContinuousClock.Instant?
+    /// The last reason a stream ended, kept so the failure shown when patience runs out is the
+    /// bridge's own sentence rather than a generic one.
+    private var lastEndReason: String?
+    private let clock = ContinuousClock()
     private let firstFrameDeadline: Duration
 
     init(
@@ -159,6 +169,18 @@ final class AndroidSidebarModel {
     /// to produce its first IDR. A warm emulator did it in 0.83 s; a cold physical device on USB is
     /// the slow case this covers.
     static let firstFrameDeadline: Duration = .seconds(8)
+
+    /// How long a selection keeps chasing a device that is not ready before the panel declares
+    /// failure. Measured on this host, 2026-08-07: a cold boot sits `offline` in `adb` for ~21 s
+    /// and produces its first video at ~39 s, with `open` refused or stalling throughout; a
+    /// first-ever boot that still has dexopt to do runs minutes on a slower machine. The window is
+    /// generous because everything inside it stays QUIET — the veil, not an error.
+    static let deviceGrace: Duration = .seconds(120)
+
+    /// The pause between attempts while the device is coming up. Short enough that the mirror opens
+    /// within a beat or two of the device turning ready; long enough that a booting host is not
+    /// answering a `list` and an `open` for the same panel every frame.
+    static let reattemptPause: Duration = .milliseconds(1500)
 
     // MARK: The ensure loop
 
@@ -243,12 +265,28 @@ final class AndroidSidebarModel {
 
     /// Boot an AVD. Headless on the host — see the bridge's `boot`.
     ///
-    /// The read-back after the call is deliberately NOT the whole story here: an emulator takes tens
-    /// of seconds to reach `device` state, far longer than a simulator, so the row goes back to the
-    /// list's own poll rather than pretending the boot has landed.
+    /// The spinner holds until the boot is VISIBLE — the serial in the list — rather than until the
+    /// host merely accepts the launch. A row whose play button returns while the emulator is still
+    /// coming up invites a second instance against the same AVD, which the emulator refuses with a
+    /// lock error that reads as a broken panel. Measured 2026-08-07: the serial appears in
+    /// `adb devices` within a second or two of launch, so the hold is short; the cap covers a host
+    /// under load. The boot itself is tens of seconds more, and the LIST carries that part — the
+    /// booting emulator now names its AVD (via the host's console read-back), so the row stays one
+    /// row, saying "Starting up…".
     func boot(_ device: AndroidDevice) async {
-        guard let avd = device.avdName else { return }
-        await act(device.key) { await self.bridge.boot(avd: avd) }
+        guard let avd = device.avdName, device.serial == nil else { return }
+        guard case .ready = phase, !pending.contains(device.key) else { return }
+        pending.insert(device.key)
+        defer { pending.remove(device.key) }
+        if let problem = await bridge.boot(avd: avd) {
+            failure = problem
+            return
+        }
+        for _ in 0..<10 {
+            await refreshDevices()
+            if devices.first(where: { $0.key == device.key })?.serial != nil { return }
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 
     func shutdown(_ device: AndroidDevice) async {
@@ -303,13 +341,14 @@ final class AndroidSidebarModel {
         selection = key
         // Every one of these is a claim about the PREVIOUS device.
         streamSize = nil
+        lastEndReason = nil
         logLines.removeAll()
         isLogStarted = false
         logStream?.disconnect()
         logStream = nil
 
         guard let key, let device = devices.first(where: { $0.key == key }),
-              let serial = device.serial, case let .ready(host, port) = phase
+              case let .ready(host, port) = phase
         else {
             // Leaving the list open with the drawer still latched would reopen a console for whatever
             // gets selected next, which nobody asked for.
@@ -319,22 +358,43 @@ final class AndroidSidebarModel {
         // The drawer stays latched across a device switch — someone reading logs while stepping
         // between two devices means to keep reading logs — so the socket follows the selection.
         if isConsoleOpen { openConsole() }
+        guard let serial = device.serial else {
+            // Selected before the boot gave it a serial. The stage waits on the device rather than
+            // stalling on a mirror that cannot exist yet.
+            beginAwaiting(key)
+            return
+        }
         openStream(key, serial: serial, host: host, port: port)
+    }
+
+    /// The stage is waiting on the DEVICE, not on a socket: keep the veil up and look again shortly.
+    private func beginAwaiting(_ key: String) {
+        if awaitBegan == nil { awaitBegan = clock.now }
+        isAwaitingStream = true
+        scheduleReattempt(key)
+    }
+
+    /// Whether the current wait still has patience left. With no campaign running there is nothing
+    /// to be out of patience with.
+    private var withinGrace: Bool {
+        awaitBegan.map { clock.now - $0 < Self.deviceGrace } ?? true
     }
 
     /// Open the mirror for `key` and start the clock on it. Shared by selection, resume and retry, so
     /// none of them can drift into a subtly different way of connecting.
     private func openStream(_ key: String, serial: String, host: String, port: UInt16) {
+        if awaitBegan == nil { awaitBegan = clock.now }
         let connection = makeStream { [weak self] event in
             self?.handle(event, for: key)
         }
         stream = connection
         connection.connect(host: host, port: port, serial: serial, maxSize: Self.streamMaxSize)
         isAwaitingStream = true
+        streamWatchdog?.cancel()
         streamWatchdog = Task { [weak self, firstFrameDeadline] in
             try? await Task.sleep(for: firstFrameDeadline)
             guard !Task.isCancelled else { return }
-            await self?.giveUpOnStream(key)
+            await self?.reattemptStream(key)
         }
     }
 
@@ -342,13 +402,19 @@ final class AndroidSidebarModel {
     /// device is still the subject — its console stays subscribed — so this is deliberately not a
     /// re-selection, which would close it too.
     func retry() {
-        guard let key = selection, let serial = serial(for: key),
-              case let .ready(host, port) = phase else { return }
+        guard let key = selection, case let .ready(host, port) = phase else { return }
         stream?.disconnect()
+        stream = nil
         settleStream()
         failure = nil
         frames.reset()
         hasVideo = false
+        guard let serial = serial(for: key) else {
+            // The device lost its serial (a reboot in progress) — wait for it the same way a fresh
+            // selection would, rather than refusing the click.
+            beginAwaiting(key)
+            return
+        }
         openStream(key, serial: serial, host: host, port: port)
     }
 
@@ -368,6 +434,7 @@ final class AndroidSidebarModel {
             return
         }
         settleStream()
+        lastEndReason = nil
         hasVideo = true
     }
 
@@ -381,36 +448,91 @@ final class AndroidSidebarModel {
         !hasVideo || isAwaitingStream
     }
 
-    /// The stream has answered — with video, with an error, or by ending.
+    /// The stream has answered — with video, with an error, or by the panel giving up. Ends the
+    /// whole campaign: watchdog, reattempts and the patience clock all reset together.
     private func settleStream() {
         streamWatchdog?.cancel()
         streamWatchdog = nil
+        reattempt?.cancel()
+        reattempt = nil
+        awaitBegan = nil
         isAwaitingStream = false
     }
 
-    /// The deadline passed with the socket silent. Rather than blame the stream, ASK WHAT THE DEVICE
-    /// IS — the panel's list is up to four seconds stale, and the common cause is a device that went
-    /// away between the last poll and the click. The read-back is what turns a hang into a sentence,
-    /// and it distinguishes the two cases that want different endings: a device that is gone (say so
-    /// and go back, since there is nothing to look at) and a device that is running but not encoding
-    /// (stay, because the screen is the thing being worked on).
-    private func giveUpOnStream(_ key: String) async {
-        guard selection == key, isAwaitingStream, case .ready = phase else { return }
+    private func scheduleReattempt(_ key: String) {
+        reattempt?.cancel()
+        reattempt = Task { [weak self] in
+            try? await Task.sleep(for: Self.reattemptPause)
+            guard !Task.isCancelled else { return }
+            await self?.reattemptStream(key)
+        }
+    }
+
+    /// What to do about a selection with no video yet, given what the device list just said. Pure —
+    /// the timing around it stays untested, the decision does not.
+    ///
+    /// This is the piece that turns a boot from a dead end into a wait. Measured 2026-08-07 against
+    /// a cold boot: `open` is REFUSED for the first ~21 s (`offline`), can stall for ~15 s more the
+    /// moment the state turns `device`, and succeeds cleanly after that — so a refused or silent
+    /// attempt while the device is not (yet) running means "again shortly", not "broken".
+    enum StreamVerdict: Equatable {
+        /// The device is ready — open (or re-open) the mirror now.
+        case connect
+        /// Not ready yet, patience left — keep the veil up and look again shortly.
+        case wait
+        /// The device left the list entirely. Say so and go back; there is nothing to look at.
+        case gone
+        /// Patience ran out on a RUNNING device — the stall message, with the retry button.
+        case stalled
+        /// Patience ran out on a device that never reached `device` state.
+        case neverReady
+    }
+
+    static func verdict(for device: AndroidDevice?, withinGrace: Bool) -> StreamVerdict {
+        guard let device else { return .gone }
+        switch (device.isRunning, withinGrace) {
+        case (true, true): return .connect
+        case (true, false): return .stalled
+        case (false, true): return .wait
+        case (false, false): return .neverReady
+        }
+    }
+
+    /// The wait's one revisit point: the per-attempt watchdog and the reattempt pause both land
+    /// here, ask the bridge what the device is NOW, and act on the verdict. The read-back is what
+    /// turns a hang into a sentence — the panel's own list is up to four seconds stale, and the
+    /// common causes (a boot in progress, a device that went away between poll and click) both live
+    /// inside that staleness.
+    private func reattemptStream(_ key: String) async {
+        guard selection == key, isAwaitingStream, case let .ready(host, port) = phase else { return }
         let name = devices.first { $0.key == key }?.name ?? "This device"
         let live = try? await bridge.devices().get()
         // The await let the world move: a frame may have landed, or the selection moved on.
         guard selection == key, isAwaitingStream else { return }
-        settleStream()
-        guard let live else {
-            failure = "No video has arrived from this device."
-            return
-        }
-        devices = live
-        if live.first(where: { $0.key == key })?.isRunning == true {
-            failure = "The device is running, but no video has arrived."
-        } else {
+        if let live { devices = live }
+        let device = devices.first { $0.key == key }
+        switch Self.verdict(for: device, withinGrace: withinGrace) {
+        case .connect:
+            guard let serial = device?.serial else { return }
+            // A fresh socket rather than more patience with the silent one: the measured mid-boot
+            // failure is an `open` that stalled inside the host's `adb push`, and the attempt after
+            // it succeeds in under a second.
+            stream?.disconnect()
+            openStream(key, serial: serial, host: host, port: port)
+        case .wait:
+            stream?.disconnect()
+            stream = nil
+            scheduleReattempt(key)
+        case .gone:
+            settleStream()
             failure = "\(name) is no longer running."
             select(nil)
+        case .stalled:
+            settleStream()
+            failure = lastEndReason ?? "The device is running, but no video has arrived."
+        case .neverReady:
+            settleStream()
+            failure = lastEndReason ?? "\(name) never finished starting."
         }
     }
 
@@ -446,10 +568,15 @@ final class AndroidSidebarModel {
 
     /// Re-open what ``park()`` dropped. Idempotent by the `stream == nil` guard.
     func resume() {
-        guard stream == nil, let key = selection, let serial = serial(for: key),
+        guard stream == nil, !isAwaitingStream, let key = selection,
               case let .ready(host, port) = phase else { return }
-        openStream(key, serial: serial, host: host, port: port)
         if isConsoleOpen { openConsole() }
+        guard let serial = serial(for: key) else {
+            // Parked while the device was still coming up — resume the wait, not just the socket.
+            beginAwaiting(key)
+            return
+        }
+        openStream(key, serial: serial, host: host, port: port)
     }
 
     // MARK: Device controls
@@ -653,9 +780,19 @@ final class AndroidSidebarModel {
             noteVideoArrived()
             frames.deliver(accessUnit: data, isKeyframe: isKeyframe)
         case let .ended(reason):
-            settleStream()
+            // An ended stream is a fact about the CONNECTION; whether it is a failure is a fact
+            // about the DEVICE, and the reattempt loop is where the device gets asked. A refused
+            // `open` against a booting device and a mirror that died mid-session both land here,
+            // and both re-enter the same wait a fresh selection starts in — the veil, a look at
+            // the list, and either a reconnect or, once patience runs out, the reason kept below.
+            stream = nil
             hasVideo = false
-            if let reason { failure = reason }
+            lastEndReason = reason
+            streamWatchdog?.cancel()
+            streamWatchdog = nil
+            if awaitBegan == nil { awaitBegan = clock.now }
+            isAwaitingStream = true
+            scheduleReattempt(key)
         }
     }
 }

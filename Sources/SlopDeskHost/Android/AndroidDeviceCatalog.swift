@@ -230,6 +230,28 @@ enum AndroidDeviceCatalog {
         )
     }
 
+    /// The `avd name` console reply → the AVD's name, or `nil`.
+    ///
+    /// This is how a BOOTING emulator gets its name: `adbd` inside the guest answers no shell until
+    /// well into the boot (measured 2026-08-07: ~21 s of `offline` on a cold start), but the QEMU
+    /// console on the host side is up from process launch. The reply is the name on its own line
+    /// followed by a bare `OK`; anything refused says `KO: …`.
+    static func parseConsoleAVDName(_ reply: String?) -> String? {
+        guard let reply else { return nil }
+        // The console speaks CRLF, and Swift reads "\r\n" as ONE grapheme — a split on the Character
+        // "\n" finds nothing to cut. `isNewline` matches the CRLF cluster as well as a bare newline.
+        for rawLine in reply.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty || line == "OK" { continue }
+            if line.hasPrefix("KO") { return nil }
+            // An AVD name never contains whitespace (`avdmanager` refuses it); a line with any is
+            // console chatter, not a name.
+            guard !line.contains(where: \.isWhitespace) else { continue }
+            return line
+        }
+        return nil
+    }
+
     /// `system-images/android-36/google_apis/arm64-v8a/` → `36`.
     ///
     /// The system-image path is the only place a non-running AVD records its API level —
@@ -255,11 +277,47 @@ enum AndroidDeviceCatalog {
     /// as a merge anyway so that a device whose `getprop` timed out still shows its declared size
     /// instead of an empty row.
     static func merge(running: [AndroidDevice], avds: [AndroidDevice]) -> [AndroidDevice] {
+        let declared = Dictionary(
+            avds.compactMap { avd in avd.avdName.map { ($0, avd) } },
+            uniquingKeysWith: { first, _ in first },
+        )
+        var devices = running.compactMap { device -> AndroidDevice? in
+            if let name = device.avdName {
+                return declared[name].map { filling(device, from: $0) } ?? device
+            }
+            // An emulator serial that cannot yet say WHICH AVD it is: for the first beat of a boot
+            // the serial registers with `adb` before the QEMU console accepts, so the name lookup
+            // comes back empty. Without a name the row has no `isEmulator`, no identity and no AVD
+            // to fold into — it would render as a physical phone that is "Not responding" for a
+            // second or two. Hold it back; the next poll names it. (The cost: an emulator whose
+            // console never answers stays hidden while offline — a row that would have been an
+            // unusable stranger anyway.)
+            if device.state != "device", device.serial?.hasPrefix("emulator-") == true {
+                return nil
+            }
+            return device
+        }
         let bootedNames = Set(running.compactMap(\.avdName))
-        var devices = running
         for avd in avds where !bootedNames.contains(avd.avdName ?? "") {
             devices.append(avd)
         }
         return devices
+    }
+
+    /// A running record with its gaps filled from the AVD's declared definition. Live facts win —
+    /// only the fields the probe could not produce fall back, which is the whole list for a device
+    /// still booting: it answers no shell, but its `config.ini` was exact before it ever booted.
+    static func filling(_ device: AndroidDevice, from avd: AndroidDevice) -> AndroidDevice {
+        var filled = device
+        filled.manufacturer = device.manufacturer ?? avd.manufacturer
+        filled.model = device.model ?? avd.model
+        filled.release = device.release ?? avd.release
+        filled.apiLevel = device.apiLevel ?? avd.apiLevel
+        filled.abi = device.abi ?? avd.abi
+        filled.width = device.width ?? avd.width
+        filled.height = device.height ?? avd.height
+        filled.density = device.density ?? avd.density
+        filled.formFactor = device.formFactor ?? avd.formFactor
+        return filled
     }
 }

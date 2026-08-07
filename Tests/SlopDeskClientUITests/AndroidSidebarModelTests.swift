@@ -93,6 +93,53 @@ final class AndroidSidebarPhaseTests: XCTestCase {
             AndroidSidebarModel.videoArrivalIsNews(hasVideo: false, isAwaitingStream: false),
         )
     }
+
+    // MARK: The wait's verdict
+
+    /// The decision that turned a boot from a dead end into a wait. Measured 2026-08-07 against a
+    /// cold boot: `open` is refused for the first ~21 s, can stall ~15 s more the moment `adb` says
+    /// `device`, and succeeds cleanly after that — so silence while the device is not (yet) running
+    /// means "again shortly", not "broken".
+    private func device(state: String, serial: String? = "emulator-5554") -> AndroidDevice {
+        AndroidDevice(
+            key: "avd:Pixel_API36", name: "Pixel API36", serial: serial, avdName: "Pixel_API36",
+            state: state, isEmulator: true,
+        )
+    }
+
+    func testABootingDeviceIsWaitedOnNotFailed() {
+        XCTAssertEqual(
+            AndroidSidebarModel.verdict(for: device(state: "offline"), withinGrace: true), .wait,
+        )
+        // Freshly booted, no serial yet — same wait.
+        XCTAssertEqual(
+            AndroidSidebarModel.verdict(for: device(state: "offline", serial: nil), withinGrace: true),
+            .wait,
+        )
+    }
+
+    func testAReadyDeviceIsConnectedTheMomentItTurnsUp() {
+        XCTAssertEqual(
+            AndroidSidebarModel.verdict(for: device(state: "device"), withinGrace: true), .connect,
+        )
+    }
+
+    func testPatienceRunsOutInTheRightWords() {
+        // A running device with no video is the stall message with the retry button; a device that
+        // never came up is its own sentence. Both only AFTER the grace window.
+        XCTAssertEqual(
+            AndroidSidebarModel.verdict(for: device(state: "device"), withinGrace: false), .stalled,
+        )
+        XCTAssertEqual(
+            AndroidSidebarModel.verdict(for: device(state: "offline"), withinGrace: false),
+            .neverReady,
+        )
+    }
+
+    func testADeviceThatLeftTheListIsGoneWhateverThePatience() {
+        XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: true), .gone)
+        XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: false), .gone)
+    }
 }
 
 // MARK: - The video path

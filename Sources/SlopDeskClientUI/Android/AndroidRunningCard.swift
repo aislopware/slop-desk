@@ -48,14 +48,18 @@ struct AndroidRunningCard: View {
                 .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
         }
         .contentShape(.rect)
-        .onTapGesture { if device.isRunning { onOpen() } }
+        // A booting emulator opens too: the stage knows how to wait for a device now, and "click,
+        // then watch it come up" is strictly better than "watch the list until clicking works".
+        // A physical device that is attached-but-unusable stays un-clickable — its fix (an
+        // authorization dialog on its own screen) is not something waiting can do.
+        .onTapGesture { if device.isRunning || device.isEmulator && device.serial != nil { onOpen() } }
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         .help(help)
     }
 
     private var help: String {
-        device.isRunning ? "Open \(device.name)" : "\(device.name) — \(Self.explain(device.state))"
+        device.isRunning ? "Open \(device.name)" : "\(device.name) — \(Self.explain(device))"
     }
 
     /// The screen box: a FIXED height and a width that follows the device's own aspect, so what varies
@@ -71,7 +75,7 @@ struct AndroidRunningCard: View {
             if device.isAttachedButUnusable {
                 // The one state that gets a word instead of a glyph. `unauthorized` is fixed by
                 // looking at the device, and a symbol cannot say that.
-                Text(Self.explain(device.state))
+                Text(Self.explain(device))
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.Text.tertiary)
                     .multilineTextAlignment(.center)
@@ -139,6 +143,15 @@ struct AndroidRunningCard: View {
                 Task { await model.shutdown(device) }
             }
         }
+    }
+
+    /// The device's state as a sentence, with the one reading `adb`'s word alone would get wrong:
+    /// an EMULATOR that is `offline` is almost always a boot in progress — the serial registers
+    /// within seconds of launch and the guest's `adbd` answers ~21 s later (measured 2026-08-07) —
+    /// and "Not responding" over a card that is doing exactly what was asked reads as a fault.
+    static func explain(_ device: AndroidDevice) -> String {
+        if device.isEmulator, device.state == "offline" { return "Starting up…" }
+        return explain(device.state)
     }
 
     /// `adb`'s state word as a sentence. The words are `adb`'s own and mean nothing to most readers —
