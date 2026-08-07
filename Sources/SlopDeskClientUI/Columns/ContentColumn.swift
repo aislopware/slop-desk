@@ -88,7 +88,17 @@ struct ContentColumn: View {
                 SplitContainer(store: store, paneDrag: paneDrag)
                     .environment(\.colorScheme, Slate.glassColorScheme)
                     .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
-                    .padding(Slate.Metric.islandMargin)
+                    .padding(.vertical, Slate.Metric.islandMargin)
+                    .padding(.leading, Slate.Metric.islandMargin)
+                    // Toward the PANEL ISLAND the margin halves (the panel card carries no leading
+                    // margin of its own): with the 1px divider gap the inter-island channel lands
+                    // at ~5px — the reference's own island gap, and a step tighter than the 8px
+                    // window edges after "closer still" (user-directed 2026-08-07). With the panel
+                    // hidden the trailing edge IS a window edge and takes the full margin back.
+                    .padding(
+                        .trailing,
+                        chrome.codeSidebarCollapsed ? Slate.Metric.islandMargin : Slate.Metric.space1,
+                    )
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.
