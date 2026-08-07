@@ -54,8 +54,11 @@ spacing:
   space3: "12px"
   space4: "16px"
 components:
+  field:
+    backgroundColor: "Slate.Surface.field — windowBackgroundColor blended a step toward its opposite pole (8% black light / 9% white dark)"
+    note: "the ONE floor colour every column and divider gap paints; no materials, no vibrancy, no drawn seams. Derived, not hex: raw windowBackgroundColor is pure white in light (kills the chip) and darker than the glass in dark (inverts the island relationship)"
   sidebar:
-    backgroundColor: "NSVisualEffectView .sidebar material (behind-window)"
+    backgroundColor: "the field (flat — no material)"
     textColor: "semantic label tiers"
   list-row:
     backgroundColor: "transparent"
@@ -64,7 +67,7 @@ components:
     height: "32px"
     padding: "0 12px"
   list-row-active:
-    backgroundColor: "{colors.accent} @ 15%"
+    backgroundColor: "controlBackgroundColor (solid chip — white in light, a step darker than the field in dark)"
     textColor: "labelColor"
     rounded: "{rounded.control}"
     height: "32px"
@@ -73,15 +76,21 @@ components:
     backgroundColor: "{colors.glass-ember}"
     rounded: "{rounded.island}"
     margin: "{spacing.space2}"
-    border: "separatorColor hairline"
-    note: "full window height — no reserved titlebar band; the ONLY island in the window"
+    border: "none — separation is the field gap + radius (JetBrains Islands)"
+    note: "full window height — no reserved titlebar band"
+  panel-island:
+    backgroundColor: "{colors.glass-ember}"
+    rounded: "{rounded.island}"
+    margin: "{spacing.space2}"
+    border: "none"
+    note: "the right panel — its tab strip lives INSIDE the island, on the glass"
   panel-tab-chip:
-    backgroundColor: "quaternarySystemFill at rest; {colors.accent} @ 15% selected"
+    backgroundColor: "quaternarySystemFill at rest; {colors.accent} @ 15% selected (on-glass resolution)"
     rounded: "capsule"
     height: "24px"
 ---
 
-# SlopDesk Design System — NATIVE / Terminal Island
+# SlopDesk Design System — NATIVE / Islands
 
 North star: **the chrome is macOS's; the terminal is ours.** SlopDesk's window is a native macOS
 app — real sidebar material, semantic system colours, system hairlines, the OS light/dark switch —
@@ -97,17 +106,23 @@ pattern), Panic Nova (native materials with a full-bodied sidebar/panel presence
 bar), JetBrains Islands + Canario (ONE rounded card floating on flat chrome, full window height,
 no title band; splits divided inside it; tabs as small rounded chips).
 
-**One island.** The terminal card is the only floating object in the window (user-directed
-2026-08-07 after a two-island round: "too many islands is ugly"). Both flanking columns are FLAT
-chrome fields; nothing else gets the island treatment, and no hard divider lines separate the
-columns — the island's margins and the material change ARE the seams.
+**One floor, two islands.** The whole window floor is ONE flat colour — `Slate.Surface.field`,
+painted identically by all three columns and the divider gaps, with no materials, no vibrancy and
+no drawn seams (user-directed 2026-08-07: a sidebar wearing its own material tone beside the flat
+content field read as "a mess", not a floor). On that floor float exactly two glass islands: the
+terminal (centre) and the right panel (whose tab strip lives INSIDE its island). Islands wear NO
+border and NO shadow — JetBrains ships island borders equal to the island fill; the field gap and
+the radius are the whole separation. The left sidebar stays FLAT; its one floating object is the
+active row's solid chip (Canario's white active tab). The field↔island tone relationship follows
+the reference in both modes: islands lighter than the field in light, darker in dark, deliberately
+subtle.
 
 ## The two worlds
 
 | World | Where | Colour source | Follows OS appearance? |
 |---|---|---|---|
-| **Chrome** | sidebar, hover titlebar, right panel (strip + surfaces), overlays, Settings, empty states | Semantic system colours + system materials | **Yes** — light/dark, vibrancy, active/inactive |
-| **Glass** | the terminal island, satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) | **No** — the glass keeps its own polarity (Pages pattern) |
+| **Chrome** | the window field, sidebar, hover titlebar (empty state), overlays, Settings, empty states | Semantic system colours | **Yes** — light/dark, active/inactive |
+| **Glass** | the terminal island, the panel island (strip + surfaces), satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) | **No** — the glass keeps its own polarity (Pages pattern) |
 
 Nothing may straddle the boundary: a view is either ON the chrome (semantic tokens) or ON the glass
 (profile tokens, or semantic tokens under the island's forced colour scheme — see below). The three
@@ -115,17 +130,19 @@ dead chrome rounds died precisely because chrome and glass shared one invented p
 
 ## Chrome — the system's, verbatim
 
-- **Sidebar** = a real `NSVisualEffectView` (`.sidebar`, behind-window, follows-window-active)
-  behind a transparent hosting view (`SidebarMaterialController`). No painted ground. Wallpaper
-  tint, vibrancy and inactive dimming come from the OS.
-- **Surfaces** (`Slate.Surface`): `void`/`ground` → `underPageBackgroundColor`, `face` →
-  `windowBackgroundColor`, `raised` → `quaternarySystemFill`, `lift` → `tertiarySystemFill`.
+- **Sidebar** = FLAT on the shared window field — no material, no vibrancy (the `.sidebar`
+  `NSVisualEffectView` round gave the column its own tone and a visible seam; removed 2026-08-07).
+  The active row's solid chip (`Slate.Surface.chip` → `controlBackgroundColor`) is the column's one
+  raised object.
+- **Surfaces** (`Slate.Surface`): `field` → the derived floor tone (see above), `void`/`ground` →
+  `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
+  `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
 - **Text** (`Slate.Text`): the semantic label tiers (`labelColor` → `tertiaryLabelColor`). Never a
   custom RGB for chrome text — it silently opts the label out of vibrancy.
 - **Lines** (`Slate.Line`): `separatorColor`, INSIDE surfaces only. Between the window's columns
-  there is NO drawn seam (`FlatDividerSplitView` fills the divider gap with plain
-  `windowBackgroundColor`): the sidebar material simply ends where the content field begins — hard
-  hairlines between chrome regions would cut the window back into boxes around the island.
+  there is NO drawn seam (`FlatDividerSplitView` fills the divider gap with the same field tone
+  every column paints): the floor is one uninterrupted colour — hard hairlines between chrome
+  regions would cut the window back into boxes around the islands.
 - **Status** (`Slate.Status`): `systemGreen` / `systemOrange` / `systemRed`; info rides the accent.
 - **Identity** (`Slate.Identity`): the 8 system hues (red → purple), FNV-1a keyed per project — the
   Finder-tag dialect. Spent as spines/washes only, never row plates or text recolouring.
@@ -141,10 +158,10 @@ dead chrome rounds died precisely because chrome and glass shared one invented p
 line, link highlight, find-bar caret/toggles, info status. Everything else interactive is the
 system's.
 
-## Glass — the terminal island
+## Glass — the islands
 
 - The WHOLE split tree of the content column is **one rounded glass card** (`radiusIsland` 12pt
-  continuous, `islandMargin` 8pt of system chrome around it, one `separatorColor` hairline ring)
+  continuous, `islandMargin` 8pt of field around it, NO ring, NO shadow)
   running the FULL window height — there is no reserved titlebar band (Canario); the hover-reveal
   titlebar floats OVER the island's top edge and shows NOTHING at rest (title, cluster and reopen
   plates all fade in on strip hover, under the forced glass scheme while the island is up).
@@ -156,6 +173,11 @@ system's.
   edge-to-edge and adopt the same forced scheme.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). No dimming siblings.
+- **The panel island** (the right column) is the second glass card, same anatomy: glass fill,
+  forced glass scheme, island radius, symmetric `islandMargin`, no ring. Its TAB STRIP sits INSIDE
+  the island — the capsule chips, reload plate and hide toggle all resolve on the glass — and the
+  surfaces below (workbench webview, simulator/emulator stages, placeholders) fill the card to its
+  clipped corners.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -197,8 +219,12 @@ explicit choice (or the dark-mode dual-slot). The FIXED pills (secure blue `#2D6
   are the anti-reference: any future "give the chrome a palette" proposal repeats a documented
   failure.
 - DON'T float per-pane cards, add pane shadows, or re-tint the island per project.
-- DON'T add a second island (the right panel had one for an hour and it read as two competing
-  systems); DON'T draw separator hairlines between the window's columns.
+- DON'T add a THIRD island, and don't island the left sidebar — the composition is two glass
+  islands on one flat floor, with the sidebar's active chip as the only other raised object.
+  DON'T draw separator hairlines between the window's columns, and DON'T give any island a
+  border ring or shadow.
+- DON'T give any column its own material or background tone — the floor is ONE colour
+  (`Slate.Surface.field`) or the composition collapses back into boxes.
 - DON'T force a colour scheme on chrome; DON'T let OS-appearance semantics leak INSIDE the island
   (use the forced glass scheme).
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.

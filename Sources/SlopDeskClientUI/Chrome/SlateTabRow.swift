@@ -16,7 +16,7 @@
 // coloured ring" the way a mail row reads unread. The rail is monochrome except the marks that
 // carry state; the IDENTITY register lives on the section HEADER's folder mark (the Canario
 // dialect, user-directed 2026-08-07 — the earlier 2px spine + 5% wash read as invisible
-// ornament and were removed). ACTIVE is the lifted chip (the `lift` fill + 1px hairline + the
+// ornament and were removed). ACTIVE is the solid chip (the `chip` fill + 1px hairline + the
 // light-chrome cast shadow — Canario's white active tab). Nothing else rides the row: no
 // subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
 // menu.
@@ -158,10 +158,14 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// ACTIVE = the LIFTED chip (the ladder's top rung — Canario's white active tab; the cast
-    /// shadow rides `Slate.State.cardShadow`, light-chrome-only), hover = the quiet wash.
+    /// ACTIVE = the SOLID chip (`Slate.Surface.chip` — Canario's white active tab, the one mini-
+    /// island the flat sidebar floats; the cast shadow rides `Slate.State.cardShadow`,
+    /// light-chrome-only), hover = the quiet wash. Solid rather than the translucent `lift` fill
+    /// (user-directed 2026-08-07, islands round): on the one window field a translucent grey read
+    /// as a wash, not a raised object — the chip has to carry the island fill relationship
+    /// (lighter than the field in light, darker in dark) the big islands set.
     private var rowBackground: Color {
-        if active { Slate.Surface.lift }
+        if active { Slate.Surface.chip }
         else if hovering { Slate.State.hover }
         else { .clear }
     }

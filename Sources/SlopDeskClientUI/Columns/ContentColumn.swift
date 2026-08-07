@@ -38,12 +38,10 @@ struct ContentColumn: View {
             // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
             .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // MERIDIAN L5, scoped by the user reporting that a titlebar tone differing from the pane below it read as jarringly out of place:
-            // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone
-            // (`card`), never the dimmed chrome `window` tone. Panes are flush under the band (no gap, no
-            // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed
-            // housing is the SIDEBAR column only.
-            .background(Slate.Surface.face)
+            // The ONE window field — the same floor tone all three columns and the divider gaps
+            // paint (user-directed 2026-08-07, islands round), so the island floats on an
+            // uninterrupted ground.
+            .background(Slate.Surface.field)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay — OVER the island's top margin now
             // that the island runs to the window top (no reserved band, user-directed 2026-08-07).
@@ -83,14 +81,13 @@ struct ContentColumn: View {
                 // with subtle lines on the glass, never as separate cards. The forced colour scheme is
                 // the glass's own polarity (``Slate/glassColorScheme``): everything drawn ON the glass
                 // resolves its semantic colours against the profile, not the OS appearance.
+                // NO border ring and NO shadow on the island (islands round, from the reference:
+                // JetBrains ships `Island.borderColor` equal to the island fill — separation is the
+                // field gap and the radius, nothing drawn). The hairline ring the first island round
+                // wore re-boxed the card against the flat floor.
                 SplitContainer(store: store, paneDrag: paneDrag)
                     .environment(\.colorScheme, Slate.glassColorScheme)
                     .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous)
-                            .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.hairline)
-                            .allowsHitTesting(false),
-                    )
                     .padding(Slate.Metric.islandMargin)
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty

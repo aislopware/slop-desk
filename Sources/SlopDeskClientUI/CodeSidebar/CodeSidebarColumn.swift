@@ -94,16 +94,26 @@ struct CodeSidebarColumn: View {
     }
 
     var body: some View {
+        // THE PANEL ISLAND (user-directed 2026-08-07, islands round — reversing the same round's
+        // earlier flat-panel call): the whole panel is a SECOND glass island beside the terminal's,
+        // with the tab strip INSIDE the card — the tabs belong to the island they switch, and a
+        // strip left out on the chrome floor read as an orphaned band. Same anatomy as the terminal
+        // island: the glass surface, the forced glass scheme (so the strip's chips, inks and every
+        // surface below resolve against the glass, not the OS appearance), the continuous island
+        // radius, and NO border ring or shadow (JetBrains ships island borders equal to the island
+        // fill — the field gap and radius are the whole separation). The symmetric margin makes the
+        // inter-island channel two margins wide, the same doubling the reference's per-island
+        // border-width layout produces.
         VStack(spacing: 0) {
             strip
-            // FLAT, deliberately (user-directed 2026-08-07, single-island round): the flanking
-            // columns are plain chrome fields — the ONE floating object in the window is the
-            // terminal island, and a second island here diluted it ("too many islands"). No
-            // hairline under the strip either — hard seams between chrome regions went with the
-            // column dividers; the strip's chip tabs give the band its structure.
             surfaceArea
         }
-        .background(Slate.Surface.face)
+        .background(Slate.Surface.terminal)
+        .environment(\.colorScheme, Slate.glassColorScheme)
+        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
+        .padding(Slate.Metric.islandMargin)
+        // The one window field behind the island — the same floor every column paints.
+        .background(Slate.Surface.field)
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
         // settings watcher applies it without a reload). The ensure-round sync below covers the
         // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
@@ -115,7 +125,7 @@ struct CodeSidebarColumn: View {
         }
     }
 
-    /// The surface region, flush on the flat chrome column.
+    /// The surface region, filling the island below its strip.
     private var surfaceArea: some View {
         Group {
             // A bare switch: the surfaces carry no animation of their own — whatever motion the

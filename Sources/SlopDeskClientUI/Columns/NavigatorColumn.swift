@@ -1,5 +1,5 @@
-// NavigatorColumn — the left sidebar navigator: a flat tabs panel on the `Slate.Surface.ground`
-// background (NOT native `.sidebar` vibrancy — the host split item is a PLAIN item), a header
+// NavigatorColumn — the left sidebar navigator: a flat tabs panel on the ONE window field
+// (`Slate.Surface.face` — NOT native `.sidebar` vibrancy; the host split item is a PLAIN item), a header
 // SEARCH FIELD spanning the full row width (it shares the tab cards' gutter — no trailing
 // controls), and rows ALWAYS grouped into By-Project sections under a gutter-chevron + NAME group
 // header that shares ONE left rail with its rows — the live git line (mono metadata) on a second
@@ -156,9 +156,9 @@ struct NavigatorColumn: View {
     }
 
     #if os(macOS)
-    /// macOS: the flat "TABS" panel — name rows + white-card active, grouped By-Project sections.
-    /// Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
-    /// native vibrancy/rounding).
+    /// macOS: the flat "TABS" panel — name rows + solid-chip active, grouped By-Project sections.
+    /// Paints the shared window field (the host `NSSplitViewItem` is a plain item, so there is no
+    /// native vibrancy/rounding — deliberately: one floor colour under the islands).
     private var macSidebar: some View {
         let allRows = renderedRows
         let sections = buildSections(allRows, query: query)
@@ -293,8 +293,11 @@ struct NavigatorColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // NO background — the hosting view stays transparent so the REAL sidebar material behind it
-        // (see `SidebarMaterialController`) shows through: wallpaper tint, vibrancy, inactive dimming.
+        // The ONE window field (user-directed 2026-08-07, islands round) — the same floor tone the
+        // content column and the divider gaps paint, so the ground under the islands is a single
+        // uninterrupted colour. The earlier `.sidebar` vibrancy material gave this column its own
+        // tone and a visible seam; it is gone.
+        .background(Slate.Surface.field)
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome

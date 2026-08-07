@@ -190,12 +190,42 @@ enum Slate {
         static let face = Color(nsColor: .windowBackgroundColor)
         static let raised = Color(nsColor: .quaternarySystemFill)
         static let lift = Color(nsColor: .tertiarySystemFill)
+        /// The SOLID mini-island fill — the active sidebar row's chip (Canario's white active tab).
+        /// Against ``field`` it carries the JetBrains Islands island↔field relationship in both
+        /// appearances: WHITE on the grey light field (island lighter than field), and a step
+        /// DARKER than the dark field (island darker than field) — the same deliberate ~1.2:1
+        /// whisper their theme ships, from a semantic colour instead of invented hex.
+        static let chip = Color(nsColor: .controlBackgroundColor)
+        /// THE FLOOR — the one colour every window column and divider gap paints (user-directed
+        /// 2026-08-07, islands round). NOT the raw `windowBackgroundColor`: on current macOS that
+        /// resolves to PURE WHITE in light and to a tone DARKER than the Ember glass in dark
+        /// (#1E1E1E vs #27221E — measured), which flattens the white active chip into the floor
+        /// and inverts the reference's dark-mode relationship. JetBrains Islands runs the field a
+        /// deliberate step OFF the island tones in each mode — darker than the islands in light,
+        /// lighter in dark, ~1.2:1. This dynamic colour derives that step from semantics at draw
+        /// time: the window background blended a few points toward its opposite pole. Exposed as
+        /// an `NSColor` too because the AppKit split view (divider gap + layer) paints the same
+        /// floor.
+        static let fieldNSColor = NSColor(
+            name: nil,
+            dynamicProvider: { appearance in
+                let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                let base = NSColor.windowBackgroundColor
+                return base.blended(withFraction: dark ? 0.09 : 0.08, of: dark ? .white : .black)
+                    ?? base
+            },
+        )
+        static let field = Color(nsColor: fieldNSColor)
         #else
         static let void = Color(uiColor: .secondarySystemBackground)
         static let ground = Color(uiColor: .secondarySystemBackground)
         static let face = Color(uiColor: .systemBackground)
         static let raised = Color(uiColor: .quaternarySystemFill)
         static let lift = Color(uiColor: .tertiarySystemFill)
+        /// See the AppKit notes — the solid active-row chip and the window floor; the grouped
+        /// pair is iOS's own "cell on a field" idiom, so no blend is needed here.
+        static let chip = Color(uiColor: .secondarySystemGroupedBackground)
+        static let field = Color(uiColor: .systemGroupedBackground)
         #endif
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }

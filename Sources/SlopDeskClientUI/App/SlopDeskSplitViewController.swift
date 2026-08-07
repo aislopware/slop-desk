@@ -99,19 +99,20 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // (identical ivar layout) — and side-steps the constructor path that traps.
         object_setClass(splitView, FlatDividerSplitView.self)
 
-        // 1) Sidebar — the navigator (sessions / panes), hosted over the REAL macOS sidebar material
-        //    (`NSVisualEffectView` `.sidebar`, behind-window) so the column picks up wallpaper tinting
-        //    and inactive-window dimming like every native sidebar — user-directed 2026-08-07,
-        //    REVERSING the earlier "plain flat painted panel" choice (three painted-chrome rounds all
-        //    read as generic; the dynamic material is what reads native). Still a PLAIN split item
-        //    rather than `sidebarWithViewController:` — the automatic sidebar treatment brings its own
-        //    collapse/glass behaviours that fight the swizzled 3-column divider machinery below.
-        //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
+        // 1) Sidebar — the navigator (sessions / panes), FLAT on the one window field
+        //    (user-directed 2026-08-07, islands round: "the whole floor under the island must be ONE
+        //    colour" — the earlier `.sidebar` NSVisualEffectView material gave this column its own
+        //    vibrancy tone and a visible seam against the content field, which is exactly the mixed
+        //    figure-ground the round removed; both references, JetBrains Islands and Canario, run one
+        //    flat field under everything). A PLAIN split item rather than `sidebarWithViewController:`
+        //    — the automatic sidebar treatment brings its own collapse/glass behaviours that fight the
+        //    swizzled 3-column divider machinery below. Holding priority above the content's default
+        //    so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
             store: store, preferences: preferences, chrome: chrome,
             connection: connection, paneDrag: paneDrag, onConnect: onConnect,
         ).overlayCoordinator(overlay))
-        let sidebarItem = NSSplitViewItem(viewController: SidebarMaterialController(hosting: navigator))
+        let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
         sidebarItem.maximumThickness = 360
         sidebarItem.canCollapse = true
@@ -274,14 +275,14 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
         // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both wear the
-        // plain system window background — the seam is deliberately invisible (no separator line; the columns
-        // are flat chrome fields around the one floating island).
+        // ONE field tone every column paints (`Slate.Surface.fieldNSColor`) — so the seam is deliberately
+        // invisible: the islands' margins are the only structure the floor shows.
         //
         // Repaint on a RUNTIME profile/appearance change: `drawDivider` pixels are CACHED in the layer; a
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
         // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        splitView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        splitView.layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
@@ -335,41 +336,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 }
 
-/// Hosts the navigator column over the REAL macOS sidebar material: an `NSVisualEffectView`
-/// (`.sidebar`, behind-window, follows-window-active) with the SwiftUI hosting view pinned edge-to-edge
-/// on top. The hosting view stays transparent (`NavigatorColumn` paints no macOS background), so the
-/// material — wallpaper tint, vibrancy, inactive dimming — IS the sidebar's ground.
-private final class SidebarMaterialController: NSViewController {
-    private let hosting: NSViewController
-
-    init(hosting: NSViewController) {
-        self.hosting = hosting
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("init(coder:) is not supported — SidebarMaterialController is created in code")
-    }
-
-    override func loadView() {
-        let effect = NSVisualEffectView()
-        effect.material = .sidebar
-        effect.blendingMode = .behindWindow
-        effect.state = .followsWindowActiveState
-        addChild(hosting)
-        hosting.view.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(hosting.view)
-        NSLayoutConstraint.activate([
-            hosting.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            hosting.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: effect.topAnchor),
-            hosting.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
-        view = effect
-    }
-}
-
 /// A drop-in `NSSplitView` whose ONLY change is a flat, theme-coloured divider — installed via
 /// `object_setClass` onto the controller's already-built split view (so it never goes through the
 /// `NSSplitViewController` construction path that traps `_setupSplitView` when a custom split view is
@@ -377,13 +343,28 @@ private final class SidebarMaterialController: NSViewController {
 /// so the sidebar/content seam blends into the flat chrome instead of AppKit's default pure-black
 /// hairline. Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
+    /// Re-resolve the divider gap's layer colour when the OS appearance flips. The layer
+    /// `backgroundColor` set in `pinWindowAppearance` is a CGColor SNAPSHOT — a dynamic NSColor
+    /// resolved once, in whatever appearance was current at assignment — so without this hook a
+    /// light→dark switch left the 1px gaps painted in the LIGHT field tone (measured: `#EFEFEF`
+    /// stripes across a `#3A3A3A` floor). The drawn divider content is appearance-correct on its
+    /// next draw; it just needs the invalidation.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Slate.Surface.fieldNSColor.cgColor
+        }
+        needsDisplay = true
+        layer?.setNeedsDisplay()
+    }
+
     override func drawDivider(in rect: NSRect) {
-        // NO drawn seam (user-directed 2026-08-07, single-island round): the flanking columns are
-        // flat chrome fields and the one terminal island floats between them — a hard hairline
-        // between columns would cut the window back into boxes. The divider strip wears the plain
-        // system window background (resolved in the view's current appearance), so the gap is
-        // invisible: the sidebar material simply ends where the content field begins.
-        NSColor.windowBackgroundColor.setFill()
+        // NO drawn seam (user-directed 2026-08-07, islands round): every column paints the SAME
+        // field tone and the islands float on it — a hard hairline between columns would cut the
+        // window back into boxes. The divider strip wears that same field colour (resolved in the
+        // view's current appearance), so the gap is literally invisible: three columns, one
+        // uninterrupted floor.
+        Slate.Surface.fieldNSColor.setFill()
         NSBezierPath(rect: rect).fill()
     }
 
