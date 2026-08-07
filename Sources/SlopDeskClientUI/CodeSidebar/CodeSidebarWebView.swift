@@ -509,7 +509,7 @@ final class CodeSidebarWebViewPool {
         return webView
     }
 
-    /// The workbench's four user scripts, in the order their injection times require. Split out so
+    /// The workbench's five user scripts, in the order their injection times require. Split out so
     /// the mint reads as "pick a dressing" rather than sixty lines of one branch.
     private func installWorkbenchDressing(on controller: WKUserContentController) {
         // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
@@ -546,6 +546,16 @@ final class CodeSidebarWebViewPool {
         // captures the API) and ALL frames (extension webviews copy too).
         controller.addUserScript(WKUserScript(
             source: CodeSidebarPageDressing.clipboardBridgeScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+        ))
+        // The webview CANVAS: VS Code webview content documents are transparent at every layer
+        // and scroll at frame level, so WebKit painted the slivers a markdown-preview scroll
+        // exposes WHITE (`underPageBackgroundColor` and the KVC `drawsBackground` never reach a
+        // subframe). Document START (the first paint needs the colour) and ALL frames (the
+        // preview lives two iframes deep). See `webviewCanvasScript`.
+        controller.addUserScript(WKUserScript(
+            source: CodeSidebarPageDressing.webviewCanvasScript(),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false,
         ))

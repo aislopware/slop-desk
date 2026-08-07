@@ -119,6 +119,26 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         XCTAssertTrue(script.contains(".catch(function () {})"))
     }
 
+    // MARK: Webview canvas
+
+    func testWebviewCanvasScriptPaintsTheRootWithTheLiveThemeVarAndNothingElse() {
+        let script = CodeSidebarPageDressing.webviewCanvasScript()
+        // The canvas rides the workbench's OWN var — never a literal colour (a literal would
+        // drift on theme flips; the var re-resolves when the host re-posts the theme) — and
+        // falls back to transparent so a frame without VS Code vars keeps its behaviour.
+        XCTAssertTrue(script.contains(
+            "html { background-color: var(--vscode-editor-background, transparent); }",
+        ))
+        XCTAssertFalse(script.contains("#"), "no literal colour may ride the canvas rule")
+        // UNLAYERED on purpose: the webview host's `_defaultStyles` transparent-body rule sits
+        // in `@layer vscode-default`, and only an unlayered rule outranks it unconditionally.
+        XCTAssertFalse(script.contains("@layer"))
+        // Re-injection guard plus the document-start reality: `head` may not exist yet.
+        XCTAssertTrue(script.contains("getElementById(\"slopdesk-webview-canvas\")"))
+        XCTAssertTrue(script.contains("style.id = \"slopdesk-webview-canvas\""))
+        XCTAssertTrue(script.contains("document.head || document.documentElement"))
+    }
+
     // MARK: Focus truth
 
     func testFocusTruthScriptReplaysTheMissedBlurOnlyWhileTheEngineSaysUnfocused() {

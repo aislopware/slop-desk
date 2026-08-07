@@ -30,6 +30,15 @@
 //     never reached NSPasteboard. The bridge wraps `writeText`/`write` to ALSO post the plain
 //     text to the native handler (`clipboardHandlerName` — the pool writes NSPasteboard), keeping
 //     the original call as best effort. Copy works deterministically; paste already worked.
+//   • The webview CANVAS (a separate, document-start, ALL-frames script). VS Code webview
+//     content documents (markdown preview, extension pages) are transparent at every layer by
+//     design — the desktop app composites them over the editor — and they scroll at FRAME level,
+//     so WebKit fills the slivers a scroll exposes before paint catches up with the frame's
+//     canvas colour: transparent resolves to WHITE. None of the app's other measures reach a
+//     subframe (`underPageBackgroundColor` covers main-frame overscroll only, the KVC
+//     `drawsBackground` only the base canvas, the dressing sheet is main-frame-only). The script
+//     keys the root canvas to the workbench's own theme var, so it re-resolves on theme flips
+//     and stays transparent in any frame without VS Code vars.
 //
 // Everything here is a PURE string builder (unit-pinned headlessly); the pool wires the products
 // into `WKUserContentController` — the only WebKit-touching seam, unreachable from unit tests.
@@ -50,6 +59,9 @@ enum CodeSidebarPageDressing {
 
     /// The `WKScriptMessageHandler` name the clipboard bridge posts copied text to.
     static let clipboardHandlerName = "slopdeskClipboard"
+
+    /// The DOM id of the webview-canvas style tag — the canvas script's re-injection guard.
+    static let canvasStyleElementID = "slopdesk-webview-canvas"
 
     /// The DOM id of the meta tag code-server embeds the workbench boot configuration in — the
     /// element the recommendation-tips graft rewrites.
@@ -278,6 +290,30 @@ enum CodeSidebarPageDressing {
                 window.dispatchEvent(new FocusEvent("blur"));
             }
             [1500, 4000, 9000, 20000].forEach(function (ms) { setTimeout(sync, ms); });
+        })();
+        """
+    }
+
+    /// The webview-canvas `WKUserScript` source (document START — the first paint must already
+    /// have the colour — and ALL frames: the markdown preview lives two iframes deep). Gives
+    /// every document an opaque root canvas in the workbench's own editor colour, so a
+    /// frame-level scroll exposes theme-coloured slivers instead of WebKit's white.
+    ///
+    /// The rule is UNLAYERED on purpose: the webview host's `_defaultStyles` sets
+    /// `body { background-color: transparent }` inside `@layer vscode-default`, and any
+    /// unlayered rule outranks a layered one. The var reference stays live — the host posts the
+    /// theme AFTER document load (and re-posts on every theme flip), and the computed canvas
+    /// follows; a frame without VS Code vars falls back to transparent, changing nothing there.
+    static func webviewCanvasScript() -> String {
+        """
+        (function () {
+            if (document.getElementById("\(canvasStyleElementID)")) { return; }
+            var root = document.head || document.documentElement;
+            if (!root) { return; }
+            var style = document.createElement("style");
+            style.id = "\(canvasStyleElementID)";
+            style.textContent = "html { background-color: var(--vscode-editor-background, transparent); }";
+            root.appendChild(style);
         })();
         """
     }
