@@ -1016,9 +1016,10 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
             XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
         }
-        // The settings seed selects the themes BY LABEL — a drift here is a silent stock-theme
-        // boot. Dark is the base `workbench.colorTheme` AND the preferred-dark; light is the
-        // preferred-light the seeded `window.autoDetectColorScheme` flips to on a light client.
+        // The settings seed selects the theme BY LABEL — a drift here is a silent stock-theme
+        // boot. The workbench is PINNED to the dark Foundry Ember (no `window.autoDetectColorScheme`):
+        // under the split-tone Ember the editor is dark glass beside the terminal while the client
+        // chrome is light, so appearance-following would flip the glass light (v20).
         let seeded = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(CodeServerManager.seededUserSettings.utf8),
@@ -1026,9 +1027,9 @@ final class CodeServerManagerTests: XCTestCase {
         )
         let labels = CodeServerManager.foundryExtensionThemes.map(\.label)
         XCTAssertEqual(seeded["workbench.colorTheme"] as? String, "Foundry Ember")
-        XCTAssertEqual(seeded["window.autoDetectColorScheme"] as? Bool, true)
-        XCTAssertEqual(seeded["workbench.preferredDarkColorTheme"] as? String, "Foundry Ember")
-        XCTAssertEqual(seeded["workbench.preferredLightColorTheme"] as? String, "Foundry Ember Light")
+        XCTAssertNil(seeded["window.autoDetectColorScheme"], "v20 pins the dark glass workbench")
+        XCTAssertNil(seeded["workbench.preferredDarkColorTheme"])
+        XCTAssertNil(seeded["workbench.preferredLightColorTheme"])
         XCTAssertTrue(labels.contains("Foundry Ember"))
         XCTAssertTrue(labels.contains("Foundry Ember Light"))
         // The folder name pins the manifest identity (publisher.name-version).

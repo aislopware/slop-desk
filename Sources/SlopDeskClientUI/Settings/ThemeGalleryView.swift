@@ -74,11 +74,14 @@ private struct ThemeSwatchArt: View {
     let choice: ThemeChoice
 
     var body: some View {
-        if choice == .system {
+        if choice == .system, ThemeResolution.defaultLightID != ThemeResolution.defaultDarkID {
             HStack(spacing: Slate.Metric.hairline) {
                 swatch(id: ThemeResolution.defaultLightID)
                 swatch(id: ThemeResolution.defaultDarkID)
             }
+        } else if choice == .system {
+            // Both OS appearances resolve to the one split-tone default — a single honest swatch.
+            swatch(id: ThemeResolution.defaultDarkID)
         } else {
             swatch(id: choice.builtinID)
         }

@@ -252,12 +252,8 @@ struct NavigatorColumn: View {
                                 )
                             }
                             if !collapsed {
-                                // The section's IDENTITY hue — hashed from the project key once per
-                                // section (``Slate/Identity``), worn by every row as the 2px spine
-                                // + the active card's wash. The keyless "Other" bucket has none.
-                                let identity = section.projectKey.map(Slate.Identity.hue(for:))
                                 ForEach(section.rows) { row in
-                                    macRow(row, identity: identity)
+                                    macRow(row)
                                 }
                             }
                         }
@@ -303,11 +299,10 @@ struct NavigatorColumn: View {
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome
     /// is read inside ``SidebarLiveRow``, so a pane's status tick re-renders that one leaf, not
     /// this sidebar body.
-    private func macRow(_ row: RailRow, identity: Color?) -> some View {
+    private func macRow(_ row: RailRow) -> some View {
         SidebarLiveRow(
             store: store,
             row: row,
-            identity: identity,
             fallbackTitle: defaultTitle(for: row.kind),
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
@@ -611,11 +606,13 @@ struct SidebarSectionHeaderRow: View {
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-            // The folder — the group is a place, spoken in the header's own muted ink; the one
-            // pictogram the monochrome rail keeps.
+            // The folder — the group is a place, and it wears the project's IDENTITY hue
+            // (``Slate/Identity``, the Canario dialect's coloured folders — user-directed
+            // 2026-08-07): the one full-strength identity mark the rail carries per project.
+            // The keyless "Other" bucket keeps the muted header ink.
             Image(systemSymbol: .folderFill)
                 .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.State.header)
+                .foregroundStyle(projectKey.map(Slate.Identity.hue(for:)) ?? Slate.State.header)
                 .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
                 // `nerdAware` — a project folder named with a nerd-font glyph draws it from the
@@ -929,9 +926,6 @@ struct SidebarSectionHeaderRow: View {
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
-    /// The row's project IDENTITY hue (``Slate/Identity``, resolved once per section) — the 2px
-    /// spine segment + the active card's wash. `nil` ⇒ the keyless "Other" bucket (no identity).
-    let identity: Color?
     /// The kind's generic title (``PaneChooserRegistry``) when the row title is empty.
     let fallbackTitle: String
     let onSelect: () -> Void
@@ -1069,7 +1063,6 @@ private struct SidebarLiveRow: View {
             ),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
-            identity: identity,
             isEditing: chrome.isEditing,
             helpText: SidebarRowTooltip.text(
                 cwd: row.cwd,

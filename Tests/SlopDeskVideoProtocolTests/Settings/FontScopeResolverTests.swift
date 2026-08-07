@@ -123,7 +123,7 @@ final class FontScopeResolverTests: XCTestCase {
     func testLightSlotSlugResolvesBuiltinLightID() {
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .system)),
-            "foundry-ember-light", "the light slot resolves .system to the OS-light default",
+            "foundry-ember", "the light slot resolves .system to the OS-light default (split-tone Ember)",
         )
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .foundryEmberLight)),
@@ -131,7 +131,7 @@ final class FontScopeResolverTests: XCTestCase {
         )
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences()),
-            "foundry-ember-light", "an unset light slot follows the OS ⇒ the OS-light default",
+            "foundry-ember", "an unset light slot ⇒ the OS-light default (split-tone Ember)",
         )
     }
 

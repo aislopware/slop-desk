@@ -14,14 +14,12 @@
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
 // coloured ring" the way a mail row reads unread. The rail is monochrome except the marks that
-// carry state and the IDENTITY register (FOUNDRY, the Three-Registers Rule): each project row
-// wears its project's 2px identity SPINE down the left edge (the per-row segments stack into the
-// section's regional bar; a drained row — done/finished — dims its segment to 28%), and the
-// ACTIVE row's raised card additionally takes a ≤5% wash of the same hue. That is the register's
-// whole budget: titles and icons never recolour, and no per-row plate exists. ACTIVE is the
-// raised card (fill + wash + 1px hairline; the cast shadow is light-theme-only). Nothing else
-// rides the row: no subtitle, no readout, no telemetry — the richness lives in the hover tooltip
-// and the context menu.
+// carry state; the IDENTITY register lives on the section HEADER's folder mark (the Canario
+// dialect, user-directed 2026-08-07 — the earlier 2px spine + 5% wash read as invisible
+// ornament and were removed). ACTIVE is the lifted chip (the `lift` fill + 1px hairline + the
+// light-chrome cast shadow — Canario's white active tab). Nothing else rides the row: no
+// subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
+// menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -77,11 +75,6 @@ struct SlateTabRow: View {
     /// Whether this pane's TAB is armed for synchronized input (⌘⇧I) — the fixed sync-amber grouped-
     /// panes glyph, so an armed tab is visible even from the rail.
     var syncInput: Bool = false
-    /// The row's project IDENTITY hue (``Slate/Identity``) — worn as the 2px leading SPINE segment
-    /// plus, on the active card only, the ≤5% wash (the Three-Registers Rule's whole per-row
-    /// budget). `nil` ⇒ no identity (the keyless "Other" bucket, or a surface outside the project
-    /// rail) ⇒ no spine, no wash.
-    var identity: Color?
     /// Whether the row is in inline-RENAME mode — swaps the title `Text` for a committing `TextField`.
     var isEditing: Bool = false
     /// The row's tooltip text (full cwd / live agent line / last command) — shown on hover via `.help`.
@@ -144,32 +137,11 @@ struct SlateTabRow: View {
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
         .frame(height: Slate.Metric.heightTabRow)
-        .background {
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).fill(rowBackground)
-            // The identity WASH — the active card only, capped at the register's 5% budget so the
-            // hue reads as temperature, never as a plate.
-            if active, let identity {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusTab)
-                    .fill(identity.opacity(Slate.Metric.identityWashOpacity))
-            }
-        }
+        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
         .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
             Slate.Line.card,
             lineWidth: Slate.Metric.cardBorderWidth,
         ) } }
-        // The identity SPINE — the 2px project-hue bar down the row's left edge. Each row draws
-        // its own segment; the negative bleed spans the rail's 2pt row spacing so a section's
-        // segments read as ONE regional bar. A drained row (the past states — done/finished) dims
-        // its segment to the drained opacity while keeping the hue (Heat-Is-Life: the past
-        // desaturates in place, it does not vanish).
-        .overlay(alignment: .leading) {
-            if let identity {
-                Rectangle()
-                    .fill(identity.opacity(drained ? Slate.Metric.identitySpineDrainedOpacity : 1))
-                    .frame(width: Slate.Metric.identitySpineWidth)
-                    .padding(.vertical, -1)
-            }
-        }
         // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
         // (`cardShadow` resolves clear — fill + hairline carry the lift). Hover/rest cast nothing.
         .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
@@ -186,18 +158,12 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
+    /// ACTIVE = the LIFTED chip (the ladder's top rung — Canario's white active tab; the cast
+    /// shadow rides `Slate.State.cardShadow`, light-chrome-only), hover = the quiet wash.
     private var rowBackground: Color {
-        if active { Slate.Surface.raised }
+        if active { Slate.Surface.lift }
         else if hovering { Slate.State.hover }
         else { .clear }
-    }
-
-    /// Whether the row's identity spine renders DRAINED — the past states only (a finish that has
-    /// happened: the fresh flash and the settled unread marker alike). Attention that still waits
-    /// on you (`awaitingInput`, `error`) and every busy tier keep the full-strength spine: drained
-    /// means "over", not "quiet".
-    private var drained: Bool {
-        badge == .completed || badge == .finished
     }
 
     /// The title's ink — the NEUTRAL live-otty ladder only (state hue belongs to the trailing

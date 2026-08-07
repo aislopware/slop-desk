@@ -15,12 +15,15 @@ import Foundation
 /// GOLDEN-SAFE: this resolver is pure client-chrome routing — it never touches the wire / `EnvConfig` /
 /// sidecar (it just selects which built-in `SlateTheme` the chrome + terminal cells adopt).
 public enum ThemeResolution {
-    /// The compile-time default DARK built-in id (Foundry Ember) — the OS-dark fallback for an unset
-    /// slot OR the `.system` choice (both follow the OS). MIRRORS `SlateTheme.foundryEmber.id`.
+    /// The compile-time default built-in id for BOTH OS appearances (Foundry Ember). The split-tone
+    /// Ember (light warm chrome around dark terminal glass — user-directed 2026-08-07) is the product's
+    /// one signature look and reads correctly under either OS mode, so an unset slot / `.system` no
+    /// longer swaps to a per-appearance variant. MIRRORS `SlateTheme.foundryEmber.id`.
     public static let defaultDarkID = "foundry-ember"
-    /// The compile-time default LIGHT built-in id (Foundry Ember Light) — the OS-light fallback for an
-    /// unset slot OR the `.system` choice. MIRRORS `SlateTheme.foundryEmberLight.id`.
-    public static let defaultLightID = "foundry-ember-light"
+    /// The OS-light fallback — the SAME split-tone Ember (see ``defaultDarkID``). Kept as a distinct
+    /// constant so the dual-slot resolver and the picker's "System" card stay expressed in light/dark
+    /// terms; Ember Light remains an explicit picker choice only.
+    public static let defaultLightID = "foundry-ember"
 
     /// Resolve the active built-in theme id for `appearance` under the current OS appearance.
     ///
@@ -36,11 +39,10 @@ public enum ThemeResolution {
     }
 
     /// The built-in ``SlateTheme`` id for a (possibly `nil` / `.system`) ``ThemeChoice`` under `osIsDark`:
-    ///   - `nil` (unset slot — the FRESH-INSTALL default) ⇒ FOLLOWS the OS (dark → ``defaultDarkID``, light →
-    ///     ``defaultLightID``), matching the Theme picker, which presents an unset light slot as "System"; a
-    ///     fresh install therefore renders the light default in light mode and the dark default in dark mode,
-    ///     rather than a fixed dark theme regardless of OS appearance;
-    ///   - `.system` ⇒ likewise FOLLOWS the OS (dark → ``defaultDarkID``, light → ``defaultLightID``);
+    ///   - `nil` (unset slot — the FRESH-INSTALL default) ⇒ the OS-appearance default (dark →
+    ///     ``defaultDarkID``, light → ``defaultLightID``) — both currently the one split-tone Ember, so a
+    ///     fresh install shows the signature look under either OS appearance;
+    ///   - `.system` ⇒ likewise the OS-appearance default;
     ///   - any concrete choice ⇒ its fixed `SlateTheme.id` (via ``ThemeChoice/builtinID``).
     public static func builtinID(for choice: ThemeChoice?, osIsDark: Bool) -> String {
         guard let choice else { return osIsDark ? defaultDarkID : defaultLightID }

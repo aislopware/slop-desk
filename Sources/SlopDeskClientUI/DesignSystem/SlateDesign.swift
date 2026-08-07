@@ -56,6 +56,12 @@ struct SlateTheme: Equatable {
     let face: Color
     let raised: Color
     let lift: Color
+    /// The TERMINAL glass — the cell surface libghostty paints, exposed as a `Color` for the
+    /// SwiftUI views that must match it (pane letterbox, GUI-pane backdrops). On a SPLIT-TONE
+    /// seed this is NOT `face`: the chrome frame is a light warm surface while the glass stays
+    /// dark (the Canario architecture — user-directed 2026-08-07), so "the pane surface" and
+    /// "the chrome face" are different materials.
+    let terminal: Color
 
     // Text
     let textPrimary: Color
@@ -157,9 +163,51 @@ struct SlateTheme: Equatable {
         let blue: UInt32
         let purple: UInt32
         let magenta: UInt32
-        let identity: [UInt32] // 8 project hues (spine + wash duty)
+        let identity: [UInt32] // 8 project hues (folder marks + region duty)
         let ansi: [UInt32] // the full 16-slot terminal palette, engine-mapped
         let isLight: Bool
+        /// SPLIT-TONE overrides (the Canario architecture, user-directed 2026-08-07): a light
+        /// warm CHROME frame around DARK terminal glass. When set, the terminal cell colours
+        /// decouple from the chrome ladder; `nil` ⇒ the terminal wears `face`/`ink`/`lift`
+        /// (a single-tone seed).
+        var terminalFace: UInt32?
+        var terminalInk: UInt32?
+        var terminalSelection: UInt32?
+
+        init(
+            name: String, void: UInt32, ground: UInt32, face: UInt32, raised: UInt32,
+            lift: UInt32, ink: UInt32, ink2: UInt32, ink3: UInt32, accent: UInt32,
+            accentDeep: UInt32, red: UInt32, orange: UInt32, amber: UInt32, green: UInt32,
+            cyan: UInt32, blue: UInt32, purple: UInt32, magenta: UInt32, identity: [UInt32],
+            ansi: [UInt32], isLight: Bool, terminalFace: UInt32? = nil,
+            terminalInk: UInt32? = nil, terminalSelection: UInt32? = nil,
+        ) {
+            self.name = name
+            self.void = void
+            self.ground = ground
+            self.face = face
+            self.raised = raised
+            self.lift = lift
+            self.ink = ink
+            self.ink2 = ink2
+            self.ink3 = ink3
+            self.accent = accent
+            self.accentDeep = accentDeep
+            self.red = red
+            self.orange = orange
+            self.amber = amber
+            self.green = green
+            self.cyan = cyan
+            self.blue = blue
+            self.purple = purple
+            self.magenta = magenta
+            self.identity = identity
+            self.ansi = ansi
+            self.isLight = isLight
+            self.terminalFace = terminalFace
+            self.terminalInk = terminalInk
+            self.terminalSelection = terminalSelection
+        }
     }
 
     /// Build a full ``SlateTheme`` from a ``FoundrySeed`` — structural opacities (borders / hover /
@@ -179,6 +227,7 @@ struct SlateTheme: Equatable {
             face: Color(slateHex: s.face),
             raised: Color(slateHex: s.raised),
             lift: Color(slateHex: s.lift),
+            terminal: Color(slateHex: s.terminalFace ?? s.face),
             textPrimary: Color(slateHex: s.ink),
             textSecondary: Color(slateHex: s.ink2),
             textTertiary: Color(slateHex: s.ink3),
@@ -209,16 +258,16 @@ struct SlateTheme: Equatable {
             accentDeep: Color(slateHex: s.accentDeep),
             identity: s.identity.map { Color(slateHex: $0) },
             id: "foundry-\(s.name)",
-            terminalBackgroundHex: hex6(s.face),
-            terminalForegroundHex: hex6(s.ink),
+            terminalBackgroundHex: hex6(s.terminalFace ?? s.face),
+            terminalForegroundHex: hex6(s.terminalInk ?? s.ink),
             // The engine-mapped 16-slot palette: dark seeds put `lift` in slot 0 (visible against face) and
             // the ink tiers in 7/8/15; light seeds invert (ink in 0, near-white surfaces in 7/15). Slots
             // 1–6 are the chromatic set with blue leaned toward cyan for on-face readability.
             ansiPalette: s.ansi.map { hex6($0) },
             // Solid lift fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
             // selection-foreground=cell-foreground so this is a highlight, not an invert.
-            selectionBackgroundHex: hex6(s.lift),
-            cursorHex: hex6(s.ink),
+            selectionBackgroundHex: hex6(s.terminalSelection ?? s.lift),
+            cursorHex: hex6(s.terminalInk ?? s.ink),
             cursorTextHex: nil,
         )
     }
@@ -233,21 +282,25 @@ struct SlateTheme: Equatable {
         return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
-    /// Foundry Ember — the DEFAULT theme (dark). Warm graphite (OKLCH hue 55) with a teal accent chosen to
-    /// sit maximally far from the hazard amber. face #27221E.
+    /// Foundry Ember — the DEFAULT theme, SPLIT-TONE (the Canario architecture, user-directed
+    /// 2026-08-07): a light warm-clay CHROME frame (OKLCH hue 45, C ≈ 0.04 — visibly terracotta,
+    /// not paper) around DARK Ember terminal glass (#27221E cells, the palette the user picked).
+    /// Dark-on-dark chrome read as generic; the frame now carries the app's identity the way
+    /// Canario's salmon frame does, while the panes stay tight dark glass.
     static let foundryEmber = foundry(FoundrySeed(
         name: "ember",
-        void: 0x171310, ground: 0x201B17, face: 0x27221E, raised: 0x322C29, lift: 0x3E3833,
-        ink: 0xE6DED6, ink2: 0xADA8A3, ink3: 0x7C7874,
-        accent: 0x60CDCD, accentDeep: 0x009898,
-        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
-        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
-        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+        void: 0xD6B4A5, ground: 0xE5C4B6, face: 0xEFD0C2, raised: 0xF7E1D7, lift: 0xFCF2EE,
+        ink: 0x41332D, ink2: 0x756761, ink3: 0x968983,
+        accent: 0x007272, accentDeep: 0x004D4D,
+        red: 0xB43249, orange: 0xA35303, amber: 0x8E6A00, green: 0x357A3A,
+        cyan: 0x00787D, blue: 0x006A9D, purple: 0x6E4FB1, magenta: 0x9A3A8A,
+        identity: [0xAB5B56, 0xA2662F, 0x857720, 0x4B864E, 0x008883, 0x277FAB, 0x6470B3, 0x91619C],
         ansi: [
             0x3A3431, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA8A3,
             0x7C7874, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE6DED6,
         ],
-        isLight: false,
+        isLight: true,
+        terminalFace: 0x27221E, terminalInk: 0xE6DED6, terminalSelection: 0x3E3833,
     ))
 
     /// Foundry Ember Light — warm paper, the normal-polarity Ember for the follow-OS light slot.
@@ -326,6 +379,7 @@ enum Slate {
         static var face: Color { Slate.theme.face }
         static var raised: Color { Slate.theme.raised }
         static var lift: Color { Slate.theme.lift }
+        static var terminal: Color { Slate.theme.terminal }
     }
 
     @MainActor
@@ -508,14 +562,6 @@ enum Slate {
         static let hairline: CGFloat = 1
         static let cardBorderWidth: CGFloat = 1
         static let dividerHoverWidth: CGFloat = 2
-        /// The IDENTITY spine — the 2px project-hue bar standing at the leading edge of a sidebar
-        /// project group (the identity register's entire footprint besides the active row's wash).
-        static let identitySpineWidth: CGFloat = 2
-        /// The active row's identity WASH opacity — the register's ceiling (DESIGN.md caps it at 5%).
-        static let identityWashOpacity: CGFloat = 0.05
-        /// A DRAINED spine segment's opacity (the Heat-Is-Life Rule: done/disconnected keeps the hue
-        /// at 28% — the past desaturates in place rather than vanishing).
-        static let identitySpineDrainedOpacity: CGFloat = 0.28
         /// Active-pane focus marker: leg length (points) of the small FILLED accent triangle in the focused
         /// pane's TOP-LEFT corner (Warp-style), not a box/bracket/underline/dot/top-bar outline and not
         /// dimming the unfocused panes — a small corner mark signals focus without adding a border to the

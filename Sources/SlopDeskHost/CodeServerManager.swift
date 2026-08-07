@@ -375,13 +375,13 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Foundry Ember` / `Foundry Ember Light` from the seeded `slopdesk-foundry`
-    /// extension, generated from the exact OKLCH palettes the client chrome runs on; the vendored
-    /// Monokai Pro family stays seeded beside it as ⌘K ⌘T picker options;
-    /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
-    /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
-    /// light client gets a light editor while a dark client on the same host stays dark, from the
-    /// one shared settings file) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
+    /// theme (`Foundry Ember` from the seeded `slopdesk-foundry` extension, generated from the
+    /// exact OKLCH palettes the client chrome runs on; the vendored Monokai Pro family and
+    /// `Foundry Ember Light` stay seeded beside it as ⌘K ⌘T picker options; the theme is PINNED
+    /// dark — no `window.autoDetectColorScheme` — because under the split-tone Ember
+    /// (user-directed 2026-08-07) the editor is a DARK GLASS surface beside the terminal while
+    /// the CLIENT chrome is light, so appearance-following would flip the glass light exactly
+    /// when the signature theme is active) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.131, the v6-era observation): it
@@ -445,9 +445,6 @@ final class CodeServerManager: @unchecked Sendable {
     {
         "chat.disableAIFeatures": true,
         "workbench.colorTheme": "Foundry Ember",
-        "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Foundry Ember",
-        "workbench.preferredLightColorTheme": "Foundry Ember Light",
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1055,6 +1052,54 @@ final class CodeServerManager: @unchecked Sendable {
             "window.autoDetectColorScheme": true,
             "workbench.preferredDarkColorTheme": "Monokai Pro",
             "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v19 — the Foundry pair with `window.autoDetectColorScheme` flipping the workbench to
+        // Ember Light on a light client. The split-tone Ember (user-directed 2026-08-07) makes the
+        // editor a DARK GLASS surface beside the terminal regardless of the client's appearance —
+        // its chrome went light, so appearance-following would flip the glass light exactly when
+        // the signature theme is active. v20 pins the dark workbench and drops the auto-detect
+        // trio; Ember Light remains a ⌘K ⌘T picker option.
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Foundry Ember",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Foundry Ember",
+            "workbench.preferredLightColorTheme": "Foundry Ember Light",
             "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {

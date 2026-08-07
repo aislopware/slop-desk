@@ -14,11 +14,12 @@ enum NativePaneColor {
     /// The chrome / window background (pane header, divider bands, empty content) — the Slate window backdrop.
     static var window: Color { Slate.Surface.ground }
 
-    /// The terminal / editable content surface background — the floating card surface.
-    static var terminalBackground: Color { Slate.Surface.face }
+    /// The terminal / editable content surface background — the TERMINAL glass rung (on a
+    /// split-tone seed this is the dark cell surface, NOT the light chrome `face`).
+    static var terminalBackground: Color { Slate.Surface.terminal }
 
-    /// The pane-seam hairline — the `void` rung (FOUNDRY's Depth-By-Light: the 1px gap between
-    /// panes reads as the dark BEHIND the lit workspace, not as an ink stroke on it).
+    /// The pane-seam hairline — the `void` rung: on the split-tone seed the 1px gap between dark
+    /// glass panes shows the warm FRAME through it (the Canario gap, kept tight).
     static var separator: Color { Slate.Surface.void }
 }
 #endif

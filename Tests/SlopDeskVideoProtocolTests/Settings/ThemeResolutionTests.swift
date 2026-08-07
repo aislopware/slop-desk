@@ -6,19 +6,18 @@ import XCTest
 final class ThemeResolutionTests: XCTestCase {
     // MARK: Single / primary slot (useSeparateDarkTheme OFF or unset)
 
-    /// The all-`nil` default appearance (FRESH INSTALL) FOLLOWS the OS — the picker presents an unset light slot
-    /// as "System", so the resolver must render the light default in light mode and the dark default in dark
-    /// mode, NOT a fixed dark theme regardless of OS appearance. The old
-    /// `builtinID(for: nil)` returning a fixed `defaultDarkID` fails the light-mode case below.
-    func testDefaultAppearanceFollowsOSForBothAppearances() {
+    /// The all-`nil` default appearance (FRESH INSTALL) resolves to the ONE split-tone Ember under either
+    /// OS appearance — the signature look (light warm chrome, dark terminal glass) reads correctly in both
+    /// modes, so a fresh install never swaps to a per-appearance variant.
+    func testDefaultAppearanceIsSplitToneEmberForBothAppearances() {
         let def = AppearancePreferences()
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: false), "foundry-ember-light",
-            "fresh install in LIGHT mode → the light default",
+            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: false), "foundry-ember",
+            "fresh install in LIGHT mode → the split-tone default",
         )
         XCTAssertEqual(
             ThemeResolution.activeBuiltinID(appearance: def, osIsDark: true), "foundry-ember",
-            "fresh install in DARK mode → the dark default",
+            "fresh install in DARK mode → the split-tone default",
         )
     }
 
@@ -35,15 +34,15 @@ final class ThemeResolutionTests: XCTestCase {
         )
     }
 
-    /// The legacy `.system` single choice STILL follows the OS by construction (dark → Ember, light →
-    /// Ember Light) even with separate-dark OFF.
-    func testSystemChoiceFollowsOS() {
+    /// The legacy `.system` single choice resolves to the split-tone Ember default under either OS
+    /// appearance (both per-appearance defaults are the one signature theme).
+    func testSystemChoiceResolvesToDefault() {
         let prefs = AppearancePreferences(theme: .system)
         XCTAssertEqual(
             ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "foundry-ember",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "foundry-ember-light",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "foundry-ember",
         )
     }
 
@@ -77,11 +76,12 @@ final class ThemeResolutionTests: XCTestCase {
     // MARK: builtinID mapping
 
     func testBuiltinIDMapping() {
-        // An unset slot (nil) follows the OS, exactly like `.system` (the picker shows it as "System").
+        // An unset slot (nil) resolves like `.system` (the picker shows it as "System") — the split-tone
+        // default under either OS appearance.
         XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: true), "foundry-ember")
-        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "foundry-ember-light")
+        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "foundry-ember")
         XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: true), "foundry-ember")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "foundry-ember-light")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "foundry-ember")
         XCTAssertEqual(ThemeResolution.builtinID(for: .foundryGraphite, osIsDark: true), "foundry-graphite")
         XCTAssertEqual(ThemeResolution.builtinID(for: .foundryDusk, osIsDark: true), "foundry-dusk")
         XCTAssertEqual(ThemeResolution.builtinID(for: .foundryEmber, osIsDark: false), "foundry-ember")
