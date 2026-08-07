@@ -777,6 +777,11 @@ final class SubprocessE2ETests: XCTestCase {
         env["SLOPDESK_SCROLLBACK_DIR"] = container.appendingPathComponent("scrollback").path
         env["SLOPDESK_WORKSPACE_STATE_DIR"] = container.path
         env["SLOPDESK_FILE_DROP_DIR"] = container.appendingPathComponent("drop").path
+        // The daemon prewarms the shared code-server at boot; a real Node child per E2E run is a
+        // multi-second boot plus a stray listener this suite must never create. The bisect
+        // override doubles as the off-switch: SET but not executable resolves to "no binary"
+        // (documented in `HostServiceProcess.locate`), so the prewarm silently no-ops.
+        env["SLOPDESK_CODE_SERVER_BIN"] = container.appendingPathComponent("code-server-absent").path
         return env
     }
 

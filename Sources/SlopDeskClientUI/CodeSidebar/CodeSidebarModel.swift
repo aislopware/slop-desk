@@ -43,7 +43,7 @@ final class CodeSidebarModel {
     private(set) var phase: CodeSidebarPhase = .starting
 
     /// Bumped by the header's reload button — part of the column's `.task` id, so a bump cancels the
-    /// settled loop and re-ensures from scratch (respawning a dead/idle-reaped code-server).
+    /// settled loop and re-ensures from scratch (respawning a dead code-server).
     private(set) var generation = 0
 
     func requestReload() { generation += 1 }
@@ -66,6 +66,7 @@ final class CodeSidebarModel {
         interval: Duration = .milliseconds(900),
     ) async {
         phase = .starting
+        var round = 0
         while !Task.isCancelled {
             var endpoint = await ensure(projectRoot)
             guard !Task.isCancelled else { return }
@@ -79,12 +80,23 @@ final class CodeSidebarModel {
             phase = Self.phase(for: endpoint, host: resolvedHost, projectRoot: projectRoot)
             switch phase {
             case .ready: return
-            case .starting: try? await Task.sleep(for: interval)
+            case .starting:
+                // The host prewarms code-server at daemon boot, so `.starting` is normally a
+                // sub-second race (panel expanded moments after a hostd restart) — the first
+                // rounds poll at `interval / 3` so readiness lands within ~300 ms of the host
+                // having it, then the steady cadence takes over for a genuinely cold boot.
+                try? await Task.sleep(for: round < Self.rampRounds ? interval / 3 : interval)
             case .offline,
                  .unavailable: try? await Task.sleep(for: interval * 4)
             }
+            round += 1
         }
     }
+
+    /// How many `.starting` rounds poll at the fast cadence before backing off to `interval` —
+    /// 8 rounds × 300 ms ≈ the head of a real code-server boot (spawn → listening measured at
+    /// ~0.4–1.2 s on the host this was tuned against).
+    static let rampRounds = 8
 
     /// One ensure round's endpoint → the phase to render. Pure — pinned by `CodeSidebarModelTests`.
     /// A `ready` endpoint that cannot form a URL (empty host) degrades to `.offline`, never a trap.

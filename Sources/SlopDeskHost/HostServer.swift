@@ -512,8 +512,9 @@ public final class HostServer: @unchecked Sendable {
         await installWorkspaceDocument()
         startWorkspaceReconciler()
         // The embedded editor's way back into a terminal. Installed here rather than lazily: the
-        // bridge socket binds on the first `ensureCodeServer`, which arrives on a client's poll
-        // with no further hook into this server.
+        // bridge socket binds on the daemon's `prewarmCodeServer()` (or, headless-server uses like
+        // tests, the first `ensureCodeServer`), neither of which has a further hook into this
+        // server — and the runner must be on the bridge object before its listener exists.
         installCodeBridgeTerminalRunner()
         let muxStream = transport.muxConnections
         muxAcceptTask = Task { [weak self] in
@@ -521,6 +522,15 @@ public final class HostServer: @unchecked Sendable {
                 await self?.handleNewMuxConnection(muxConnection)
             }
         }
+    }
+
+    /// Boots the shared code-server ahead of any client — the daemon calls this once its
+    /// listeners are up, so the panel's first expand meets a warm workbench instead of a cold
+    /// seed + Node boot (``CodeServerManager/prewarm()``). Deliberately NOT folded into
+    /// ``start()``: unit tests build and start HostServers freely, and a real code-server spawn
+    /// is banned there (hang-safety) — only the `slopdesk-hostd` executable calls this.
+    public func prewarmCodeServer() {
+        HostCodeServerPerformer.sharedManager.prewarm()
     }
 
     /// Stops the listener and shuts down every live and detached channel.
@@ -559,8 +569,8 @@ public final class HostServer: @unchecked Sendable {
         drainWorkspaceChannels()
         // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
-        // Terminate the shared code-server child (the right sidebar's embedded VS Code). It
-        // self-reaps on idle, but a daemon stop must not strand a Node process.
+        // Terminate the shared code-server child (the right sidebar's embedded VS Code). With no
+        // idle reaper this is its only stop, and a daemon stop must not strand a Node process.
         HostCodeServerPerformer.sharedManager.shutdown()
         // Same for the shared simulator server (the right panel's Simulators surface). It has no
         // idle reaper of its own, so this is the ONLY thing that stops it — the simulated devices

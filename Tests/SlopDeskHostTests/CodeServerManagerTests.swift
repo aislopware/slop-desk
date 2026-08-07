@@ -654,6 +654,62 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertTrue(cli.calls.isEmpty)
     }
 
+    // MARK: Prewarm (daemon-boot spawn, no client)
+
+    func testPrewarmSpawnsWithoutAnyEnsureAndEnsureAdoptsTheChild() {
+        let spawner = FakeSpawner()
+        let bridge = FakeBridge()
+        let seeds = Counter()
+        let manager = makeManager(spawner: spawner, settingsSeeder: { seeds.increment() }, bridge: bridge)
+
+        manager.prewarm()
+        XCTAssertEqual(spawner.spawnCount, 1, "prewarm boots the child with no verb-18 round")
+        XCTAssertEqual(seeds.value, 1, "the settings seed runs on the prewarm, not the first ensure")
+        XCTAssertEqual(bridge.startedPaths.count, 1, "the bridge listener binds before the child spawns")
+
+        // The first client round observes the prewarmed child — same instance, no second spawn.
+        spawner.announcePort(6060)
+        XCTAssertEqual(
+            manager.ensure(projectRoot: root),
+            MetadataCodec.ServiceEndpoint(state: .ready, port: 6060),
+        )
+        XCTAssertEqual(spawner.spawnCount, 1)
+        XCTAssertEqual(seeds.value, 1)
+    }
+
+    func testPrewarmWithoutBinaryIsASilentNoOp() {
+        let spawner = FakeSpawner()
+        let bridge = FakeBridge()
+        let manager = makeManager(spawner: spawner, binary: nil, bridge: bridge)
+        manager.prewarm()
+        XCTAssertEqual(spawner.spawnCount, 0)
+        XCTAssertTrue(bridge.startedPaths.isEmpty, "no binary ⇒ nothing binds either")
+    }
+
+    func testPrewarmWithMissingExtensionsSpawnsWhenTheInstallLands() async throws {
+        // The install task's completion CONTINUES the boot — on a prewarmed host there is no
+        // client poll to pick the spawn up, so waiting for the next ensure would strand the
+        // child unspawned until the panel opens (exactly the cold start prewarm removes).
+        let spawner = FakeSpawner()
+        let cli = FakeCLI([0])
+        let manager = makeManager(
+            spawner: spawner,
+            cliRunner: { cli.run(binary: $0, arguments: $1) },
+            installedExtensionsRegistry: { nil },
+        )
+        manager.prewarm()
+        XCTAssertEqual(spawner.spawnCount, 0, "no child boots while the install CLI runs")
+        for _ in 0..<500 {
+            if spawner.spawnCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(spawner.spawnCount, 1, "the install completion spawns — no ensure needed")
+        XCTAssertEqual(
+            cli.calls,
+            CodeServerManager.bundledMarketplaceExtensions.map { ["--install-extension", $0] },
+        )
+    }
+
     /// Drives the client's poll until the deferred first spawn happens (bounded — an install task
     /// that never releases the spawn fails the test instead of hanging it).
     private func pollUntilSpawn(manager: CodeServerManager, spawner: FakeSpawner) async throws {
@@ -1260,6 +1316,10 @@ final class CodeServerManagerTests: XCTestCase {
         // NO positional folder — one shared instance serves every project; each client names its
         // folder in the workbench URL's `?folder=` query.
         XCTAssertFalse(arguments.contains { $0.hasPrefix("/") })
+        // NO idle reaper — the daemon prewarms at boot so the workbench is always warm; a
+        // self-reaping child re-imposes the cold start prewarm exists to remove. Never
+        // reintroduce without revisiting `prewarm()`.
+        XCTAssertFalse(arguments.contains("--idle-timeout-seconds"))
     }
 
     func testChildEnvironmentInjectsTheOfficialMarketplaceGallery() throws {

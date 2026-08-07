@@ -4,7 +4,7 @@ import SlopDeskProtocol
 /// Supervises the HOST's code-server (VS Code web workbench) — the backend of the client's
 /// right-sidebar embedded editor (``MetadataVerb/ensureCodeServer``).
 ///
-/// **ONE shared instance, lazily.** code-server serves every folder from a single process — the
+/// **ONE shared instance, prewarmed.** code-server serves every folder from a single process — the
 /// workbench resolves its folder from the client's `?folder=` query, so per-project children were
 /// pure overhead (a Node runtime + extension host each) AND fought over the session socket
 /// (`code-server-ipc.sock` is per user-data-dir; only the first child owns it, and the CLI's
@@ -20,9 +20,12 @@ import SlopDeskProtocol
 /// at most once per ``probeInterval`` (the client polls ~1 Hz; a dead-port connect costs a syscall,
 /// not a hang — the probe's timeout is bounded).
 ///
-/// **Crash/idle recovery is implicit** (the cmux `VSCodeServeWebController` lesson): a child that
-/// exited — including by its own `--idle-timeout-seconds` reaper — reads `isRunning == false` on
-/// the next `ensure`, which drops the record and respawns fresh.
+/// **Crash recovery is implicit** (the cmux `VSCodeServeWebController` lesson): a child that
+/// exited reads `isRunning == false` on the next `ensure`, which drops the record and respawns
+/// fresh. There is deliberately NO `--idle-timeout-seconds`: the daemon calls ``prewarm()`` at
+/// boot precisely so the workbench is always warm, and a reaper would undo that every quiet
+/// stretch — the cold boot it forces onto the next panel expand costs more than the idle Node
+/// runtime it frees (user-directed startup-latency pass, 2026-08-07).
 ///
 /// **No auth token.** The child runs `--auth none` on `0.0.0.0`: security = the WireGuard mesh,
 /// identical to every other port hostd opens (docs/DECISIONS — no app-layer crypto/auth).
@@ -47,11 +50,6 @@ final class CodeServerManager: @unchecked Sendable {
     /// Reads the profile registry (`extensions/extensions.json`) — the workbench's installed-set
     /// source of truth — for the bundled-extension check. `nil` = no registry yet (pristine host).
     typealias InstalledExtensionsRegistry = @Sendable () -> Data?
-
-    /// Idle self-shutdown handed to the child (`--idle-timeout-seconds`): a workbench nobody has
-    /// open for 2 h reaps itself instead of holding a Node runtime forever; the next sidebar expand
-    /// transparently respawns it.
-    static let idleTimeoutSeconds = 7200
 
     private struct Instance {
         var handle: any HostServiceProcessHandle
@@ -123,6 +121,22 @@ final class CodeServerManager: @unchecked Sendable {
         self.openRetryDelay = openRetryDelay
     }
 
+    /// Boots the shared code-server WITHOUT a client request — `slopdesk-hostd` calls this once
+    /// its listeners are up, so the first panel expand finds a live workbench instead of paying
+    /// the seed + extension-install + Node-boot chain interactively. Identical to ``ensure`` minus
+    /// the root validation (there is no root — the one child serves every folder). A host with no
+    /// binary is a silent no-op: `unavailable` is verb 18's ANSWER, not a boot failure.
+    ///
+    /// Deliberately not called from ``HostServer/start()``: unit tests build and start servers
+    /// freely and may never spawn a real Node child (hang-safety) — only the daemon executable
+    /// (and the E2E harness, which points `SLOPDESK_CODE_SERVER_BIN` at a non-executable to keep
+    /// its sandboxed hostd childless) reaches this.
+    func prewarm() {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = bootLocked()
+    }
+
     /// Ensures the shared code-server and reports where it stands RIGHT NOW (never waits). `nil`
     /// when `projectRoot` is not an absolute path to an existing host directory (→ `.notFound` on
     /// the wire — never hand out an endpoint for a path the host cannot see).
@@ -130,7 +144,13 @@ final class CodeServerManager: @unchecked Sendable {
         guard Self.canonicalRoot(projectRoot) != nil else { return nil }
         lock.lock()
         defer { lock.unlock() }
+        return bootLocked()
+    }
 
+    /// The one shared boot path (caller holds `lock`): observe a live child, or walk the one-time
+    /// chain — settings seed, bridge bind, bundled-extension install — and spawn. Both ``ensure``
+    /// (per verb-18 round) and ``prewarm``/``finishBundledExtensionInstall`` (once each) land here.
+    private func bootLocked() -> MetadataCodec.ServiceEndpoint {
         if let existing = instance {
             if existing.handle.isRunning {
                 return endpointLocked(for: existing)
@@ -242,8 +262,8 @@ final class CodeServerManager: @unchecked Sendable {
         bridge.setTerminalRunner(runner)
     }
 
-    /// Terminates the child (host shutdown). It also self-reaps on idle, but hostd going down must
-    /// not strand a Node process.
+    /// Terminates the child (host shutdown) — with no idle reaper, this is the ONLY thing that
+    /// stops it; hostd going down must not strand a Node process.
     func shutdown() {
         lock.lock()
         let stranded = instance
@@ -304,11 +324,15 @@ final class CodeServerManager: @unchecked Sendable {
         }
     }
 
-    /// Synchronous `.done` flip for the install task (NSLock is unusable directly in async code).
+    /// Synchronous `.done` flip for the install task (NSLock is unusable directly in async code),
+    /// then the CONTINUATION of the boot that install deferred: the spawn happens right here, not
+    /// on the next ensure round — a prewarmed host has no client polling to pick it up, and a
+    /// polled one saves a round.
     private func finishBundledExtensionInstall() {
         lock.lock()
+        defer { lock.unlock() }
         bundledExtensionInstall = .done
-        lock.unlock()
+        _ = bootLocked()
     }
 
     // MARK: - Pure helpers (unit-tested directly)
@@ -344,7 +368,9 @@ final class CodeServerManager: @unchecked Sendable {
             "--disable-update-check",
             "--disable-workspace-trust",
             "--disable-getting-started-override",
-            "--idle-timeout-seconds", String(idleTimeoutSeconds),
+            // NO --idle-timeout-seconds: the prewarmed child stays warm for the daemon's whole
+            // life (see the class doc — a reaper here re-imposes the cold boot prewarm exists
+            // to remove).
         ]
     }
 

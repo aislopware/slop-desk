@@ -289,6 +289,12 @@ Task {
         exit(1)
     }
 
+    // Boot the code panel's backend NOW, off the client path: the shared code-server pays its
+    // settings seed + extension install + Node boot while nobody is waiting, so the first panel
+    // expand connects to a live workbench (user-directed startup-latency pass, 2026-08-07). A
+    // binary-less host no-ops — verb 18 keeps answering `unavailable`.
+    server.prewarmCodeServer()
+
     // Bring up the inspector listener (port + 1) once the terminal server is up and its REAL
     // bound port is known — `--port 0` mints an OS-chosen ephemeral port that can differ from
     // `parsed.port`, and `inspectorPort` is `terminalPort &+ 1` for the object's whole lifetime, so

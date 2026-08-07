@@ -6986,3 +6986,44 @@ it does not put the panel on a workbench three releases old.
 Verified end to end: with Homebrew's 4.112 and a hand-installed `~/.local/bin` copy both still
 present on the host, a restarted hostd spawned its workbench from
 `ThirdParty/tools/.prefix/code-server/4.131.0/` (read off the child's own `lsof` txt map).
+
+## The code panel's backend boots with the daemon, not with the panel (2026-08-07)
+
+The user reported code-server as "heavy, slow to start" and asked for a thorough startup pass.
+Measurement first (nothing in-repo had ever timed this chain): the server's own spawn → listening
+is small — ~0.4 s with a warm filesystem cache, ~1.2 s cold — and the browser-side workbench boot
+on the real profile is ~2.2 s to interactive. What made the panel FEEL slow was the architecture
+around those numbers: the spawn was lazy (first panel expand paid seed + bundled-extension check +
+Node boot interactively), the child carried `--idle-timeout-seconds 7200` (two quiet hours reaped
+it, so the next expand was cold again — the "sometimes fast, sometimes slow" signature), and the
+client polled readiness at a flat 900 ms.
+
+Three changes, no new flags (OFF is not a valid mode for any of them):
+
+- **Prewarm.** `slopdesk-hostd` calls `HostServer.prewarmCodeServer()` right after its listeners
+  come up; `CodeServerManager.prewarm()` walks the same locked boot path as `ensure` minus root
+  validation. Deliberately NOT inside `HostServer.start()` — unit tests build and start servers
+  freely and may never spawn a real Node child; the E2E harness points `SLOPDESK_CODE_SERVER_BIN`
+  at a non-executable so its sandboxed hostd stays childless (a SET but non-executable override
+  resolving to "no binary" is documented `HostServiceProcess.locate` behavior).
+- **No idle reaper.** `--idle-timeout-seconds` is gone from `launchArguments()` (pinned by test):
+  a reaper re-imposes the exact cold boot prewarm removes, trading ~300-450 MB of resident Node
+  for a panel that is always warm. `shutdown()` is now the child's only stop.
+- **Install completion continues the boot.** The one-shot bundled-extension install used to leave
+  the spawn to the NEXT ensure round — on a prewarmed host there is none, so
+  `finishBundledExtensionInstall()` now re-enters the boot path itself.
+
+Client side, `CodeSidebarModel.poll` ramps: the first 8 `.starting` rounds poll at `interval / 3`
+(≈300 ms) before settling at 900 ms — post-prewarm, `.starting` is normally only visible when the
+panel expands moments after a hostd restart, and the ramp shaves the wait to find it ready.
+
+Measured but NOT adopted: `NODE_COMPILE_CACHE` (bundled Node 24 supports it; the cache populates —
+281 files — but saves only ~70 ms on a ~0.4 s path nobody waits on anymore). Not worth a cache
+directory whose staleness would need managing across pin bumps. Also out of scope on purpose: a
+workbench-interactive signal back to Swift (the veil still drops at `didFinish`), and any change to
+the golden-pinned verb-18 wire — the poll ramp is client-local.
+
+The measurement is now repeatable: `scripts/measure-code-server-start.sh` times spawn → listening
+against the resolved binary and warns if a live host child still carries the old idle-timeout flag
+(the tell of a pre-prewarm build). Run it when bumping the code-server pin (docs/46's "a pin bump
+has a tail").
