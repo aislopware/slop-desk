@@ -321,8 +321,8 @@ struct AndroidDeviceList: View {
     }
 
     /// A click on a device that is not running starts it — the same intent a click on a running card
-    /// carries, one step earlier. An emulator boot is tens of seconds, so the row's spinner clears as
-    /// soon as the host has accepted the launch and the list's own poll carries it from there.
+    /// carries, one step earlier. The row's spinner holds until the boot is VISIBLE in the list (see
+    /// ``AndroidSidebarModel/boot(_:)``), at which point the row itself moves to the attached shelf.
     private func open(_ device: AndroidDevice) {
         guard !model.pending.contains(device.key) else { return }
         Task { await model.boot(device) }

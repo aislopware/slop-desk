@@ -140,6 +140,43 @@ final class AndroidSidebarPhaseTests: XCTestCase {
         XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: true), .gone)
         XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: false), .gone)
     }
+
+    // MARK: The lifecycle spinner's hold
+
+    /// What `pending` waits for after a play press. Both lifecycle verbs are fire-and-forget on the
+    /// host (`emulator` is spawned; `adb emu kill` merely asks), so "the host accepted it" is not a
+    /// state change — these two predicates are. A spinner that resolves any earlier re-arms the
+    /// button mid-flight: a second boot press then hits the AVD lock, and a second stop press sits
+    /// on a card that looks healthy and is not.
+    func testABootHoldsItsSpinnerUntilTheSerialFoldsIn() {
+        let key = "avd:Pixel_API36"
+        // Accepted but not yet surfaced: the AVD row still has no transport.
+        XCTAssertFalse(
+            AndroidSidebarModel.bootIsVisible([device(state: "offline", serial: nil)], key: key),
+        )
+        // A list glitch that drops the row entirely is still not visibility.
+        XCTAssertFalse(AndroidSidebarModel.bootIsVisible([], key: key))
+        // The fold: same row, now carrying the booted serial — state is irrelevant, `offline`
+        // IS the boot in progress.
+        XCTAssertTrue(
+            AndroidSidebarModel.bootIsVisible([device(state: "offline")], key: key),
+        )
+    }
+
+    func testAShutdownHoldsItsSpinnerUntilTheSerialIsGone() {
+        let serial = "emulator-5554"
+        // Still dying: the serial is listed, however the row is keyed and whatever adb calls it.
+        XCTAssertFalse(
+            AndroidSidebarModel.shutdownIsVisible([device(state: "offline")], serial: serial),
+        )
+        // Landed: the AVD row remains — merely no longer running — and that is the resolved state.
+        XCTAssertTrue(
+            AndroidSidebarModel.shutdownIsVisible(
+                [device(state: "offline", serial: nil)], serial: serial,
+            ),
+        )
+        XCTAssertTrue(AndroidSidebarModel.shutdownIsVisible([], serial: serial))
+    }
 }
 
 // MARK: - The video path

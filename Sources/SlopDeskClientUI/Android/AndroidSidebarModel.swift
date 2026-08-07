@@ -265,14 +265,15 @@ final class AndroidSidebarModel {
 
     /// Boot an AVD. Headless on the host — see the bridge's `boot`.
     ///
-    /// The spinner holds until the boot is VISIBLE — the serial in the list — rather than until the
-    /// host merely accepts the launch. A row whose play button returns while the emulator is still
-    /// coming up invites a second instance against the same AVD, which the emulator refuses with a
-    /// lock error that reads as a broken panel. Measured 2026-08-07: the serial appears in
-    /// `adb devices` within a second or two of launch, so the hold is short; the cap covers a host
-    /// under load. The boot itself is tens of seconds more, and the LIST carries that part — the
-    /// booting emulator now names its AVD (via the host's console read-back), so the row stays one
-    /// row, saying "Starting up…".
+    /// The spinner holds until the boot is VISIBLE — the serial folded into this row — and not
+    /// merely until the host accepts the launch, because the launch is fire-and-forget: `emulator`
+    /// is spawned and the request returns. A play button that comes back while the emulator is
+    /// still surfacing invites a second instance against the same AVD, which the emulator refuses
+    /// with a lock error that reads as a broken panel. The wait is usually a second or two, but the
+    /// fold rides the console answering, which under load can lag well past any polite cap — so the
+    /// deadline here is long, and running out of it is a REPORTED failure, never a silently
+    /// re-armed button. The boot itself is tens of seconds more, and the LIST carries that part:
+    /// the named row says "Starting up…" from the attached shelf.
     func boot(_ device: AndroidDevice) async {
         guard let avd = device.avdName, device.serial == nil else { return }
         guard case .ready = phase, !pending.contains(device.key) else { return }
@@ -282,11 +283,25 @@ final class AndroidSidebarModel {
             failure = problem
             return
         }
-        for _ in 0..<10 {
-            await refreshDevices()
-            if devices.first(where: { $0.key == device.key })?.serial != nil { return }
-            try? await Task.sleep(for: .seconds(1))
+        let key = device.key
+        if await !holdWhilePending(deadline: Self.bootVisibleDeadline, until: {
+            Self.bootIsVisible($0, key: key)
+        }) {
+            failure = "\(device.name) did not start."
         }
+    }
+
+    /// The launch has SURFACED: the booted serial folded into the row that was pressed. State does
+    /// not matter — `offline` is a boot in progress and the row already says so from the shelf.
+    static func bootIsVisible(_ list: [AndroidDevice], key: String) -> Bool {
+        list.first { $0.key == key }?.serial != nil
+    }
+
+    /// The shutdown has LANDED: no row carries the serial any more, under whatever key the dying
+    /// emulator was listed. Keyed on the serial rather than the row because the row itself outlives
+    /// the shutdown — the AVD stays listed, merely no longer running.
+    static func shutdownIsVisible(_ list: [AndroidDevice], serial: String) -> Bool {
+        !list.contains { $0.serial == serial }
     }
 
     func shutdown(_ device: AndroidDevice) async {
@@ -294,34 +309,62 @@ final class AndroidSidebarModel {
         // Drop the mirror FIRST: shutting a device down with its socket open leaves the panel
         // decoding a stream about to be killed, and the frozen final frame reads as a hang.
         if selection == device.key { select(nil) }
-        await act(device.key) { await self.bridge.shutdown(serial: serial) }
+        guard case .ready = phase, !pending.contains(device.key) else { return }
+        pending.insert(device.key)
+        defer { pending.remove(device.key) }
+        if let problem = await bridge.shutdown(serial: serial) {
+            failure = problem
+            return
+        }
+        // `adb emu kill` is as fire-and-forget as the launch: it asks, and the serial leaves the
+        // list whenever the emulator finishes dying. Holding the spinner until it is GONE is what
+        // keeps the card from sitting there as a healthy-looking "Attached" with a pressable stop
+        // for however long that takes.
+        if await !holdWhilePending(deadline: Self.shutdownVisibleDeadline, until: {
+            Self.shutdownIsVisible($0, serial: serial)
+        }) {
+            failure = "\(device.name) did not shut down."
+        }
     }
+
+    /// Polls the list until `until` sees the state change, or the deadline passes — the caller
+    /// keeps its `pending` entry for the whole wait, which is the entire point: `pending` means
+    /// "this device's state is in flight", and it must not resolve before the state does.
+    ///
+    /// One-second cadence rather than the watcher's four: this loop runs only while a lifecycle
+    /// verb is outstanding, and it is also what carries the change to the screen sooner than the
+    /// ambient poll would.
+    private func holdWhilePending(
+        deadline: Duration, until visible: ([AndroidDevice]) -> Bool,
+    ) async -> Bool {
+        let began = clock.now
+        while clock.now - began < deadline {
+            await refreshDevices()
+            if visible(devices) { return true }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return false
+    }
+
+    /// How long a launch may stay invisible before the panel calls it failed. Generous on purpose:
+    /// the serial itself registers within seconds, but its NAME (the fold) needs the QEMU console,
+    /// whose accept-and-greet can lag on a loaded host.
+    static let bootVisibleDeadline: Duration = .seconds(60)
+    /// A snapshot save on the way down is the slow case (measured runs land well inside this).
+    static let shutdownVisibleDeadline: Duration = .seconds(45)
 
     /// Stop every emulator that is running. Offered only where more than one is up, because that is
     /// the only place it is a different verb from the card's own stop button — and it is the state a
     /// day of testing leaves behind. Physical devices are never included: this panel may not power
     /// off someone's phone.
     ///
-    /// Sequential rather than concurrent: `act` refuses a second call for a key already in flight but
-    /// not for a different one, and firing every shutdown at once would have each read the device
-    /// list back while the others were still landing.
+    /// Sequential rather than concurrent: `shutdown` refuses a second call for a key already in
+    /// flight but not for a different one, and firing every shutdown at once would have each read
+    /// the device list back while the others were still landing.
     func shutdownAll() async {
         for device in devices where device.isRunning && device.isEmulator {
             await shutdown(device)
         }
-    }
-
-    private func act(_ key: String, _ body: () async -> String?) async {
-        guard case .ready = phase, !pending.contains(key) else { return }
-        pending.insert(key)
-        defer { pending.remove(key) }
-        if let problem = await body() {
-            failure = problem
-            return
-        }
-        // Read back rather than assume: the request succeeding means the host accepted it, not that
-        // the device reached the state. The next list is the truth.
-        await refreshDevices()
     }
 
     // MARK: The mirror
