@@ -1,7 +1,7 @@
 // ContentColumn — the centre content area. Renders the active tab's pane tree via the
 // identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab),
 // with a hover-reveal titlebar floating as a TOP overlay. The titlebar lives here (not at window level)
-// so its centred title menu centres over the content area for free, and the terminal extends under it
+// so its controls sit over the content area for free, and the terminal extends under it
 // for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
 
 #if canImport(SwiftUI)

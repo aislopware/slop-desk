@@ -81,7 +81,7 @@ components:
   panel-island:
     backgroundColor: "{colors.glass-ember}"
     rounded: "{rounded.island}"
-    margin: "{spacing.space2}"
+    margin: "{spacing.space2} top/bottom/trailing; NO leading margin — the terminal island's trailing margin is the shared channel"
     border: "none"
     note: "the right panel — its tab strip lives INSIDE the island, on the glass"
   panel-tab-chip:
@@ -163,8 +163,10 @@ system's.
 - The WHOLE split tree of the content column is **one rounded glass card** (`radiusIsland` 12pt
   continuous, `islandMargin` 8pt of field around it, NO ring, NO shadow)
   running the FULL window height — there is no reserved titlebar band (Canario); the hover-reveal
-  titlebar floats OVER the island's top edge and shows NOTHING at rest (title, cluster and reopen
-  plates all fade in on strip hover, under the forced glass scheme while the island is up).
+  titlebar floats OVER the island's top edge and shows NOTHING at rest (the connection cluster and
+  reopen plates fade in on strip hover, under the forced glass scheme while the island is up; the
+  centred title menu was REMOVED — the sidebar's active row names the pane, user-directed
+  2026-08-07).
   Panes are FLUSH inside it; splits are divided by the profile's `terminalEdge` line — a subtle line
   ON the glass (JetBrains Islands), never a chrome-coloured gap, never per-pane cards or shadows.
 - The island subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
@@ -174,10 +176,12 @@ system's.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). No dimming siblings.
 - **The panel island** (the right column) is the second glass card, same anatomy: glass fill,
-  forced glass scheme, island radius, symmetric `islandMargin`, no ring. Its TAB STRIP sits INSIDE
-  the island — the capsule chips, reload plate and hide toggle all resolve on the glass — and the
-  surfaces below (workbench webview, simulator/emulator stages, placeholders) fill the card to its
-  clipped corners.
+  forced glass scheme, island radius, no ring — but NO leading margin (the terminal island's
+  trailing margin is the shared inter-island channel; two margins there read as "too far apart",
+  user-directed 2026-08-07 — every field gutter in the window is ONE margin wide). Its TAB STRIP
+  sits INSIDE the island — the capsule chips, reload plate and hide toggle all resolve on the
+  glass — and the surfaces below (workbench webview, simulator/emulator stages, placeholders) fill
+  the card to its clipped corners.
 
 ## Terminal profiles (`SlateTheme`)
 

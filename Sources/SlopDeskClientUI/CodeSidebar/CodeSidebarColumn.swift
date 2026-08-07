@@ -101,9 +101,11 @@ struct CodeSidebarColumn: View {
         // island: the glass surface, the forced glass scheme (so the strip's chips, inks and every
         // surface below resolve against the glass, not the OS appearance), the continuous island
         // radius, and NO border ring or shadow (JetBrains ships island borders equal to the island
-        // fill — the field gap and radius are the whole separation). The symmetric margin makes the
-        // inter-island channel two margins wide, the same doubling the reference's per-island
-        // border-width layout produces.
+        // fill — the field gap and radius are the whole separation). NO leading margin: the
+        // terminal island's trailing margin (plus the 1px divider gap) already IS the channel
+        // between the two cards, and paying a second margin here doubled it — "the two islands are
+        // too far apart" (user-directed 2026-08-07). One margin per gutter keeps every field
+        // channel in the window the same width.
         VStack(spacing: 0) {
             strip
             surfaceArea
@@ -111,7 +113,7 @@ struct CodeSidebarColumn: View {
         .background(Slate.Surface.terminal)
         .environment(\.colorScheme, Slate.glassColorScheme)
         .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
-        .padding(Slate.Metric.islandMargin)
+        .padding([.top, .bottom, .trailing], Slate.Metric.islandMargin)
         // The one window field behind the island — the same floor every column paints.
         .background(Slate.Surface.field)
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's

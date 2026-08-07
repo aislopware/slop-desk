@@ -133,7 +133,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
         // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
         // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
-        // column's top chrome — the hover-reveal titlebar's centred title, and the sidebar's
+        // column's top chrome — the hover-reveal titlebar's controls, and the sidebar's
         // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
