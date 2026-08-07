@@ -72,5 +72,23 @@ final class WorkspaceChromeState {
         codeSidebarCollapsed = false
         Defaults[.codeSidebarCollapsed] = false
     }
+
+    /// The project roots whose embedded workbench has been EXPLICITLY opened this session. The code
+    /// panel used to boot the workbench for whatever project focus landed on — every project switch
+    /// paid a multi-second workbench boot plus a warm per-project webview for a surface the user
+    /// often never looked at. Opening is now an act, not a side effect of focus (user-directed
+    /// 2026-08-07): a root outside this set renders the panel's open gate, and only the gate's
+    /// button — or an explicit open-in-editor on one of the project's files — admits it. Lives here
+    /// rather than on the panel's own model because the verb-19 reveal fires from the terminal
+    /// leaf's wiring, which can reach the window's chrome but not the panel's private `@State`.
+    /// Session-scoped on purpose: a relaunch comes back gated instead of booting a workbench for
+    /// every restored project's first focus.
+    private(set) var openedCodeProjects: Set<String> = []
+
+    /// Admit a project through the code panel's open gate — the gate button and the
+    /// open-in-editor reveal are the only two callers, both of them a user gesture.
+    func openCodeProject(_ root: String) {
+        openedCodeProjects.insert(root)
+    }
 }
 #endif

@@ -7027,3 +7027,26 @@ The measurement is now repeatable: `scripts/measure-code-server-start.sh` times 
 against the resolved binary and warns if a live host child still carries the old idle-timeout flag
 (the tell of a pre-prewarm build). Run it when bumping the code-server pin (docs/46's "a pin bump
 has a tail").
+
+## The code panel opens a project's workbench on request, never on focus (2026-08-07)
+
+Until now the Files surface booted a workbench for whatever project the active pane belonged to:
+focusing one pane of another project was enough to start an ensure poll, bind a loopback relay,
+mint a pooled WKWebView and boot a multi-second workbench — and to keep that webview warm for the
+rest of the session — whether or not the user ever looked at the panel. With the host side now
+prewarmed the remaining cost of a switch is entirely this client-side chain, and it was paid as a
+side effect of moving focus.
+
+Opening is now an explicit act (user-directed). A project root the session has not admitted renders
+an OPEN GATE — the panel's placeholder anatomy (folder glyph, project name, full root in the
+instrument face) plus one text-plate button — and mounts nothing: no poll, no proxy, no webview.
+The admitted set lives on `WorkspaceChromeState.openedCodeProjects`, not on the panel's own model,
+because the second doorway is the terminal leaf's open-in-editor wiring (verb 19): a file the host
+already routed into the workbench must mount it, so the reveal admits the pane's host-pushed root
+before expanding the panel. Once admitted, a root keeps the old behavior for the rest of the
+session — returning to it is the warm swap it always was. The reload plate hides behind the gate
+(a generation bump there would boot the very thing the gate defers).
+
+Session-scoped on purpose, like the panel's tab selection: a relaunch comes back gated (pinned by
+test), so a restored many-project session never boots a workbench until asked. The strip, the
+ensure RPC, and the host are untouched — the gate is one membership check in front of the surface.

@@ -380,7 +380,16 @@ struct TerminalLeafView: View {
         HostPathActions.wire(
             model: model,
             client: { [weak live] in live?.connection?.activeMetadataClient },
-            revealCodePanel: { chrome?.revealCodeSidebar() },
+            revealCodePanel: { [weak live] in
+                // Open-in-editor is the second doorway through the code panel's open gate: the host
+                // has already routed the file into the workbench, so the panel must mount it — a
+                // reveal that landed on the gate's button would ask permission for a thing already
+                // done. The pane's host-pushed key is the root the panel will render for.
+                if let pane = live?.id, let root = store.hostPushedProjectKey(pane) {
+                    chrome?.openCodeProject(root)
+                }
+                chrome?.revealCodeSidebar()
+            },
             onResult: { action, path, ok in
                 guard !ok else { return }
                 overlay?.pushToast(Toast(

@@ -2,7 +2,9 @@
 // pooled WKWebView). Project-scoped means the ACTIVE pane picks the project (its host-pushed
 // `projectKey` — the same key the left panel's sections group by), and every pane of that project
 // shares the ONE workbench opened at the project root; focusing a pane of another project swaps the
-// warm webview for THAT project back in (see `CodeSidebarWebViewPool`).
+// warm webview for THAT project back in (see `CodeSidebarWebViewPool`). A project's FIRST workbench
+// of the session is gated behind an explicit open (``CodeOpenGate`` — user-directed 2026-08-07):
+// focus changes are free, and the boot is paid only when asked for.
 //
 // The column is macOS-only chrome hosted in its own plain `NSSplitViewItem` (a THIRD column beside
 // navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
@@ -169,12 +171,16 @@ struct CodeSidebarColumn: View {
             Spacer(minLength: 0)
             switch surfaceTab {
             case .code:
-                PlateIconButton(symbol: .arrowClockwise) {
-                    guard let root = activeProjectRoot else { return }
-                    CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                    model.requestReload()
+                // The reload plate rides only a MOUNTED workbench — behind the open gate there is
+                // nothing to reload, and a bump of the poll generation would boot the very thing
+                // the gate exists to defer.
+                if let root = activeProjectRoot, chrome.openedCodeProjects.contains(root) {
+                    PlateIconButton(symbol: .arrowClockwise) {
+                        CodeSidebarWebViewPool.shared.reload(projectRoot: root)
+                        model.requestReload()
+                    }
+                    .help("Reload the workbench")
                 }
-                .help("Reload the workbench")
             case .simulators:
                 // No back control here: leaving a device is navigation within the surface, and it
                 // now sits beside the device's own name in `SimulatorDeviceHeader` — where every
@@ -253,10 +259,17 @@ struct CodeSidebarColumn: View {
         }
     }
 
-    /// The workbench surface below the strip — phase-switched per the active project.
+    /// The workbench surface below the strip — phase-switched per the active project. A root the
+    /// user has not opened this session renders the OPEN GATE instead of mounting anything: no
+    /// ensure poll, no proxy bind, no webview — a project switch costs nothing until the workbench
+    /// is asked for (user-directed 2026-08-07). Once admitted (`chrome.openedCodeProjects`) the
+    /// root keeps its old behavior for the rest of the session: returning to it is the warm swap
+    /// it always was.
     private var surface: some View {
         Group {
-            if let root = activeProjectRoot {
+            if let root = activeProjectRoot, !chrome.openedCodeProjects.contains(root) {
+                CodeOpenGate(projectRoot: root) { chrome.openCodeProject(root) }
+            } else if let root = activeProjectRoot {
                 content(projectRoot: root)
                     // Restart the poll on a project switch or a manual reload — SwiftUI cancels the
                     // running loop with the old id, so at most one loop ensures at a time.
@@ -675,6 +688,53 @@ struct CodeSidebarColumn: View {
             }
         }
         return nil
+    }
+}
+
+/// The open gate — what a project shows before its first workbench open of the session
+/// (user-directed 2026-08-07). Same anatomy as the panel's placeholder surfaces (dim glyph, one
+/// primary line, secondary detail) so the panel keeps one empty-state voice; the detail line is the
+/// FULL root in the instrument face because the title alone — the last path component — cannot tell
+/// two same-named checkouts apart, and the gate is precisely the moment of deciding whether this is
+/// the project worth booting an editor for. The button is the panel's one text-button idiom (the
+/// stage views' "Try Again" plate) — hover lights the fill a rung, the press drops it back.
+private struct CodeOpenGate: View {
+    let projectRoot: String
+    let open: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: Slate.Metric.space2) {
+            Image(systemSymbol: .folder)
+                .font(.system(size: Slate.Typeface.display * 0.6))
+                .foregroundStyle(Slate.Text.tertiary)
+            Text(URL(fileURLWithPath: projectRoot).lastPathComponent)
+                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .foregroundStyle(Slate.Text.primary)
+            Text(projectRoot)
+                .font(Slate.Typeface.instrument(Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button(action: open) {
+                Text("Open Editor")
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.primary)
+                    .padding(.horizontal, Slate.Metric.space3)
+                    .padding(.vertical, Slate.Metric.space1)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(SlatePlateStyle { pressed in
+                hovering && !pressed ? Slate.State.selected : Slate.Surface.raised
+            })
+            .onHover { hovering = $0 }
+            .animation(Slate.Anim.smallFade, value: hovering)
+            .padding(.top, Slate.Metric.space2)
+        }
+        .multilineTextAlignment(.center)
+        .padding(Slate.Metric.space4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 #endif

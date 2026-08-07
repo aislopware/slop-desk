@@ -44,6 +44,32 @@ final class WorkspaceChromePinTests: XCTestCase {
         XCTAssertFalse(Defaults[.codeSidebarCollapsed], "revealCodeSidebar persists the expand")
     }
 
+    /// The code panel's OPEN GATE state: a fresh chrome (≙ a relaunch) has admitted NO project —
+    /// the panel greets every root with the gate, never a booting workbench — and `openCodeProject`
+    /// admits exactly the root it was given, for the rest of the session. Deliberately NOT
+    /// persisted: this asserts against a fresh instance precisely because a relaunch must come back
+    /// gated (the pre-gate behavior — a restored session booting a workbench on first focus — is
+    /// what the gate removed, user-directed 2026-08-07).
+    func testOpenedCodeProjectsStartEmptyAndAdmitPerRoot() {
+        let chrome = WorkspaceChromeState()
+        XCTAssertTrue(chrome.openedCodeProjects.isEmpty, "a fresh session has opened no workbench")
+
+        chrome.openCodeProject("/Users/x/proj-a")
+        XCTAssertTrue(chrome.openedCodeProjects.contains("/Users/x/proj-a"))
+        XCTAssertFalse(
+            chrome.openedCodeProjects.contains("/Users/x/proj-b"),
+            "admitting one root never opens the gate for another",
+        )
+
+        chrome.openCodeProject("/Users/x/proj-a") // idempotent — a re-open is not an error
+        XCTAssertEqual(chrome.openedCodeProjects.count, 1)
+
+        XCTAssertTrue(
+            WorkspaceChromeState().openedCodeProjects.isEmpty,
+            "a relaunch (fresh chrome) is gated again — the set is session-scoped by design",
+        )
+    }
+
     /// A fresh window is NOT pinned (pinning is an explicit affordance), and `togglePin()`
     /// flips the flag each call. REVERT-TO-CONFIRM-FAIL: the property / method do not exist on the un-fixed
     /// `WorkspaceChromeState`, so this fails to compile-then-pass only once the property / method are added.
