@@ -27,6 +27,10 @@ struct ContentColumn: View {
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
+    /// The OS-resolved scheme — what the hover titlebar reads while it floats over CHROME (the
+    /// empty state); over the island it flips to the glass polarity instead.
+    @Environment(\.colorScheme) private var osColorScheme
+
     var body: some View {
         content
             // The chrome model rides the environment so DEEP descendants (a terminal leaf actuating
@@ -41,11 +45,15 @@ struct ContentColumn: View {
             // housing is the SIDEBAR column only.
             .background(Slate.Surface.face)
         #if os(macOS)
-            // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
-            // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
-            // own explicit shortcuts).
+            // The hover-reveal titlebar floats as a TOP overlay — OVER the island's top margin now
+            // that the island runs to the window top (no reserved band, user-directed 2026-08-07).
+            // It adopts the GLASS scheme while an island is under it, so its title/plates resolve
+            // against the dark glass rather than the OS appearance; over the chrome empty state it
+            // keeps the OS scheme. New-pane gestures (`+` / title-menu split) mint a terminal pane
+            // directly (the kind chooser is retired — non-terminal kinds have their own shortcuts).
             .overlay(alignment: .top) {
                 SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
+                    .environment(\.colorScheme, hasActiveTab ? Slate.glassColorScheme : osColorScheme)
             }
         #endif
             // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay
@@ -60,23 +68,30 @@ struct ContentColumn: View {
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
-    /// On macOS the pane area is pushed below the hover-reveal titlebar strip (so the terminal starts under
-    /// it, not under the centred title); iOS has no titlebar so the pane area fills directly.
+    /// The pane area fills the whole column — the island runs FULL top→bottom (Canario; no
+    /// reserved titlebar band, user-directed 2026-08-07). The hover-reveal titlebar floats over
+    /// the island's top edge and shows nothing at rest.
     private var content: some View {
-        #if os(macOS)
-        VStack(spacing: 0) {
-            Color.clear.frame(height: Slate.Metric.titlebarHeight)
-            paneArea
-        }
-        #else
         paneArea
-        #endif
     }
 
     private var paneArea: some View {
         Group {
             if hasActiveTab {
+                // THE TERMINAL ISLAND (JetBrains Islands — user-directed 2026-08-07): the WHOLE split
+                // tree is ONE rounded glass card floating on the system chrome; panes divide INSIDE it
+                // with subtle lines on the glass, never as separate cards. The forced colour scheme is
+                // the glass's own polarity (``Slate/glassColorScheme``): everything drawn ON the glass
+                // resolves its semantic colours against the profile, not the OS appearance.
                 SplitContainer(store: store, paneDrag: paneDrag)
+                    .environment(\.colorScheme, Slate.glassColorScheme)
+                    .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous)
+                            .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.hairline)
+                            .allowsHitTesting(false),
+                    )
+                    .padding(Slate.Metric.islandMargin)
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.

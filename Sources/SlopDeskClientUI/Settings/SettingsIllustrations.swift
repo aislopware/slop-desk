@@ -360,8 +360,8 @@ struct SettingsThemeSwatch: View {
         )
     }
 
-    /// The chrome band — the theme's `ground` tone, the one luminance step that IS this design's structure
-    /// (MERIDIAN L5), so a swatch shows the chrome/pane relationship as well as the palette.
+    /// The header band — the profile's `terminalEdge` tone (one step off the glass), so the swatch
+    /// shows the face/edge relationship the island's internal dividers use as well as the palette.
     private var titleStrip: some View {
         HStack(spacing: Art.gap / 2) {
             ForEach(Array(dotColors.enumerated()), id: \.offset) { _, color in
@@ -371,7 +371,7 @@ struct SettingsThemeSwatch: View {
         }
         .padding(.horizontal, Slate.Metric.space1)
         .frame(height: Art.titleStrip)
-        .background(theme.ground)
+        .background(theme.terminalEdge)
     }
 
     /// Three "code lines": a prompt run, a mixed line, and a short line with the caret — each a bar in one of
@@ -386,7 +386,7 @@ struct SettingsThemeSwatch: View {
             let width = proxy.size.width
             VStack(alignment: .leading, spacing: Art.gap) {
                 line(fractions: [0.22, 0.34], colors: [ansi(2), ansi(4)], width: width)
-                line(fractions: [0.16, 0.28, 0.2], colors: [ansi(5), theme.textPrimary, ansi(3)], width: width)
+                line(fractions: [0.16, 0.28, 0.2], colors: [ansi(5), theme.terminalInk, ansi(3)], width: width)
                 HStack(spacing: Art.gap) {
                     bar(fraction: 0.12, color: ansi(1), width: width)
                     Rectangle()
@@ -417,13 +417,13 @@ struct SettingsThemeSwatch: View {
 
     /// The theme's own caret colour, falling back to its foreground (which is what `cursorHex == nil` means).
     private var caretColor: Color {
-        Color(paletteHex: theme.cursorHex ?? theme.terminalForegroundHex) ?? theme.textPrimary
+        Color(paletteHex: theme.cursorHex ?? theme.terminalForegroundHex) ?? theme.terminalInk
     }
 
     /// The terminal BACKGROUND (`terminalBackgroundHex`), which is what a user recognises a theme by — falling
-    /// back to the chrome `face` when a theme ships an unparseable hex.
+    /// back to the profile's glass `Color` when a theme ships an unparseable hex.
     private var background: Color {
-        Color(paletteHex: theme.terminalBackgroundHex) ?? theme.face
+        Color(paletteHex: theme.terminalBackgroundHex) ?? theme.terminal
     }
 
     /// The traffic-light trio, tinted from the theme's own red / yellow / green so even the chrome band carries
@@ -436,7 +436,7 @@ struct SettingsThemeSwatch: View {
     private func ansi(_ index: Int) -> Color {
         guard theme.ansiPalette.indices.contains(index),
               let color = Color(paletteHex: theme.ansiPalette[index])
-        else { return theme.textPrimary }
+        else { return theme.terminalInk }
         return color
     }
 }

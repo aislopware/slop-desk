@@ -293,7 +293,8 @@ struct NavigatorColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Slate.Surface.ground)
+        // NO background — the hosting view stays transparent so the REAL sidebar material behind it
+        // (see `SidebarMaterialController`) shows through: wallpaper tint, vibrancy, inactive dimming.
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome

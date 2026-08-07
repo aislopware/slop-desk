@@ -1395,14 +1395,16 @@ private struct AppearanceSettingsTab: View {
             windowSection
             #endif
 
-            // THEME: a GALLERY, not a dropdown — each card is a miniature of that theme's own terminal
-            // (`ThemeGalleryView`). Picking one writes `theme`/`themeDark`. With "Use separated theme for dark
-            // mode" ON the OS appearance selects the slot, so a Dark Theme gallery appears below the toggle
-            // (`dark-mode-theme.png`).
-            slateFormSection("Theme") {
+            // TERMINAL THEME: a GALLERY, not a dropdown — each card is a miniature of that theme's own
+            // terminal (`ThemeGalleryView`). Picking one writes `theme`/`themeDark`. The theme is
+            // TERMINAL-ONLY (the chrome rides the OS appearance and is not themable — user-directed
+            // 2026-08-07). With "Use separated theme for dark mode" ON the OS appearance selects the
+            // slot, so a Dark Theme gallery appears below the toggle (`dark-mode-theme.png`).
+            slateFormSection("Terminal Theme") {
                 ThemeGalleryView(
-                    title: "Theme",
-                    subtitle: "Repaints the chrome AND the terminal cells — one flat palette, applied live.",
+                    title: "Terminal Theme",
+                    subtitle: "The terminal glass: cells, ANSI palette, selection and caret — applied live. "
+                        + "App chrome follows the system appearance.",
                     selection: themeSelectionBinding(forDarkSlot: false),
                 )
                 Divider()
@@ -1431,9 +1433,9 @@ private struct AppearanceSettingsTab: View {
             }
 
             if store.appearance.useSeparateDarkTheme ?? false {
-                slateFormSection("Dark Theme") {
+                slateFormSection("Dark Terminal Theme") {
                     ThemeGalleryView(
-                        title: "Dark Theme",
+                        title: "Dark Terminal Theme",
                         subtitle: "Used while the system is in dark mode.",
                         selection: themeSelectionBinding(forDarkSlot: true),
                     )

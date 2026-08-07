@@ -166,7 +166,7 @@ struct PaneContainer: View {
     var body: some View {
         paneContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.face)
+            .background(Slate.Surface.terminal)
             // While this pane is mid-resize, cover its (frozen / stretched) surface with a calm scrim so the
             // moment reads as a deliberate "resizing" state, not a glitchy stretch. Kept in the tree at
             // opacity 0 (cheap) and faded in — never hit-tests, so taps / the divider gesture pass through.

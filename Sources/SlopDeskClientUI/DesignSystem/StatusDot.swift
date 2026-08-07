@@ -166,12 +166,8 @@ struct DashedRing: Shape {
 /// ⚠️ Reduce Motion is the PLATFORM's call here, not ours. Every other mark in this column is
 /// static, so there is nothing left for us to freeze.
 ///
-/// ⚠️⚠️ The COLOUR SCHEME has to be pinned here, on the view. A system control paints itself from
-/// the environment's scheme, and `.preferredColorScheme` does NOT cross the AppKit split-controller
-/// boundary into the column `NSHostingController`s (see `SlateDesign`'s header) — so a spinner in
-/// the rail inherits LIGHT mode and comes out dark grey on a dark theme, which is exactly what it
-/// did the first time this shipped. The window's `NSAppearance` pin does not save it: that governs
-/// AppKit's own drawing, not SwiftUI's semantic colours.
+/// The control inherits the window's appearance, which follows the OS (no theme pin anywhere —
+/// user-directed 2026-08-07), so it always paints with the right contrast on the system chrome.
 struct WorkingSpinner: View {
     var body: some View {
         indicator
@@ -194,14 +190,9 @@ struct WorkingSpinner: View {
 }
 
 #if canImport(AppKit)
-/// The macOS indicator, reached through a representable rather than `ProgressView`.
-///
-/// ⚠️⚠️ `ProgressView` came out DARK GREY on a dark theme, and neither of the obvious fixes moved
-/// it: the environment's `colorScheme` is SwiftUI's own notion, and the WINDOW's `NSAppearance` is
-/// pinned by `SlopDeskSplitViewController` but `.preferredColorScheme` does not cross into the
-/// column `NSHostingController`s (see `SlateDesign`'s header), so the control resolved Aqua. The
-/// appearance has to be set ON THE CONTROL. Reaching for the AppKit class also happens to be
-/// exactly what otty does.
+/// The macOS indicator, reached through a representable rather than `ProgressView` — the AppKit
+/// class draws itself from the window's effective appearance directly (which now follows the OS),
+/// and reaching for it also happens to be exactly what otty does.
 private struct AppKitSpinner: NSViewRepresentable {
     func makeNSView(context _: Context) -> NSProgressIndicator {
         let indicator = NSProgressIndicator()
@@ -215,7 +206,10 @@ private struct AppKitSpinner: NSViewRepresentable {
     }
 
     func updateNSView(_ indicator: NSProgressIndicator, context _: Context) {
-        indicator.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
+        // No appearance pin: the chrome follows the OS appearance (user-directed 2026-08-07), so the
+        // control inherits the window's appearance like every other native control. (The old pin
+        // existed because the window was pinned to a THEME appearance the environment scheme
+        // couldn't reach across the hosting boundary — both halves of that problem are gone.)
         // Idempotent, and it has to run on UPDATE as well as creation: an indicator only starts
         // once it has a window, which it does not have when `makeNSView` returns.
         indicator.startAnimation(nil)

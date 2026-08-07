@@ -1,34 +1,28 @@
 // SlateDesign — the minimalist design-token layer.
 //
 // A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
-// `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`. Source of truth for the tokens:
-// the theme structs below, the FOUNDRY seeds, and `Slate.Anim`'s timing curves (no
-// springs anywhere).
+// `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`.
 //
-// Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5:
-//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge, NO corner radius, NO card; adjacent
-//     split panes are separated only by the hairline `PaneDivider`.
-//   - MERIDIAN L5 (depth by light, not lines): the SIDEBAR column sits ONE luminance step BELOW the pane
-//     surface (`card`/`content` = the seed background) — pane = lit face, sidebar = unlit housing. The step
-//     IS the structure; no divider between. SCOPE: the CONTENT column is lit end-to-end — its titlebar band
-//     paints the pane tone, because panes sit flush under it (no gap/radius) and a darker strip there would
-//     read as a mispainted header. `window` (== sidebar tone) stays the ground of AUXILIARY windows
-//     (Settings / first-launch / overlays), which are chrome, not pane.
-//   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
-//   - Minimal palette: three text levels + an accent used ONLY for active state.
+// Design DNA — NATIVE CHROME, TERMINAL GLASS (user-directed 2026-08-07, replacing the painted
+// FOUNDRY chrome after three hex-world rounds all read as generic):
+//   - CHROME IS THE OPERATING SYSTEM'S. Every chrome surface, text tier, hairline and fill resolves to
+//     a SEMANTIC system colour (`labelColor` tiers, `separatorColor`, the system fill ladder,
+//     `windowBackgroundColor`/`underPageBackgroundColor`). Semantic colours resolve per-appearance at
+//     draw time, so the chrome follows the OS light/dark switch, window activation and vibrancy the
+//     way a native app does — behaviours a static hex palette can never fake. No invented chrome hex.
+//   - THE TERMINAL IS THE CONTENT EXCEPTION (the Pages pattern): the pane area keeps a deliberate
+//     fixed palette — the ``SlateTheme`` TERMINAL PROFILE — the way a printed page stays white in a
+//     dark window. The whole split tree renders as ONE floating island (JetBrains Islands): a single
+//     rounded glass card on the system chrome, panes divided INSIDE it by subtle lines on the glass.
+//   - ONE brand accent: the fixed Ember teal (light `#007272`, lifted for dark appearances). It is the
+//     only chrome colour that is ours; everything else is the system's.
+//   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
+//     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 //
-// MULTI-THEME: `SlateTheme` ships the four FOUNDRY seeds and NOTHING ELSE (`.foundryEmber` — the
-// DEFAULT — plus Ember Light / Dusk / Graphite). Every seed is generated OFFLINE by the FOUNDRY theme
-// engine (OKLCH specs + APCA-W3 audit; generator of record lives with `.impeccable/design.json`'s
-// `themeEngine` block) — no hex below was hand-picked, and a colour the engine cannot generate does not
-// ship (DESIGN.md, the Seeded-Engine Rule). `Slate.*` accessors
-// read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default `.foundryEmber`)
-// so runtime switching repoints every token live. Each theme carries the
-// `terminalBackgroundHex`/`terminalForegroundHex` that pin the libghostty cells to the same flat palette.
-// SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross the AppKit split-controller boundary into
-// the column `NSHostingController`s, so the runtime theme rides this `@Observable` store + an
-// `NSWindow.appearance` re-pin (in `SlopDeskSplitViewController`) — the `ThemeStore`-backed `@MainActor`
-// accessors keep the `NativePaneColor` injection pattern.
+// MULTI-THEME is now TERMINAL-PROFILE-ONLY: a theme switch swaps the glass palette (cells, ANSI,
+// selection, cursor, the island's own ink) and touches NO chrome. `Slate.theme` still indirects
+// through ``ThemeStore/shared`` (D3) so a runtime profile switch repoints the glass tokens live;
+// chrome tokens no longer read the store at all — they are semantic and follow the window appearance.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -39,241 +33,76 @@ import AppKit
 import UIKit
 #endif
 
-/// A full colour theme (every chrome role). Every shipped instance is a FOUNDRY seed, built from a
-/// ``FoundrySeed`` — so every theme has the SAME eight chromatics and eight identity hues available, which
-/// is what lets chrome reach past the status quartet (see ``Slate/Chroma``) and colour a project fleet
-/// (see ``Slate/Identity``) without inventing a colour some theme cannot supply.
+/// A TERMINAL PROFILE — the fixed palette of the terminal glass (the one deliberate-colour surface in
+/// an otherwise system-semantic app). Owns everything drawn ON the glass: the cell colours libghostty
+/// paints, the ANSI set, and the ink/edge/accent the SwiftUI chrome floating inside the island uses
+/// (status line, chips, focus corner) — ON-GLASS text must read against the profile, not against the
+/// OS appearance, because the glass does not follow the OS appearance.
 struct SlateTheme: Equatable {
-    // Surfaces — the 5-rung FOUNDRY ladder. Exactly five names, each REAL in every theme (a rung
-    // that collapses to another gets DELETED, not kept as aspirational vocabulary):
-    //   void   → deepest chrome: the 1px seams between panes + auxiliary-window backdrops
-    //   ground → chrome housing: sidebar column
-    //   face   → the lit pane surface: terminal cells, the content column, sheet/popover grounds
-    //   raised → one step lifted: active row card, popover panels, inset controls (search / kbd / chips)
-    //   lift   → hover/pressed on raised, the terminal selection fill, ANSI slot 0
-    let void: Color
-    let ground: Color
-    let face: Color
-    let raised: Color
-    let lift: Color
-    /// The TERMINAL glass — the cell surface libghostty paints, exposed as a `Color` for the
-    /// SwiftUI views that must match it (pane letterbox, GUI-pane backdrops). On a SPLIT-TONE
-    /// seed this is NOT `face`: the chrome frame is a light warm surface while the glass stays
-    /// dark (the Canario architecture — user-directed 2026-08-07), so "the pane surface" and
-    /// "the chrome face" are different materials.
-    let terminal: Color
-
-    // Text
-    let textPrimary: Color
-    let textSecondary: Color
-    let textTertiary: Color
-    let icon: Color
-
-    // Lines / borders
-    let divider: Color // hairline separators
-    let cardBorder: Color // the card's 1px border
-    let border: Color // subtle control border (~6%)
-    let borderActive: Color // active/hover control border (~15%)
-
-    // Interaction
-    let hover: Color // hover background plate
-    let selected: Color // selected row background
-    let header: Color // section header text
-    let accent: Color // active-state accent (Paper = green, Dark = system blue)
-    /// The active-state accent as a canonical 6-hex string (no `#`) — MIRRORS ``accent``'s colour.
-    let accentHex: String
-    let accentMuted: Color // active-state background wash
-    let panelShadow: Color // floating-card / panel drop shadow
-
-    /// Whether this theme is light (drives `.preferredColorScheme` for the window).
+    /// Stable identity for change-detection + persistence (`ThemeChoice.builtinID`).
+    let id: String
+    /// Whether the GLASS is light — the profile's own polarity, independent of the OS appearance
+    /// (a dark glass in a light window is the product default).
     let isLight: Bool
 
-    // Status / signal (theme-tuned)
-    let statusOK: Color
-    let statusWarn: Color
-    let statusErr: Color
-    let statusInfo: Color
+    // The glass surfaces
+    /// The terminal cell surface — the island's ground.
+    let terminal: Color
+    /// The divider / seam line ON the glass (the profile's selection tone: one step off the face).
+    let terminalEdge: Color
+    /// A lifted plate ON the glass (chips, handles) — the selection fill.
+    let terminalRaised: Color
 
-    // The chromatics outside the status quartet. Every FOUNDRY seed ships eight equal-loudness
-    // chromatics; the status quartet spends three (green / amber / red — info rides the accent) and
-    // these are the rest — surfaced here so chrome that needs another DISTINGUISHABLE hue (the
-    // sidebar's git readout) can take one from the seed instead of inventing a colour outside it.
-    // Not statuses: no urgency attaches to them, the consumer assigns the meaning.
-    let chromaOrange: Color
-    let chromaPurple: Color
-    let chromaBlue: Color
-    let chromaMagenta: Color
+    // The on-glass ink
+    /// Primary on-glass ink — the profile foreground.
+    let terminalInk: Color
+    /// Secondary on-glass ink (status line, captions on the glass).
+    let terminalInk2: Color
+    /// The on-glass ACCENT (focus corner, divider drag line, drop washes) — profile-tuned because the
+    /// window accent is appearance-tuned and the glass ignores the appearance.
+    let terminalAccent: Color
 
-    /// The accent's deep band — the fill/badge variant (darker, more chromatic) for surfaces where the
-    /// text-sized accent would be a pastel wash (filled pills, progress fills).
-    let accentDeep: Color
-
-    /// The IDENTITY register — 8 equal-weight project hues (one lightness, one chroma, engine-spaced).
-    /// A project keeps its hue for life; spent ONLY as a 2px spine + a ≤5% wash (DESIGN.md, the
-    /// Three-Registers Rule) — never per-row plates, never text recolouring.
-    let identity: [Color]
-
-    /// Stable identity for change-detection — distinguishes a real theme switch from an idempotent re-apply
-    /// so a SAME-LIGHTNESS variant change (e.g. Ember → Graphite) still posts the cross-boundary
-    /// repaint. Pure discriminator, never a colour.
-    let id: String
-
-    /// The libghostty terminal `background` colour (6-hex, no `#`) — pins the terminal CELLS to the SAME flat
-    /// background as the chrome (flat design: terminal content and pane backdrop are one colour). Applied
-    /// via ``TerminalConfigBuilder`` through the ``AppearanceApplier`` terminal-colour hook.
+    // The libghostty config values (6-hex, no `#`) — applied via ``TerminalConfigBuilder``.
     let terminalBackgroundHex: String
-    /// The libghostty terminal `foreground` colour (6-hex, no `#`).
     let terminalForegroundHex: String
-
-    /// The 16 ANSI terminal colours (indices 0–15: 0=black … 7=white, 8–15 = bright). 6-hex, no `#`. Reaches
-    /// the terminal CELLS via ``TerminalConfigBuilder`` `palette = N=<hex>`. Built-ins ship a canonical palette.
+    /// The 16 ANSI terminal colours (indices 0–15). Reaches the cells via `palette = N=<hex>`.
     let ansiPalette: [String]
-    /// Selection highlight background (`selection-background`), bare 6-hex opaque RGB. Paired with
-    /// libghostty `selection-foreground = cell-foreground` so glyph colours stay under the fill (not an
-    /// invert). `nil` ⇒ no `selection-background` line. (libghostty `Color` is RGB-only — no alpha.)
+    /// Selection highlight background, opaque RGB; paired with `selection-foreground =
+    /// cell-foreground` so glyph colours stay under the fill (not an invert). `nil` ⇒ no line.
     let selectionBackgroundHex: String?
-    /// Cursor block colour (`cursor-color`), 6-hex no `#`; `nil` ⇒ follow the foreground.
+    /// Cursor block colour; `nil` ⇒ follow the foreground.
     let cursorHex: String?
-    /// Glyph-under-cursor colour (`cursor-text`), 6-hex no `#`; `nil` ⇒ follow the background.
+    /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    // MARK: - FOUNDRY seeds (generated: OKLCH specs + APCA-W3 audit — see .impeccable/design.json `themeEngine`)
-
-    /// The colours a FOUNDRY seed contributes; every other chrome role is DERIVED from these with the
-    /// shared structure opacities, so all seeds have identical chrome geometry — only temperature and
-    /// accent voice change. Values are GENERATED (pinned OKLCH lightness/chroma per role, gamut-clipped by
-    /// chroma only, APCA-audited: ink ≥ 84, secondary ≥ 52, chromatics ≥ 57 on `face`) — never hand-edited.
-    private struct FoundrySeed {
-        let name: String
-        let void: UInt32 // deepest chrome: pane seams + aux-window backdrops
-        let ground: UInt32 // sidebar housing
-        let face: UInt32 // the lit pane (terminal cells + content column)
-        let raised: UInt32 // cards, popovers, active rows, inset controls
-        let lift: UInt32 // hover/pressed on raised, terminal selection, ANSI 0
-        let ink: UInt32 // primary text (Lc ~85 on face — moderate by design)
-        let ink2: UInt32 // secondary text + icons
-        let ink3: UInt32 // tertiary text + section headers + drained state
-        let accent: UInt32 // the single interaction accent (text-sized band)
-        let accentDeep: UInt32 // the accent's fill/badge band
-        let red: UInt32 // status err
-        let orange: UInt32
-        let amber: UInt32 // status warn — the HAZARD register
-        let green: UInt32 // status ok
-        let cyan: UInt32
-        let blue: UInt32
-        let purple: UInt32
-        let magenta: UInt32
-        let identity: [UInt32] // 8 project hues (folder marks + region duty)
-        let ansi: [UInt32] // the full 16-slot terminal palette, engine-mapped
-        let isLight: Bool
-        /// SPLIT-TONE overrides (the Canario architecture, user-directed 2026-08-07): a light
-        /// warm CHROME frame around DARK terminal glass. When set, the terminal cell colours
-        /// decouple from the chrome ladder; `nil` ⇒ the terminal wears `face`/`ink`/`lift`
-        /// (a single-tone seed).
-        var terminalFace: UInt32?
-        var terminalInk: UInt32?
-        var terminalSelection: UInt32?
-
-        init(
-            name: String, void: UInt32, ground: UInt32, face: UInt32, raised: UInt32,
-            lift: UInt32, ink: UInt32, ink2: UInt32, ink3: UInt32, accent: UInt32,
-            accentDeep: UInt32, red: UInt32, orange: UInt32, amber: UInt32, green: UInt32,
-            cyan: UInt32, blue: UInt32, purple: UInt32, magenta: UInt32, identity: [UInt32],
-            ansi: [UInt32], isLight: Bool, terminalFace: UInt32? = nil,
-            terminalInk: UInt32? = nil, terminalSelection: UInt32? = nil,
-        ) {
-            self.name = name
-            self.void = void
-            self.ground = ground
-            self.face = face
-            self.raised = raised
-            self.lift = lift
-            self.ink = ink
-            self.ink2 = ink2
-            self.ink3 = ink3
-            self.accent = accent
-            self.accentDeep = accentDeep
-            self.red = red
-            self.orange = orange
-            self.amber = amber
-            self.green = green
-            self.cyan = cyan
-            self.blue = blue
-            self.purple = purple
-            self.magenta = magenta
-            self.identity = identity
-            self.ansi = ansi
-            self.isLight = isLight
-            self.terminalFace = terminalFace
-            self.terminalInk = terminalInk
-            self.terminalSelection = terminalSelection
-        }
-    }
-
-    /// Build a full ``SlateTheme`` from a ``FoundrySeed`` — structural opacities (borders / hover /
-    /// selection) are shared and keyed only on light/dark; the colour roles come from the seed.
-    private static func foundry(_ s: FoundrySeed) -> Self {
-        // Structure tints (divider / borders / hover / selection) DERIVE from the palette, not a hardcoded
-        // black/white: a DARK seed tints them from its INK so every seed's hairline carries its own
-        // temperature (warm Ember, mauve Dusk, cool Graphite) instead of a flat `Color.white`. Light seeds
-        // keep a near-black structure line.
-        let line = Color(slateHex: s.isLight ? 0x000000 : s.ink)
-        return Self(
-            void: Color(slateHex: s.void),
-            // Depth by light, not lines: chrome `ground` (sidebar column) recedes one rung below the PANE
-            // surface (`face` / terminal bg). The workspace CONTENT column paints `face`, not `ground`
-            // (see ContentColumn).
-            ground: Color(slateHex: s.ground),
-            face: Color(slateHex: s.face),
-            raised: Color(slateHex: s.raised),
-            lift: Color(slateHex: s.lift),
-            terminal: Color(slateHex: s.terminalFace ?? s.face),
-            textPrimary: Color(slateHex: s.ink),
-            textSecondary: Color(slateHex: s.ink2),
-            textTertiary: Color(slateHex: s.ink3),
-            icon: Color(slateHex: s.ink2),
-            // Dark seeds carry the ink tint one step brighter than the other structure lines —
-            // at 0.07 the seam sat barely above the ground tone, more shadow than line
-            // (user-flagged, 2026-08-03). 0.10 keeps it a quiet hairline that still reads LIGHT.
-            divider: line.opacity(s.isLight ? 0.08 : 0.10),
-            cardBorder: line.opacity(s.isLight ? 0.08 : 0.07),
-            border: line.opacity(s.isLight ? 0.05 : 0.06),
-            borderActive: line.opacity(0.15),
-            hover: line.opacity(s.isLight ? 0.045 : 0.05),
-            selected: line.opacity(s.isLight ? 0.07 : 0.09),
-            header: Color(slateHex: s.ink3),
-            accent: Color(slateHex: s.accent),
-            accentHex: hex6(s.accent),
-            accentMuted: line.opacity(s.isLight ? 0.06 : 0.10),
-            panelShadow: Color.black.opacity(s.isLight ? 0.12 : 0.40),
-            isLight: s.isLight,
-            statusOK: Color(slateHex: s.green),
-            statusWarn: Color(slateHex: s.amber),
-            statusErr: Color(slateHex: s.red),
-            statusInfo: Color(slateHex: s.accent),
-            chromaOrange: Color(slateHex: s.orange),
-            chromaPurple: Color(slateHex: s.purple),
-            chromaBlue: Color(slateHex: s.blue),
-            chromaMagenta: Color(slateHex: s.magenta),
-            accentDeep: Color(slateHex: s.accentDeep),
-            identity: s.identity.map { Color(slateHex: $0) },
-            id: "foundry-\(s.name)",
-            terminalBackgroundHex: hex6(s.terminalFace ?? s.face),
-            terminalForegroundHex: hex6(s.terminalInk ?? s.ink),
-            // The engine-mapped 16-slot palette: dark seeds put `lift` in slot 0 (visible against face) and
-            // the ink tiers in 7/8/15; light seeds invert (ink in 0, near-white surfaces in 7/15). Slots
-            // 1–6 are the chromatic set with blue leaned toward cyan for on-face readability.
-            ansiPalette: s.ansi.map { hex6($0) },
-            // Solid lift fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
-            // selection-foreground=cell-foreground so this is a highlight, not an invert.
-            selectionBackgroundHex: hex6(s.terminalSelection ?? s.lift),
-            cursorHex: hex6(s.terminalInk ?? s.ink),
+    /// Build a profile from 24-bit RGB values (single source for both the `Color` and hex forms).
+    private static func profile(
+        id: String, isLight: Bool,
+        face: UInt32, ink: UInt32, ink2: UInt32, edge: UInt32, accent: UInt32,
+        ansi: [UInt32],
+    ) -> Self {
+        Self(
+            id: id,
+            isLight: isLight,
+            terminal: Color(slateHex: face),
+            terminalEdge: Color(slateHex: edge),
+            terminalRaised: Color(slateHex: edge),
+            terminalInk: Color(slateHex: ink),
+            terminalInk2: Color(slateHex: ink2),
+            terminalAccent: Color(slateHex: accent),
+            terminalBackgroundHex: hex6(face),
+            terminalForegroundHex: hex6(ink),
+            ansiPalette: ansi.map { hex6($0) },
+            // Solid edge-tone fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
+            // selection-foreground=cell-foreground, so this is a highlight, not an invert.
+            selectionBackgroundHex: hex6(edge),
+            cursorHex: hex6(ink),
             cursorTextHex: nil,
         )
     }
 
-    /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty `background`/`foreground`
-    /// config value format. Manual (no `String(format:)`) to stay allocation-cheap and trap-free.
+    /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty config value format.
+    /// Manual (no `String(format:)`) to stay allocation-cheap and trap-free.
     private static func hex6(_ v: UInt32) -> String {
         func pair(_ x: UInt32) -> String {
             let s = String(x & 0xFF, radix: 16, uppercase: true)
@@ -282,156 +111,197 @@ struct SlateTheme: Equatable {
         return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
-    /// Foundry Ember — the DEFAULT theme, SPLIT-TONE (the Canario architecture, user-directed
-    /// 2026-08-07): a light warm-clay CHROME frame (OKLCH hue 45, C ≈ 0.04 — visibly terracotta,
-    /// not paper) around DARK Ember terminal glass (#27221E cells, the palette the user picked).
-    /// Dark-on-dark chrome read as generic; the frame now carries the app's identity the way
-    /// Canario's salmon frame does, while the panes stay tight dark glass.
-    static let foundryEmber = foundry(FoundrySeed(
-        name: "ember",
-        void: 0xD6B4A5, ground: 0xE5C4B6, face: 0xEFD0C2, raised: 0xF7E1D7, lift: 0xFCF2EE,
-        ink: 0x41332D, ink2: 0x756761, ink3: 0x968983,
-        accent: 0x007272, accentDeep: 0x004D4D,
-        red: 0xB43249, orange: 0xA35303, amber: 0x8E6A00, green: 0x357A3A,
-        cyan: 0x00787D, blue: 0x006A9D, purple: 0x6E4FB1, magenta: 0x9A3A8A,
-        identity: [0xAB5B56, 0xA2662F, 0x857720, 0x4B864E, 0x008883, 0x277FAB, 0x6470B3, 0x91619C],
+    // MARK: - Built-in profiles
+
+    /// Ember — the DEFAULT: the warm dark glass the product has worn since FOUNDRY (#27221E cells,
+    /// the palette the user picked and kept through every chrome round). Ids keep their historic
+    /// `foundry-` prefix so persisted theme choices resolve unchanged.
+    static let foundryEmber = profile(
+        id: "foundry-ember", isLight: false,
+        face: 0x27221E, ink: 0xE6DED6, ink2: 0xADA8A3, edge: 0x3E3833, accent: 0x66CCD1,
         ansi: [
             0x3A3431, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA8A3,
             0x7C7874, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE6DED6,
         ],
-        isLight: true,
-        terminalFace: 0x27221E, terminalInk: 0xE6DED6, terminalSelection: 0x3E3833,
-    ))
+    )
 
-    /// Foundry Ember Light — warm paper, the normal-polarity Ember for the follow-OS light slot.
-    /// face #F6F0ED, ink #36312C (Lc ~91 — normal polarity lands naturally firmer).
-    static let foundryEmberLight = foundry(FoundrySeed(
-        name: "ember-light",
-        void: 0xDDD8D4, ground: 0xEBE5E1, face: 0xF6F0ED, raised: 0xFFF9F5, lift: 0xFFFEFE,
-        ink: 0x36312C, ink2: 0x756F69, ink3: 0x9A938D,
-        accent: 0x007272, accentDeep: 0x004D4D,
-        red: 0xB43249, orange: 0xA35303, amber: 0x8E6A00, green: 0x357A3A,
-        cyan: 0x00787D, blue: 0x006A9D, purple: 0x6E4FB1, magenta: 0x9A3A8A,
-        identity: [0xAB5B56, 0xA2662F, 0x857720, 0x4B864E, 0x008883, 0x277FAB, 0x6470B3, 0x91619C],
+    /// Ember Light — warm paper glass, the light-polarity Ember.
+    static let foundryEmberLight = profile(
+        id: "foundry-ember-light", isLight: true,
+        face: 0xF6F0ED, ink: 0x36312C, ink2: 0x756F69, edge: 0xE3DCD7, accent: 0x007272,
         ansi: [
             0x36312C, 0xB43249, 0x357A3A, 0x8E6A00, 0x006E8C, 0x6E4FB1, 0x00787D, 0xFFFEFE,
             0x9A938D, 0xC93450, 0x34893C, 0x9C7500, 0x007A9B, 0x7B57C8, 0x00858A, 0xFFF9F5,
         ],
-        isLight: true,
-    ))
+    )
 
-    /// Foundry Dusk — cool mauve (OKLCH hue 300), the Catppuccin / Rosé Pine temperature family
-    /// contrast-corrected to the FOUNDRY targets; iris accent. face #242129.
-    static let foundryDusk = foundry(FoundrySeed(
-        name: "dusk",
-        void: 0x151219, ground: 0x1D1A21, face: 0x242129, raised: 0x2F2C35, lift: 0x3A3741,
-        ink: 0xE5DCE9, ink2: 0xADA7AF, ink3: 0x7B777D,
-        accent: 0xB3B1FC, accentDeep: 0x7F77D9,
-        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
-        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
-        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+    /// Dusk — cool mauve glass (the Catppuccin / Rosé Pine temperature family); iris accent.
+    static let foundryDusk = profile(
+        id: "foundry-dusk", isLight: false,
+        face: 0x242129, ink: 0xE5DCE9, ink2: 0xADA7AF, edge: 0x36343C, accent: 0xB3B1FC,
         ansi: [
             0x36343C, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xADA7AF,
             0x7B777D, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xE5DCE9,
         ],
-        isLight: false,
-    ))
+    )
 
-    /// Foundry Graphite — near-neutral precision (OKLCH hue 270, barely-cool cast); electric cyan accent.
-    /// face #222325.
-    static let foundryGraphite = foundry(FoundrySeed(
-        name: "graphite",
-        void: 0x131416, ground: 0x1B1C1E, face: 0x222325, raised: 0x2D2E30, lift: 0x38393C,
-        ink: 0xDFDFE3, ink2: 0xA9A9AC, ink3: 0x78787B,
-        accent: 0x61C9E7, accentDeep: 0x0094B3,
-        red: 0xFB939C, orange: 0xF2A56F, amber: 0xE5BD66, green: 0x8DCD8E,
-        cyan: 0x66CCD1, blue: 0x78BEEF, purple: 0xBCAAF4, magenta: 0xE399D3,
-        identity: [0xE7958E, 0xDD9F6B, 0xBDB062, 0x85BF86, 0x55C2BC, 0x6AB8E4, 0x9BA9ED, 0xCA99D6],
+    /// Graphite — near-neutral precision glass; electric cyan accent.
+    static let foundryGraphite = profile(
+        id: "foundry-graphite", isLight: false,
+        face: 0x222325, ink: 0xDFDFE3, ink2: 0xA9A9AC, edge: 0x343537, accent: 0x61C9E7,
         ansi: [
             0x343537, 0xFB939C, 0x8DCD8E, 0xE5BD66, 0x56B9DD, 0xBCAAF4, 0x66CCD1, 0xA9A9AC,
             0x78787B, 0xFFBBBF, 0xABE6AC, 0xFCD78A, 0x7CD1F3, 0xD4C8FF, 0x8CE4E9, 0xDFDFE3,
         ],
-        isLight: false,
-    ))
+    )
 }
 
-/// Static token namespace. Colours read the active `theme` (default Foundry Ember); metrics/anim are
-/// theme-free.
+/// Static token namespace. CHROME tokens are semantic system colours (appearance-following, fixed at
+/// compile time); GLASS tokens read the active terminal profile through ``ThemeStore`` (D3).
 enum Slate {
-    /// The active theme. Indirected through ``ThemeStore/shared`` (D3) so runtime theme switching repoints
-    /// every token live — `@MainActor` because the store is, and every read site is a SwiftUI `body` /
-    /// AppKit lifecycle hook (all MainActor). ``ThemeStore``'s default (`.foundryEmber`) means a
-    /// headless / no-store render still resolves a real, deterministic palette.
+    /// The active TERMINAL PROFILE. Indirected through ``ThemeStore/shared`` (D3) so a runtime
+    /// profile switch repoints the glass tokens live — `@MainActor` because the store is.
+    /// ``ThemeStore``'s default (`.foundryEmber`) means a headless render resolves a real palette.
     @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
 
-    /// The preferred SwiftUI colour scheme for the active theme (drives `.preferredColorScheme`).
-    @MainActor static var colorScheme: ColorScheme { theme.isLight ? .light : .dark }
+    /// The colour scheme of the GLASS (the terminal profile's own polarity) — forced onto the island
+    /// subtree (`ContentColumn` / the satellite roots) so every semantic colour drawn ON the glass
+    /// (status line, chips, overlays) resolves against the profile's polarity instead of the OS
+    /// appearance: the glass does not follow the OS, so its ink must not either. This is the native
+    /// dark-content-well idiom (a video player's letterbox, a dark artboard) applied to the terminal.
+    @MainActor static var glassColorScheme: ColorScheme { theme.isLight ? .light : .dark }
 
-    // The colour namespaces are `@MainActor` because they read the runtime ``ThemeStore`` via
-    // ``Slate/theme`` (D3) — every read site is a SwiftUI `body` / AppKit lifecycle hook (all MainActor).
-    /// The 5-rung FOUNDRY surface ladder — the ONLY surface vocabulary view code speaks:
-    /// `void` (seams + aux backdrops) → `ground` (chrome housing) → `face` (the lit pane) →
-    /// `raised` (one step lifted) → `lift` (hover/pressed on raised, selection fills).
+    /// The FIXED brand accent (Ember teal) as an appearance-dynamic pair: the picked `#007272` on
+    /// light appearances, lifted to stay legible on dark chrome. The ONLY chrome colour that is not
+    /// the system's — user-directed 2026-08-07 (fixed teal over the user-configurable system accent).
+    private static let accentTeal = Color(slateDynamicLight: 0x007272, dark: 0x3DB8B8)
+    /// The accent's fill/badge band (filled pills, progress fills — white text sits on it).
+    private static let accentTealDeep = Color(slateDynamicLight: 0x005555, dark: 0x0E6B6B)
+
+    /// The chrome surface ladder — SEMANTIC system surfaces plus the one glass exception:
+    /// `void` (aux-window backdrops) → `ground` (sidebar housing; on macOS the real sidebar material
+    /// sits BEHIND the column and this is its fallback) → `face` (the window content ground) →
+    /// `raised`/`lift` (the system fill ladder) → `terminal` (the island glass — profile-driven).
     @MainActor
     enum Surface {
-        static var void: Color { Slate.theme.void }
-        static var ground: Color { Slate.theme.ground }
-        static var face: Color { Slate.theme.face }
-        static var raised: Color { Slate.theme.raised }
-        static var lift: Color { Slate.theme.lift }
+        #if canImport(AppKit)
+        static let void = Color(nsColor: .underPageBackgroundColor)
+        static let ground = Color(nsColor: .underPageBackgroundColor)
+        static let face = Color(nsColor: .windowBackgroundColor)
+        static let raised = Color(nsColor: .quaternarySystemFill)
+        static let lift = Color(nsColor: .tertiarySystemFill)
+        #else
+        static let void = Color(uiColor: .secondarySystemBackground)
+        static let ground = Color(uiColor: .secondarySystemBackground)
+        static let face = Color(uiColor: .systemBackground)
+        static let raised = Color(uiColor: .quaternarySystemFill)
+        static let lift = Color(uiColor: .tertiarySystemFill)
+        #endif
+        /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }
     }
 
+    /// ON-GLASS vocabulary — everything drawn INSIDE the terminal island reads these, never the
+    /// semantic `Text`/`State` tiers: the glass keeps its profile palette under either OS
+    /// appearance, so appearance-tuned ink would invert against it (dark label on dark glass).
+    @MainActor
+    enum Terminal {
+        static var ink: Color { Slate.theme.terminalInk }
+        static var ink2: Color { Slate.theme.terminalInk2 }
+        static var edge: Color { Slate.theme.terminalEdge }
+        static var raised: Color { Slate.theme.terminalRaised }
+        static var accent: Color { Slate.theme.terminalAccent }
+    }
+
+    /// The semantic text tiers — resolve per-appearance AND per-vibrancy (a custom RGB here would
+    /// silently opt the label out of vibrancy on the sidebar material).
     @MainActor
     enum Text {
-        static var primary: Color { Slate.theme.textPrimary }
-        static var secondary: Color { Slate.theme.textSecondary }
-        static var tertiary: Color { Slate.theme.textTertiary }
-        static var icon: Color { Slate.theme.icon }
+        #if canImport(AppKit)
+        static let primary = Color(nsColor: .labelColor)
+        static let secondary = Color(nsColor: .secondaryLabelColor)
+        static let tertiary = Color(nsColor: .tertiaryLabelColor)
+        static let icon = Color(nsColor: .secondaryLabelColor)
+        #else
+        static let primary = Color(uiColor: .label)
+        static let secondary = Color(uiColor: .secondaryLabel)
+        static let tertiary = Color(uiColor: .tertiaryLabel)
+        static let icon = Color(uiColor: .secondaryLabel)
+        #endif
     }
 
     @MainActor
     enum Line {
-        static var divider: Color { Slate.theme.divider }
-        static var card: Color { Slate.theme.cardBorder }
-        static var subtle: Color { Slate.theme.border }
-        static var active: Color { Slate.theme.borderActive }
+        #if canImport(AppKit)
+        static let divider = Color(nsColor: .separatorColor)
+        static let card = Color(nsColor: .separatorColor)
+        static let subtle = Color(nsColor: .separatorColor).opacity(0.6)
+        static let active = Color(nsColor: .tertiaryLabelColor)
+        #else
+        static let divider = Color(uiColor: .separator)
+        static let card = Color(uiColor: .separator)
+        static let subtle = Color(uiColor: .separator).opacity(0.6)
+        static let active = Color(uiColor: .tertiaryLabel)
+        #endif
     }
 
     @MainActor
     enum State {
-        static var hover: Color { Slate.theme.hover }
-        static var selected: Color { Slate.theme.selected }
-        static var accent: Color { Slate.theme.accent }
-        static var accentMuted: Color { Slate.theme.accentMuted }
-        static var header: Color { Slate.theme.header }
-        static var shadow: Color { Slate.theme.panelShadow }
-        /// The ACTIVE tab card's cast shadow — `black 4%, r2, y1` on a LIGHT theme only. Dark
-        /// themes cast nothing: at-rest depth there is the surface ladder (fill + hairline), and a
-        /// dark-on-dark shadow reads as a smudged edge, not lift (MERIDIAN L5).
-        static var cardShadow: Color { Slate.theme.isLight ? .black.opacity(0.04) : .clear }
+        #if canImport(AppKit)
+        /// Row hover — the system's faintest fill (the same plate `List` hover uses).
+        static let hover = Color(nsColor: .quinarySystemFill)
+        #else
+        static let hover = Color(uiColor: .quaternarySystemFill)
+        #endif
+        /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
+        static let selected = Slate.accentTeal.opacity(0.15)
+        static let accent = Slate.accentTeal
+        static let accentMuted = Slate.accentTeal.opacity(0.12)
+        static let header = Text.secondary
+        /// Floating-panel drop shadow — soft black, heavier on dark appearances.
+        static let shadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45)
+        /// The ACTIVE tab card's cast shadow — light appearances only; on dark, at-rest depth is the
+        /// fill ladder, and a dark-on-dark shadow reads as a smudged edge, not lift.
+        static let cardShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.04, darkAlpha: 0)
     }
 
-    /// The seed chromatics outside the status quartet — extra DISTINGUISHABLE hues for chrome that needs
-    /// more inks than `ok`/`warn`/`err`/`info` provide, taken from the active seed so a
-    /// theme swap repoints them like every other token. Carries no urgency of its own: unlike ``Status``,
-    /// the meaning lives entirely at the call site.
+    /// Extra DISTINGUISHABLE hues for chrome that needs more inks than the status set — the SYSTEM
+    /// palette (appearance-tuned by the OS), consistent with every other chrome colour.
     @MainActor
     enum Chroma {
-        static var orange: Color { Slate.theme.chromaOrange }
-        static var purple: Color { Slate.theme.chromaPurple }
-        static var blue: Color { Slate.theme.chromaBlue }
-        static var magenta: Color { Slate.theme.chromaMagenta }
+        #if canImport(AppKit)
+        static let orange = Color(nsColor: .systemOrange)
+        static let purple = Color(nsColor: .systemPurple)
+        static let blue = Color(nsColor: .systemBlue)
+        static let magenta = Color(nsColor: .systemPink)
+        #else
+        static let orange = Color(uiColor: .systemOrange)
+        static let purple = Color(uiColor: .systemPurple)
+        static let blue = Color(uiColor: .systemBlue)
+        static let magenta = Color(uiColor: .systemPink)
+        #endif
     }
 
-    /// The IDENTITY register — a project's own hue, held for life and spent ONLY as a 2px spine plus a
-    /// ≤5% wash on its active row (DESIGN.md, the Three-Registers Rule): never per-row plates, never
-    /// recoloured text, never identity-tinted icons. The hue is derived from the project's stable key
-    /// (FNV-1a over UTF-8, mod 8) so every client resolves the same hue with no synced state.
+    /// The IDENTITY register — a project's own hue, held for life and spent ONLY as a spine/wash on
+    /// its rows (never per-row plates, never recoloured text). The hues are the SYSTEM palette — the
+    /// same eight-family dialect Finder tags speak, appearance-tuned by the OS.
     @MainActor
     enum Identity {
-        /// The 8 engine-generated identity hues of the active theme (one lightness, one chroma).
-        static var hues: [Color] { Slate.theme.identity }
+        #if canImport(AppKit)
+        static let hues: [Color] = [
+            Color(nsColor: .systemRed), Color(nsColor: .systemOrange),
+            Color(nsColor: .systemYellow), Color(nsColor: .systemGreen),
+            Color(nsColor: .systemTeal), Color(nsColor: .systemBlue),
+            Color(nsColor: .systemIndigo), Color(nsColor: .systemPurple),
+        ]
+        #else
+        static let hues: [Color] = [
+            Color(uiColor: .systemRed), Color(uiColor: .systemOrange),
+            Color(uiColor: .systemYellow), Color(uiColor: .systemGreen),
+            Color(uiColor: .systemTeal), Color(uiColor: .systemBlue),
+            Color(uiColor: .systemIndigo), Color(uiColor: .systemPurple),
+        ]
+        #endif
 
         /// The identity hue for a project's stable key (its workspace path / project id).
         static func hue(for key: String) -> Color { hues[index(for: key)] }
@@ -450,25 +320,35 @@ enum Slate {
 
     @MainActor
     enum Status {
-        static var ok: Color { Slate.theme.statusOK }
-        static var warn: Color { Slate.theme.statusWarn }
-        static var err: Color { Slate.theme.statusErr }
-        static var info: Color { Slate.theme.statusInfo }
+        #if canImport(AppKit)
+        static let ok = Color(nsColor: .systemGreen)
+        static let warn = Color(nsColor: .systemOrange)
+        static let err = Color(nsColor: .systemRed)
+        #else
+        static let ok = Color(uiColor: .systemGreen)
+        static let warn = Color(uiColor: .systemOrange)
+        static let err = Color(uiColor: .systemRed)
+        #endif
+        /// Info rides the brand accent (the one non-system chrome colour).
+        static let info = Slate.accentTeal
 
-        /// FIXED security-blue — theme-INDEPENDENT (NOT derived from `Slate.theme`), unlike ``info``. The
-        /// secure-input pill must read as the SAME vivid royal-blue on every theme so it can never be confused
-        /// with the theme accent: under every FOUNDRY seed `statusInfo` IS the accent (`info == accent`),
-        /// which would make a theme-derived security badge indistinguishable
-        /// from the accent. Pinned to `secure-input.png`'s royal-blue (#2D6FE8) — a mid royal-blue that keeps
-        /// white pill text legible on BOTH light and dark themes. Never re-route this through the theme.
+        /// FIXED security-blue — appearance-INDEPENDENT: the secure-input pill must read as the SAME
+        /// vivid royal-blue everywhere so it can never be confused with the accent. Pinned to
+        /// `secure-input.png`'s royal-blue; white pill text stays legible on light and dark alike.
+        /// Never re-route this through a theme or the system palette.
         static let secureInput = Color(slateHex: 0x2D6FE8)
 
-        /// FIXED sync-amber — theme-INDEPENDENT, same rationale as ``secureInput``: the `⚠ SYNC INPUT`
-        /// pill flags a MODE where every keystroke fans into multiple shells, so it must read as the
-        /// same unmistakable amber on every theme and never collapse into a theme accent (the default
-        /// hazard amber `statusWarn` is reserved for the agent-needs-you register). A mid amber keeps white
-        /// pill text legible on BOTH light and dark themes. Never re-route this through the theme.
+        /// FIXED sync-amber — same rationale as ``secureInput``: the `⚠ SYNC INPUT` pill flags a MODE
+        /// where every keystroke fans into multiple shells, so it must read as the same unmistakable
+        /// amber everywhere. Never re-route this through a theme or the system palette.
         static let syncInput = Color(slateHex: 0xD97A1F)
+    }
+
+    /// The accent's deep band — the fill/badge variant for surfaces where the text-sized accent would
+    /// be a pastel wash (filled pills, progress fills).
+    @MainActor
+    enum Accent {
+        static let deep = Slate.accentTealDeep
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
@@ -485,6 +365,13 @@ enum Slate {
         static let radiusItem: CGFloat = 6
         static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
         static let radiusPill: CGFloat = 20
+
+        /// The terminal ISLAND's corner — the one rounded glass card the whole split tree renders as
+        /// (JetBrains Islands, user-directed 2026-08-07). Rides the floating-panel rung: the island
+        /// IS a floating panel, just a permanent one.
+        static let radiusIsland: CGFloat = radiusPanel
+        /// The desk margin around the island — the system chrome visible around the glass.
+        static let islandMargin: CGFloat = space2
 
         // 8pt spacing grid
         static let space1: CGFloat = 4
@@ -735,5 +622,54 @@ extension Color {
         let b = Double(hex & 0xFF) / 255
         self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
+
+    /// An APPEARANCE-DYNAMIC colour pair — resolves `light`/`dark` per the effective appearance at
+    /// draw time (the mechanism every semantic system colour uses), so the brand accent follows the
+    /// window appearance the way `labelColor` does instead of being pinned to one mode.
+    init(
+        slateDynamicLight light: UInt32, dark: UInt32,
+        lightAlpha: Double = 1, darkAlpha: Double = 1,
+    ) {
+        #if canImport(AppKit)
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return isDark
+                ? NSColor(slateHex: dark, alpha: darkAlpha)
+                : NSColor(slateHex: light, alpha: lightAlpha)
+        })
+        #elseif canImport(UIKit)
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(slateHex: dark, alpha: darkAlpha)
+                : UIColor(slateHex: light, alpha: lightAlpha)
+        })
+        #endif
+    }
 }
+
+#if canImport(AppKit)
+extension NSColor {
+    /// 24-bit sRGB hex + alpha (the dynamic-pair helper's leaf).
+    convenience init(slateHex hex: UInt32, alpha: Double = 1) {
+        self.init(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: alpha,
+        )
+    }
+}
+#elseif canImport(UIKit)
+extension UIColor {
+    /// 24-bit sRGB hex + alpha (the dynamic-pair helper's leaf).
+    convenience init(slateHex hex: UInt32, alpha: Double = 1) {
+        self.init(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: alpha,
+        )
+    }
+}
+#endif
 #endif

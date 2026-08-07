@@ -640,9 +640,6 @@ public struct SlopDeskClientApp: App {
                 .sheet(isPresented: $presentFirstLaunch) {
                     FirstLaunchView(model: firstLaunchModel, store: preferences)
                         .agentHooksController(agentHooks)
-                        // Adopt the active theme's light/dark like every other surface (issue 1) — without it
-                        // the sheet inherited the OS appearance and could render light over a dark workspace.
-                        .preferredColorScheme(Slate.colorScheme)
                 }
                 .task {
                     presentFirstLaunch = FirstLaunchModel.shouldPresent(
@@ -650,14 +647,10 @@ public struct SlopDeskClientApp: App {
                         automationActive: Self.hasAutomationEnvironment(),
                     )
                 }
-                // The app chrome is a PINNED palette (default Foundry Ember — flat warm-graphite seed).
-                // Pin the window's colour scheme to the active theme so every system semantic colour we don't
-                // tokenize resolves with the right contrast. Stock controls take NO tint override: the app
-                // ships one NEUTRAL accent (the AccentColor asset — see project.yml), so buttons, focus
-                // rings and selection read graphite everywhere without per-subtree `.tint()` corrections.
-                // Where the THEME accent is a deliberate signal (active tab, focus corner), the view says
+                // The chrome follows the OS appearance (semantic tokens resolve per-appearance at draw
+                // time — user-directed 2026-08-07), so NO colour scheme is forced anywhere. Where the
+                // BRAND accent is a deliberate signal (active tab, focus corner), the view says
                 // `Slate.State.accent` itself.
-                .preferredColorScheme(Slate.colorScheme)
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
             #if os(macOS)
                 .task {
@@ -1149,16 +1142,15 @@ public struct SlopDeskClientApp: App {
 
     #if os(macOS)
     /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView`
-    /// root inherits NOTHING from the main scene (the known hosting-root env trap), so the theme
-    /// colour scheme + the injected stores must be re-applied here or the satellite renders unthemed and
-    /// its deep views resolve nil coordinators.
+    /// root inherits NOTHING from the main scene (the known hosting-root env trap), so the injected
+    /// stores must be re-applied here or the satellite's deep views resolve nil coordinators. No
+    /// colour scheme is forced — the chrome follows the OS appearance like every other window.
     private func decorateSatelliteRoot(_ root: AnyView) -> AnyView {
         AnyView(
             root
                 .preferencesStore(preferences)
                 .agentHooksController(agentHooks)
-                .overlayCoordinator(overlayCoordinator)
-                .preferredColorScheme(Slate.colorScheme),
+                .overlayCoordinator(overlayCoordinator),
         )
     }
 

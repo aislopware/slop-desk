@@ -10,11 +10,12 @@ import XCTest
 
 @MainActor
 final class ThemeStoreTests: XCTestCase {
-    /// The default theme is Foundry Ember — the SPLIT-TONE product default (light warm chrome
-    /// around dark terminal glass), so its chrome-side `isLight` is TRUE.
+    /// The default terminal profile is Ember — the dark glass product default. `isLight` is the
+    /// GLASS's own polarity (chrome is not themable — it follows the OS appearance), so Ember reads
+    /// FALSE: dark cells regardless of the window appearance around them.
     func testDefaultIsFoundryEmber() {
         let store = ThemeStore()
-        XCTAssertTrue(store.active.isLight, "split-tone Ember wears light chrome ⇒ isLight")
+        XCTAssertFalse(store.active.isLight, "Ember is dark glass ⇒ isLight is false")
         XCTAssertEqual(store.active.id, "foundry-ember")
     }
 
@@ -22,30 +23,28 @@ final class ThemeStoreTests: XCTestCase {
         let store = ThemeStore()
         store.apply(.foundryEmber)
         XCTAssertEqual(store.active.id, "foundry-ember")
-        XCTAssertTrue(store.active.isLight, "split-tone Ember: light chrome, dark glass")
+        XCTAssertFalse(store.active.isLight, "Ember: dark glass")
         store.apply(.foundryEmberLight)
         XCTAssertEqual(store.active.id, "foundry-ember-light")
-        XCTAssertTrue(store.active.isLight, "Foundry Ember Light is light")
+        XCTAssertTrue(store.active.isLight, "Ember Light is light glass")
         store.apply(.foundryGraphite)
         XCTAssertEqual(store.active.id, "foundry-graphite")
-        XCTAssertFalse(store.active.isLight, "Foundry Graphite stays all-dark")
+        XCTAssertFalse(store.active.isLight, "Graphite stays dark glass")
         store.apply(.foundryEmber)
         XCTAssertEqual(store.active.id, "foundry-ember")
-        // nil (appearance reset/unset) resolves to the split-tone default under EITHER OS appearance —
-        // the one signature theme reads correctly in both modes. The probe is stubbed for determinism.
+        // nil (appearance reset/unset) resolves to the Ember default under EITHER OS appearance —
+        // the glass does not follow the OS (the Pages pattern). The probe is stubbed for determinism.
         store.osIsDark = { true }
         store.active = .foundryEmberLight
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the split-tone default")
+        XCTAssertEqual(store.active.id, "foundry-ember", "nil in dark mode → the Ember default")
         store.osIsDark = { false }
         store.active = .foundryEmberLight
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "foundry-ember", "nil in light mode → the split-tone default")
+        XCTAssertEqual(store.active.id, "foundry-ember", "nil in light mode → the Ember default")
     }
 
-    /// Each theme carries the libghostty terminal bg/fg for its TERMINAL surface. On the split-tone
-    /// Ember the terminal glass (#27221E) deliberately DIVERGES from the light chrome face — the seed's
-    /// `terminalFace` override; the all-dark variants still equal their chrome face.
+    /// Each profile carries the libghostty terminal bg/fg for its glass — the pinned cell colours.
     func testTerminalBackgroundMatchesChromeWindow() {
         // Foundry Ember terminal glass stays the pinned dark #27221E, no `#`.
         XCTAssertEqual(SlateTheme.foundryEmber.terminalBackgroundHex, "27221E")
@@ -138,16 +137,16 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(store.active.id, "foundry-ember")
     }
 
-    /// The legacy `.system` single choice resolves to the split-tone default through `apply(appearance:)`
-    /// and stays there across an OS flip (both per-appearance defaults are the one signature theme).
+    /// The legacy `.system` single choice resolves to the Ember default through `apply(appearance:)`
+    /// and stays there across an OS flip (both per-appearance defaults are the one signature glass).
     func testSystemChoiceFollowsOSThroughApplyAppearance() {
         let store = ThemeStore()
         store.osIsDark = { true }
         store.apply(appearance: AppearancePreferences(theme: .system))
-        XCTAssertEqual(store.active.id, "foundry-ember", "OS dark → Foundry Ember")
+        XCTAssertEqual(store.active.id, "foundry-ember", "OS dark → Ember")
         store.osIsDark = { false }
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "foundry-ember", "OS light → still the split-tone Ember")
+        XCTAssertEqual(store.active.id, "foundry-ember", "OS light → still Ember (glass ignores the OS)")
     }
 
     /// CROSS-MODULE PIN: every concrete ``ThemeChoice``'s `builtinID` (in the leaf) round-trips to a built-in
@@ -163,7 +162,7 @@ final class ThemeStoreTests: XCTestCase {
             XCTAssertNotNil(theme, "\(choice) id \(id) must resolve to a built-in SlateTheme")
             XCTAssertEqual(theme?.id, id, "round-trip: ThemeChoice.builtinID ⇄ SlateTheme.id")
         }
-        // Both leaf default ids resolve to the shipped split-tone Ember (one signature default).
+        // Both leaf default ids resolve to the shipped Ember glass (one signature default).
         XCTAssertEqual(ThemeStore.builtin(id: ThemeResolution.defaultDarkID)?.id, SlateTheme.foundryEmber.id)
         XCTAssertEqual(
             ThemeStore.builtin(id: ThemeResolution.defaultLightID)?.id, SlateTheme.foundryEmber.id,

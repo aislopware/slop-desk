@@ -11,15 +11,15 @@ import SwiftUI
 // `@MainActor` because the aliases read the runtime ``Slate/theme`` (D3) — call sites are SwiftUI views.
 @MainActor
 enum NativePaneColor {
-    /// The chrome / window background (pane header, divider bands, empty content) — the Slate window backdrop.
-    static var window: Color { Slate.Surface.ground }
+    /// The pane-canvas backdrop (gaps behind placed leaves, empty tab area) — the ISLAND is one
+    /// glass card, so its canvas is the glass itself, never a chrome tone.
+    static var window: Color { Slate.Surface.terminal }
 
-    /// The terminal / editable content surface background — the TERMINAL glass rung (on a
-    /// split-tone seed this is the dark cell surface, NOT the light chrome `face`).
+    /// The terminal / editable content surface background — the terminal profile's glass.
     static var terminalBackground: Color { Slate.Surface.terminal }
 
-    /// The pane-seam hairline — the `void` rung: on the split-tone seed the 1px gap between dark
-    /// glass panes shows the warm FRAME through it (the Canario gap, kept tight).
-    static var separator: Color { Slate.Surface.void }
+    /// The pane-seam line INSIDE the island — the profile's edge tone (one step off the glass), the
+    /// JetBrains-Islands internal divider: a subtle line on the glass, never a chrome-coloured gap.
+    static var separator: Color { Slate.Terminal.edge }
 }
 #endif

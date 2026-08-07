@@ -85,7 +85,10 @@ struct SatellitePaneRootView: View {
                 size: proxy.size,
             )
         }
-        .background(Slate.Surface.face)
+        .background(Slate.Surface.terminal)
+        // A satellite IS glass edge-to-edge (no island margin — the window frame is the frame), so
+        // the whole root adopts the glass polarity like the main window's island subtree.
+        .environment(\.colorScheme, Slate.glassColorScheme)
         .ignoresSafeArea()
         .overlay(alignment: .top) {
             // A `.desktop` satellite has NO merge-back affordance — the desktop never joins a tab

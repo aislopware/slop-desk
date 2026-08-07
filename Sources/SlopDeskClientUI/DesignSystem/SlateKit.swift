@@ -100,11 +100,13 @@ struct SlatePlateStyle: ButtonStyle {
 /// caller's `ViewThatFits` ladder, which drops the labels the strip cannot afford. ``showsLabel`` is
 /// how a rung of that ladder is asked for; nothing else should set it.
 ///
-/// The pill is the resurrected inspector tab's (`InspectorColumn.tabButton`, deleted in `6de70aa`,
-/// dug back up user-directed 2026-08-03 after two animation redesigns were rejected — round 1's
-/// opacity fades read as cheap, round 2's width morph as stuttery), and the shape the user named as
-/// the good one: filled when selected, flat when not. At full width it no longer changes SIZE
-/// between states, which is what those animation rounds were fighting over.
+/// The pill descends from the resurrected inspector tab (`InspectorColumn.tabButton`, deleted in
+/// `6de70aa`, dug back up user-directed 2026-08-03 after two animation redesigns were rejected —
+/// round 1's opacity fades read as cheap, round 2's width morph as stuttery). Since 2026-08-07
+/// (single-island round) it is a CAPSULE chip filled at rest — the JetBrains Islands tab
+/// treatment: a small raised island standing on the flat chrome, with selection as the tint on
+/// top. At full width it never changes SIZE between states, which is what those animation rounds
+/// were fighting over.
 ///
 /// There are NO `.animation` modifiers on the selection path. The ONE animation there is the
 /// caller's `withAnimation(Slate.Anim.standard)` transaction around the selection write, which
@@ -156,8 +158,11 @@ struct PanelTabPlate: View {
         Button(action: action) {
             plate
                 .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-                .background(fill, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-                .contentShape(.rect)
+                // A PILL chip, filled at rest (user-directed 2026-08-07, single-island round —
+                // the JetBrains Islands tab treatment): each tab is a small raised rounded chip
+                // standing on the flat chrome, not a rectangle that only lights up on selection.
+                .background(fill, in: .capsule)
+                .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -205,13 +210,12 @@ struct PanelTabPlate: View {
         }
     }
 
-    /// The plate rungs a latched control uses everywhere else: ``Slate/State/selected`` for on,
-    /// ``Slate/State/hover`` for the pointer. The earlier tab sat its selected state on the HOVER
-    /// tint and gave the unselected tabs no pointer feedback at all — one rung too faint to read at
-    /// true size, and a control that never moves under the pointer.
+    /// The chip ladder: RAISED at rest (the chip must exist before the pointer finds it — that is
+    /// what makes it read as a small island), one rung up (`lift`) under the pointer, and the
+    /// selection tint for the latched tab — the same rung every other latched control uses.
     private var fill: Color {
         if selected { return Slate.State.selected }
-        return hovering ? Slate.State.hover : .clear
+        return hovering ? Slate.Surface.lift : Slate.Surface.raised
     }
 }
 

@@ -99,16 +99,19 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // (identical ivar layout) — and side-steps the constructor path that traps.
         object_setClass(splitView, FlatDividerSplitView.self)
 
-        // 1) Sidebar — the navigator (sessions / panes). A PLAIN split item, NOT
-        //    `NSSplitViewItem(sidebarWithViewController:)`: the native sidebar style paints system vibrancy +
-        //    inset-grouped/rounded selection, which is the "native SwiftUI rounded corners" look we are
-        //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
+        // 1) Sidebar — the navigator (sessions / panes), hosted over the REAL macOS sidebar material
+        //    (`NSVisualEffectView` `.sidebar`, behind-window) so the column picks up wallpaper tinting
+        //    and inactive-window dimming like every native sidebar — user-directed 2026-08-07,
+        //    REVERSING the earlier "plain flat painted panel" choice (three painted-chrome rounds all
+        //    read as generic; the dynamic material is what reads native). Still a PLAIN split item
+        //    rather than `sidebarWithViewController:` — the automatic sidebar treatment brings its own
+        //    collapse/glass behaviours that fight the swizzled 3-column divider machinery below.
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
             store: store, preferences: preferences, chrome: chrome,
             connection: connection, paneDrag: paneDrag, onConnect: onConnect,
         ).overlayCoordinator(overlay))
-        let sidebarItem = NSSplitViewItem(viewController: navigator)
+        let sidebarItem = NSSplitViewItem(viewController: SidebarMaterialController(hosting: navigator))
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
         sidebarItem.maximumThickness = 360
         sidebarItem.canCollapse = true
@@ -261,40 +264,34 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         splitView.setPosition(target, ofDividerAt: 1)
     }
 
-    /// Pin the WINDOW's `NSAppearance` to the active theme. Factored out so both `viewDidAppear` (first
-    /// attach) and `themeDidChange` (runtime switch) drive the SAME re-pin.
+    /// Refresh the window-level chrome. The window FOLLOWS the OS appearance (`appearance = nil` —
+    /// user-directed 2026-08-07; semantic tokens resolve per-appearance at draw time, so no pin) and
+    /// keeps the system window background; only the split view's divider layer needs an explicit
+    /// refresh here.
     private func pinWindowAppearance() {
-        // Concrete sRGB backdrop (NOT `NSColor(Slate.theme.window)`): the SwiftUI-Color→NSColor bridge resolves
-        // through the effective appearance and left the divider reading black on the LIGHT themes; a plain
-        // sRGB triple is appearance-stable. The theme's `terminalBackgroundHex` IS the flat window tone in hex.
-        let backdrop = NSColor(slateHex6: Slate.theme.terminalBackgroundHex)
-        view.window?.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
-        view.window?.backgroundColor = backdrop
+        // Clear any historic pin (an upgraded install's window may still carry one).
+        view.window?.appearance = nil
         // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
         // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
-        // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both are set
-        // to `flatDividerTone()` — the chrome ground carrying the Slate `divider` hairline tint (a faint
-        // FOREGROUND wash, user-directed), so the seam reads as a deliberate native hairline instead of a
-        // bare luminance step.
+        // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both wear the
+        // plain system window background — the seam is deliberately invisible (no separator line; the columns
+        // are flat chrome fields around the one floating island).
         //
-        // CRITICAL — repaint on a RUNTIME theme switch: `drawDivider` draws OPAQUE ground pixels that AppKit
-        // CACHES in the layer; a plain `needsDisplay` does NOT re-invoke it for the divider rect, so after a
-        // light→dark (or dark→light) switch the seam kept its STALE pre-switch colour — a bright near-white
-        // line on the freshly-dark chrome (the SwiftUI columns repaint via `@Observable`, but this AppKit seam
-        // did not). `layer?.setNeedsDisplay()` invalidates the layer's drawn CONTENT so `drawDivider` re-runs
-        // with the now-current theme; `displayIfNeeded()` forces it synchronously so no stale frame is shown.
+        // Repaint on a RUNTIME profile/appearance change: `drawDivider` pixels are CACHED in the layer; a
+        // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
+        // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        splitView.layer?.backgroundColor = flatDividerTone().cgColor
+        splitView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
     }
 
-    /// React to a runtime theme switch (the `AppearanceApplier` hook already repointed `ThemeStore.shared`).
-    /// Re-pin the window appearance AND force each hosted column to re-read the theme tokens — a SwiftUI
-    /// `@Observable` change inside `ThemeStore` re-renders views that READ it, but the AppKit window
-    /// appearance + any system-dynamic resolution must be re-pinned explicitly here (the boundary SwiftUI
-    /// observation does not cross). `needsDisplay` on each column view nudges a redraw so no pane is left
+    /// React to a runtime terminal-profile switch (the `AppearanceApplier` hook already repointed
+    /// `ThemeStore.shared`). Refresh the divider layer AND force each hosted column to re-read the
+    /// glass tokens — a SwiftUI `@Observable` change inside `ThemeStore` re-renders views that READ
+    /// it, but the AppKit seam must be refreshed explicitly here (the boundary SwiftUI observation
+    /// does not cross). `needsDisplay` on each column view nudges a redraw so no pane is left
     /// half-painted in the old palette.
     @objc
     private func themeDidChange() {
@@ -338,6 +335,41 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 }
 
+/// Hosts the navigator column over the REAL macOS sidebar material: an `NSVisualEffectView`
+/// (`.sidebar`, behind-window, follows-window-active) with the SwiftUI hosting view pinned edge-to-edge
+/// on top. The hosting view stays transparent (`NavigatorColumn` paints no macOS background), so the
+/// material — wallpaper tint, vibrancy, inactive dimming — IS the sidebar's ground.
+private final class SidebarMaterialController: NSViewController {
+    private let hosting: NSViewController
+
+    init(hosting: NSViewController) {
+        self.hosting = hosting
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) is not supported — SidebarMaterialController is created in code")
+    }
+
+    override func loadView() {
+        let effect = NSVisualEffectView()
+        effect.material = .sidebar
+        effect.blendingMode = .behindWindow
+        effect.state = .followsWindowActiveState
+        addChild(hosting)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            hosting.view.topAnchor.constraint(equalTo: effect.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+        ])
+        view = effect
+    }
+}
+
 /// A drop-in `NSSplitView` whose ONLY change is a flat, theme-coloured divider — installed via
 /// `object_setClass` onto the controller's already-built split view (so it never goes through the
 /// `NSSplitViewController` construction path that traps `_setupSplitView` when a custom split view is
@@ -346,7 +378,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 /// hairline. Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
-        flatDividerTone().setFill()
+        // NO drawn seam (user-directed 2026-08-07, single-island round): the flanking columns are
+        // flat chrome fields and the one terminal island floats between them — a hard hairline
+        // between columns would cut the window back into boxes. The divider strip wears the plain
+        // system window background (resolved in the view's current appearance), so the gap is
+        // invisible: the sidebar material simply ends where the content field begins.
+        NSColor.windowBackgroundColor.setFill()
         NSBezierPath(rect: rect).fill()
     }
 
@@ -521,51 +558,4 @@ extension SlopDeskSplitViewController {
     }
 }
 
-/// The flat divider tone: the Slate `divider` hairline tint (foreground at its hairline opacity) composited
-/// over the sidebar `ground`, as ONE opaque sRGB colour.
-///
-/// REVERSES the earlier bare-ground rule (which drew NO hairline, leaving only the ground→face luminance
-/// step) — user-directed 2026-08-03: a faint foreground-tinted line reads more native than the bare step.
-/// The earlier worry — a hairline that reads heavy against one of its two differently-lit
-/// neighbours — is answered by using the theme's own `divider` token at its hairline OPACITY over `ground`
-/// (not a raw white/black line): the tint tracks the theme's foreground, so it lifts the seam by the same
-/// faint wash on dark and light alike, exactly the register the pane-grid dividers already use.
-///
-/// Resolved via `Color.resolve(in:)` (NOT `NSColor(_: SwiftUI.Color)`, which resolves through the effective
-/// appearance and read black on the light themes) — both tokens are concrete `Color(.sRGB, …)`, so resolve is
-/// appearance-stable and exact.
-@MainActor
-private func flatDividerTone() -> NSColor {
-    // The Slate `divider` hairline (foreground at ~7%) composited OVER the chrome ground — AppKit
-    // needs one OPAQUE colour (the layer background under the column gaps cannot alpha-blend
-    // against anything), so the tint is folded in here. Plain per-channel lerp (never fused —
-    // the bit-exact-floats convention).
-    let ground = Slate.theme.ground.resolve(in: EnvironmentValues())
-    let tint = Slate.theme.divider.resolve(in: EnvironmentValues())
-    let alpha = tint.opacity
-    func blend(_ top: Float, _ bottom: Float) -> CGFloat {
-        CGFloat(top * alpha + bottom * (1 - alpha))
-    }
-    return NSColor(
-        srgbRed: blend(tint.red, ground.red),
-        green: blend(tint.green, ground.green),
-        blue: blend(tint.blue, ground.blue),
-        alpha: 1,
-    )
-}
-
-private extension NSColor {
-    /// Concrete sRGB `NSColor` from a 6-hex backdrop string (the theme's flat window tone). Avoids the
-    /// appearance-sensitivity of `NSColor(_: SwiftUI.Color)` — a plain sRGB triple resolves identically in
-    /// `.aqua` and `.darkAqua`, so the flat divider doesn't read black on the light themes.
-    convenience init(slateHex6 hex: String) {
-        let v = UInt64(hex, radix: 16) ?? 0
-        self.init(
-            srgbRed: CGFloat((v >> 16) & 0xFF) / 255,
-            green: CGFloat((v >> 8) & 0xFF) / 255,
-            blue: CGFloat(v & 0xFF) / 255,
-            alpha: 1,
-        )
-    }
-}
 #endif

@@ -10,11 +10,13 @@
 //     surface it hides). The `sidebar.*` glyph pair stays: otty's `inset.filled.*third.square`
 //     pair was tried and user-rejected 2026-08-03. The connection cluster shows here ONLY while
 //     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
-// The plate buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
-// faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
-// strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
-// STATUS, not controls. The reopen button flips the shared `WorkspaceChromeState` flag that the split
-// representable reads to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
+// The WHOLE strip is HOVER-REVEALED (user-directed 2026-08-07, single-island round): at rest the strip
+// shows NOTHING — the terminal island runs to the window top (Canario keeps no title band), and an
+// always-on centred title would sit on top of live terminal rows. Pointer-in-strip fades in the centre
+// title, the connection cluster and the reopen plates together (`HoverSensor` — hit-test-transparent,
+// so the strip stays draggable/clickable). The reopen button flips the shared `WorkspaceChromeState`
+// flag that the split representable reads to collapse the matching `NSSplitViewItem` — same machinery
+// the old toolbar drove.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -85,9 +87,13 @@ struct SlateTitlebar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, rowTop)
 
-            // Centre: the active title as a menu, on the traffic-light row.
-            TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
-                .padding(.top, rowTop)
+            // Centre: the active title as a menu, on the traffic-light row — hover-revealed like
+            // everything else in the strip (it floats over live terminal rows at rest; `revealed`
+            // keeps it up while its menu is open even if the pointer wanders).
+            TitleMenuButton(
+                title: activeTitle, store: store, activePane: activePane, revealed: topHover,
+            )
+            .padding(.top, rowTop)
 
             // Right: the RIGHT-panel REOPEN — only while the panel is COLLAPSED and the top strip
             // is hovered (user-directed 2026-08-03: the expanded-state hide toggle moved into the
@@ -104,6 +110,11 @@ struct SlateTitlebar: View {
                         kbps: ConnectionTelemetry.kbps(store),
                         onConnect: onConnect,
                     )
+                    // Hover-revealed with the rest of the strip — at rest the island's top edge
+                    // stays clean (the cluster's resting home is the sidebar footer anyway).
+                    .opacity(topHover ? 1 : 0)
+                    .allowsHitTesting(topHover)
+                    .animation(Slate.Anim.smallFade, value: topHover)
                 }
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
                     .opacity(!codeSidebarVisible && topHover ? 1 : 0)
@@ -140,11 +151,14 @@ struct SlateTitlebar: View {
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store. The trailing slot holds only the hover
 /// `⋯` menu hint — attention never rides the titlebar (the sidebar's ring marks are the one attention
-/// surface), so at rest the centred title is bare (MERIDIAN zero-ornament at rest).
+/// surface). The WHOLE button is `revealed`-gated (strip hover) — at rest it is gone entirely, since
+/// the island's terminal rows now run under this strip; an open menu pins it up regardless.
 private struct TitleMenuButton: View {
     let title: String
     let store: WorkspaceStore
     let activePane: PaneID?
+    /// Strip-hover from the owning titlebar — the reveal gate this button shares with the plates.
+    var revealed = true
 
     @State private var hover = false
     @State private var show = false
@@ -169,6 +183,9 @@ private struct TitleMenuButton: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .opacity(revealed || show ? 1 : 0)
+        .allowsHitTesting(revealed || show)
+        .animation(Slate.Anim.smallFade, value: revealed)
         .onHover { hover = $0 }
         .animation(Slate.Anim.smallFade, value: hover)
         .popover(isPresented: $show, arrowEdge: .bottom) {
