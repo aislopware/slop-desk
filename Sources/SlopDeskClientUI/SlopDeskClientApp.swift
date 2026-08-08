@@ -744,10 +744,10 @@ public struct SlopDeskClientApp: App {
                     )
                     // AUTOMATION ONLY: bring the window to front + make it key ONCE per window open (see helper).
                     Self.automationBringToFrontOnce(window)
-                    // Centre the traffic lights in the 40pt titlebar band. AppKit's default corner
-                    // inset is tuned for a standard title bar, which this chrome does not have — the
+                    // Centre the traffic lights in the 40pt titlebar band. AppKit's default titlebar
+                    // is tuned for a standard title row, which this chrome does not have — the
                     // lights sat top-heavy above the strip's own vertical centre.
-                    Self.keepWindowControlsPositioned(on: window)
+                    Self.growTitlebarToBandHeight(on: window)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
                 // (Fires AFTER ``SlopDeskAppTerminationDelegate`` has drained the in-flight pane
@@ -1202,77 +1202,32 @@ public struct SlopDeskClientApp: App {
     ///      8×16, and DEFER the once-per-open commit until real metrics exist — so the window recomputes to the
     ///      exact cols×rows once libghostty reports its true cell advance (a later introspect fire), rather than
     ///      permanently committing the approximation.
-    /// Move the three system window controls off the window's corner and onto the CHROME's own
-    /// grid — ``Slate/Metric/windowControlsInset`` from the top and the leading edge, which centres
-    /// the 14pt discs on the 40pt band the app's titlebar chrome actually occupies (user-directed
-    /// 2026-08-09: at AppKit's default 9/9 they sit high in a band twice a titlebar's height and
-    /// read top-heavy against the toggle beside them).
+    /// Grow the system titlebar to the chrome's own band height so AppKit CENTRES the three window
+    /// controls in it (user-directed 2026-08-09: at the default inset the 14pt discs sit high in a
+    /// band twice a titlebar's height and read top-heavy against the toggle beside them). MEASURED
+    /// on the running app: `.unifiedCompact` yields a 40pt `AXToolbar` — the band's own height — and
+    /// lands the discs at 13 from the top, 12 from the leading edge.
     ///
-    /// The whole cluster is TRANSLATED by one delta rather than positioned button by button, so the
-    /// system's own pitch and ordering survive whatever AppKit does with them.
+    /// ⚠️ THIS DOES NOT MOVE THE BUTTONS, AND THAT IS THE WHOLE POINT. The first cut nudged their
+    /// frames directly and it FLICKERED: AppKit rebuilds the titlebar whenever `NSWindow.title`
+    /// changes, which resets the cluster to the corner, and the correction then landed a frame later
+    /// as a visible jump. The window title tracks the focused pane's cwd folder name, so switching
+    /// panes inside one project usually kept the same string and looked clean while crossing to
+    /// another project re-titled the window and jumped — the symptom read as a pane-switch bug and
+    /// was a title-change bug. Owning the HEIGHT instead of the POSITION makes the centring AppKit's
+    /// own layout, so every rebuild re-derives it and there is nothing left to correct. Verified: a
+    /// cross-project switch re-titles the window and the discs stay at 13.
     ///
-    /// ⚠️ THE DELTA IS MEASURED AND APPLIED IN **WINDOW** COORDINATES, then converted back through
-    /// `superview.convert(_:from: nil)` for the actual `setFrameOrigin`. Doing the arithmetic
-    /// straight on `button.frame` looks equivalent and is not: window space is always bottom-left
-    /// origin, while the private titlebar container the buttons live in is free to be flipped, so a
-    /// frame-space nudge can carry the WRONG SIGN. Getting it wrong is not a small offset — the
-    /// re-arm below re-measures and re-applies, so a sign error walks the cluster clean off the
-    /// window in a couple of resizes.
-    ///
-    /// ⚠️ AppKit re-lays the cluster out whenever the titlebar view is rebuilt, so this must be
-    /// RE-APPLIED, not applied once — see ``keepWindowControlsPositioned(on:)``. It is also the
-    /// reason this stays best-effort: a missing button (some window configurations have none) or a
-    /// pre-layout call (zero-size frames, absurd deltas) is a no-op rather than a precondition.
+    /// The toolbar is EMPTY and has no delegate — it is a height declaration, not a toolbar. With no
+    /// items and customization off, AppKit adds no "Show Toolbar" / "Customize Toolbar…" to the View
+    /// menu (checked: it still reads Show Tab Bar / Show All Tabs / Enter Full Screen), and the
+    /// window's own `titlebarAppearsTransparent` keeps it from painting anything.
     @MainActor
-    static func positionWindowControls(in window: NSWindow) {
-        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
-            .compactMap { window.standardWindowButton($0) }
-        guard let anchor = buttons.first, anchor.bounds.width > 0, window.frame.height > 0
-        else { return }
-        let inWindow = anchor.convert(anchor.bounds, to: nil)
-        let inset = Slate.Metric.windowControlsInset
-        let deltaX = inset - inWindow.minX
-        // Window space is bottom-left origin, so a button that sits `currentTop` from the top edge
-        // moves DOWN by decreasing y — which is exactly what a negative `deltaY` does here.
-        let deltaY = (window.frame.height - inWindow.maxY) - inset
-        // Below half a point there is nothing to do; past a plate's width the measurement is not
-        // trustworthy (the cluster has not been laid out yet) and moving on it would strand it.
-        guard abs(deltaX) > 0.5 || abs(deltaY) > 0.5 else { return }
-        guard abs(deltaX) < Slate.Metric.plate, abs(deltaY) < Slate.Metric.plate else { return }
-        for button in buttons {
-            guard let superview = button.superview else { continue }
-            let target = button.convert(button.bounds, to: nil).offsetBy(dx: deltaX, dy: deltaY)
-            button.setFrameOrigin(superview.convert(target, from: nil).origin)
-        }
-    }
-
-    /// The window whose control cluster already has its observers. The introspect hook re-fires on
-    /// every re-render, and a fresh observer per fire would stack up hundreds of redundant callbacks
-    /// on one window.
-    @MainActor private static var windowControlsObserved: ObjectIdentifier?
-    /// The live observer tokens for that window, held so a re-arm can retire the previous set.
-    @MainActor private static var windowControlsObservers: [NSObjectProtocol] = []
-
-    /// Keep ``positionWindowControls(in:)`` in force. The cluster is re-laid-out by AppKit on a
-    /// resize and on both full-screen transitions, each of which would otherwise snap the lights
-    /// back to the corner mid-session.
-    @MainActor
-    private static func keepWindowControlsPositioned(on window: NSWindow) {
-        positionWindowControls(in: window)
-        guard windowControlsObserved != ObjectIdentifier(window) else { return }
-        windowControlsObserved = ObjectIdentifier(window)
-        let center = NotificationCenter.default
-        windowControlsObservers.forEach(center.removeObserver)
-        windowControlsObservers = [
-            NSWindow.didResizeNotification,
-            NSWindow.didEnterFullScreenNotification,
-            NSWindow.didExitFullScreenNotification,
-        ].map { name in
-            center.addObserver(forName: name, object: window, queue: .main) { note in
-                guard let window = note.object as? NSWindow else { return }
-                MainActor.assumeIsolated { positionWindowControls(in: window) }
-            }
-        }
+    private static func growTitlebarToBandHeight(on window: NSWindow) {
+        // The introspect hook re-fires on every scene re-render; this must stay idempotent.
+        guard window.toolbar == nil else { return }
+        window.toolbar = NSToolbar(identifier: "SlopDeskBandHeight")
+        window.toolbarStyle = .unifiedCompact
     }
 
     /// All numeric inputs are clamped inside ``WindowSizeMath`` (never 0×0 / off-screen-gigantic).
