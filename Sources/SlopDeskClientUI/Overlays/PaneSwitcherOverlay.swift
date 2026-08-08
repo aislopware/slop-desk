@@ -1,4 +1,4 @@
-// PaneSwitcherOverlay — the ⌃⇥ switcher's face: a floating glass card listing the session's panes in
+// PaneSwitcherOverlay — the ⌃⇥ switcher's face: a floating paper card listing the session's panes in
 // MOST-RECENTLY-USED order with the provisional highlight marked.
 //
 // Presented as a plain always-mounted `.overlay` rather than a `.sheet`, unlike every other surface in
@@ -79,7 +79,7 @@ struct PaneSwitcherOverlay: View {
         // The card is only as tall as its rows until it hits that ceiling — `fixedSize` on the vertical
         // axis stops the ScrollView claiming the whole allowance for four rows.
         .fixedSize(horizontal: false, vertical: true)
-        .slateGlassCard()
+        .slatePaperCard()
     }
 }
 

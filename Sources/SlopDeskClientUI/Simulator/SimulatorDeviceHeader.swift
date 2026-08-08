@@ -98,11 +98,14 @@ struct SimulatorDeviceHeader<Actions: View>: View {
         .animation(Slate.Anim.smallFade, value: facts.map(\.id))
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
-        // NO RULE UNDER IT (user-directed 2026-08-04). The stage below opens on `face`, one step up
-        // in light, and that tone change IS the edge — MERIDIAN L5. The hairline was a second rule
-        // landing a few points under the tab strip's, which is what made the top of the panel read
-        // as a stack of bands rather than as a caption over a device.
-        .background(Slate.Surface.ground)
+        // NO RULE UNDER IT (user-directed 2026-08-04) and no tone change either: the header and the
+        // stage are the SAME ground now (ONE ISLAND — the panel sinks), so this line simply sits in
+        // the field above the device, which is what a caption does. The hairline that used to be here
+        // was a second rule landing a few points under the tab strip's, and that is what made the top
+        // of the panel read as a stack of bands rather than as a caption over a device. (Until
+        // 2026-08-08 the edge was carried by the stage opening one step up in light — MERIDIAN L5.
+        // See ``SimulatorStageView`` for why that split retired.)
+        .background(Slate.Surface.field)
     }
 
     /// Ordered by how often it is the thing being checked: the pixel size, then the short UDID,

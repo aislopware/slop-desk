@@ -62,9 +62,10 @@ struct AndroidDeviceHeader<Actions: View>: View {
         .animation(Slate.Anim.smallFade, value: facts.map(\.id))
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
-        // No rule under it: the stage below opens on `face`, one step up in light, and that tone
-        // change IS the edge (MERIDIAN L5).
-        .background(Slate.Surface.ground)
+        // No rule under it and no tone change: header and stage share the ground (ONE ISLAND, law 1),
+        // so this reads as a caption over the device. See ``SimulatorStageView`` for the retired
+        // MERIDIAN L5 split it used to carry.
+        .background(Slate.Surface.field)
     }
 
     /// `Android 16` where the device says so, `API 36` where only the level is known — which is the

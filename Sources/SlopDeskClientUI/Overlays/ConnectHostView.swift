@@ -2,7 +2,7 @@
 // (``SlateOverlayCard``) that every overlay now takes from the ⌃⇥ switcher.
 //
 // It was a grouped `Form` before, under the "everything outside the workspace is native chrome" directive.
-// The Form is gone: its inset grey group boxes are a ground of their own, and a ground inside a glass card
+// The Form is gone: its inset grey group boxes are a ground of their own, and a ground inside a floating card
 // is a box inside a box — the single thing that most made these dialogs look unrelated to the workspace it
 // floats over.
 //

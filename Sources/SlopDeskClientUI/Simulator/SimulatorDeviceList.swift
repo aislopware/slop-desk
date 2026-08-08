@@ -172,7 +172,8 @@ struct SimulatorDeviceList: View {
                 list
             }
         }
-        .background(Slate.Surface.ground)
+        // THE GROUND, like every other column in this window (ONE ISLAND, law 1) — the list sinks.
+        .background(Slate.Surface.field)
     }
 
     // MARK: Filter

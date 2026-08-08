@@ -1,4 +1,4 @@
-// SlateOverlayCard — the shared vocabulary every FLOATING surface speaks: the glass card it is drawn on,
+// SlateOverlayCard — the shared vocabulary every FLOATING surface speaks: the paper card it is drawn on,
 // the plate a selected row lifts onto, and the keycap a pressable key is set in.
 //
 // It was written for the ⌃⇥ pane switcher and then, once that card was the one surface the user liked,
@@ -9,10 +9,14 @@
 //
 // The four moves, which is all "the switcher's style" actually is:
 //
-//   1. The SURFACE is glass with a rim and a cast shadow, never an opaque box. Glass alone all but vanishes
-//      over a dark terminal, so the card adds the two things a real pane of glass has: a specular edge and a
-//      shadow under it. Both are theme-directed — a light rim reads as a highlight on a dark theme and as
-//      nothing at all on a light one, so on a light theme the edge darkens instead.
+//   1. The SURFACE is PAPER: the ground's own cream, opaque, cut at the island's corner, edged by the
+//      island's hairline and dropped on a real shadow. It was Liquid Glass until 2026-08-08, and ONE
+//      ISLAND took that material's reason away. Glass earns its keep by refracting what varies behind
+//      it; behind these cards now lie exactly two flat opaque tones, so the effect degraded to a grey
+//      slab that also flipped relationship halfway across itself — light-over-cream at the edges,
+//      light-over-glass in the middle. Apple's own rule points the same way (avoid stacking glass;
+//      apply the material once, at the top). Rendered side by side at true size, the paper card reads
+//      as a sheet laid on the canvas and the glass one all but disappeared into it.
 //   2. NO chrome inside it. No `Divider` between regions, no grouped-`Form` insets, no `List` section fills.
 //      A card that is already a distinct object does not need internal boxes to say where it ends; spacing
 //      carries the structure. This is the move that makes the surfaces look related rather than merely tinted.
@@ -23,11 +27,11 @@
 //
 // ⚠️ THE INK IS NEUTRAL, NOT THE TERMINAL'S. `Slate` supplies every DIMENSION here (raw font/radius/height
 // literals fail `scripts/check-ds-leaks.sh`) and the mono FACE, but none of its colour. A floating card is
-// not part of the workspace's world: the theme's greys are tinted (the Dracula pair's are violet),
-// and a dialog wearing them reads as a stained panel rather than as a neutral surface hovering
-// over coloured work. So the family's ink comes from the SYSTEM's semantic colours (``SlateOverlayInk``),
-// which are neutral by construction and follow light/dark on their own. The workspace keeps the filter; the
-// things that float above it do not.
+// not part of the workspace's world: the profile's greys are tinted violet, and a dialog wearing them
+// reads as a stained panel rather than as a neutral surface hovering over coloured work. So the family's
+// ink comes from the SYSTEM's semantic colours (``SlateOverlayInk``), which are neutral by construction.
+// The card stands on the CHROME's polarity — the same light the navigator and the panel stand in — so
+// every one of those inks resolves dark on the cream without a single call site changing.
 //
 // Nor is the MACHINE'S accent part of the family. It was the last colour left — the caret, the fuzzy-match
 // run, the ✓ gutter, the default button — and a card that is otherwise monochrome reads as a system dialog
@@ -69,68 +73,71 @@ enum SlateOverlayInk {
 
 // MARK: - The card surface
 
-/// The floating card's SURFACE: Liquid Glass with a specular rim and a cast shadow, or a plain material when
-/// the user asked for less transparency. A modifier rather than a wrapper view because the two branches must
-/// land on the SAME geometry — an `if/else` around the whole card would hand SwiftUI two view identities to
-/// cross-fade between when the accessibility setting flips.
-struct SlateGlassCard: ViewModifier {
+/// The floating card's SURFACE: PAPER — the ground's cream, opaque, at the island's own corner, edged by
+/// the island's hairline and dropped on the deepest rung of the shadow ladder.
+///
+/// Nothing here is appearance-directed any more. The app has ONE polarity (`SlateAppearancePin`), one
+/// ground and one glass, so a card that summoned itself over the workspace is either the ground raised or
+/// the glass repeated — and the glass repeated is invisible, because a card lands centred, which is where
+/// the island already is. The cream reverses that: ~13:1 against the canvas it covers, and against the
+/// ground at the card's edges the hairline and the cast shadow carry it, exactly as they carry the island
+/// itself. No material, no rim highlight, no Reduce-Transparency branch to keep honest.
+struct SlatePaperCard: ViewModifier {
+    /// Panel-scale (a summoned card) or row-scale (a notification). A corner is read against the surface
+    /// it cuts, so the two do not share a number: the palette is a window-scale object and takes the
+    /// island's own 26; a 320 × 46 notification takes the compact island's 10, one rung above the corner
+    /// Tahoe puts on a selected row.
+    enum Scale {
+        case panel
+        case row
+
+        var radius: CGFloat {
+            switch self {
+            case .panel: Slate.Metric.islandRadius
+            case .row: Slate.Metric.islandRadiusCompact
+            }
+        }
+    }
+
+    var scale: Scale = .panel
+
     /// Whether the card carries the click barrier below. The MODAL cards (which float on a full-bleed
     /// dismiss floor) need it; a card that is ITSELF a button — the notification card, whose whole body
     /// is its jump action — must NOT, because a `Button` in the background outranks the wrapping button
     /// for any click the content declines, and the card's own action would silently stop firing.
     var hitBarrier = true
 
-    /// Custom glass must self-gate the accessibility setting (the native-chrome research's pitfall list):
-    /// with Reduce Transparency on, the card takes a plain opaque material instead.
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    /// The APPEARANCE, not the theme: the rim and the shadow are lighting, and lighting follows light/dark.
-    @Environment(\.colorScheme) private var colorScheme
-
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Slate.Metric.radiusPanel, style: .continuous)
-    }
-
-    /// The lit edge. Glass is legible at its BOUNDARY — over a dark terminal the blur alone leaves a grey
-    /// slab, and the rim is what says "pane of glass". Directed by appearance: a dark one gets a white
-    /// highlight, a light one a darkened edge, where a white one would disappear.
-    private var rim: Color {
-        colorScheme == .light ? .black.opacity(0.10) : .white.opacity(0.14)
-    }
-
-    /// Black at two strengths — a shadow is an absence of light, so it is neutral by nature.
-    private var shadow: Color {
-        .black.opacity(colorScheme == .light ? 0.12 : 0.40)
+        RoundedRectangle(cornerRadius: scale.radius, style: .continuous)
     }
 
     func body(content: Content) -> some View {
-        Group {
-            if reduceTransparency {
-                content.background(.regularMaterial, in: shape)
-            } else {
-                content.glassEffect(.regular, in: shape)
+        content
+            .background(Slate.Surface.field, in: shape)
+            .overlay { shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline) }
+            // ⚠️ The card is SOLID TO CLICKS, and that is a correctness fix, not polish. The card floats
+            // on a full-bleed dismiss floor; a click that lands on the card's own body — a label, the
+            // padding between two fields, the gap beside a disclosure row — is not a click on the floor,
+            // but nothing in the content is interactive there, so it fell straight through and DISMISSED
+            // the card the user was reaching into. The barrier goes BEHIND the content, so every real
+            // control on the card still gets its hit first; only what the content declines stops here.
+            .background {
+                if hitBarrier {
+                    Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain)
+                }
             }
-        }
-        .overlay { shape.strokeBorder(rim, lineWidth: Slate.Metric.hairline) }
-        // ⚠️ The card is SOLID TO CLICKS, and that is a correctness fix, not polish. The card floats on a
-        // full-bleed dismiss floor; a click that lands on the card's own body — a label, the padding
-        // between two fields, the gap beside a disclosure row — is not a click on the floor, but nothing
-        // in the content is interactive there, so it fell straight through and DISMISSED the card the
-        // user was reaching into. The barrier goes BEHIND the content, so every real control on the card
-        // still gets its hit first; only what the content declines to take stops here.
-        .background {
-            if hitBarrier {
-                Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain)
-            }
-        }
-        .slateShadow(.panel, color: shadow)
+            // The shadow is what LIFTS an opaque cream card off an opaque cream ground — the hairline
+            // alone only draws its outline. The deepest rung on purpose: this surface floats above the
+            // island, which is itself already above the ground.
+            .slateShadow(.palette, color: Slate.State.overlayShadow)
     }
 }
 
 extension View {
-    /// Draw this content as a floating glass card (see ``SlateGlassCard``). `hitBarrier: false` is for a
+    /// Draw this content as a floating paper card (see ``SlatePaperCard``). `hitBarrier: false` is for a
     /// card whose whole body is already a button (the notification card) — see the modifier's note.
-    func slateGlassCard(hitBarrier: Bool = true) -> some View {
-        modifier(SlateGlassCard(hitBarrier: hitBarrier))
+    func slatePaperCard(scale: SlatePaperCard.Scale = .panel, hitBarrier: Bool = true) -> some View {
+        modifier(SlatePaperCard(scale: scale, hitBarrier: hitBarrier))
     }
 
     /// Sink an editable field into its plate: the pane face, ringed by a hairline, at the small radius.
@@ -171,7 +178,7 @@ extension View {
 ///
 /// A `Button` rather than a tap gesture on a `Color`, because this layer floats over an AppKit split
 /// (`NSViewControllerRepresentable`) and a real control is the arrangement that is unambiguously hit-tested
-/// there. It is also why the card carries its own hit barrier (see ``SlateGlassCard``): a floor that spans
+/// there. It is also why the card carries its own hit barrier (see ``SlatePaperCard``): a floor that spans
 /// the window would otherwise be reachable THROUGH the card's own inert body.
 struct SlateClickTarget: View {
     let action: () -> Void
@@ -213,6 +220,14 @@ extension View {
 ///
 /// A chord is ONE cap ("⇧⌘L"), not a cap per glyph. The modifiers are not separate keys to find; they are
 /// one gesture, and splitting them into a row of little boxes reads as four things to do.
+///
+/// ⚠️ THE ONE INSTRUMENT-VOICE READOUT SET IN THE SYSTEM FACE, and it is a rendering fact rather than a
+/// preference. A chord's modifiers are SYMBOL glyphs (⇧ U+21E7, ⌘ U+2318, ⌥, ⌃), and a monospaced face
+/// advances them by its cell rather than by the glyph — SF Mono, which is what `Slate.Typeface.instrument`
+/// resolves to wherever the pinned mono is not installed, overlaps ⇧ into ⌘ into W until "⇧⌘W" is one
+/// smear. Rendered side by side at 3× the three candidates split two-to-one: both proportional faces set
+/// the chord cleanly and the mono one collides. macOS draws the same glyphs in the same face in every menu,
+/// so this is also the register a reader already knows a shortcut in.
 struct SlateKeycap: View {
     let label: String
     /// Whether the row this cap sits on is the selected one — the cap brightens WITH its row rather than
@@ -221,7 +236,7 @@ struct SlateKeycap: View {
 
     var body: some View {
         Text(label)
-            .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .medium))
+            .font(.system(size: Slate.Typeface.footnote, weight: .medium))
             .foregroundStyle(lit ? SlateOverlayInk.secondary : SlateOverlayInk.tertiary)
             .frame(height: Slate.Metric.heightControl)
             .padding(.horizontal, Slate.Metric.space2)

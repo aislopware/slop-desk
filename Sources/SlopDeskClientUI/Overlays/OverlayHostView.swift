@@ -1,6 +1,6 @@
 // OverlayHostView — the single mount point that presents EVERY floating overlay above the workspace as
 // NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns no
-// state. Each overlay is an IN-WINDOW glass card (``SlateOverlayCard``) driven by the injected
+// state. Each overlay is an IN-WINDOW paper card (``SlateOverlayCard``) driven by the injected
 // ``OverlayCoordinator`` flags; the pane/tab close confirmation stays a native `.alert` off the store's
 // `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty) is the
 // host's only other in-tree content — transient notifications float over the workspace without a modal.
@@ -91,17 +91,20 @@ struct OverlayHostView: View {
             // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
             // like the ⌃⇥ switcher — which is the whole point of the family.
             //
-            // `glassEffect` refracts what is behind the view WITHIN its own backdrop. A sheet is a separate
-            // window, so there is nothing behind it to refract and the material silently degrades to a flat
-            // fill — measured: every interior pixel of the sheet-hosted card was one dead value, where the
-            // in-window card's vary with the terminal beneath. Two further symptoms had the same root: a
-            // sheet paints its own surface across its whole window, which flashed as a pale frame on open
-            // (and, when the card was inset to make room for its shadow, showed as a violet halo ringing
-            // it), and the sheet window's mask clipped the corner to the system's radius instead of ours.
+            // A sheet is a separate WINDOW, and a window brings its own surface and its own mask. Two
+            // symptoms, one root: the sheet paints its ground across its whole frame, which flashed as a
+            // pale panel on open (and, once the card was inset to make room for its shadow, showed as a
+            // halo ringing it); and the sheet window's mask clipped the corner to the SYSTEM's radius
+            // instead of the island's 26, which is the one number the whole family is cut at.
             //
-            // Substituting a behind-window `NSVisualEffectView` was tried and rejected on sight: it is a
-            // different material, so the cards read as cousins of the switcher rather than as the same
-            // object. There is no separate-window arrangement that matches an in-window glass card.
+            // The card is also SHADOWED, and a shadow needs something to fall on. In-window it falls on the
+            // island and the ground — the same two tones the island's own cast lands on — so the card reads
+            // as one more thing lifted off this canvas. Presented in its own window it falls on nothing the
+            // user can see, and the depth cue the paper surface depends on is simply gone.
+            //
+            // (Until 2026-08-08 this note argued refraction: the card was Liquid Glass and a sheet had
+            // nothing behind it to refract. ONE ISLAND retired the material — see ``SlatePaperCard`` — but
+            // every other reason to stay in-window survived it intact.)
             //
             // The keyboard needs nothing from the sheet: it already yields on the COORDINATOR's flags
             // (`capturesKeyboardWhileVisible` → the app's `isOverlayCapturingKeys` → the dispatcher's
@@ -185,7 +188,7 @@ struct OverlayHostView: View {
                 // may rely on SwiftUI gesture recognition.
                 SlateClickTarget { closeActiveSheet() }
                 sheetContent(sheet)
-                    .slateGlassCard()
+                    .slatePaperCard()
                     // The card must never run out of a small window; this is the margin it keeps.
                     .padding(Slate.Metric.space4)
                 // The controls are real AppKit controls and read as themselves, in the app's ONE

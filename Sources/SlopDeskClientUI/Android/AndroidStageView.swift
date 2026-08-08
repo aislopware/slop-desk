@@ -4,8 +4,9 @@
 // THREE BANDS, top to bottom, exactly as the simulator stage has them and for the same reasons: the
 // top bar names the thing the other two are about and carries the verbs that act on it; the device is
 // the lit content; the console is what the device just said, so it goes below rather than beside and
-// the tap-watch-read loop stays one column. Two surfaces, not four bands — housing on `ground`,
-// content on `face` (MERIDIAN L5).
+// the tap-watch-read loop stays one column. ONE surface under all three: the panel sinks to the
+// window's cream ground (ONE ISLAND, law 1) and hairlines tell the bands apart — see
+// ``SimulatorStageView`` for why the two-surface MERIDIAN L5 split retired on 2026-08-08.
 //
 // NO BEZEL, and it is not an omission. The simulator panel seats its stream inside the real device
 // body because `baguette` serves per-model chrome artwork. Nothing equivalent exists for Android: the
@@ -46,7 +47,7 @@ struct AndroidStageView: View {
         VStack(spacing: 0) {
             headerLayer
             device
-                .background(Slate.Surface.face)
+                .background(Slate.Surface.field)
                 .overlay { stageState }
                 .animation(Slate.Anim.smallFade, value: showsLoading)
                 .animation(Slate.Anim.smallFade, value: isStalled)
@@ -233,7 +234,7 @@ struct AndroidStageView: View {
     private func veil(@ViewBuilder content: () -> some View) -> some View {
         VStack(spacing: Slate.Metric.space2) { content() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.face)
+            .background(Slate.Surface.field)
             .transition(.opacity)
     }
 

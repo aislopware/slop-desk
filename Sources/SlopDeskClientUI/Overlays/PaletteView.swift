@@ -62,7 +62,7 @@ struct PaletteView: View {
             SlateCardSeparator()
             resultsList
         }
-        // The glass card is applied by `OverlayHostView`; this view carries only its content + a fixed
+        // The paper card is applied by `OverlayHostView`; this view carries only its content + a fixed
         // macOS dialog width.
         #if os(macOS)
         .frame(width: panelWidth)

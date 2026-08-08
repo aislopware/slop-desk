@@ -7245,3 +7245,68 @@ single `SlateTheme.app` so no token call site changed; `SlateTheme` lost `id`/`i
 `chromeIsLight` because a single value has no polarity to branch on. `AppearanceApplier` is down to
 one hook, `resolveTerminalColors`, which the app binds to `SlateTheme.app` so the libghostty CELL
 colours still track the profile headlessly-safely (`nil` hook ⇒ the pref's own colours stand).
+
+## TWO TONES everywhere — the paper card and the panel sweep (2026-08-08, user-directed)
+
+ONE ISLAND set the window frame and stopped there. This round carried the same law into the
+surfaces that had not been touched, because the instruction was to adopt the new design across
+what remained. Two kinds of drift turned out to be hiding, both invisible while the chrome was
+still dark, and both a THIRD thing in a design whose whole claim is that there are two.
+
+**A third grey — the device panels.** The Simulators and Emulators surfaces, and the first-launch
+window, painted themselves from `underPageBackgroundColor` and `windowBackgroundColor`. Those are
+the right semantic choices for an app standing in the system's own tones; this one stands on a
+cream it chose. Sampled live, the panel column read `#A1A09F` against the sidebar's `#FFFBEB` — a
+column that visibly did not belong to the window it was in. Every one of those surfaces is now
+`Slate.Surface.field`.
+
+That also retires MERIDIAN L5's "two surfaces, depth by light" inside the device panels, where the
+top bar was housing on `ground` and the device and console were content on the lit `face`. The
+argument for lighting the stage does not survive the sweep: the lit thing there is the DEVICE, which
+arrives already drawn as an object — its own bezel artwork, or a bare screen inside the panel's
+corner — so lighting the band behind it only competed with it. The three bands are now told apart by
+the hairlines that were already there. Where something must genuinely lift off the ground inside a
+panel — a placeholder plate behind a picture that has not landed, a console strip, a first-launch
+card — it takes `Surface.raised`, which is TRANSLUCENT and therefore tints the cream rather than
+substituting another palette's grey for it. That is the general rule this round adds: a region of a
+surface is a translucent lift of it, never a second opaque tone.
+
+**A third material — the floating family.** The palette, Open Quickly, global search, the cheat
+sheet, connect, the pane switcher and the notification card were Liquid Glass. Glass earns its keep
+by refracting what varies behind it, and after ONE ISLAND exactly two flat opaque tones lie back
+there, so the effect had degraded to a grey slab that additionally flipped relationship halfway
+across itself: light-over-cream at the card's edges, light-over-glass in its middle. Apple's own
+guidance points the same way — do not stack glass; apply the material once, at the top.
+
+`SlateGlassCard` is therefore `SlatePaperCard`: `Surface.field`, opaque, cut at the island's 26,
+edged by the island's hairline, on the `palette` shadow rung. The decision was made by rendering
+both candidates at true size rather than by argument, and it was not close. A summoned card lands
+CENTRED, which is exactly where the dark island already is, so a card wearing the island's glass
+disappeared into it; the cream card reads as a sheet laid on the canvas at ~13:1 and is carried at
+its own edges — where it meets the ground — by the hairline and the cast, exactly as the island is.
+The card keeps the neutral system-semantic ink (`SlateOverlayInk`) it always had.
+
+The card carries a SCALE, because a corner is read against the surface it cuts and the family spans
+two: a 640pt summoned panel takes the island's 26 (Tahoe's own alert panel measures ≈ 30, so 26 is
+inside the range the OS uses at that size), and a 320 × 46 notification takes the compact island's
+10. One token had to grow with it: `State.overlayShadow` (0.30) is twice `State.shadow`, because a
+panel floating over the dark island is separated by tone while a paper card is the ground's own
+cream lifted off the ground, and nothing but the cast tells the two apart at its edges.
+
+The overlay host's justification for presenting IN-WINDOW rather than in a `.sheet` was rewritten,
+not deleted. The refraction half of it is gone with the material, but the rest survives intact: a
+sheet is a separate window, it paints its own ground across its whole frame (which flashed as a pale
+panel on open and haloed the inset card), its mask clips the corner to the system's radius instead of
+the island's 26, and a shadow presented in its own window falls on nothing the user can see.
+
+**One craft fix found on the way.** `SlateKeycap` set chords in the instrument voice, and the
+modifier symbols (⇧ U+21E7, ⌘ U+2318, ⌥, ⌃) are advanced by a monospaced face's CELL rather than by
+the glyph — so on any machine without the pinned mono installed, where `Slate.Typeface.instrument`
+resolves to SF Mono, "⇧⌘W" rendered as one smear. Rendered side by side at 3×, the three candidate
+faces split two-to-one: both proportional faces set the chord cleanly and the mono one collides. The
+cap is now the system face, which is also the register macOS draws the same glyphs in in every menu.
+
+Settings is deliberately NOT swept. It stays in pure system semantics (`SettingsInk`) for the reason
+that file already gives — a preferences window full of native `Toggle`/`Picker`/`Stepper` controls
+that draw themselves from the OS accent no matter what, so it should look like System Settings
+rather than half like it.

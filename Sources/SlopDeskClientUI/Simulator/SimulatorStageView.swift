@@ -11,13 +11,18 @@
 // device just said, so it goes below the device rather than beside it, and the tap-watch-read loop
 // stays one column.
 //
-// TWO SURFACES (MERIDIAN L5, depth by light). The first cut painted every band the chrome tone, which
-// left the one lit, live thing in the panel sitting on exactly the same grey as the buttons around it
-// — a flat sheet with hairlines ruled across it. The device and its output are CONTENT and take the
-// lit `face`; the top bar is HOUSING and stays on `ground`. The verbs used to be a fourth band's
-// worth of trays floating on the stage, kept off `ground` so they would not stripe the column; they
-// now ride the top bar, which needs no new band and had a half-width of nothing in it (see
-// ``SimulatorDeviceHeader``). The stage under it is the device and nothing else.
+// ONE SURFACE — the panel SINKS (ONE ISLAND, law 1). All three bands paint `Surface.field`, the same
+// cream the navigator, the moat and the Files panel stand on, and the bands are told apart by the
+// hairlines between them. This reverses the MERIDIAN L5 "two surfaces, depth by light" split that
+// stood here until 2026-08-08, where the top bar was housing on `ground` and the device and console
+// were content on the lit `face`. Two things retired it. The tones it named are the SYSTEM's aux
+// backdrop and window ground, not this app's ground, so under ONE ISLAND they sampled a third,
+// unrelated grey next to the cream — the panel column visibly did not belong to the window it was in.
+// And the argument for lighting the stage no longer holds: the lit, live thing here is the DEVICE,
+// which arrives already drawn as an object (its own bezel, or the island's corner around a bare
+// screen), so lighting the band behind it only competed with it. The verbs ride the top bar rather
+// than floating on the stage — no new band, and the half-width of nothing in that bar is now spent
+// (see ``SimulatorDeviceHeader``). The stage under it is the device and nothing else.
 //
 // THE BODY OR A BARE RECT. With chrome loaded the stream is seated in the real device, side buttons
 // and all. Without it — still loading, or a model the server cannot describe — it falls back to the
@@ -51,9 +56,9 @@ struct SimulatorStageView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerLayer
-            // The STAGE: one lit surface with the device on it and nothing else.
+            // The STAGE: the ground, with the device on it and nothing else.
             device
-                .background(Slate.Surface.face)
+                .background(Slate.Surface.field)
                 .overlay { stageState }
                 .animation(Slate.Anim.smallFade, value: showsLoading)
                 .animation(Slate.Anim.smallFade, value: isStalled)
@@ -308,7 +313,7 @@ struct SimulatorStageView: View {
     private func veil(@ViewBuilder content: () -> some View) -> some View {
         VStack(spacing: Slate.Metric.space2) { content() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.face)
+            .background(Slate.Surface.field)
             .transition(.opacity)
     }
 

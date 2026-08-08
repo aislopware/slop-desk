@@ -38,7 +38,9 @@ public struct FirstLaunchView: View {
             footer
         }
         .frame(width: 540, height: 580)
-        .background(Slate.Surface.ground)
+        // The app's own ground, not the system's aux backdrop: this is the first surface anyone sees,
+        // and it should be the cream the workspace behind it is about to be (ONE ISLAND, law 4).
+        .background(Slate.Surface.field)
         // Safety net: any dismissal (Done / Skip Setup / Esc / window-close) marks first-launch complete so it
         // never re-presents. Idempotent (sets a single `Defaults` flag).
         .onDisappear { model.finish() }
@@ -233,8 +235,11 @@ private struct FirstLaunchClaudeHooksStep: View {
 
 // MARK: - Shared step chrome (a flat card + a gray note)
 
-/// A flat card wrapping a step's controls (card == window background, hairline border — the flat
-/// pane aesthetic).
+/// A flat card wrapping a step's controls: a translucent lift over the window's cream, hairline-bordered.
+///
+/// `raised` rather than an opaque tone — the card is a REGION of this surface, not a second surface laid
+/// on it, and a translucent fill tints the ground it stands on instead of substituting another palette's
+/// grey for it (the same reason the device panels' placeholder plates use it).
 struct FirstLaunchCard<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -243,7 +248,7 @@ struct FirstLaunchCard<Content: View>: View {
             .padding(Slate.Metric.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard).fill(Slate.Surface.face),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard).fill(Slate.Surface.raised),
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)

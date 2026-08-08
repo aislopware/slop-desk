@@ -89,8 +89,10 @@ struct SimulatorRunningCard: View {
                 // own padding. No spinner: the capture is 22 ms, so an indicator would be a flash, and
                 // this panel has already been bitten once by an indicator drawn from "nothing has
                 // arrived yet" (see `docs/47`).
+                // `raised` and not a flat tone: it is a TRANSLUCENT fill, so it tints the cream the
+                // card stands on instead of substituting a grey from the system's aux palette for it.
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .fill(Slate.Surface.ground)
+                    .fill(Slate.Surface.raised)
             }
         }
         .frame(height: Slate.Metric.deviceCardArt)

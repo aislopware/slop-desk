@@ -144,7 +144,7 @@ struct AndroidDeviceList: View {
                 list
             }
         }
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
     }
 
     // MARK: Filter

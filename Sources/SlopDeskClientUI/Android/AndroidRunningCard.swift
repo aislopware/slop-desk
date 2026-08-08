@@ -71,7 +71,7 @@ struct AndroidRunningCard: View {
     private var art: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .fill(Slate.Surface.ground)
+                .fill(Slate.Surface.raised)
             if device.isAttachedButUnusable {
                 // The one state that gets a word instead of a glyph. `unauthorized` is fixed by
                 // looking at the device, and a symbol cannot say that.

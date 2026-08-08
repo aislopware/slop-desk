@@ -34,7 +34,11 @@ struct SimulatorConsoleView: View {
             strip
             content
         }
-        .background(Slate.Surface.face)
+        // The ground — the drawer is part of the sunken panel, not a lit surface inside it (ONE
+        // ISLAND, law 1). Its top edge is the hairline below, which is the whole reason the rule is
+        // drawn here rather than left to a tone change (and was already true when this was `face`:
+        // the drawer opens over the stage, so it needs an edge of its own either way).
+        .background(Slate.Surface.field)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Slate.Line.divider)
@@ -44,9 +48,9 @@ struct SimulatorConsoleView: View {
 
     // MARK: Controls
 
-    /// The drawer's own head, one rung ABOVE the rows it sits on. A drawer sharing its body's tone
-    /// with the surface above it has no top edge of its own, so the rows read as a continuation of
-    /// the stage rather than as a second thing that opened. Clear and Hide ride one tray — both
+    /// The drawer's own head, one rung ABOVE the rows it sits on — `raised`, a translucent tint over
+    /// the panel's cream rather than a tone borrowed from elsewhere. It is what separates the head
+    /// from the log under it once both stand on the same ground. Clear and Hide ride one tray — both
     /// destroy what is on screen (one the history, one the drawer), which is the pairing worth
     /// making at a glance; Follow stays loose beside them because it LATCHES, and a lit key only
     /// reads as lit against the panel's own tone.

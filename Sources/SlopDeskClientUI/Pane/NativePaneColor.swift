@@ -12,7 +12,7 @@ import SwiftUI
 @MainActor
 enum NativePaneColor {
     /// The pane-canvas backdrop (gaps behind placed leaves, empty tab area) — the ISLAND is one
-    /// glass card, so its canvas is the glass itself, never a chrome tone.
+    /// glass surface, so its canvas is the glass itself, never a chrome tone.
     static var window: Color { Slate.Surface.terminal }
 
     /// The terminal / editable content surface background — the terminal profile's glass.

@@ -352,6 +352,11 @@ enum Slate {
         static let header = Text.secondary
         /// Floating-panel drop shadow — soft black, heavier on dark appearances.
         static let shadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45)
+        /// The SUMMONED card's cast shadow — twice ``shadow``, and its own rung because it does twice the
+        /// work. A panel that floats over the dark island is separated by tone alone; a paper card is the
+        /// ground's own cream lifted off the ground, so nothing but the cast tells the two apart at the
+        /// card's edges. Compared side by side at true size, `shadow` read as a halo and this reads as lift.
+        static let overlayShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.30, darkAlpha: 0.55)
         /// The ACTIVE tab card's cast shadow — light appearances only; on dark, at-rest depth is the
         /// fill ladder, and a dark-on-dark shadow reads as a smudged edge, not lift.
         static let cardShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.04, darkAlpha: 0)

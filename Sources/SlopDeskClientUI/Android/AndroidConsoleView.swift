@@ -34,7 +34,7 @@ struct AndroidConsoleView: View {
             strip
             content
         }
-        .background(Slate.Surface.face)
+        .background(Slate.Surface.field)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Slate.Line.divider)

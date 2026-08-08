@@ -100,6 +100,17 @@ components:
   panel-column:
     backgroundColor: "the field (the ground) behind the strip; the workbench/device surfaces fill below a divider hairline"
     note: "the right column SINKS like the navigator. The embedded workbench is seeded with `workbench.colorCustomizations` painting every VS Code surface {colors.ground}, and its webview is pinned to the CHROME polarity — panel and ground read as one continuous field (user-directed 2026-08-08)"
+  device-panel:
+    backgroundColor: "the field (the ground), all three bands — the list, the header, the stage and the console"
+    note: "the Simulators / Emulators surfaces sink like every other column: no lit stage, no second tone. Bands are told apart by hairlines; the DEVICE is the lit object and arrives already drawn as one. A placeholder plate behind a picture that has not landed is `Surface.raised` — a translucent tint of the cream, never an opaque grey"
+  overlay-card:
+    backgroundColor: "{colors.ground} — PAPER: the ground's own cream, opaque"
+    rounded: "{rounded.island} for a summoned panel; {rounded.compact-island} for a row-scale notification"
+    note: "SlatePaperCard. Hairline + the palette shadow rung carry it against the cream at its edges; ~13:1 against the island it covers. It was Liquid Glass until 2026-08-08 — a card lands centred, which is exactly where the dark island already is, so the glass repeated was invisible. Ink stays SlateOverlayInk (system-semantic, neutral)"
+  keycap:
+    backgroundColor: "SlateOverlayInk.plate + hairline"
+    rounded: "{rounded.small}"
+    note: "the ONE instrument-voice readout set in the SYSTEM face: ⇧ ⌘ ⌥ ⌃ are symbol glyphs and a monospaced cell advances them narrower than they draw, so a chord collides into one smear. Measured across three faces at 3x"
   panel-tab-chip:
     backgroundColor: "transparent at rest; State.hover wash on hover; SELECTED = a compact island — the island fill + a divider hairline, ink flipped to the glass polarity (user-directed 2026-08-08)"
     rounded: "{rounded.compact-island}"
@@ -155,6 +166,39 @@ The second profile had already lost its reason to exist: law 4 put the SAME crea
 so picking "Alucard" only flattened the one contrast this design is built on — a cream frame around
 a dark canvas — leaving a window with no island in it. What survives of the old machinery is the
 app-level LIGHT pin (`SlateAppearancePin`), which the cream ground still requires.
+
+### TWO TONES, and nothing is allowed to be a third
+
+The law is not "two tones in the window frame" — it is two tones **everywhere**, and that is what
+the 2026-08-08 sweep across the remaining surfaces enforced. Two kinds of drift had survived the
+first round, both of them invisible until the ground turned cream:
+
+**A third grey.** The device panels (Simulators, Emulators) and the first-launch window painted
+themselves from `underPageBackgroundColor` and `windowBackgroundColor` — the SYSTEM's aux backdrop
+and window ground. Those are correct semantic choices in an app that stands in the system's own
+tones; this one does not. Sampled live, the panel column was `#A1A09F` against the sidebar's
+`#FFFBEB`, so the panel visibly did not belong to the window it was in. Every one of those surfaces
+is now `Slate.Surface.field`. Where something genuinely must lift off the ground inside a panel — a
+placeholder plate behind a picture that has not arrived, a console strip, a first-launch card — it
+uses `Surface.raised`, which is TRANSLUCENT and therefore tints the cream instead of replacing it.
+That is the general rule: **a region of a surface is a translucent lift of it, never a second opaque
+tone.**
+
+**A third material.** The floating family (palette, Open Quickly, global search, cheat sheet,
+connect, pane switcher, notifications) was Liquid Glass. Glass earns its keep by refracting what
+varies behind it, and after ONE ISLAND there are exactly two flat opaque tones back there, so the
+effect degraded to a grey slab that also flipped relationship halfway across itself — light-over-cream
+at the card's edges, light-over-glass in its middle. Apple's own guidance points the same way (do not
+stack glass; apply the material once, at the top). The family is now PAPER: `Surface.field`, opaque,
+cut at the island's 26, hairline-edged, on the `palette` shadow rung. Rendered side by side at true
+size the choice was not close — a dark card lands centred, which is exactly where the dark island
+already is, so it disappeared; the cream one reads as a sheet laid on the canvas at ~13:1. The card
+takes `Surface.field` and NOT the island's glass for that reason, and it keeps the neutral
+system-semantic ink it always had.
+
+The shadow is the one token that had to grow: `State.overlayShadow` (0.30) is twice `State.shadow`,
+because a panel over the dark island is separated by tone while a paper card is the ground's own
+cream lifted off the ground, and nothing but the cast tells them apart at the card's edges.
 
 ### Geometry
 
@@ -327,7 +371,8 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
 - **Interaction states**: rest / hover / selected everywhere; a true PRESSED fill exists only on
   the plate idiom (`SlatePlateStyle`, whose press previews the latch it lands on) — rows and tabs
   act instantly, so they do not carry one. Do not add pressed fills to instant-action rows.
-- **Overlays**: `SlateOverlayCard` glass/material + `Color.primary` ink. Settings stays pure
+- **Overlays**: `SlatePaperCard` — the ground's cream, opaque, at the island's corner — plus
+  `Color.primary` ink (`SlateOverlayInk`). No material anywhere in the family. Settings stays pure
   system semantics (`SettingsInk` — a deliberate second world; do not route it through `Slate`).
 
 ## Do / Don't
@@ -337,7 +382,8 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
   enters ONLY as a `SlateTheme` field, derived in the Pro hue family as a lightness rung.
 - DON'T make a second island SURFACE. The archipelago — every column and every pane on its own card,
   parted by channels of ground — was built and rejected as too busy (user-directed 2026-08-08).
-  `slateIsland()` has one call site. Also still dead: floating cards, the liquid-glass floor and
+  `slateIsland()` has one call site. Also still dead: floating per-PANE cards (the summoned overlay
+  card is a different thing and lives on paper, not glass), the liquid-glass floor and
   any translucent window material, plus five chrome worlds that are now the anti-reference — dark
   graphite, clay `#EFD0C2`, salmon `#C59B8B`, FOUNDRY ember, and the lavender frame `#B0A2EA`.
 - DON'T change hue to separate regions — the only separations are the island's edge and the
@@ -347,6 +393,16 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
 - DON'T float per-pane cards, add pane shadows, or tint any column per project.
 - DON'T give any column its own material, tone or rounding — the ground is one opaque colour and
   the columns sink into it; only the terminal canvas is lifted.
+- DON'T reach for `Surface.ground` / `Surface.face` / `Surface.void` in chrome. Those are the
+  SYSTEM's aux-window tones and they sample a third grey next to the cream; chrome paints
+  `Surface.field`. They stay legal only INSIDE the island, where the forced glass scheme resolves
+  them against the glass, and in `GuiLeafView`'s scrim.
+- DON'T lift a region of a surface with a second opaque tone — a lift is `Surface.raised`, which is
+  translucent and tints the ground it stands on.
+- DON'T put a MATERIAL on a floating card. The overlay family is paper (`slatePaperCard`); glass
+  over two flat opaque tones has nothing to refract and reads as a grey slab.
+- DON'T set a chord ("⇧⌘W") in the instrument voice — a monospaced cell collides the modifier
+  symbols. `SlateKeycap` is the system face on purpose.
 - DON'T add appearance pins beyond the ONE `SlateAppearancePin` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
