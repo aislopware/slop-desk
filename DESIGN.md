@@ -71,7 +71,7 @@ components:
     textColor: "semantic label tiers"
     note: "collapsing MINIMIZES to an 80pt RAIL, never hides (rail round): lights band, centered expand toggle, one muted folder chip per project group (attention roll-up on its corner), New Tab, compact ping readout"
   sidebar-search-field:
-    backgroundColor: "Slate.Surface.chip + subtle hairline stroke"
+    backgroundColor: "Slate.State.hover wash, no stroke — a recess in the column, not an island (restored user-directed 2026-08-08)"
     rounded: "{rounded.control}"
     height: "28px"
   panel-edge-handle:
@@ -84,7 +84,7 @@ components:
     height: "32px"
     padding: "0 12px"
   list-row-active:
-    backgroundColor: "Slate.Surface.chip (controlBackgroundColor) under the chrome's own scheme — the one filled plate on a sidebar of ghosts (the reverse-video flip is retired, user-directed 2026-08-08)"
+    backgroundColor: "Slate.Surface.raised translucent wash + Line.card hairline border — the overlay card, NOT a solid fill (restored user-directed 2026-08-08; both the reverse-video flip and the solid chip plate are retired)"
     textColor: "labelColor"
     rounded: "{rounded.control}"
     height: "32px"
@@ -161,10 +161,11 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
   chrome, flat round), New Tab, compact connection readout. The expanded strip keeps its collapse
   toggle permanent at top-trailing; the right panel's reopen is the `PanelEdgeHandle` drawer pull.
   There is NO titlebar of any kind.
-  The active row is the column's one raised object: the solid chip fill (`Slate.Surface.chip` →
-  `controlBackgroundColor`) under the chrome's own scheme — a quiet plate one step off the floor.
-  The reverse-video colour-scheme flip of the 2026-08-07 polish round is RETIRED (user-directed
-  2026-08-08); do not reintroduce inversion as a selection language.
+  The active row is the column's one raised object: the translucent overlay card — a
+  `Slate.Surface.raised` wash plus the `Line.card` hairline border. The wash TINTS the chrome
+  floor and stays in its hue family; a solid fill does not (the system `chip` plate read as
+  off-family neutral grey and is retired, as is the reverse-video colour-scheme flip of the
+  2026-08-07 polish round — both user-directed 2026-08-08). Do not reintroduce either.
 - **Surfaces** (`Slate.Surface`): `field` → the chrome floor (above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
@@ -249,8 +250,9 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T introduce a second selection language: selected = the quiet filled plate (sidebar `chip`
-  fill, strip selection tint). No reverse-video/colour-scheme inversion (tried 2026-08-07, retired
-  2026-08-08), no underlines for selection.
+- DON'T introduce a second selection language: selected = the translucent overlay card (sidebar
+  `raised` wash + `Line.card` hairline, strip selection tint). No reverse-video/colour-scheme
+  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day —
+  off-family grey on the authored floor), no underlines for selection.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.

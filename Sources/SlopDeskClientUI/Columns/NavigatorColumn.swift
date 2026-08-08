@@ -224,16 +224,11 @@ struct NavigatorColumn: View {
             }
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
-            // The MINI-ISLAND fill (not the hover tint — on the coloured frame floor the hover
-            // whisper vanished entirely and the field read as bare placeholder text). The chip
-            // surface is the same island↔floor step the active row stands on, so the one input
-            // on the frame reads as a small island of its own; the subtle hairline keeps its
-            // edge from melting into the floor where the two tones run close.
-            .background(Slate.Surface.chip, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-            .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-            )
+            // The quiet HOVER wash, restored user-directed 2026-08-08: on the flat chrome floor
+            // the whisper reads fine again (the coloured frame floor that once swallowed it is
+            // gone), and the solid system `chip` fill it briefly wore sat off-hue as a neutral
+            // grey plate. No stroke — the field is a recess in the column, not an island.
+            .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
             .padding(.horizontal, 8)
@@ -1315,13 +1310,20 @@ private struct RailProjectChip: View {
             .contentShape(.rect(cornerRadius: Slate.Metric.radiusCard))
         }
         .buttonStyle(.plain)
-        // The ACTIVE chip is the plain solid chip under the chrome's own scheme — the reverse-video
-        // flip is retired (user-directed 2026-08-08): selection reads as the one filled plate on a
-        // sidebar of ghosts, same dialect as the active tab row.
+        // The ACTIVE chip is the translucent overlay card — a `raised` wash plus the `Line.card`
+        // hairline, the same pre-rounds selection the active tab row wears (user-directed
+        // 2026-08-08). A wash TINTS the chrome floor and stays in its hue family; the solid
+        // system `chip` fill it briefly replaced sat off-family as a neutral grey plate.
         .background(
-            active ? Slate.Surface.chip : (hovering ? Slate.State.hover : Color.clear),
+            active ? Slate.Surface.raised : (hovering ? Slate.State.hover : Color.clear),
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
         )
+        .overlay {
+            if active {
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
+                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
+            }
+        }
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         .help(rows.count == 1 ? "\(title) — 1 tab" : "\(title) — \(rows.count) tabs")

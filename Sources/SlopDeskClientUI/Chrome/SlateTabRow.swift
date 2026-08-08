@@ -16,11 +16,11 @@
 // coloured ring" the way a mail row reads unread. The rail is monochrome except the marks that
 // carry state; the IDENTITY register lives on the section HEADER's folder mark (the Canario
 // dialect, user-directed 2026-08-07 — the earlier 2px spine + 5% wash read as invisible
-// ornament and were removed). ACTIVE is the plain SOLID chip (`Surface.chip`) under the chrome's
-// own scheme — the 2026-08-07 reverse-video colour-scheme flip was retired the next day
-// (user-directed 2026-08-08): selection is the one filled plate on a sidebar of ghosts. Nothing
-// else rides the row: no subtitle, no readout, no telemetry — the richness lives in the hover
-// tooltip and the context menu.
+// ornament and were removed). ACTIVE is the translucent overlay card: a `raised` wash plus the
+// `Line.card` hairline — the pre-rounds selection, restored user-directed 2026-08-08 after both
+// the reverse-video flip (retired same day) and the solid neutral `chip` fill (off-hue on the
+// authored chrome floor) were rejected. Nothing else rides the row: no subtitle, no readout, no
+// telemetry — the richness lives in the hover tooltip and the context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -161,11 +161,12 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// ACTIVE = the SOLID chip (`Slate.Surface.chip`) under the chrome's own scheme — a raised
-    /// plate one step off the floor (the reverse-video flip is retired, user-directed 2026-08-08).
-    /// Hover keeps the quiet wash.
+    /// ACTIVE = the translucent OVERLAY fill (`Slate.Surface.raised`) plus the hairline card
+    /// border drawn in `body` — the pre-rounds selection card, restored user-directed 2026-08-08:
+    /// a wash TINTS the chrome floor (staying in its hue) where the solid `chip` fill replaced it
+    /// with the system's neutral grey and sat visibly off-family. Hover keeps the quieter wash.
     private var rowBackground: Color {
-        if active { Slate.Surface.chip }
+        if active { Slate.Surface.raised }
         else if hovering { Slate.State.hover }
         else { .clear }
     }
