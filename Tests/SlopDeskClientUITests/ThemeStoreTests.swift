@@ -11,8 +11,8 @@ import XCTest
 @MainActor
 final class ThemeStoreTests: XCTestCase {
     /// The default terminal profile is Dracula — the dark glass product default. `isLight` is the
-    /// GLASS's own polarity; the CHROME polarity is the frame's (inverted — the Canario structure
-    /// both shipped profiles wear, round-8 verdict, user-directed 2026-08-07).
+    /// GLASS's own polarity, and since the flat round (user-directed 2026-08-08) the chrome wears
+    /// the same polarity — one appearance voice, no frame flip.
     func testDefaultIsDracula() {
         let store = ThemeStore()
         XCTAssertFalse(store.active.isLight, "Dracula is dark glass ⇒ isLight is false")
@@ -48,26 +48,24 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(SlateTheme.alucard.terminalForegroundHex, "1F1F1F")
     }
 
-    /// Both shipped profiles are INVERTED (the Canario frame, round-8 verdict): the floor is the
-    /// authored frame pole (opposite polarity, the glass's hue family) and the CHROME polarity is
-    /// the flip of the glass polarity. Pinned values lock the picked frame depths — Dracula's is
-    /// the lavender-gradient pair from the liquid-glass round (the Pro-band plate #C3BAF0 pulled
-    /// 22%/35% toward the deep accent, user-directed 2026-08-07); the trial's paler #AFACD2 was
-    /// rejected as washed.
-    func testFrameStructure() {
-        // Dracula: dark glass, mid-light violet frame, light chrome standing on it.
+    /// Both shipped profiles are FLAT (the divider layout, round-10 verdict — the inverted frame
+    /// and its islands are retired): the chrome polarity EQUALS the glass polarity, and the chrome
+    /// ladder is the published Dracula chrome's per-channel offsets (statusbar/sidebar/rail vs the
+    /// classic editor) transposed onto each profile's own face — one hue family, lightness steps
+    /// only (user-directed 2026-08-08).
+    func testChromeLadderStructure() {
+        // Dracula: dark glass, a chrome rung darker, a divider rung darker again, a lifted rung up.
         XCTAssertFalse(SlateTheme.dracula.isLight, "the glass stays dark")
-        XCTAssertTrue(SlateTheme.dracula.chromeIsLight, "the chrome flips light onto the frame")
-        XCTAssertEqual(SlateTheme.dracula.floorHexValue, 0xB0A2EA, "the picked dark-theme frame")
-        XCTAssertEqual(SlateTheme.dracula.floorDeepHexValue, 0xA493E7, "the frame gradient's deep pole")
-        // Alucard: cream glass, deep violet frame, dark chrome standing on it.
+        XCTAssertEqual(SlateTheme.dracula.chromeIsLight, SlateTheme.dracula.isLight, "one polarity — no frame flip")
+        XCTAssertEqual(SlateTheme.dracula.chromeHexValue, 0x1B1922, "sidebar offset −07/−08/−0A off the Pro face")
+        XCTAssertEqual(SlateTheme.dracula.chromeLineHexValue, 0x131117, "border offset −0F/−10/−15 off the Pro face")
+        XCTAssertEqual(SlateTheme.dracula.chromeLiftHexValue, 0x2E2E3C, "rail offset +0C/+0D/+10 off the Pro face")
+        // Alucard: cream glass, the ladder mirrored deeper into the cream.
         XCTAssertTrue(SlateTheme.alucard.isLight, "the glass is light")
-        XCTAssertFalse(SlateTheme.alucard.chromeIsLight, "the chrome flips dark onto the frame")
-        XCTAssertEqual(SlateTheme.alucard.floorHexValue, 0x4C4869, "the picked light-theme frame")
-        XCTAssertEqual(
-            SlateTheme.alucard.floorDeepHexValue, 0x4C4869,
-            "no authored gradient — the deep pole equals the floor",
-        )
+        XCTAssertEqual(SlateTheme.alucard.chromeIsLight, SlateTheme.alucard.isLight, "one polarity — no frame flip")
+        XCTAssertEqual(SlateTheme.alucard.chromeHexValue, 0xF6F1DE)
+        XCTAssertEqual(SlateTheme.alucard.chromeLineHexValue, 0xE3DECB)
+        XCTAssertEqual(SlateTheme.alucard.chromeLiftHexValue, 0xFFFDF4)
     }
 
     /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme

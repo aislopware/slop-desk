@@ -135,17 +135,10 @@ public struct WorkspaceRootView: View {
             preferences: preferencesStore, paneDrag: paneDrag,
         )
         .ignoresSafeArea()
-        // The liquid-glass ground (trial, user-directed 2026-08-07): one behind-window material
-        // under the WHOLE frame, tinted ONCE by the profile's floor gradient — the columns and
-        // the divider gap paint clear, so the gradient runs unbroken across the window while the
-        // desktop blurs through the frame and the islands stay opaque.
-        .background {
-            ZStack {
-                LiquidGlassFloor()
-                Slate.Surface.floorGlassGradient
-            }
-            .ignoresSafeArea()
-        }
+        // The flat chrome ground (flat round, user-directed 2026-08-08): one opaque chrome tone
+        // behind the split — the columns paint their own flat surfaces over it, and it backstops
+        // any transient gap (a mid-animation collapse) so no bare window colour ever shows.
+        .background(Slate.Surface.field.ignoresSafeArea())
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
         // composes above the AppKit split (SwiftUI overlays compose over an `NSViewControllerRepresentable`).
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks real visibility.

@@ -94,28 +94,17 @@ struct CodeSidebarColumn: View {
     }
 
     var body: some View {
-        // THE PANEL ISLAND (user-directed 2026-08-07, islands round — reversing the same round's
-        // earlier flat-panel call): the whole panel is a SECOND glass island beside the terminal's,
-        // with the tab strip INSIDE the card — the tabs belong to the island they switch, and a
-        // strip left out on the chrome floor read as an orphaned band. Same anatomy as the terminal
-        // island: the glass surface, the forced glass scheme (so the strip's chips, inks and every
-        // surface below resolve against the glass, not the OS appearance), the continuous island
-        // radius, and NO border ring or shadow (JetBrains ships island borders equal to the island
-        // fill — the field gap and radius are the whole separation). NO leading margin: the
-        // terminal island's trailing margin (plus the 1px divider gap) already IS the channel
-        // between the two cards, and paying a second margin here doubled it — "the two islands are
-        // too far apart" (user-directed 2026-08-07). One margin per gutter keeps every field
-        // channel in the window the same width.
+        // The panel runs FLAT and full-bleed (flat round, user-directed 2026-08-08 — the second
+        // glass island is retired with the first): the tab strip stays INSIDE the column at its
+        // top, the whole column wears the glass surface edge to edge, and the 1px split divider
+        // against the terminal column is the only separation. The forced glass scheme stays — the
+        // strip's chips, inks and every surface below resolve against the profile, not the OS.
         VStack(spacing: 0) {
             strip
             surfaceArea
         }
         .background(Slate.Surface.terminal)
         .environment(\.colorScheme, Slate.glassColorScheme)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
-        .padding([.top, .bottom, .trailing], Slate.Metric.islandMargin)
-        // The one window field behind the island — the same floor every column paints.
-        .background(Slate.Surface.field)
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
         // settings watcher applies it without a reload). The ensure-round sync below covers the
         // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.

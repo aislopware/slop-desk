@@ -677,13 +677,12 @@ struct SidebarSectionHeaderRow: View {
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-            // The folder — the group is a place, and it wears the project's IDENTITY hue
-            // (``Slate/Identity``, the Canario dialect's coloured folders — user-directed
-            // 2026-08-07): the one full-strength identity mark the rail carries per project.
-            // The keyless "Other" bucket keeps the muted header ink.
+            // The folder — the group is a place. MUTED header ink, not the identity hue (flat
+            // round restraint, user-directed 2026-08-08: a full-strength tinted folder per project
+            // read as ornament — icon colour tracks the muted text tone, the name is the identity).
             Image(systemSymbol: .folderFill)
                 .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(projectKey.map(Slate.Identity.hue(for:)) ?? Slate.State.header)
+                .foregroundStyle(Slate.State.header)
                 .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
                 // `nerdAware` — a project folder named with a nerd-font glyph draws it from the
@@ -1269,10 +1268,10 @@ private struct IOSSidebarLiveRow: View {
 }
 
 #if os(macOS)
-/// One rail project chip — the group header folded to its identity mark: the folder in the
-/// project's hue (the same ``Slate/Identity`` mark the expanded header wears), the ACTIVE project
-/// standing on the solid chip fill (the mini-island the expanded row's reverse-video chip stands
-/// on), and the group's attention roll-up as a corner dot in the strongest ink of the rows it
+/// One rail project chip — the group header folded to a muted folder glyph (icon colour tracks
+/// the muted header ink — flat-round restraint, user-directed 2026-08-08), the ACTIVE project
+/// standing on the reverse-video chip fill (the same flipped-scheme chip the active tab row
+/// wears), and the group's attention roll-up as a corner dot in the strongest ink of the rows it
 /// hides (``StatusPresentation/attentionRollupInk(_:)``). Volatile chrome (selection, badges) is
 /// read INSIDE this leaf so a status tick re-renders one chip, never the rail body.
 private struct RailProjectChip: View {
@@ -1283,6 +1282,10 @@ private struct RailProjectChip: View {
     let onSelect: (PaneID) -> Void
 
     @State private var hovering = false
+    /// The ambient chrome scheme — flipped onto the ACTIVE chip so it wears the same reverse-video
+    /// inversion as the active tab row (the app's one selection language): the chip fill and the
+    /// glyph ink both re-resolve against the opposite polarity.
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let activePane = store.tree.activeSession?.activeTab?.activePane
@@ -1298,9 +1301,12 @@ private struct RailProjectChip: View {
             }
         } label: {
             ZStack {
+                // Muted header ink, not the identity hue (flat round restraint, user-directed
+                // 2026-08-08 — same call as the section header's folder): the rail tells projects
+                // apart by position and tooltip, not by a hue carnival.
                 Image(systemSymbol: .folderFill)
                     .font(.system(size: Slate.Typeface.title))
-                    .foregroundStyle(projectKey.map(Slate.Identity.hue(for:)) ?? Slate.State.header)
+                    .foregroundStyle(Slate.State.header)
                 if let rollup {
                     Circle()
                         .fill(rollup)
@@ -1317,6 +1323,11 @@ private struct RailProjectChip: View {
             active ? Slate.Surface.chip : (hovering ? Slate.State.hover : Color.clear),
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
         )
+        // The ACTIVE chip is reverse video, exactly like the active tab row (same modifier order:
+        // the flip wraps the fill): the chip fill AND the glyph ink re-resolve against the
+        // opposite polarity — without it the semantic chip fill sits a whisper off the flat
+        // chrome and the mark disappears.
+        .environment(\.colorScheme, active ? (scheme == .dark ? .light : .dark) : scheme)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         .help(rows.count == 1 ? "\(title) — 1 tab" : "\(title) — \(rows.count) tabs")

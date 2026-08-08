@@ -79,29 +79,13 @@ struct ContentColumn: View {
     private var paneArea: some View {
         Group {
             if hasActiveTab {
-                // THE TERMINAL ISLAND (JetBrains Islands — user-directed 2026-08-07): the WHOLE split
-                // tree is ONE rounded glass card floating on the system chrome; panes divide INSIDE it
-                // with subtle lines on the glass, never as separate cards. The forced colour scheme is
-                // the glass's own polarity (``Slate/glassColorScheme``): everything drawn ON the glass
-                // resolves its semantic colours against the profile, not the OS appearance.
-                // NO border ring and NO shadow on the island (islands round, from the reference:
-                // JetBrains ships `Island.borderColor` equal to the island fill — separation is the
-                // field gap and the radius, nothing drawn). The hairline ring the first island round
-                // wore re-boxed the card against the flat floor.
+                // The terminal surface runs FULL-BLEED (flat round, user-directed 2026-08-08 —
+                // the floating island, its margins and its radius are retired with the frame):
+                // the column IS the glass, edge to edge, and the 1px split dividers are the only
+                // structure between columns. The forced colour scheme stays: everything drawn ON
+                // the glass resolves its semantic colours against the profile, not the OS.
                 SplitContainer(store: store, paneDrag: paneDrag)
                     .environment(\.colorScheme, Slate.glassColorScheme)
-                    .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusIsland, style: .continuous))
-                    .padding(.vertical, Slate.Metric.islandMargin)
-                    .padding(.leading, Slate.Metric.islandMargin)
-                    // Toward the PANEL ISLAND the margin halves (the panel card carries no leading
-                    // margin of its own): with the 1px divider gap the inter-island channel lands
-                    // at ~5px — the reference's own island gap, and a step tighter than the 8px
-                    // window edges after "closer still" (user-directed 2026-08-07). With the panel
-                    // hidden the trailing edge IS a window edge and takes the full margin back.
-                    .padding(
-                        .trailing,
-                        chrome.codeSidebarCollapsed ? Slate.Metric.islandMargin : Slate.Metric.space1,
-                    )
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.

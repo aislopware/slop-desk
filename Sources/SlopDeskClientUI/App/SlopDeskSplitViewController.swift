@@ -280,36 +280,26 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         splitView.setPosition(target, ofDividerAt: 1)
     }
 
-    /// Refresh the window-level chrome. The window carries NO pin of its own (`appearance = nil`):
-    /// since the whole-app theme round (user-directed 2026-08-07) the APP-level pin
-    /// (`ThemeStore.pinAppAppearance`) wears the theme's GLASS polarity, and every window
-    /// (this one, Settings, overlays) inherits it. The FRAME chrome is the one exception, pinned
-    /// here on the split's own view: the three hosted columns stand on the authored frame floor,
-    /// whose polarity is the CHROME's — inverted against the glass on a frame profile
-    /// (user-directed 2026-08-07, Dracula round). The islands are immune to this pin (each forces
-    /// the glass scheme locally), so it reaches exactly the floor-standing chrome — while the
-    /// window-root overlay layer (palette, toasts, sheets) sits OUTSIDE this subtree and keeps the
-    /// app-level identity polarity.
+    /// Refresh the window-level chrome. The window and the split view carry NO appearance pin of
+    /// their own: since the flat round (user-directed 2026-08-08) the chrome polarity EQUALS the
+    /// glass polarity, so the app-level pin (`ThemeStore.pinAppAppearance`) is the one appearance
+    /// voice and both historic per-window/per-view pins are cleared here (an upgraded install's
+    /// window may still carry one).
     private func pinWindowAppearance() {
-        // Clear any historic per-window pin (an upgraded install's window may still carry one) so
-        // the app-level pin is the one voice.
         view.window?.appearance = nil
-        view.appearance = NSAppearance(named: Slate.theme.chromeIsLight ? .aqua : .darkAqua)
-        // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
-        // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
-        // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both wear the
-        // ONE field tone every column paints (`Slate.Surface.fieldNSColor`) — so the seam is deliberately
-        // invisible: the islands' margins are the only structure the floor shows.
+        view.appearance = nil
+        // The column dividers are the 1px GAPs between the hosting columns, painted TWO ways that must
+        // agree: `FlatDividerSplitView.drawDivider(in:)` fills each gap, AND (the split view being
+        // layer-backed for its `NSHostingController` columns) the gaps also show this layer
+        // `backgroundColor`. Both wear the profile's own DIVIDER tone (`SlateTheme.chromeLineHexValue`
+        // — a fixed hex, so the CGColor-snapshot trap family stays dead): the flat round's structure
+        // is exactly these 1px seams between full-bleed columns.
         //
-        // Repaint on a RUNTIME profile/appearance change: `drawDivider` pixels are CACHED in the layer; a
+        // Repaint on a RUNTIME profile change: `drawDivider` pixels are CACHED in the layer; a
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
         // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
         splitView.wantsLayer = true
-        // CLEAR, not the floor tone (liquid-glass trial, user-directed 2026-08-07): the floor
-        // tint must stack over the behind-window material EXACTLY ONCE per region. The columns
-        // and `drawDivider` each paint the tint themselves; an opaque (or tinted) layer here
-        // would both hide the material and double-tint the column regions against the gap.
-        splitView.layer?.backgroundColor = NSColor.clear.cgColor
+        splitView.layer?.backgroundColor = NSColor(slateHex: Slate.theme.chromeLineHexValue).cgColor
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
@@ -430,25 +420,24 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 /// so the sidebar/content seam blends into the flat chrome instead of AppKit's default pure-black
 /// hairline. Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
-    /// Re-assign the divider gap's layer colour when the OS appearance flips. The floor colour is
-    /// FIXED per profile now, so the assignment itself cannot resolve stale — but under the System
+    /// Re-assign the divider gap's layer colour when the OS appearance flips. The divider tone is
+    /// FIXED per profile, so the assignment itself cannot resolve stale — but under the System
     /// theme an OS flip re-resolves ``ThemeStore/active`` to the other built-in, and this hook is the
-    /// AppKit-side nudge that re-reads the new profile's floor (the SwiftUI columns re-render on
+    /// AppKit-side nudge that re-reads the new profile's tone (the SwiftUI columns re-render on
     /// their own; the layer does not).
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        // Clear, matching `pinWindowAppearance` — the divider gap's tint comes from
-        // `drawDivider` alone over the behind-window material (liquid-glass trial).
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.backgroundColor = NSColor(slateHex: Slate.theme.chromeLineHexValue).cgColor
         needsDisplay = true
         layer?.setNeedsDisplay()
     }
 
-    override func drawDivider(in _: NSRect) {
-        // NOTHING (liquid-glass trial, user-directed 2026-08-07): the floor is one window-root
-        // gradient behind the whole split, the columns paint clear, and this gap must too — any
-        // fill here would restart the gradient inside the 1px seam. Overridden (not inherited)
-        // because AppKit's default draws the divider pure black.
+    override func drawDivider(in rect: NSRect) {
+        // The profile's own divider tone (flat round, user-directed 2026-08-08): a 1px seam of the
+        // chrome ladder's deepest rung between the full-bleed columns — the round's whole
+        // structural vocabulary. Overridden because AppKit's default draws the divider pure black.
+        NSColor(slateHex: Slate.theme.chromeLineHexValue).setFill()
+        rect.fill()
     }
 
     /// The CODE-panel divider (content | code) is dragged by hand, not by AppKit's built-in
