@@ -96,4 +96,34 @@ struct SlateCompactIsland<Content: View>: View {
             .shadow(color: selected ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
     }
 }
+
+/// The PROJECT island — the bed one project's group stands on in the sidebar, header and rows
+/// together, washed in that project's identity hue (``Slate/ProjectTint``).
+///
+/// It does NOT break law 1, and the distinction is the whole point: this island is not LIFTED. It
+/// carries no glass, no hairline, no shadow — only the ground's own cream shifted 5% toward a hue,
+/// which is a bed the eye feels rather than a surface it reads as floating. The one lifted thing in
+/// the window is still the terminal canvas; the one thing stamped out of its material is still the
+/// selected tab, and that chip goes on standing INSIDE this bed, which is why the bed inseams its
+/// content (``Slate/Metric/projectIslandInset``) instead of letting the chip butt against its edge.
+///
+/// Approved on the Warp reading (user-directed 2026-08-08) after the same identity spent as a MARK —
+/// tinted glyph, dot, spine, header rule — was rejected in all four shapes: a colour that names a
+/// group belongs to the group's ground, not to a symbol sitting inside it.
+struct SlateProjectIsland<Content: View>: View {
+    /// The project's normalized key — `nil` is the keyless bucket, which gets a neutral bed.
+    let projectKey: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, Slate.Metric.projectIslandInset)
+            .padding(.vertical, Slate.Metric.space2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Slate.ProjectTint.wash(for: projectKey),
+                in: .rect(cornerRadius: Slate.Metric.islandRadiusCompact, style: .continuous),
+            )
+    }
+}
 #endif

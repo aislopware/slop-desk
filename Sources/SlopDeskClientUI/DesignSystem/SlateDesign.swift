@@ -292,9 +292,17 @@ enum Slate {
     /// duration, and the host line exactly when it says DISCONNECTED). Legibility, user-reported
     /// 2026-08-08. Measured on white as a control: 3.95 : 1.88, so the cream was never the cause.
     ///
-    /// The two weak rungs are re-solved to 7.0 and 4.5 against `#FFFBEB`, and they are the ground's
-    /// own colour at that depth rather than a foreign neutral, so the ladder keeps the cream's
-    /// warmth. `primary` stays the system semantic — it already measures 14.5 and costs nothing.
+    /// The two weak rungs are re-solved against `#FFFBEB`, and they are the ground's own colour at
+    /// that depth rather than a foreign neutral, so the ladder keeps the cream's warmth. `primary`
+    /// stays the system semantic — it already measures 14.5 and costs nothing.
+    ///
+    /// The quiet rung is solved one step deeper than the plain cream needs (5.17 there, where 4.51
+    /// would have done), because the sidebar's ground is no longer only the cream: a project island
+    /// lays its identity hue under the rows (``Slate/ProjectTint``), and a tinted bed is a DIFFERENT
+    /// ground. `#76746D` held 4.51 on the cream but slid to 4.21 under the bed; this rung is solved
+    /// so it holds exactly 4.50 on the DEEPEST bed in the register, and the cream simply gets a
+    /// darker quiet tier for free. It is therefore pinned to ``Slate/Opacity/bed`` — re-solve it if
+    /// that alpha ever moves.
     ///
     /// ⚠️ PINNED ON THE LIGHT SIDE ONLY. Two subtrees flip `colorScheme` to glass (the selected row's
     /// ``SlateCompactIsland``, the pane chrome inside the terminal island); a flat hex draws
@@ -305,12 +313,12 @@ enum Slate {
         #if canImport(AppKit)
         static let primary = Color(nsColor: .labelColor)
         static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabelColor)
-        static let tertiary = Color(slatePinnedLight: 0x76746D, darkSystem: .tertiaryLabelColor)
+        static let tertiary = Color(slatePinnedLight: 0x6C6B64, darkSystem: .tertiaryLabelColor)
         static let icon = secondary
         #else
         static let primary = Color(uiColor: .label)
         static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabel)
-        static let tertiary = Color(slatePinnedLight: 0x76746D, darkSystem: .tertiaryLabel)
+        static let tertiary = Color(slatePinnedLight: 0x6C6B64, darkSystem: .tertiaryLabel)
         static let icon = secondary
         #endif
 
@@ -350,6 +358,17 @@ enum Slate {
     /// tokens did not govern (round 13): every `.opacity(N)` in chrome code picks a rung here, so
     /// two washes that mean the same thing can never drift apart by a few hundredths again.
     enum Opacity {
+        /// A GROUND that has to stay a ground (``ProjectTint/wash(for:)``). Below ``faint``, because
+        /// a bed that reads as a FILL stops being a ground: measured across the identity register
+        /// the island lands 1.13–1.15× off the cream, which is separation the eye resolves without
+        /// the group turning into a coloured panel. The first pass shipped 0.05 (1.06×) and read as
+        /// barely there in the running app (user-reported 2026-08-09).
+        ///
+        /// The tint is not free and the price is paid in ``Slate/Text/tertiary``: a tinted bed is a
+        /// different ground, and every step here deepens the rung that has to stay legible on the
+        /// worst bed in the register. Raising this without re-solving that rung is how the quiet
+        /// tier silently drops under the 4.5 reading floor.
+        static let bed = 0.10
         /// The faint accent wash (``State/accentMuted``'s dose).
         static let faint = 0.12
         /// The selection/latch wash (``State/selected``'s dose).
@@ -408,10 +427,57 @@ enum Slate {
         #endif
     }
 
-    // The per-project IDENTITY hue register (tinted folders, FNV-1a → 8 system hues) is RETIRED
-    // (flat round restraint, user-directed 2026-08-08): a hue per project on chrome glyphs read as
-    // ornament. Projects are told apart by name, position and tooltip; do not reintroduce a
-    // per-project colour mark without a fresh verdict.
+    /// The per-project IDENTITY hue — a launch-stable colour per project, spent as the GROUND its
+    /// group stands on and nowhere else (``ProjectTint/wash(for:)``, ``SlateProjectIsland``).
+    ///
+    /// The earlier reading of this idea — the hue on the folder GLYPH — was rejected as ornament,
+    /// and that verdict still holds: the folder in the group header stays monochrome. What was
+    /// approved instead (user-directed 2026-08-08) is the island reading: one low-alpha bed under
+    /// the whole project, header and rows together, so the colour names the GROUP rather than
+    /// decorating a symbol inside it.
+    ///
+    /// The register is the half of the wheel the STATUS vocabulary does not speak, plus brown. Red,
+    /// amber and green are deliberately absent: a project whose bed was amber would be saying, in
+    /// the app's own dialect, that something in it needs attention. Every hue is deepened until it
+    /// clears 3.0:1 on the cream ground, so the register survives being spent anywhere else later —
+    /// though at ``Slate/Opacity/bed`` it never is.
+    ///
+    /// ⚠️ The map is FNV-1a over the key's UTF-8, never `hashValue`: Swift's is per-process seeded,
+    /// so a `hashValue` register would deal every project a new colour on every launch — the one
+    /// thing an identity mark may not do.
+    enum ProjectTint {
+        /// Five cool hues plus brown. See the type note for why the warm half is missing.
+        @MainActor
+        static let register: [Color] = [
+            Color(slateHex: 0x0088FF), Color(slateHex: 0x6155F5), Color(slateHex: 0xCB30E0),
+            Color(slateHex: 0x00A2AD), Color(slateHex: 0xAC7F5E),
+        ]
+
+        /// The hue a project key is dealt — stable across launches, machines and window rebuilds.
+        @MainActor
+        static func hue(for key: String) -> Color {
+            register[index(of: key, count: register.count)]
+        }
+
+        /// The BED a project group stands on: its hue at ``Slate/Opacity/bed``. A `nil` key (the
+        /// keyless "Other" bucket) gets a neutral bed of the same weight — the bucket is still a
+        /// group and still wants an island, it just has no identity to spend.
+        @MainActor
+        static func wash(for key: String?) -> Color {
+            guard let key else { return Slate.Text.secondary.opacity(Opacity.bed) }
+            return hue(for: key).opacity(Opacity.bed)
+        }
+
+        /// FNV-1a-64 over UTF-8, reduced mod the register size. Wrapping multiply is the algorithm.
+        static func index(of key: String, count: Int) -> Int {
+            var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+            for byte in key.utf8 {
+                hash ^= UInt64(byte)
+                hash = hash &* 0x100_0000_01B3
+            }
+            return Int(hash % UInt64(count))
+        }
+    }
 
     @MainActor
     enum Status {
@@ -538,10 +604,19 @@ enum Slate {
         /// The sidebar TAB row — the standard single-line row rung (`heightRow`), so the tab list
         /// keeps the ladder's beat: denser than a lounge list, taller than a menu row.
         static let heightTabRow: CGFloat = heightRow
-        /// The tab row's horizontal content inset — `space3`, which is ALSO the section header's
-        /// chevron-gutter width: with the list inset (`space2`) both land every text run (header
-        /// name, git line, row titles) on ONE left rail, chevron hanging in the gutter before it.
+        /// The chrome rail OUTSIDE the project islands — the connection footer's content inset and
+        /// the empty-list label's. `space3`, one step wider than the rail inside an island, because
+        /// nothing out here has an island edge to stand off from.
         static let tabRowInset: CGFloat = space3
+        /// How far a project island holds its content off its OWN edge — the selected row's dark
+        /// chip must float inside the bed rather than butt against it. A grid step (`space2`), and
+        /// chosen at true size against 6 and 10 (user-directed 2026-08-08).
+        static let projectIslandInset: CGFloat = space2
+        /// The text rail INSIDE a project island — header name, git line and every row title stand
+        /// here. `projectIslandInset + islandRail` is held at 18 so the runs keep the rail the
+        /// sidebar had before the islands arrived, minus nothing: what the island spends on its own
+        /// breathing room, the rail gives back.
+        static let islandRail: CGFloat = 10
         /// The sidebar project-group header row (gutter chevron + name). 24pt + the list's 2pt row
         /// spacing on both sides = the 28pt inter-group band; the air IS the separator.
         static let heightSectionHeader: CGFloat = 24

@@ -223,39 +223,22 @@ struct NavigatorColumn: View {
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
             .padding(.horizontal, 8)
-            .padding(.bottom, 6)
+            // The band between the field and the first project island. `space3`, not the old 6:
+            // the islands are beds now, and a bed starting a breath under the search plate read as
+            // if the field were part of the first group (user-reported 2026-08-09).
+            .padding(.bottom, Slate.Metric.space3)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                // `space2` between islands, not the old 2pt row gap: the beds are the grouping now,
+                // and two beds a hairline apart would read as one striped surface.
+                LazyVStack(alignment: .leading, spacing: Slate.Metric.space2) {
                     if allRows.isEmpty {
                         emptyLabel("No tabs open")
                     } else if sections.isEmpty {
                         emptyLabel("No matching tabs")
                     } else {
                         ForEach(sections) { section in
-                            let collapseKey = Self.collapseKey(section.projectKey)
-                            let collapsed = collapsedSections.contains(collapseKey)
-                            if let header = section.header {
-                                SidebarSectionHeaderRow(
-                                    store: store, title: header, projectKey: section.projectKey,
-                                    collapsed: collapsed, count: section.rows.count,
-                                    rows: section.rows,
-                                    onToggle: {
-                                        // Animated (otty snaps its collapse in one frame; the glide is a
-                                        // deliberate refinement) — the chevron turns, the rows fade, and
-                                        // the sections below slide up in the same curve.
-                                        withAnimation(Slate.Anim.standard) {
-                                            if collapsed { collapsedSections.remove(collapseKey) }
-                                            else { collapsedSections.insert(collapseKey) }
-                                        }
-                                    },
-                                )
-                            }
-                            if !collapsed {
-                                ForEach(section.rows) { row in
-                                    macRow(row)
-                                }
-                            }
+                            projectIsland(section)
                         }
                     }
                 }
@@ -294,6 +277,43 @@ struct NavigatorColumn: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Slate.Surface.field)
+    }
+
+    /// One project's ISLAND: the group's header and its rows on one bed washed in the project's
+    /// identity hue (``SlateProjectIsland``). A section with no header is the ungrouped flat list —
+    /// it gets no bed, because there is no project for a colour to name.
+    @ViewBuilder
+    private func projectIsland(_ section: RowSection) -> some View {
+        let collapseKey = Self.collapseKey(section.projectKey)
+        let collapsed = collapsedSections.contains(collapseKey)
+        let rows = VStack(alignment: .leading, spacing: 2) {
+            if let header = section.header {
+                SidebarSectionHeaderRow(
+                    store: store, title: header, projectKey: section.projectKey,
+                    collapsed: collapsed, count: section.rows.count,
+                    rows: section.rows,
+                    onToggle: {
+                        // Animated (otty snaps its collapse in one frame; the glide is a deliberate
+                        // refinement) — the chevron turns, the rows fade, and the islands below
+                        // slide up in the same curve.
+                        withAnimation(Slate.Anim.standard) {
+                            if collapsed { collapsedSections.remove(collapseKey) }
+                            else { collapsedSections.insert(collapseKey) }
+                        }
+                    },
+                )
+            }
+            if !collapsed {
+                ForEach(section.rows) { row in
+                    macRow(row)
+                }
+            }
+        }
+        if section.header == nil {
+            rows
+        } else {
+            SlateProjectIsland(projectKey: section.projectKey) { rows }
+        }
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome
@@ -556,12 +576,18 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
-/// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
-/// under it (the instrument mono — data, not identity) both start on the SAME x as every row
-/// title is x-anchored by the disclosure chevron's `tabRowInset` gutter; the FOLDER glyph stands
-/// between chevron and name (both always visible — the otty header anatomy: chevron, folder,
-/// name), so the parent's label indents PAST its rows'. The name is the basename `section.header` already carries
+/// The project section header — the top line of the group's ``SlateProjectIsland``: the FOLDER
+/// glyph, the group's NAME (11pt system, semibold — the parent stands a step firmer than its rows)
+/// and the live git line under it (the instrument mono — data, not identity).
+///
+/// The header stands on the island's own text rail (``Slate/Metric/islandRail``), the SAME rail the
+/// row titles keep, so the folder glyph and the titles below it read off one line. It used to indent
+/// past its rows because a disclosure chevron hung in a gutter before it; that chevron now stands at
+/// the island's TRAILING rail instead (user-directed 2026-08-08). Inside an island the group is
+/// already drawn — the bed IS the grouping — so an arrow parked in the reading column was restating
+/// a boundary the surface had already stated, and it was the one glyph pinned hardest to the left.
+///
+/// The name is the basename `section.header` already carries
 /// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
 /// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
 /// one row; while collapsed the header folds to one line with the hidden-row COUNT trailing — mono
@@ -581,43 +607,38 @@ struct SidebarSectionHeaderRow: View {
     var collapsed: Bool = false
     /// The group's row count — the muted trailing number while collapsed (how many tabs are hidden).
     var count: Int = 0
-    /// The group's rows — read ONLY while collapsed, to fuse the hidden rows' badges into the
-    /// count's roll-up ink. Structural identity; the volatile badge reads happen in `body` so a
-    /// status tick re-renders this leaf, never the sidebar body. Default keeps the snapshot-render
-    /// mount unchanged.
+    /// The group's rows — read while collapsed to fuse the hidden rows' badges into the count's
+    /// roll-up ink, and always to work out whether the FOCUSED pane lives in this group. Structural
+    /// identity; the volatile badge reads happen in `body` so a status tick re-renders this leaf,
+    /// never the sidebar body. Default keeps the snapshot-render mount unchanged.
     var rows: [RailRow] = []
     var onToggle: () -> Void = {}
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The header's leading anatomy (the otty grouped-header trio, both glyphs ALWAYS visible):
-        // the collapse chevron in the `tabRowInset` gutter, the dim folder beside it, then the
-        // name — which therefore indents PAST the row titles, the parent standing left-and-above
-        // its children. Baseline-aligned: the glyphs sit on the NAME line; the git line hangs
-        // beneath.
+        // Which project is FOCUSED — read here, in the header leaf, not in the sidebar body: a focus
+        // change then repaints the two affected headers instead of re-running the whole rows +
+        // sectioning + list-diff pass (the same leaf-scoped contract `SidebarLiveRow` keeps for
+        // selection).
+        let current = Self.holdsFocus(rows: rows, store: store)
+        // The header's leading anatomy: the dim folder, then the name — both on the island's text
+        // rail, so the glyph starts exactly where the row titles below it do. Baseline-aligned: the
+        // folder sits on the NAME line; the git line hangs beneath.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // One chevron glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS
-            // with the group animation instead of teleporting between two symbols. Leading-aligned
-            // in its gutter, clear of the folder.
-            Image(systemSymbol: .chevronRight)
-                // `.medium`, not `.semibold` — a 1px-stroke glyph; semibold at this size reads a
-                // full step chunkier.
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.State.header)
-                .rotationEffect(.degrees(collapsed ? 0 : 90))
-                .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-            // The folder — the group is a place, spoken in the header's own muted ink; the one
-            // pictogram the monochrome rail keeps.
+            // The folder — the group is a place, spoken in the header's own ink; the one pictogram
+            // the monochrome rail keeps. It stays MONOCHROME even though the group now has an
+            // identity hue: the bed carries that colour, and tinting the glyph too would say the
+            // same thing twice (user-directed 2026-08-08).
             Image(systemSymbol: .folderFill)
                 .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.State.header)
+                .foregroundStyle(headerInk(current: current))
                 .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
                 // `nerdAware` — a project folder named with a nerd-font glyph draws it from the
                 // bundled symbols face instead of a notdef box.
                 Text.nerdAware(title, size: Slate.Typeface.footnote)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .foregroundStyle(headerInk(current: current))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 let segments = Self.detailSegments(collapsed: collapsed, summary: summary)
@@ -643,9 +664,21 @@ struct SidebarSectionHeaderRow: View {
                 Text(trailing)
                     .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                     .foregroundStyle(rollup ?? Slate.Text.tertiary)
+                    .padding(.trailing, 6)
             }
+            // One chevron glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS
+            // with the group animation instead of teleporting between two symbols. It stands at the
+            // island's TRAILING rail, out of the reading column — see the type note.
+            Image(systemSymbol: .chevronRight)
+                // `.medium`, not `.semibold` — a 1px-stroke glyph; semibold at this size reads a
+                // full step chunkier.
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(Slate.State.header)
+                .rotationEffect(.degrees(collapsed ? 0 : 90))
         }
-        .padding(.trailing, Slate.Metric.tabRowInset) // the rows' trailing-slot x
+        // Both rails are the island's, so the folder lands on the row titles' x and the chevron on
+        // their trailing-slot x.
+        .padding(.horizontal, Slate.Metric.islandRail)
         .padding(.vertical, 4)
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)
@@ -660,6 +693,22 @@ struct SidebarSectionHeaderRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// WHICH project is open, said on the ink ladder the sidebar just rebuilt: the focused group's
+    /// folder and name step up to the body ink; every other group stays on the quiet rung. Chosen
+    /// over a second alpha on the bed, a hue edge, and dropping the other groups' colour altogether
+    /// (user-directed 2026-08-08) — a step on a ladder that already exists spends no new vocabulary,
+    /// and it cannot collide with the SELECTED ROW's dark chip standing inside the same island.
+    private func headerInk(current: Bool) -> Color {
+        current ? Slate.Text.primary : Slate.Text.secondary
+    }
+
+    /// Does the FOCUSED pane live in this group? Pure over the rows + the tree's focus, so the
+    /// marking rule is unit-pinnable and the leaf's only store read is the focus itself.
+    static func holdsFocus(rows: [RailRow], store: WorkspaceStore) -> Bool {
+        guard let focused = store.tree.activeSession?.activeTab?.activePane else { return false }
+        return rows.contains { $0.id == focused }
     }
 
     /// The header's muted trailing slot: the hidden-row count while COLLAPSED (the otty

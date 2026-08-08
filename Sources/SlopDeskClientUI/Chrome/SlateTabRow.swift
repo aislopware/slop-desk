@@ -155,7 +155,11 @@ struct SlateTabRow: View {
             Spacer(minLength: 6)
             if !isEditing { trailing }
         }
-        .padding(.horizontal, Slate.Metric.tabRowInset)
+        // The rail INSIDE the project island — the row's chip already stands `projectIslandInset`
+        // off the bed's edge, so the text rail gives that back and the runs land where they always
+        // did (`SidebarSectionHeaderRow` keeps the same rail, which is what puts the folder glyph
+        // and the row titles on one line).
+        .padding(.horizontal, Slate.Metric.islandRail)
         .frame(height: Slate.Metric.heightTabRow)
     }
 
