@@ -68,7 +68,7 @@ components:
     note: "FlatDividerSplitView paints the divider AND the split-view backing layer in the ground colour, so the three columns read as one continuous sunken field; the only boundary the window draws is the island's own edge
   island:
     backgroundColor: "{colors.glass-dracula} (Alucard: {colors.glass-alucard})"
-    rounded: "8px — concentric with the window's own 16 (Apple's inner = outer − inset), and JetBrains' `Island.arc.compact = 16` arc WIDTH"
+    rounded: "14px — strict concentricity (16 − 8) gives 8, but 8 read as a barely-softened rectangle at canvas size, so the corner is opened for the modern read (user-directed 2026-08-08). Stays UNDER the window's own 16: an inner corner rounder than its frame reads as a bubble"
     inset: "8px moat on the leading/trailing/bottom sides; the top side of the moat is the full 40px band"
     border: "1px Slate.Line.divider, inset-stroked inside the clip"
     note: "THE ONE ISLAND (user-directed 2026-08-08) — the terminal canvas, the window's only lifted surface. `View.slateIsland()` is its single call site; a second one is the many-islands clutter coming back. Panes tile it edge-to-edge, parted by the PaneDivider hairline, never by a channel"
@@ -82,7 +82,7 @@ components:
     height: "28px"
   titlebar:
     backgroundColor: "transparent — a hover-reveal overlay riding the content column's top strip (40px)"
-    note: "restored with the chrome revert (user-directed 2026-08-08): reopen plates for both collapsed columns fade in while the pointer is in the top strip; the centred active-title menu (working dir / split / move / close) and — while the sidebar is hidden — the connection cluster stay always-visible on the traffic-light row"
+    note: "the band is EMPTY at rest (user-directed 2026-08-08): the centred pane title and its menu are deleted — with the terminal lifted, this strip is the island's top moat, bare ground. Only the two hover-revealed reopen plates and — while the sidebar is hidden — the connection cluster appear on the traffic-light row"
   list-row:
     backgroundColor: "transparent"
     textColor: "secondaryLabelColor"
@@ -119,8 +119,8 @@ North star: **one ground, one island.** SlopDesk's window holds exactly two tone
 Alucard's published cream `#FFFBEB`, and it is the same cream under both profiles: the navigator,
 the code panel, the top band and the moat all stand on it, flush, un-rounded, with no seam between
 them — they SINK. Lifted off that ground is exactly ONE surface: the terminal canvas, wearing the
-profile's glass, rounded at 8pt, floating in a uniform 8pt moat (the top side of which is the 40pt
-titlebar band). Inside the island, panes tile edge-to-edge and are parted by a hairline, never by a
+profile's glass, rounded at 14pt, floating in a uniform 8pt moat (the top side of which is the 40pt
+titlebar band, which is now empty). Inside the island, panes tile edge-to-edge and are parted by a hairline, never by a
 channel — one lift, one vocabulary.
 
 This is the third structure of 2026-08-08 and it was set by the user twice. The first ask was the
@@ -144,11 +144,15 @@ ground gives ~13:1 — the Canario read, a bright frame carrying a dark canvas. 
 and the glass are the same cream by construction, so the window reads as one calm light surface and
 the island is drawn by its corner and its hairline edge alone.
 
-### Geometry — three sources, one number
+### Geometry
 
-Window 16 (macOS 26 Tahoe's titlebar-only window radius) − moat 8 = island 8. That is Apple's own
-concentricity rule; the same 8 falls out of JetBrains' published `Island.arc.compact = 16` (an arc
-WIDTH, so radius 8) and out of measuring Rio Canario (≈7.5).
+Window 16 (macOS 26 Tahoe's titlebar-only window radius), moat 8, island **14**.
+
+Three independent sources put the concentric answer at 8 — Apple's inner = outer − inset, JetBrains'
+published `Island.arc.compact = 16` (an arc WIDTH), and a measurement of Rio Canario (≈7.5) — and 8
+is what shipped first. At canvas size it read as a barely-softened rectangle, so the corner was
+opened to 14 for the modern read (user-directed 2026-08-08). The ceiling is the window's own 16: an
+inner corner rounder than the frame around it reads as a bubble, not a panel.
 
 ## The two worlds — one chrome polarity
 
@@ -248,6 +252,11 @@ info status. Everything else interactive is the system's.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
+- **The titlebar band is EMPTY at rest** (user-directed 2026-08-08): the centred pane title and its
+  menu are deleted. With the terminal lifted, the band is the island's top moat — bare ground — and a
+  label floating in it read as chrome the layout no longer has room for. Split / move / close keep
+  their chords; the cwd readout and Copy Path live in the palette's DIRECTORY section. Only the two
+  hover-revealed reopen plates and the connection cluster (while the sidebar is hidden) appear there.
 - **The panel column** (right) SINKS: it carries the workbench / device surfaces below a TAB
   STRIP band standing on the ground, closed by a `Line.divider` hairline. Its chips are ghost at rest, the hover wash under the
   pointer, and the SELECTED chip wears the `State.selected` accent wash with primary ink — the

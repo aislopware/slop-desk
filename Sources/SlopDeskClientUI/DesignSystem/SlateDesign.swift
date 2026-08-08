@@ -462,10 +462,13 @@ enum Slate {
         /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
         /// misaligned panel.
         static let islandInset: CGFloat = 8
-        /// The island's corner: `windowRadius − islandInset`, Apple's concentricity rule. The same 8
-        /// falls out of JetBrains' `Island.arc.compact = 16` (an arc WIDTH) and out of measuring
-        /// Canario, so three independent sources agree.
-        static let islandRadius: CGFloat = 8
+        /// The island's corner. Strict concentricity (`windowRadius − islandInset`) gives 8, and so do
+        /// JetBrains' `Island.arc.compact = 16` (an arc WIDTH) and a measurement of Canario — but 8 read
+        /// as a barely-softened rectangle at this size, and the brief is the MODERN island, so the
+        /// corner is opened to 14 (user-directed 2026-08-08). It stays UNDER the window's own 16: an
+        /// inner corner rounder than the frame it sits in reads as a bubble, not a panel. Everything
+        /// else on the ladder is untouched — this is the island's number, not a new rung.
+        static let islandRadius: CGFloat = 14
         /// The GROUND BAND across the window's top — the strip the traffic lights and the hover
         /// titlebar stand on, above the island. The height ladder's chrome-strip rung
         /// (``heightStrip`` / ``titlebarHeight``); the band is not a new measurement.
