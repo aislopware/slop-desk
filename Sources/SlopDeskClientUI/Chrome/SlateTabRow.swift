@@ -16,12 +16,11 @@
 // coloured ring" the way a mail row reads unread. The rail is monochrome except the marks that
 // carry state; the IDENTITY register lives on the section HEADER's folder mark (the Canario
 // dialect, user-directed 2026-08-07 — the earlier 2px spine + 5% wash read as invisible
-// ornament and were removed). ACTIVE is the REVERSE-VIDEO chip (user-directed 2026-08-07, polish
-// round): the row flips its colour-scheme environment, so the solid `chip` fill and every ink on
-// it resolve at the OPPOSITE pole — a bright pill on the dark floor, an ink pill on the light one
-// (ANSI SGR 7 as a selection language; Canario's contrast-flipped active tab). Nothing else rides
-// the row: no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and
-// the context menu.
+// ornament and were removed). ACTIVE is the plain SOLID chip (`Surface.chip`) under the chrome's
+// own scheme — the 2026-08-07 reverse-video colour-scheme flip was retired the next day
+// (user-directed 2026-08-08): selection is the one filled plate on a sidebar of ghosts. Nothing
+// else rides the row: no subtitle, no readout, no telemetry — the richness lives in the hover
+// tooltip and the context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -93,8 +92,6 @@ struct SlateTabRow: View {
 
     @State private var hovering = false
     @State private var closeHover = false
-    /// The chrome's own scheme — the pole the active row's REVERSE VIDEO flips from.
-    @Environment(\.colorScheme) private var scheme
     /// The inline-rename draft text — seeded from `title` when the field opens.
     @State private var draft = ""
     /// Whether the inline rename has already been RESOLVED by Return (commit) or Escape (cancel) — so the
@@ -148,15 +145,9 @@ struct SlateTabRow: View {
         ) } }
         // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
         // (`cardShadow` resolves clear — fill + hairline carry the lift). Hover/rest cast nothing.
+        // The reverse-video colour-scheme flip that used to wrap the row is retired (user-directed
+        // 2026-08-08): every colour resolves under the chrome's own scheme.
         .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
-        // REVERSE VIDEO (user-directed 2026-08-07, polish round): the ACTIVE row flips the whole
-        // row's colour-scheme environment to the OPPOSITE pole, so every semantic colour inside —
-        // the chip fill, the title ink, badges, status marks, the hover close plate — re-resolves
-        // inverted: the chip is the one BRIGHT object on a dark floor (and the one ink-dark object
-        // on a light one). This is the terminal's own selection language (ANSI SGR 7, reverse
-        // video) applied to the rail — Canario's contrast-flipped active pill, derived from
-        // semantics rather than painted hex. Inactive rows keep the chrome's scheme untouched.
-        .environment(\.colorScheme, rowScheme)
         .contentShape(.rect)
         // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
         // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap arm
@@ -170,21 +161,13 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// ACTIVE = the SOLID chip (`Slate.Surface.chip`), resolved under the FLIPPED scheme
-    /// (``rowScheme``) so it lands on the opposite pole: near-white on a dark floor, near-black on
-    /// a light one — the reverse-video chip (user-directed 2026-08-07, polish round). Hover keeps
-    /// the quiet same-scheme wash.
+    /// ACTIVE = the SOLID chip (`Slate.Surface.chip`) under the chrome's own scheme — a raised
+    /// plate one step off the floor (the reverse-video flip is retired, user-directed 2026-08-08).
+    /// Hover keeps the quiet wash.
     private var rowBackground: Color {
         if active { Slate.Surface.chip }
         else if hovering { Slate.State.hover }
         else { .clear }
-    }
-
-    /// The active row's flipped colour scheme — the reverse-video pole; inactive rows pass the
-    /// chrome's own scheme through unchanged.
-    private var rowScheme: ColorScheme {
-        guard active else { return scheme }
-        return scheme == .dark ? .light : .dark
     }
 
     /// The title's ink — the NEUTRAL live-otty ladder only (state hue belongs to the trailing

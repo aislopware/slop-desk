@@ -1270,10 +1270,11 @@ private struct IOSSidebarLiveRow: View {
 #if os(macOS)
 /// One rail project chip — the group header folded to a muted folder glyph (icon colour tracks
 /// the muted header ink — flat-round restraint, user-directed 2026-08-08), the ACTIVE project
-/// standing on the reverse-video chip fill (the same flipped-scheme chip the active tab row
-/// wears), and the group's attention roll-up as a corner dot in the strongest ink of the rows it
-/// hides (``StatusPresentation/attentionRollupInk(_:)``). Volatile chrome (selection, badges) is
-/// read INSIDE this leaf so a status tick re-renders one chip, never the rail body.
+/// standing on the plain solid chip fill (the same chip the active tab row wears; the
+/// reverse-video flip is retired), and the group's attention roll-up as a corner dot in the
+/// strongest ink of the rows it hides (``StatusPresentation/attentionRollupInk(_:)``). Volatile
+/// chrome (selection, badges) is read INSIDE this leaf so a status tick re-renders one chip,
+/// never the rail body.
 private struct RailProjectChip: View {
     let store: WorkspaceStore
     let title: String
@@ -1282,11 +1283,6 @@ private struct RailProjectChip: View {
     let onSelect: (PaneID) -> Void
 
     @State private var hovering = false
-    /// The ambient chrome scheme — flipped onto the ACTIVE chip so it wears the same reverse-video
-    /// inversion as the active tab row (the app's one selection language): the chip fill and the
-    /// glyph ink both re-resolve against the opposite polarity.
-    @Environment(\.colorScheme) private var scheme
-
     var body: some View {
         let activePane = store.tree.activeSession?.activeTab?.activePane
         let active = rows.contains { $0.id == activePane }
@@ -1319,15 +1315,13 @@ private struct RailProjectChip: View {
             .contentShape(.rect(cornerRadius: Slate.Metric.radiusCard))
         }
         .buttonStyle(.plain)
+        // The ACTIVE chip is the plain solid chip under the chrome's own scheme — the reverse-video
+        // flip is retired (user-directed 2026-08-08): selection reads as the one filled plate on a
+        // sidebar of ghosts, same dialect as the active tab row.
         .background(
             active ? Slate.Surface.chip : (hovering ? Slate.State.hover : Color.clear),
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
         )
-        // The ACTIVE chip is reverse video, exactly like the active tab row (same modifier order:
-        // the flip wraps the fill): the chip fill AND the glyph ink re-resolve against the
-        // opposite polarity — without it the semantic chip fill sits a whisper off the flat
-        // chrome and the mark disappears.
-        .environment(\.colorScheme, active ? (scheme == .dark ? .light : .dark) : scheme)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         .help(rows.count == 1 ? "\(title) — 1 tab" : "\(title) — \(rows.count) tabs")

@@ -84,8 +84,8 @@ components:
     height: "32px"
     padding: "0 12px"
   list-row-active:
-    backgroundColor: "reverse video — the row flips its colorScheme environment, so the chip (controlBackgroundColor) and every ink inside resolve at the OPPOSITE pole: near-white chip + dark text on the dark chrome, near-black chip + light text on the cream chrome"
-    textColor: "labelColor (under the flipped scheme)"
+    backgroundColor: "Slate.Surface.chip (controlBackgroundColor) under the chrome's own scheme — the one filled plate on a sidebar of ghosts (the reverse-video flip is retired, user-directed 2026-08-08)"
+    textColor: "labelColor"
     rounded: "{rounded.control}"
     height: "32px"
     padding: "0 12px"
@@ -96,7 +96,7 @@ components:
     backgroundColor: "{colors.glass-dracula}"
     note: "the right column — its tab strip sits at the top of the same flat glass surface"
   panel-tab-chip:
-    backgroundColor: "ghost (clear) at rest; raised wash on hover; selected = inverted micro-chip — glass INK fill with glass FACE text, the strip's reverse-video echo of the sidebar chip"
+    backgroundColor: "Slate.Surface.raised at rest; lift on hover; selected = the selection tint ({colors.accent} at 15%) with primary ink — the filled chip row, restored user-directed 2026-08-08 (the inverted micro-chip is retired)"
     rounded: "capsule"
     height: "24px"
 ---
@@ -161,11 +161,10 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
   chrome, flat round), New Tab, compact connection readout. The expanded strip keeps its collapse
   toggle permanent at top-trailing; the right panel's reopen is the `PanelEdgeHandle` drawer pull.
   There is NO titlebar of any kind.
-  The active row is the column's one raised object, and it is **reverse video** (kept from the
-  polish round): the row flips its `colorScheme` environment, so the chip fill (`Slate.Surface.chip`
-  → `controlBackgroundColor`) and every semantic ink inside re-resolve at the opposite pole — a
-  near-white chip with dark text on the dark chrome. Selection is stated by INVERSION, still
-  entirely semantic.
+  The active row is the column's one raised object: the solid chip fill (`Slate.Surface.chip` →
+  `controlBackgroundColor`) under the chrome's own scheme — a quiet plate one step off the floor.
+  The reverse-video colour-scheme flip of the 2026-08-07 polish round is RETIRED (user-directed
+  2026-08-08); do not reintroduce inversion as a selection language.
 - **Surfaces** (`Slate.Surface`): `field` → the chrome floor (above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
@@ -196,9 +195,10 @@ info status. Everything else interactive is the system's.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
 - **The panel column** (right) is the second glass surface, same anatomy. Its TAB STRIP sits at
-  its top, on the glass. The SELECTED strip chip is the **inverted micro-chip**: glass-ink fill
-  with glass-face text — the same reverse-video language as the sidebar chip, so the whole app has
-  ONE way of saying "selected". At rest a tab is a ghost (no plate); hover is the raised wash.
+  its top, on the glass. The strip chips are the filled chip row (restored user-directed
+  2026-08-08 — the inverted micro-chip is retired): `raised` at rest, `lift` on hover, and the
+  SELECTED chip wears the selection tint (accent 15%) with primary ink — the same rung every other
+  latched control uses.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -249,7 +249,8 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T introduce a second selection language: selected = reverse-video inversion (sidebar chip,
-  strip micro-chip). No accent-tinted plates, no underlines for selection.
+- DON'T introduce a second selection language: selected = the quiet filled plate (sidebar `chip`
+  fill, strip selection tint). No reverse-video/colour-scheme inversion (tried 2026-08-07, retired
+  2026-08-08), no underlines for selection.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
