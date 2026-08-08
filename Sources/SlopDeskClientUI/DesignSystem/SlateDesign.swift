@@ -877,10 +877,30 @@ enum Slate {
         /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
         /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
         static let needle = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.24)
+        /// The EMPHASIZED curve — a fast, decisive attack with a long settle, for the moves big
+        /// enough that the eye tracks the object rather than just noticing the result. Named once
+        /// here because two very different actuators spend it: SwiftUI (`stackReflow`, `columnSlide`)
+        /// and AppKit (`NSSplitViewItem.animator()`, which cannot take a SwiftUI `Animation` and so
+        /// needs the raw control points).
+        static let emphasizedControlPoints: (x1: Float, y1: Float, x2: Float, y2: Float)
+            = (0.4, 0, 0.2, 1)
         /// A whole COLUMN reflowing (toast spine expand/collapse shifts every sibling card, not just the
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.
         static let stackReflow = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.28)
+        /// The SELECTION PLATE travelling between two chips (`SlateCompactIsland`'s morph). Longer
+        /// than `standard` and on the emphasized curve on purpose: `standard` is sized for a state
+        /// that CHANGES IN PLACE, and spent on a plate crossing the whole panel it read as a skip
+        /// rather than a move (measured: the plate cleared 128pt in ~120ms). This is still well
+        /// under the column slide — the plate is the smaller object and must not feel heavier.
+        static let selectionMorph = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.26)
+        /// A SPLIT COLUMN opening or closing — the sidebar and the code panel (user-directed
+        /// 2026-08-09). The longest move in the app: an entire column's width travels, so it takes
+        /// the emphasized curve and a beat more than `stackReflow` to keep the terminal's re-wrap
+        /// from reading as a snap. Anything that has to LAND with the column (the titlebar strip
+        /// arriving as the sidebar leaves) delays by this much.
+        static let columnSlideDuration: Double = 0.32
+        static let columnSlide = Animation.timingCurve(0.4, 0, 0.2, 1, duration: columnSlideDuration)
         /// The ONE repeating shape in the vocabulary — a slow symmetric breathe for a preview that
         /// demonstrates blinking (the cursor preview). EaseInEaseOut 0.55s, autoreversing forever;
         /// never used on live chrome (the at-rest-motion purge stands).

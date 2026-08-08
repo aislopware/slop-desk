@@ -66,34 +66,56 @@ struct SlateCompactIsland<Content: View>: View {
     let selected: Bool
     /// The caller's live hover flag — an unselected chip still lights under the pointer.
     var hovering = false
+    /// The MORPH namespace shared by one list of chips. Supply it and the selected plate stops being
+    /// a per-row background that cross-fades and becomes ONE plate that TRAVELS from the old row to
+    /// the new one (user-directed 2026-08-09: selection "jumped"). `nil` — a lone chip with no
+    /// siblings to travel between — keeps the plain fade.
+    var morph: Namespace.ID?
     @ViewBuilder let content: () -> Content
 
     /// The chrome's own scheme, passed straight back through for an unselected chip: overriding it
     /// unconditionally would pin the resting rows to a scheme instead of leaving them on the app pin.
     @Environment(\.colorScheme) private var chromeScheme
 
-    private var radius: CGFloat { Slate.Metric.islandRadiusCompact }
+    /// One geometry id per list: every chip sharing a `morph` namespace also shares this, which is
+    /// exactly what makes the plate a single travelling object rather than N appearing ones.
+    private static var morphID: String { "slate.compactIsland.selection" }
 
-    private var fill: Color {
-        if selected { return Slate.Surface.island }
-        return hovering ? Slate.State.hover : .clear
-    }
+    private var radius: CGFloat { Slate.Metric.islandRadiusCompact }
 
     var body: some View {
         content()
             .environment(\.colorScheme, selected ? Slate.glassColorScheme : chromeScheme)
-            .background(fill, in: .rect(cornerRadius: radius, style: .continuous))
-            .overlay {
-                if selected {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline)
-                        .allowsHitTesting(false)
-                }
+            .background(alignment: .center) { plate }
+    }
+
+    /// The chip's ground. Selected draws the island plate — fill, hairline and the light profile's
+    /// whisper of a shadow as ONE view, which is what lets the morph carry all three across; hover
+    /// draws the resting tint; at rest nothing.
+    ///
+    /// ⚠️ The shadow belongs to the PLATE, not to the chip: cast on the whole
+    /// `content().background(…)` stack it also shadowed the label, which reads as a smudge under
+    /// text at small sizes and cannot travel with a matched-geometry move.
+    @ViewBuilder
+    private var plate: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        if selected {
+            let pill = shape
+                .fill(Slate.Surface.island)
+                .overlay(shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline))
+                // The light profile's chip is cream on cream — the hairline draws it, and this
+                // whisper keeps it from reading flat. Dark profiles cast nothing (`cardShadow`
+                // resolves clear there): an inverted chip needs no help separating.
+                .shadow(color: Slate.State.cardShadow, radius: 2, y: 1)
+                .allowsHitTesting(false)
+            if let morph {
+                pill.matchedGeometryEffect(id: Self.morphID, in: morph)
+            } else {
+                pill
             }
-            // The light profile's chip is cream on cream — the hairline draws it, and this whisper
-            // of a shadow keeps it from reading flat. Dark profiles cast nothing (`cardShadow`
-            // resolves clear there): an inverted chip needs no help separating.
-            .shadow(color: selected ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
+        } else if hovering {
+            shape.fill(Slate.State.hover).allowsHitTesting(false)
+        }
     }
 }
 

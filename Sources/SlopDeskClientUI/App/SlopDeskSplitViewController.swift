@@ -294,15 +294,24 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // The code panel re-expands at its persisted width — applied in the animation's completion
         // (a `setPosition` mid-animation is overridden by the collapse animation's final frame).
         // The left sidebar restores nothing: its width is capped/session-scoped by design.
-        if item === codeSidebarItem, !collapsed {
-            NSAnimationContext.runAnimationGroup { _ in
-                item.animator().isCollapsed = collapsed
-            } completionHandler: { [weak self] in
-                // Fires on the main thread; the handler's type is just not annotated.
-                MainActor.assumeIsolated { self?.restoreCodeSidebarWidth() }
-            }
-        } else {
+        let restoresWidth = item === codeSidebarItem && !collapsed
+        NSAnimationContext.runAnimationGroup { context in
+            // AppKit's default (0.25s, ease-in-ease-out) is not this app's vocabulary, and a column
+            // is the longest move it makes — the whole width of a panel travels and the terminal
+            // re-wraps behind it. `columnSlide`'s emphasized curve leaves decisively and settles
+            // long, which is what keeps the arrival from reading as a snap (user-directed
+            // 2026-08-09). The SwiftUI side of the same gesture — the titlebar strip that lands as
+            // the sidebar leaves — is timed off the SAME token, so the two halves stay in step.
+            context.duration = Slate.Anim.columnSlideDuration
+            let points = Slate.Anim.emphasizedControlPoints
+            context.timingFunction = CAMediaTimingFunction(
+                controlPoints: points.x1, points.y1, points.x2, points.y2,
+            )
             item.animator().isCollapsed = collapsed
+        } completionHandler: { [weak self] in
+            guard restoresWidth else { return }
+            // Fires on the main thread; the handler's type is just not annotated.
+            MainActor.assumeIsolated { self?.restoreCodeSidebarWidth() }
         }
     }
 }

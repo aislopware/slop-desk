@@ -58,8 +58,9 @@ struct SlateTitlebar: View {
     var body: some View {
         // Everything in the band is CENTRED on it. That used to be wrong — AppKit's default corner
         // inset put the traffic lights high in the 40pt band, so the controls had to be top-anchored
-        // to meet them. `SlopDeskClientApp.positionWindowControls` now centres the lights instead
-        // (user-directed 2026-08-09), so the band has ONE row and plain centring finds it.
+        // to meet them. `SlopDeskClientApp.growTitlebarToBandHeight` now gives AppKit a titlebar of
+        // the band's own height and lets IT centre the lights (user-directed 2026-08-09), so the
+        // band has ONE row and plain centring finds it.
         ZStack {
             // Left: the sidebar REOPEN and, beside it, the tabs the hidden sidebar took with it.
             // Both are collapsed-only; the button is ALWAYS visible in that state (it is the only
@@ -73,14 +74,26 @@ struct SlateTitlebar: View {
                 }
             }
             .opacity(sidebarVisible ? 0 : 1)
+            // The cluster ARRIVES rather than appears: while the sidebar is up it waits one control
+            // to the leading side and slides into place as the column finishes leaving. A pure
+            // opacity fade read as a layer switching on; a short travel in the same direction the
+            // column just went reads as the tabs coming with it (user-directed 2026-08-09).
+            .offset(x: sidebarVisible ? -Slate.Metric.heightControl : 0)
             .allowsHitTesting(!sidebarVisible)
             .padding(.leading, Slate.Metric.windowControlsLead)
             // Reserve the trailing plate's slot so a long run of tabs scrolls instead of sliding
             // under the right-panel reopen button.
             .padding(.trailing, Slate.Metric.plate + 2 * Slate.Metric.space3)
-            // Never RIDE the collapse slide (the column edge travels x 80→300): fade in only once
-            // it has settled.
-            .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
+            // Never RIDE the collapse slide (the column edge travels x 80→300): the strip lands as
+            // the column finishes, so the delay tracks `columnSlideDuration` rather than a literal.
+            // Leaving is the mirror and must CLEAR first — no delay, and quick, so the arriving
+            // column never catches the strip still on screen.
+            .animation(
+                sidebarVisible
+                    ? Slate.Anim.fadeOut
+                    : Slate.Anim.columnSlide.delay(Slate.Anim.columnSlideDuration * 0.55),
+                value: sidebarVisible,
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
 
             // Right: the RIGHT-panel REOPEN — only while the panel is COLLAPSED and the top strip
@@ -92,8 +105,12 @@ struct SlateTitlebar: View {
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
                     .opacity(!codeSidebarVisible && topHover ? 1 : 0)
                     .allowsHitTesting(!codeSidebarVisible && topHover)
+                    // Same contract as the leading cluster: land as the column finishes leaving,
+                    // clear immediately when it comes back.
                     .animation(
-                        codeSidebarVisible ? nil : Slate.Anim.standard.delay(0.15),
+                        codeSidebarVisible
+                            ? Slate.Anim.fadeOut
+                            : Slate.Anim.columnSlide.delay(Slate.Anim.columnSlideDuration * 0.55),
                         value: codeSidebarVisible,
                     )
                     .animation(Slate.Anim.smallFade, value: topHover)

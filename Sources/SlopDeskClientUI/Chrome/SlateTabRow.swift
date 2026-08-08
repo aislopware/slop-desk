@@ -77,6 +77,9 @@ struct SlateTabRow: View {
     var isEditing: Bool = false
     /// The row's tooltip text (full cwd / live agent line / last command) — shown on hover via `.help`.
     var helpText: String?
+    /// The list's shared selection-morph namespace, so the active plate TRAVELS between rows instead
+    /// of fading out here and in somewhere else. See ``SlateCompactIsland/morph``.
+    var morph: Namespace.ID?
     var onSelect: () -> Void
     var onClose: () -> Void
     /// Commit the inline rename with the field's current text. No-op default keeps call sites compatible.
@@ -109,7 +112,7 @@ struct SlateTabRow: View {
     /// is why nothing below hand-picks an "ink on the chip": title, marks, receipts and the close `×`
     /// all keep reading their semantic tiers and resolve against the plate they actually stand on.
     var body: some View {
-        SlateCompactIsland(selected: active, hovering: hovering) { line }
+        SlateCompactIsland(selected: active, hovering: hovering, morph: morph) { line }
             .contentShape(.rect)
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
             // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap

@@ -62,7 +62,18 @@ struct NavigatorColumn: View {
     /// The COLLAPSED project groups (header chevron toggled shut), keyed by ``collapseKey(_:)``.
     /// Session-scoped presentation state — a fresh launch opens every group.
     @State private var collapsedSections: Set<String> = []
+
+    /// The selection plate's morph namespace, shared by EVERY row in the panel — including rows in
+    /// different project islands, so the plate travels across a group boundary the same way it
+    /// travels between two rows of one project.
+    @Namespace private var selectionMorph
     #endif
+
+    /// The focused pane — the ONE volatile value the sidebar body watches, and only so the selection
+    /// plate's morph has an animated transaction to ride (see the list's `.animation`).
+    private var focusedPaneID: PaneID? {
+        store.tree.activeSession?.activeTab?.activePane
+    }
 
     /// The collapse-set key for a section: its normalized project key, or the sentinel for the
     /// keyless "Other" bucket (whose `projectKey` is `nil` but which still collapses).
@@ -226,6 +237,15 @@ struct NavigatorColumn: View {
                     }
                 }
                 .padding(.horizontal, 8)
+                // THE MORPH'S TRANSACTION. `matchedGeometryEffect` interpolates only inside an
+                // animated transaction, and the rows that flip `active` are leaves the container
+                // does not otherwise re-render — so without an explicit `value` to watch here the
+                // plate would still teleport. Reading the focused pane id costs this body ONE cheap
+                // dependency (the id, not the volatile per-pane dicts `RailRowsMemo` exists to keep
+                // out); the rows array is memoized, so the re-eval is a sectioning pass, not a
+                // rebuild. Selection is STILL read inside each leaf — that contract is about
+                // correctness (a param-carried `active` strands the old row lit) and stands.
+                .animation(Slate.Anim.selectionMorph, value: focusedPaneID)
                 // Captures the enclosing NSScrollView (must sit INSIDE the scroll content) so a pane
                 // drag parked at the list's top/bottom edge auto-scrolls rows into reach.
                 .background(sidebarScrollCapturer)
@@ -299,6 +319,7 @@ struct NavigatorColumn: View {
             store: store,
             row: row,
             fallbackTitle: defaultTitle(for: row.kind),
+            morph: selectionMorph,
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
@@ -950,6 +971,8 @@ private struct SidebarLiveRow: View {
     let row: RailRow
     /// The kind's generic title (``PaneChooserRegistry``) when the row title is empty.
     let fallbackTitle: String
+    /// The sidebar's shared selection-morph namespace — see ``SlateCompactIsland/morph``.
+    let morph: Namespace.ID
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRename: (String) -> Void
@@ -1093,6 +1116,7 @@ private struct SidebarLiveRow: View {
                 viewers: store.paneViewers(for: row.id),
                 holders: store.paneHolders(for: row.id),
             ),
+            morph: morph,
             onSelect: onSelect,
             onClose: onClose,
             onRename: onRename,

@@ -33,6 +33,11 @@ struct WorkspaceTabStrip: View {
     /// also carries the traffic lights and a full-height chip crowded them.
     private static let chipHeight = Slate.Metric.heightControl
 
+    /// The selection plate's morph namespace, shared by every chip in the strip so the plate TRAVELS
+    /// between tabs. The strip's own namespace, not the sidebar's: only one of the two is ever
+    /// mounted, and a plate cannot travel to a row that does not exist.
+    @Namespace private var selectionMorph
+
     var body: some View {
         let sections = RailRowsBuilder.sectionedByProject(
             rows, tabOrder: store.flatOrderedTabIDs(), query: "",
@@ -44,6 +49,13 @@ struct WorkspaceTabStrip: View {
                 }
             }
             .padding(.horizontal, Slate.Metric.space1)
+            // The morph's transaction — same contract as the sidebar list's: the plate can only
+            // travel inside an animated transaction, and the chips that flip `active` are leaves
+            // this body does not otherwise re-render.
+            .animation(
+                Slate.Anim.selectionMorph,
+                value: store.tree.activeSession?.activeTab?.activePane,
+            )
         }
         .scrollIndicators(.hidden)
         // Exactly the bed's own height — 24 chip + 2×4 inset = 32 — which the titlebar then centres
@@ -59,8 +71,11 @@ struct WorkspaceTabStrip: View {
         SlateProjectIsland(projectKey: section.projectKey, verticalInset: Slate.Metric.space1) {
             HStack(spacing: Slate.Metric.space1) {
                 ForEach(section.rows) { row in
-                    TabStripChip(store: store, row: row, onSelect: { onSelect(row.id) })
-                        .id(row.leafIdentity)
+                    TabStripChip(
+                        store: store, row: row, morph: selectionMorph,
+                        onSelect: { onSelect(row.id) },
+                    )
+                    .id(row.leafIdentity)
                 }
             }
         }
@@ -76,6 +91,8 @@ struct WorkspaceTabStrip: View {
 private struct TabStripChip: View {
     let store: WorkspaceStore
     let row: RailRow
+    /// The strip's shared selection-morph namespace — see ``SlateCompactIsland/morph``.
+    let morph: Namespace.ID
     let onSelect: () -> Void
 
     @State private var hovering = false
@@ -110,7 +127,7 @@ private struct TabStripChip: View {
                 unseenDone: store.paneUnseenDone.contains(row.id),
             ),
         )
-        SlateCompactIsland(selected: active, hovering: hovering) {
+        SlateCompactIsland(selected: active, hovering: hovering, morph: morph) {
             HStack(spacing: Slate.Metric.space1) {
                 Text.nerdAware(
                     agent ? RailRowsBuilder.agentMarkedTitle(title) : title,
