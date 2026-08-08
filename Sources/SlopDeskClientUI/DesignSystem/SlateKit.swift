@@ -100,15 +100,11 @@ struct SlatePlateStyle: ButtonStyle {
 /// caller's `ViewThatFits` ladder, which drops the labels the strip cannot afford. ``showsLabel`` is
 /// how a rung of that ladder is asked for; nothing else should set it.
 ///
-/// The pill descends from the resurrected inspector tab (`InspectorColumn.tabButton`, deleted in
-/// `6de70aa`, dug back up user-directed 2026-08-03 after two animation redesigns were rejected —
-/// round 1's opacity fades read as cheap, round 2's width morph as stuttery). The inverted
-/// micro-chip (ink fill, face text) of the 2026-08-07 polish round is retired, and the strip now
-/// SPEAKS THE SIDEBAR ROW'S OWN LANGUAGE (user-directed 2026-08-08, following the otty-original
-/// selection): ghost at rest, the hover wash under the pointer, and the selected tab is the one
-/// raised overlay card — `raised` wash plus the `Line.card` hairline, no accent tint. At full
-/// width a tab never changes SIZE between states, which is what those animation rounds were
-/// fighting over.
+/// The pill is the resurrected inspector tab's (`InspectorColumn.tabButton`, deleted in `6de70aa`,
+/// dug back up user-directed 2026-08-03 after two animation redesigns were rejected — round 1's
+/// opacity fades read as cheap, round 2's width morph as stuttery), and the shape the user named as
+/// the good one: filled when selected, flat when not. At full width it no longer changes SIZE
+/// between states, which is what those animation rounds were fighting over.
 ///
 /// There are NO `.animation` modifiers on the selection path. The ONE animation there is the
 /// caller's `withAnimation(Slate.Anim.standard)` transaction around the selection write, which
@@ -159,21 +155,9 @@ struct PanelTabPlate: View {
     var body: some View {
         Button(action: action) {
             plate
-                // Selected steps up to the primary ink on the raised card; unselected rests on
-                // the icon ink (the pre-inversion pair, restored user-directed 2026-08-08).
                 .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-                .background(fill, in: .capsule)
-                // The sidebar row's own card hairline — the strip follows the otty-original
-                // selection (user-directed 2026-08-08): one neutral overlay-card language on
-                // both sides of the window.
-                .overlay {
-                    if selected {
-                        Capsule().strokeBorder(
-                            Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth,
-                        )
-                    }
-                }
-                .contentShape(.capsule)
+                .background(fill, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -221,12 +205,12 @@ struct PanelTabPlate: View {
         }
     }
 
-    /// The sidebar row's ladder, verbatim (user-directed 2026-08-08 — the strip follows the
-    /// otty-original selection): CLEAR at rest, the faint hover wash under the pointer, and the
-    /// selected tab is the one `raised` card (its hairline rides the `body` overlay). The
-    /// filled-at-rest chip row and its accent selection tint are retired with it.
+    /// The plate rungs a latched control uses everywhere else: ``Slate/State/selected`` for on,
+    /// ``Slate/State/hover`` for the pointer. The earlier tab sat its selected state on the HOVER
+    /// tint and gave the unselected tabs no pointer feedback at all — one rung too faint to read at
+    /// true size, and a control that never moves under the pointer.
     private var fill: Color {
-        if selected { return Slate.Surface.raised }
+        if selected { return Slate.State.selected }
         return hovering ? Slate.State.hover : .clear
     }
 }

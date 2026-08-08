@@ -427,35 +427,6 @@ enum RailRowsBuilder {
         return text.isEmpty ? nil : text
     }
 
-    /// The trailing-slot elapsed readout for a WORKING agent row — how long the current turn has been
-    /// running, compact enough for the otty 28pt slot reserve: `42s` under a minute, `2m15s` under an
-    /// hour, `1h02m` beyond. A negative interval (clock skew between the stamp and "now") clamps to
-    /// `0s` rather than rendering garbage. Pure + static so the format is unit-pinned; the view feeds
-    /// it a 1 Hz `TimelineView` date. (Shipped 2026-07-24, retired the same evening as redundant with
-    /// the title shimmer — restored user-directed 2026-08-08: the shimmer itself has since died, and
-    /// the instrument-rows round put the duration back as the slot's live reading.)
-    static func workingElapsedLabel(from start: Date, now: Date) -> String {
-        let seconds = Int(Double.maximum(0, now.timeIntervalSince(start)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m\(String(format: "%02d", seconds % 60))s" }
-        return "\(minutes / 60)h\(String(format: "%02d", minutes % 60))m"
-    }
-
-    /// The COARSE age readout ("how long ago / for how long") for a finish or a waiting question —
-    /// one unit, no composite: `45s`, `3m`, `2h`, `5d`. Coarser than ``workingElapsedLabel(from:now:)``
-    /// on purpose: an age only needs to move once in a while, so its `TimelineView` ticks at 10 s and
-    /// the label never invites reading it as a stopwatch. Clock skew clamps to `0s`.
-    static func ageLabel(from start: Date, now: Date) -> String {
-        let seconds = Int(Double.maximum(0, now.timeIntervalSince(start)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
-    }
-
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
     /// idle pane — sub-second `ls`/`cd` chatter never takes the title, so the resting title doesn't
     /// churn with every trivial command. Mirrors the busy-dot reveal default (1 s,

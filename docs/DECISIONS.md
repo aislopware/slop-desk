@@ -7085,3 +7085,31 @@ footer gains a top hairline and swaps the cpu/mem SF-symbol marks for filling ar
 reading's own alarm ink; disk keeps its glyph (free-space-only data has no denominator). A
 Canario-style hover live-peek of pane content was considered and DECLINED outright in the same
 round — do not re-propose it.
+
+## The chrome returns to the pre-islands layout (2026-08-08, user-directed)
+
+The window chrome — sidebar, top bar and panel strip — reverts to the layout it had at
+`5283c1c1`, before the islands transition began: the hover-reveal `SlateTitlebar` overlay is
+back (reopen plates fade in on top-strip hover; the centred pane-title menu and, while the
+sidebar is hidden, the connection cluster stay on the traffic-light row), the sidebar collapses
+by HIDING again (the 80pt rail and the `PanelEdgeHandle` drawer pull are deleted), the strip
+chips return to `State.selected`-wash rects with the `Line.divider` hairline under the strip,
+and the round-14 instrument rows / footer arc gauges leave the sidebar. The chrome files were
+copied from `1b20eb74` verbatim (that commit differs from `5283c1c1` only by non-design panel
+fixes) rather than re-derived, so the revert cannot drift.
+
+What did NOT revert, by explicit instruction: the Dracula Pro / Alucard theme world and the
+whole Slate token layer. The old code's `Surface.ground`/`Surface.face` sites were mapped onto
+today's `Surface.field` (the authored chrome floor) and `Surface.terminal` (the glass), the
+one-polarity appearance pin and the ink-tint `chromeLine` dividers stay, and the split
+controller keeps painting its backing layer in the chrome line colour inside the otherwise-base
+implementation. The round-14 command ladder also stays: it rides the terminal pane's trailing
+edge and is neither sidebar nor top bar, so it sits outside the requested revert.
+
+The embedded workbench follows the chrome home: the seeded settings return to the Monokai Pro /
+Monokai Pro Light trio, and the generated Dracula/Alucard workbench extension is actively swept
+from seeded hosts (folders plus the `extensions.json` registry entry). The obsolete-seed list
+had to change shape for this: the current seed may never appear in that list (a seed equal to
+the current one re-marks every font-synced host as pristine-former and rewrites it each boot),
+so the old Monokai entry LEFT the list as it became current again, and the Dracula trio entered
+as the newest former seed.

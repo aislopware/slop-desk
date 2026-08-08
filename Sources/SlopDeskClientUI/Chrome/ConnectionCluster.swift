@@ -241,15 +241,6 @@ struct ConnectionCluster: View {
         return String(format: "%.1fT", gib / 1024)
     }
 
-    /// A percent reading as the arc gauge's sweep fraction — clamped to 0…1 so a host reporting a
-    /// momentary >100% (multi-core cpu bursts round up) fills the ring rather than lapping it, and
-    /// `nil` (no pulse) reads 0 (an empty ring under digits that are not there anyway). Pure +
-    /// static so the clamp is unit-pinned.
-    static func gaugeFraction(percent: Int?) -> Double {
-        guard let percent else { return 0 }
-        return Double.minimum(1, Double.maximum(0, Double(percent) / 100))
-    }
-
     /// Free space below this is worth a raised run: the machine still works, but the next container
     /// pull or clean build is the one that fails.
     static let diskWarnMiB: UInt32 = 15 * 1024
@@ -428,12 +419,6 @@ struct ConnectionRailFooter: View {
             }
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
-        .padding(.top, Slate.Metric.space2)
-        // The cockpit's own hairline — the footer is an INSTRUMENT block, and the rule keeps its
-        // readings from reading as one more list row (the round-14 cockpit pass).
-        .overlay(alignment: .top) {
-            Rectangle().fill(Slate.Line.subtle).frame(height: Slate.Metric.hairline)
-        }
     }
 
     /// Line one — who we are talking to, and how far away it feels. On the CONTROL band, not the
@@ -477,27 +462,19 @@ struct ConnectionRailFooter: View {
     /// under the identity rather than a second row competing with it. The line speaks its full prose
     /// to VoiceOver, which cannot see a silhouette.
     private func pulseLine(_ readings: (cpu: String, memory: String, disk: String?)) -> some View {
-        HStack(alignment: .center, spacing: Slate.Metric.space2) {
-            // The PERCENT readings trade their glyphs for filling arc gauges (round-14 cockpit
-            // pass): the arc IS the reading's silhouette — how full the machine is, before the
-            // digits say by how much — and status stays fill + alarm ink, never a new hue.
-            reading(
-                readings.cpu, alarm: .quiet,
-                fraction: ConnectionCluster.gaugeFraction(percent: pulse?.cpuPercent),
-            )
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
+            reading(ConnectionCluster.cpuSymbol, readings.cpu, alarm: .quiet)
             Spacer(minLength: Slate.Metric.space1)
             // The middle: memory, the reading between the second-to-second one and the day-to-day one.
             reading(
-                readings.memory, alarm: ConnectionCluster.memoryAlarm(pulse?.memoryPressure),
-                fraction: ConnectionCluster.gaugeFraction(percent: pulse?.memoryPercent),
+                ConnectionCluster.memorySymbol, readings.memory,
+                alarm: ConnectionCluster.memoryAlarm(pulse?.memoryPressure),
             )
             if let disk = readings.disk {
                 Spacer(minLength: Slate.Metric.space1)
-                // Disk keeps its drive glyph: the host reports FREE space only (no total), and an
-                // arc without a denominator would be a drawing of a guess.
                 reading(
-                    disk, alarm: ConnectionCluster.diskAlarm(freeMiB: pulse?.diskFreeMiB),
-                    symbol: ConnectionCluster.diskSymbol,
+                    ConnectionCluster.diskSymbol, disk,
+                    alarm: ConnectionCluster.diskAlarm(freeMiB: pulse?.diskFreeMiB),
                 )
             }
         }
@@ -507,23 +484,16 @@ struct ConnectionRailFooter: View {
         .accessibilityLabel(pulseSpoken)
     }
 
-    /// One reading: its mark — an arc GAUGE when the reading has a denominator, its glyph when it
-    /// does not — then its number, at ONE alarm: the mark climbs WITH the digits, because a
-    /// half-raised readout reads as a rendering bug rather than a warning.
-    @ViewBuilder
-    private func reading(
-        _ value: String, alarm: ConnectionCluster.Alarm,
-        fraction: Double? = nil, symbol: SFSymbol? = nil,
-    ) -> some View {
+    /// One reading: its mark, then its number, at ONE alarm — the glyph climbs WITH the digits, because a
+    /// half-raised readout reads as a rendering bug rather than a warning. The mark sits a step above the
+    /// digits (`footnote`) so a drawing built from strokes holds its silhouette next to type built from
+    /// stems.
+    private func reading(_ symbol: SFSymbol, _ value: String, alarm: ConnectionCluster.Alarm) -> some View {
         let weight = ConnectionCluster.alarmWeight(alarm)
-        HStack(alignment: .center, spacing: Slate.Metric.space1) {
-            if let fraction {
-                PulseGauge(fraction: fraction, ink: ConnectionCluster.alarmInk(alarm))
-            } else if let symbol {
-                Image(systemSymbol: symbol)
-                    .font(.system(size: Slate.Typeface.footnote, weight: weight))
-                    .symbolRenderingMode(.monochrome)
-            }
+        return HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.footnote, weight: weight))
+                .symbolRenderingMode(.monochrome)
             Text(value)
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: weight))
         }
@@ -542,29 +512,6 @@ struct ConnectionRailFooter: View {
     private var linkAlarm: ConnectionCluster.Alarm {
         guard let detail, detail.isMetric else { return .quiet }
         return ConnectionCluster.linkAlarm(led)
-    }
-}
-
-/// The footer's ARC GAUGE — a percent reading drawn as a filling ring (round-14 cockpit pass):
-/// a full-circle track on the subtle hairline ink, and a sweep from 12 o'clock in the reading's
-/// own alarm ink. Status stays FILL + ink — the arc never invents a hue the alarm ladder does
-/// not already speak. Pure geometry over `Slate` tokens; the fraction is pre-clamped by
-/// ``ConnectionCluster/gaugeFraction(percent:)``.
-struct PulseGauge: View {
-    let fraction: Double
-    let ink: Color
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Slate.Line.subtle, lineWidth: Slate.Metric.gaugeStroke)
-            Circle()
-                .trim(from: 0, to: fraction)
-                .stroke(ink, style: StrokeStyle(lineWidth: Slate.Metric.gaugeStroke, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: Slate.Metric.gaugeDiameter, height: Slate.Metric.gaugeDiameter)
-        .accessibilityHidden(true)
     }
 }
 

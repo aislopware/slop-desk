@@ -94,31 +94,18 @@ struct CodeSidebarColumn: View {
     }
 
     var body: some View {
-        // The panel runs FLAT and full-bleed (flat round, user-directed 2026-08-08 — the second
-        // glass island is retired with the first): the tab strip stays INSIDE the column at its
-        // top, the whole column wears the glass surface edge to edge, and the 1px split divider
-        // against the terminal column is the only separation. The forced glass scheme stays — the
-        // strip's chips, inks and every surface below resolve against the profile, not the OS.
         VStack(spacing: 0) {
             strip
-            surfaceArea
-        }
-        .background(Slate.Surface.terminal)
-        .environment(\.colorScheme, Slate.glassColorScheme)
-        // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
-        // settings watcher applies it without a reload). The ensure-round sync below covers the
-        // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
-        .onChange(of: fontSpec) { _, spec in
-            guard let spec, let client = Self.firstConnectedMetadataClient(store) else { return }
-            // Records the push too, so the next ensure round does not re-send what just landed.
-            Self.lastPushedFontSpec = spec
-            Task { await client.syncCodeFont(spec) }
-        }
-    }
-
-    /// The surface region, filling the island below its strip.
-    private var surfaceArea: some View {
-        Group {
+            // The strip's bottom edge: the Slate divider hairline — the SAME faint fg-tint the
+            // split divider carries (batch 12's one visual language for seams). Without it the
+            // ground band ends in an abrupt tone change against the workbench's own tab strip,
+            // two mismatched grays stacked with no rule between them.
+            //
+            // It stays for EVERY surface (user-directed 2026-08-04, after a round that made it
+            // conditional): the tab row is chrome that outranks whatever it switches between, and
+            // chrome without an edge floats. The stacked-hairline complaint it was meant to fix
+            // belonged to the SECOND rule — the device header's — which is the one that went.
+            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             // A bare switch: the surfaces carry no animation of their own — whatever motion the
             // swap has rides the `selectSurface` transaction, exactly like the pre-removal
             // inspector's content switch under its `withAnimation` tab write.
@@ -140,7 +127,16 @@ struct CodeSidebarColumn: View {
                 )
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Slate.Surface.field)
+        // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
+        // settings watcher applies it without a reload). The ensure-round sync below covers the
+        // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
+        .onChange(of: fontSpec) { _, spec in
+            guard let spec, let client = Self.firstConnectedMetadataClient(store) else { return }
+            // Records the push too, so the next ensure round does not re-send what just landed.
+            Self.lastPushedFontSpec = spec
+            Task { await client.syncCodeFont(spec) }
+        }
     }
 
     /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,
@@ -353,12 +349,8 @@ struct CodeSidebarColumn: View {
         CodeSidebarWebView(projectRoot: projectRoot, url: url)
             .overlay {
                 if veiled {
-                    // The veil covers a workbench that is GLASS-dark: it paints the glass canvas
-                    // under the forced glass scheme so its spinner/label read on it — a chrome-lit
-                    // veil here restores the black → white → workbench boot flash it exists to hide.
                     waiting("Opening workbench…")
-                        .background(Slate.Surface.terminal)
-                        .environment(\.colorScheme, Slate.glassColorScheme)
+                        .background(Slate.Surface.field)
                         .transition(.opacity)
                 }
             }

@@ -240,17 +240,6 @@ final class ConnectionClusterTests: XCTestCase {
         XCTAssertEqual(ConnectionCluster.diskAlarm(freeMiB: nil), .quiet, "an unread volume is not a fault")
     }
 
-    /// The arc gauge's sweep fraction: percent/100 clamped to 0…1; no pulse reads 0 (an empty
-    /// ring under digits that are not there anyway) — never a lapped ring, never a negative trim.
-    func testGaugeFractionClampsToTheRing() {
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: nil), 0)
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: 0), 0)
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: 17), 0.17, accuracy: 0.0001)
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: 100), 1)
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: 130), 1, "burst >100% fills, never laps")
-        XCTAssertEqual(ConnectionCluster.gaugeFraction(percent: -3), 0, "a negative reading stays empty")
-    }
-
     @MainActor
     func testNoteStreamKbpsKeepsZeroAndDropsNegative() {
         let model = RemoteWindowModel()

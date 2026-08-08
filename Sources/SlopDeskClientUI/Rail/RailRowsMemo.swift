@@ -103,9 +103,9 @@ struct RailStructureKey: Equatable {
     /// supplied — the SIDEBAR fingerprint only) sits AT its project root, where the at-root rung titles by
     /// the program. Exactly the cases where a process change changes the TITLE (structural). The ONE guard
     /// deciding whether reading `store.paneForegroundProcess[id]` is even worthwhile — shared by this
-    /// fingerprint AND the window-title read (`WorkspaceRootView.windowTitle(for:)`, which omits
-    /// `projectKey` — no section header there, the folder name stays its title) so every title site
-    /// registers the volatile process dict as an
+    /// fingerprint AND the titlebar / window-title reads (``SlateTitlebar``'s `activeTitle`,
+    /// `WorkspaceRootView.windowTitle(for:)`, which omit `projectKey` — no section header there, the
+    /// folder name stays their title) so every title site registers the volatile process dict as an
     /// Observation dependency ONLY for a pane that would actually retitle by it — a background pane's
     /// process tick otherwise re-evaluates a body/view that can never change as a result.
     static func titledByProcess(

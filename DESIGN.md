@@ -9,7 +9,7 @@ colors:
   glass-dracula-ink: "#F8F8F2"
   glass-dracula-edge: "#454158" # in-glass split divider + selection fill (the Pro selection)
   glass-dracula-accent: "#9580FF" # on-glass accent (focus corner, drag line)
-  chrome-dracula: "#1B1922" # sidebar/rail/panel-strip floor — the official Dracula chrome offset (−07/−08/−0A) off the Pro face
+  chrome-dracula: "#1B1922" # sidebar/panel-strip floor — the official Dracula chrome offset (−07/−08/−0A) off the Pro face
   chrome-dracula-line: "#312F37" # the 1px column divider — an INK TINT: 10% of the glass ink over the ground (lighter than both surfaces it separates)
   chrome-dracula-lift: "#2E2E3C" # hover/raised rung — the official rail offset (+0C/+0D/+10)
   chrome-alucard: "#F6F1DE" # the cream mirror of the same ladder
@@ -69,14 +69,14 @@ components:
   sidebar:
     backgroundColor: "the field (the chrome floor, full-bleed)"
     textColor: "semantic label tiers"
-    note: "collapsing MINIMIZES to an 80pt RAIL, never hides (rail round): lights band, centered expand toggle, one muted folder chip per project group (attention roll-up on its corner), New Tab, compact ping readout"
+    note: "collapsing HIDES the column (chrome revert, user-directed 2026-08-08): the collapse toggle lives in the sidebar's traffic-light strip, the reopen plate in the hover-reveal titlebar; the connection cluster rests in the sidebar footer and rides the titlebar only while the sidebar is hidden"
   sidebar-search-field:
     backgroundColor: "Slate.State.hover wash, no stroke — a recess in the column, not an island (restored user-directed 2026-08-08)"
     rounded: "{rounded.control}"
     height: "28px"
-  panel-edge-handle:
-    backgroundColor: "Slate.Surface.raised; lift on hover"
-    rounded: "leading corners only ({rounded.card}) — a drawer pull fused to the window's trailing edge, vertically centered; reopens the collapsed right panel"
+  titlebar:
+    backgroundColor: "transparent — a hover-reveal overlay riding the content column's top strip (40px)"
+    note: "restored with the chrome revert (user-directed 2026-08-08): reopen plates for both collapsed columns fade in while the pointer is in the top strip; the centred active-title menu (working dir / split / move / close) and — while the sidebar is hidden — the connection cluster stay always-visible on the traffic-light row"
   list-row:
     backgroundColor: "transparent"
     textColor: "secondaryLabelColor"
@@ -87,27 +87,21 @@ components:
     backgroundColor: "Slate.Surface.raised translucent wash + Line.card hairline border — the overlay card, NOT a solid fill (restored user-directed 2026-08-08; both the reverse-video flip and the solid chip plate are retired)"
     textColor: "labelColor"
     rounded: "{rounded.control}"
-    height: "48px — the two-register rung: the active row alone carries its home-abbreviated cwd as a second mono line (instrument rows, user-directed 2026-08-08)"
+    height: "32px"
     padding: "0 12px"
-  list-row-readouts:
-    textColor: "instrument mono at the caption size — working turn clock (secondary, 1 Hz), finish age (tertiary, coarse one-unit), awaiting age (the attention ink, pairing with the hand mark)"
-    note: "the trailing slot's live readings (instrument rows round): duration is back on the rail — the shimmer that once stood in for it is long retired"
   terminal-column:
     backgroundColor: "{colors.glass-dracula}"
     note: "full-bleed flat column — no card, no radius, no margin; splits inside are divided by the profile's terminalEdge line"
   panel-column:
-    backgroundColor: "{colors.glass-dracula}"
-    note: "the right column — its tab strip sits at the top of the same flat glass surface"
+    backgroundColor: "the field (the chrome floor) behind the strip; the workbench/device surfaces fill below a divider hairline"
+    note: "the right column — its tab strip is a chrome band at the top, closed by the divider hairline (chrome revert, user-directed 2026-08-08)"
   panel-tab-chip:
-    backgroundColor: "transparent at rest; State.hover wash on hover; selected = Slate.Surface.raised + Line.card hairline with primary ink — the sidebar row's overlay-card language, followed user-directed 2026-08-08 (the filled-at-rest chip row and its accent selection tint are retired)"
-    rounded: "capsule"
+    backgroundColor: "transparent at rest; State.hover wash on hover; selected = the State.selected accent wash — the strip's pre-islands language, restored with the chrome revert (user-directed 2026-08-08)"
+    rounded: "{rounded.control}"
     height: "24px"
   command-ladder:
     textColor: "status inks only — running = accent, clean = Status.ok, failed = Status.err; never a new hue"
     note: "the terminal pane's trailing-edge tick rail (round 14): one 6x2 tick per OSC-133 command block, evenly pitched (10pt, compressing to a 4pt floor, then dropping oldest), newest at the bottom; muted at rest, full ink under the pointer; click = the navigator's own re-anchor jump + landed flash. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
-  footer-cockpit:
-    textColor: "instrument mono on the alarm ladder (quiet/raised/loud) — unchanged"
-    note: "the sidebar footer is an instrument BLOCK (round 14): a top hairline sets it off the list, and the two percent readings trade their SF-symbol marks for filling ARC GAUGES (11pt ring, 2pt stroke, subtle track, sweep in the reading's own alarm ink). Disk keeps its glyph — the host reports free space only, and an arc without a denominator would lie"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -137,16 +131,18 @@ per-project identity hues on chrome, colour lives in the terminal's ANSI and the
 
 | World | Where | Colour source |
 |---|---|---|
-| **Chrome** | the window field, sidebar/rail, dividers, the panel edge handle, overlays, Settings, empty states | Semantic system colours resolving under the profile's polarity, on the profile's chrome floor |
-| **Glass** | the terminal column, the panel column (strip + surfaces), satellite pane windows, embedded workbench | The active **terminal profile** (`SlateTheme`) |
+| **Chrome** | the window field, sidebar, dividers, the hover-reveal titlebar, the panel tab strip, overlays, Settings, empty states | Semantic system colours resolving under the profile's polarity, on the profile's chrome floor |
+| **Glass** | the terminal column, the panel column's surfaces (workbench, device streams), satellite pane windows | The active **terminal profile** (`SlateTheme`) |
 
 **Whole-app theme, ONE polarity per profile** (flat round): `chromeIsLight == isLight` — the
 inverted frame and its two-ring appearance pin are retired. Dracula is dark end to end; Alucard is
 light end to end. `ThemeStore.pinAppAppearance` pins `NSApp.appearance` from that one polarity;
 windows and views carry NO pin of their own. The "System" choice follows the OS by resolving to
 the pair (dark → Dracula, light → Alucard); a concrete choice ignores the OS. The embedded
-workbench webviews are pinned per-webview to the same polarity and seeded to the matching
-Dracula / Alucard workbench theme.
+workbench webviews are pinned per-webview to the same polarity and seeded to the Monokai Pro /
+Monokai Pro Light pair with `window.autoDetectColorScheme` (chrome revert, user-directed
+2026-08-08 — the generated Dracula/Alucard workbench extension is actively swept from seeded
+hosts).
 
 Nothing may straddle the chrome/glass boundary: a view is either ON the chrome (semantic tokens
 over the chrome floor) or ON the glass (profile tokens, or semantic tokens under the forced glass
@@ -166,28 +162,24 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
   shows through during live column drags). This is the ONLY seam between columns.
 - **Lift** — the profile's `chromeLift` (`#2E2E3C` / `#FFFDF4`) is the hover/raised rung for
   chrome objects that need a step up from the floor.
-- **Sidebar** = flat on the floor. Collapsing MINIMIZES it to the 80pt RAIL (rail round) — the
-  window controls always keep a floor; the column never fully hides. Rail anatomy top→bottom:
-  clear lights band (the lights own nearly the full 80pt — no control shares it), centered expand
-  toggle, one folder chip per project group (44pt, MUTED glyph — identity hues are retired from
-  chrome, flat round), New Tab, compact connection readout. The expanded strip keeps its collapse
-  toggle permanent at top-trailing; the right panel's reopen is the `PanelEdgeHandle` drawer pull.
-  There is NO titlebar of any kind.
+- **Sidebar** = flat on the floor, with a 40pt traffic-light reserve at its top holding the
+  collapse toggle and New Tab plate. Collapsing HIDES the column (chrome revert, user-directed
+  2026-08-08 — the 80pt rail is retired with the islands layout it belonged to); the reopen
+  plate lives in the titlebar, and the connection cluster falls back from the sidebar footer to
+  the titlebar's trailing end while the column is hidden.
   The active row is the column's one raised object: the translucent overlay card — a
   `Slate.Surface.raised` wash plus the `Line.card` hairline border. The wash TINTS the chrome
   floor and stays in its hue family; a solid fill does not (the system `chip` plate read as
   off-family neutral grey and is retired, as is the reverse-video colour-scheme flip of the
   2026-08-07 polish round — both user-directed 2026-08-08). Do not reintroduce either.
-  **Rows are INSTRUMENTS** (instrument rows, user-directed 2026-08-08): the active card alone
-  carries its home-abbreviated cwd as a second mono line (the two-register 48pt rung); a WORKING
-  agent row's slot runs the 1 Hz turn clock ("42s", "2m15s"); a finished row dates its receipt /
-  ring-close with a coarse one-unit age ("3m"); an AWAITING row ages its question in the
-  attention ink, pairing with the hand mark the way the receipt pairs with its outcome ink. Hue
-  stays on the marks; the readings are the instrument mono at the caption size.
-  **The footer is the cockpit** (round 14): a top hairline sets the connection footer off the
-  list, and cpu/mem trade their glyphs for filling ARC GAUGES — the arc is the reading's
-  silhouette, sweeping in the reading's own alarm ink (fill + brightness, never a new hue).
-  Disk keeps its glyph: free-space-only data has no denominator to sweep.
+  Rows are one 32pt register: title, marks, and the trailing glyph slot — the round-14
+  instrument readouts (cwd second line, turn clock, ages) left with the chrome revert.
+- **Titlebar** — a transparent hover-reveal overlay on the content column's top strip
+  (`SlateTitlebar`, restored user-directed 2026-08-08): the reopen plates for both collapsed
+  columns fade in only while the pointer is in the strip (a hit-test-transparent `HoverSensor`
+  keeps clicks and the window-move gesture untouched); the centred active-pane title menu and —
+  while the sidebar is hidden — the connection cluster stay always-visible, aligned to the
+  traffic-light row. No bar, no material: the chrome is the plates themselves.
 - **Surfaces** (`Slate.Surface`): `field` → the chrome floor (above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
@@ -224,11 +216,11 @@ info status. Everything else interactive is the system's.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
-- **The panel column** (right) is the second glass surface, same anatomy. Its TAB STRIP sits at
-  its top, on the glass. The strip chips speak the sidebar row's own language (followed
-  user-directed 2026-08-08; the filled-at-rest chip row and its accent tint are retired): ghost
-  at rest, the hover wash under the pointer, and the SELECTED chip is the one raised overlay
-  card — `raised` wash plus the `Line.card` hairline, primary ink.
+- **The panel column** (right) carries the workbench / device surfaces below a chrome TAB
+  STRIP band (chrome revert, user-directed 2026-08-08): the strip sits on the chrome floor and
+  is closed by a `Line.divider` hairline. Its chips are ghost at rest, the hover wash under the
+  pointer, and the SELECTED chip wears the `State.selected` accent wash with primary ink — the
+  strip's own pre-islands language, distinct from the sidebar row's overlay card.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -262,7 +254,7 @@ outside every palette.
   `card` 2/1 (the active card's whisper, `cardShadow` colour) / `chip` 4/1 (pills, mode badges,
   instrument chips) / `ghost` 8/2 (a pane mid-drag) / `panel` 12/4 (find bar, overlay cards) /
   `palette` 30/12 (the command palette, the deepest float). Radius/y never appear at a call site.
-- **Type**: system face for prose; **JetBrains Mono instrument voice** for the rail, readouts,
+- **Type**: system face for prose; **JetBrains Mono instrument voice** for readouts,
   numbers, caps micro-labels — the terminal's own register bleeding into the chrome. This, not
   colour, is where the product's character lives. Three tracking rungs: `instrumentTracking` 1.2
   (mono engraving), `capsTracking` 0.6 (sidebar caps), `pillTracking` 0.5 (caps on a pill plate —
@@ -296,18 +288,16 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T introduce a second selection language: selected = the translucent overlay card (`raised`
-  wash + `Line.card` hairline) on sidebar row, rail chip AND strip chip alike. No
-  reverse-video/colour-scheme inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral
-  `chip` plate (same day — off-family grey on the authored floor), no accent tint or accent edge
-  on selection (tried both doses the same day, both pulled), no underlines for selection.
+- DON'T re-dress the sidebar's selection: the active row is the translucent overlay card
+  (`raised` wash + `Line.card` hairline) and nothing else. No reverse-video/colour-scheme
+  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day —
+  off-family grey on the authored floor), no accent tint or accent edge on the ROW (tried both
+  doses the same day, both pulled), no underlines. The panel strip and the plate idiom keep
+  their own `State.selected` wash — that is the latched-control language, not the row's.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
 - DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a
   rung of `Slate.Opacity` / `Slate.Elevation` / the tracking trio, or the ladder needs a rung.
-- DO keep row telemetry in the instrument voice and the trailing slot: the turn clock, the
-  finish age and the awaiting age are the rail's live readings (instrument rows round) — never
-  recolour the TITLE for state, and never let a reading outlive the state it dates.
 - DON'T draw the command ladder proportionally to scrollback rows, and don't give it hues
   beyond the status trio — the even pitch is the honesty contract; the fill is the vocabulary.
 - DON'T hand-roll a zero-state: list surfaces speak `SlateNoResultsLine`, panes speak

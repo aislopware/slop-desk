@@ -49,17 +49,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
 
-    /// The sidebar's expanded-state ceiling (divider drag range while expanded).
-    static let sidebarMaxWidth: CGFloat = 360
-
-    /// Whether the sidebar currently wears the RAIL width (`nil` before the first apply). The rail
-    /// replaces the collapse (user-directed 2026-08-07): `applySidebarRail` slides the item's width
-    /// between the rail and the expanded band instead of toggling `isCollapsed`.
-    private var sidebarRailActive: Bool?
-    /// The expanded width to come back to — captured when the rail takes over, so a hand-widened
-    /// panel re-expands where the user left it (session-scoped, like the width itself).
-    private var lastExpandedSidebarWidth: CGFloat = SlopDeskSplitViewController.defaultSidebarWidth
-
     /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
 
@@ -110,27 +99,19 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // (identical ivar layout) — and side-steps the constructor path that traps.
         object_setClass(splitView, FlatDividerSplitView.self)
 
-        // 1) Sidebar — the navigator (sessions / panes), FLAT on the one window field
-        //    (user-directed 2026-08-07, islands round: "the whole floor under the island must be ONE
-        //    colour" — the earlier `.sidebar` NSVisualEffectView material gave this column its own
-        //    vibrancy tone and a visible seam against the content field, which is exactly the mixed
-        //    figure-ground the round removed; both references, JetBrains Islands and Canario, run one
-        //    flat field under everything). A PLAIN split item rather than `sidebarWithViewController:`
-        //    — the automatic sidebar treatment brings its own collapse/glass behaviours that fight the
-        //    swizzled 3-column divider machinery below. Holding priority above the content's default
-        //    so window-resize grows the content, not the sidebar.
+        // 1) Sidebar — the navigator (sessions / panes). A PLAIN split item, NOT
+        //    `NSSplitViewItem(sidebarWithViewController:)`: the native sidebar style paints system vibrancy +
+        //    inset-grouped/rounded selection, which is the "native SwiftUI rounded corners" look we are
+        //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
+        //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
             store: store, preferences: preferences, chrome: chrome,
             connection: connection, paneDrag: paneDrag, onConnect: onConnect,
         ).overlayCoordinator(overlay))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
-        sidebarItem.maximumThickness = Self.sidebarMaxWidth
-        // NEVER truly collapsed (user-directed 2026-08-07, rail round): "collapsing" the tabs
-        // panel now NARROWS it to the rail (`applySidebarRail`) so the traffic lights keep a
-        // column under them and the projects stay visible — a fully removed sidebar left the
-        // window controls floating over the island.
-        sidebarItem.canCollapse = false
+        sidebarItem.maximumThickness = 360
+        sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
 
         // 2) Content — the pane grid (terminal / desktop / remote window) + the hover-reveal titlebar
@@ -148,7 +129,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
         // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
         // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
-        // column's top chrome — the hover-reveal titlebar's controls, and the sidebar's
+        // column's top chrome — the hover-reveal titlebar's centred title, and the sidebar's
         // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
@@ -292,8 +273,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // agree: `FlatDividerSplitView.drawDivider(in:)` fills each gap, AND (the split view being
         // layer-backed for its `NSHostingController` columns) the gaps also show this layer
         // `backgroundColor`. Both wear the profile's own DIVIDER tone (`SlateTheme.chromeLineHexValue`
-        // — a fixed hex, so the CGColor-snapshot trap family stays dead): the flat round's structure
-        // is exactly these 1px seams between full-bleed columns.
+        // — a fixed hex, so the CGColor-snapshot trap family stays dead).
         //
         // Repaint on a RUNTIME profile change: `drawDivider` pixels are CACHED in the layer; a
         // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
@@ -305,11 +285,11 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         splitView.displayIfNeeded()
     }
 
-    /// React to a runtime terminal-profile switch (the `AppearanceApplier` hook already repointed
-    /// `ThemeStore.shared`). Refresh the divider layer AND force each hosted column to re-read the
-    /// glass tokens — a SwiftUI `@Observable` change inside `ThemeStore` re-renders views that READ
-    /// it, but the AppKit seam must be refreshed explicitly here (the boundary SwiftUI observation
-    /// does not cross). `needsDisplay` on each column view nudges a redraw so no pane is left
+    /// React to a runtime theme switch (the `AppearanceApplier` hook already repointed `ThemeStore.shared`).
+    /// Re-pin the window appearance AND force each hosted column to re-read the theme tokens — a SwiftUI
+    /// `@Observable` change inside `ThemeStore` re-renders views that READ it, but the AppKit window
+    /// appearance + any system-dynamic resolution must be re-pinned explicitly here (the boundary SwiftUI
+    /// observation does not cross). `needsDisplay` on each column view nudges a redraw so no pane is left
     /// half-painted in the old palette.
     @objc
     private func themeDidChange() {
@@ -320,70 +300,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 
     /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
-    /// a real change so a steady-state update doesn't re-trigger the animation). The LEFT
-    /// sidebar's "collapse" is the RAIL (a width slide, never a removed item); the right code
-    /// panel still collapses away entirely.
+    /// a real change so a steady-state update doesn't re-trigger the animation).
     func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
-        applySidebarRail(sidebarCollapsed)
+        applyItemCollapse(sidebarItem, collapsed: sidebarCollapsed)
         applyItemCollapse(codeSidebarItem, collapsed: codeSidebarCollapsed)
-    }
-
-    /// Slide the sidebar between the RAIL width and the expanded band (user-directed 2026-08-07,
-    /// rail round). The item's thickness constraints are opened to span BOTH endpoints for the
-    /// slide, then pinned at the destination — `min == max` at the rail, the normal drag band
-    /// while expanded — so the divider is honestly immovable in rail mode and freely draggable
-    /// when open. First apply (launch, window not yet attached) jumps without animating.
-    private func applySidebarRail(_ rail: Bool) {
-        guard sidebarRailActive != rail, let item = sidebarItem else { return }
-        let firstApply = sidebarRailActive == nil
-        sidebarRailActive = rail
-        // Same LOST-PROMPT ordering as `applyItemCollapse`: suspend BEFORE the first frame moves.
-        resizeForwardingSuspended = true
-        store.setTerminalResizeSuspended(true)
-        if rail, let current = splitView.arrangedSubviews.first?.frame.width,
-           current > Slate.Metric.railWidth
-        {
-            lastExpandedSidebarWidth = current
-        }
-        let target = rail
-            ? Slate.Metric.railWidth
-            : CGFloat.maximum(
-                CGFloat.minimum(lastExpandedSidebarWidth, Self.sidebarMaxWidth),
-                Self.defaultSidebarWidth,
-            )
-        item.minimumThickness = Slate.Metric.railWidth
-        item.maximumThickness = Self.sidebarMaxWidth
-        if firstApply || view.window == nil {
-            splitView.setPosition(target, ofDividerAt: 0)
-            pinSidebarBand(rail: rail)
-            // No animation ⇒ possibly no resize notification burst to run the settle timer; resume
-            // directly (idempotent through `setResizeSuspended`'s guard).
-            resizeForwardingSuspended = false
-            store.setTerminalResizeSuspended(false)
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.allowsImplicitAnimation = true
-                splitView.setPosition(target, ofDividerAt: 0)
-                splitView.layoutSubtreeIfNeeded()
-            } completionHandler: { [weak self] in
-                // Fires on the main thread; the handler's type is just not annotated.
-                MainActor.assumeIsolated { self?.pinSidebarBand(rail: rail) }
-            }
-        }
-    }
-
-    /// Pin the sidebar's thickness band at the destination the slide just reached — `min == max`
-    /// at the rail, the normal drag band while expanded. Skipped when a newer toggle superseded
-    /// this slide (the completion of a cancelled animation must not fight the live one).
-    private func pinSidebarBand(rail: Bool) {
-        guard sidebarRailActive == rail, let item = sidebarItem else { return }
-        if rail {
-            item.maximumThickness = Slate.Metric.railWidth
-        } else {
-            item.minimumThickness = Self.defaultSidebarWidth
-        }
-        // The pinned band changed what the divider can do — the hover cursor must agree.
-        view.window?.invalidateCursorRects(for: splitView)
     }
 
     private func applyItemCollapse(_ item: NSSplitViewItem?, collapsed: Bool) {
@@ -399,7 +319,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         store.setTerminalResizeSuspended(true)
         // The code panel re-expands at its persisted width — applied in the animation's completion
         // (a `setPosition` mid-animation is overridden by the collapse animation's final frame).
-        // (Only the code panel routes through here now — the left sidebar rides `applySidebarRail`.)
+        // The left sidebar restores nothing: its width is capped/session-scoped by design.
         if item === codeSidebarItem, !collapsed {
             NSAnimationContext.runAnimationGroup { _ in
                 item.animator().isCollapsed = collapsed
@@ -433,9 +353,8 @@ private final class FlatDividerSplitView: NSSplitView {
     }
 
     override func drawDivider(in rect: NSRect) {
-        // The profile's own divider tone (flat round, user-directed 2026-08-08): a 1px seam of the
-        // chrome ladder's deepest rung between the full-bleed columns — the round's whole
-        // structural vocabulary. Overridden because AppKit's default draws the divider pure black.
+        // The profile's own divider tone: a 1px ink-tint seam of the chrome ladder between the
+        // columns. Overridden because AppKit's default draws the divider pure black.
         NSColor(slateHex: Slate.theme.chromeLineHexValue).setFill()
         rect.fill()
     }
@@ -545,18 +464,6 @@ private final class FlatDividerSplitView: NSSplitView {
         }
         for i in 0..<max(arrangedSubviews.count - 1, 0) {
             if items[i].isCollapsed || items[i + 1].isCollapsed { continue }
-            // A divider pinned in BOTH directions gets no rect at all — the rail's divider
-            // (min == max, user-directed 2026-08-07) is honestly immovable, and a resize arrow
-            // over it would promise a drag that cannot happen. The plain arrow is the truth.
-            let movability = SlopDeskSplitViewController.dividerMovability(
-                leadingWidth: arrangedSubviews[i].frame.width,
-                leadingMin: items[i].minimumThickness,
-                leadingMax: items[i].maximumThickness,
-                trailingWidth: arrangedSubviews[i + 1].frame.width,
-                trailingMin: items[i + 1].minimumThickness,
-                trailingMax: items[i + 1].maximumThickness,
-            )
-            if !movability.left, !movability.right { continue }
             addCursorRect(
                 dividerEffectiveRect(at: i).insetBy(dx: -2, dy: 0),
                 cursor: dividerCursor(at: i),

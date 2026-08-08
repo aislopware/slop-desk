@@ -375,13 +375,13 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Dracula` from the seeded `slopdesk-foundry` extension, generated from the
-    /// exact palettes the client chrome runs on; the vendored Monokai Pro family stays
-    /// seeded beside it as ⌘K ⌘T picker options; `window.autoDetectColorScheme` + the
-    /// preferred-theme pair make the workbench FOLLOW each client's GLASS polarity — the client
-    /// pins the webview's appearance to the glass, so a dark-theme client gets Dracula and a
-    /// light-theme client Alucard, per webview, no wire
-    /// involved) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
+    /// theme (`Monokai Pro` / `Monokai Pro Light` from the seeded extension below, which ships
+    /// ALL EIGHT stock Monokai Pro variants with only the seam borders retinted; the seeded pair
+    /// is the two filters the client chrome itself runs on;
+    /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
+    /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
+    /// light client gets a light editor while a dark client on the same host stays dark, from the
+    /// one shared settings file) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.131, the v6-era observation): it
@@ -444,10 +444,10 @@ final class CodeServerManager: @unchecked Sendable {
     static let seededUserSettings = """
     {
         "chat.disableAIFeatures": true,
-        "workbench.colorTheme": "Dracula",
+        "workbench.colorTheme": "Monokai Pro",
         "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Dracula",
-        "workbench.preferredLightColorTheme": "Alucard",
+        "workbench.preferredDarkColorTheme": "Monokai Pro",
+        "workbench.preferredLightColorTheme": "Monokai Pro Light",
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1045,59 +1045,14 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
-        // v18 — the Monokai Pro era's last seed. v19 selects the FOUNDRY pair instead (the app's
-        // own generated themes from the `slopdesk-foundry` extension — the chrome's exact
-        // palettes; user-directed 2026-08-07). The Monokai family stays seeded as picker options.
-        """
-        {
-            "chat.disableAIFeatures": true,
-            "workbench.colorTheme": "Monokai Pro",
-            "window.autoDetectColorScheme": true,
-            "workbench.preferredDarkColorTheme": "Monokai Pro",
-            "workbench.preferredLightColorTheme": "Monokai Pro Light",
-            "workbench.iconTheme": "material-icon-theme",
-            "workbench.startupEditor": "none",
-            "workbench.editorAssociations": {
-                "*.md": "vscode.markdown.preview.editor"
-            },
-            "workbench.activityBar.location": "top",
-            "workbench.sideBar.location": "right",
-            "workbench.secondarySideBar.defaultVisibility": "hidden",
-            "window.menuBarVisibility": "hidden",
-            "workbench.editor.empty.hint": "hidden",
-            "workbench.editor.decorations.badges": false,
-            "window.commandCenter": false,
-            "workbench.layoutControl.enabled": false,
-            "workbench.navigationControl.enabled": false,
-            "workbench.tips.enabled": false,
-            "extensions.ignoreRecommendations": true,
-            "editor.minimap.enabled": false,
-            "breadcrumbs.enabled": false,
-            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
-            "editor.fontSize": 13,
-            "editor.lineHeight": 1.32,
-            "editor.overviewRulerBorder": false,
-            "editor.hideCursorInOverviewRuler": true,
-            "editor.lineNumbersMinChars": 3,
-            "editor.glyphMargin": false,
-            "editor.folding": false,
-            "editor.guides.indentation": true,
-            "editor.guides.bracketPairs": "active",
-            "editor.stickyScroll.enabled": true,
-            "editor.renderWhitespace": "trailing",
-            "workbench.tree.renderIndentGuides": "always",
-            "workbench.tree.indent": 16,
-            "files.autoSave": "onFocusChange"
-        }
-        """,
         // v20 — the pinned-dark seed: the split-tone Ember (dark glass beside light chrome)
         // dropped v19's `window.autoDetectColorScheme` trio so appearance-following could not
         // flip the glass light. The whole-app theme (user-directed 2026-08-07, polish round)
         // reversed that rationale — the client pins its WHOLE appearance to the theme polarity
-        // and the webview inherits it — so the current seed (v21) restores the trio, landing
-        // byte-identical to v19. v19 therefore CANNOT stay in this list (the current seed in the
-        // obsolete list would rewrite every font-synced host on each boot); a pristine v19 file
-        // needs no upgrade anyway, because it already equals the current seed.
+        // and the webview inherits it — so v21 restored the trio, landing byte-identical to
+        // v19. While v21 was the current seed, v19 could not sit in this list (the current seed
+        // in the obsolete list would rewrite every font-synced host on each boot); now that the
+        // current seed moved on, the v21 entry below covers pristine v19 files too.
         """
         {
             "chat.disableAIFeatures": true,
@@ -1138,9 +1093,8 @@ final class CodeServerManager: @unchecked Sendable {
         }
         """,
         // v21 — the whole-app-theme seed: restored the autoDetectColorScheme trio around the
-        // Foundry Ember pair. The current seed (v22) re-points the trio at the Dracula /
-        // Alucard pair (round-8 verdict, user-directed 2026-08-07); everything else is
-        // unchanged.
+        // Foundry Ember pair. v22 re-pointed the trio at the Dracula / Alucard pair (round-8
+        // verdict, user-directed 2026-08-07); everything else is unchanged.
         """
         {
             "chat.disableAIFeatures": true,
@@ -1148,6 +1102,53 @@ final class CodeServerManager: @unchecked Sendable {
             "window.autoDetectColorScheme": true,
             "workbench.preferredDarkColorTheme": "Foundry Ember",
             "workbench.preferredLightColorTheme": "Foundry Ember Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v22 — the Dracula / Alucard trio (round-8 verdict). The current seed returns to the
+        // v18 Monokai trio with the chrome revert (user-directed 2026-08-08), so the OLD v18
+        // entry had to LEAVE this list — a seed byte-identical to the current one must never sit
+        // here (the v19/v21 rule: the current seed in the obsolete list rewrites every
+        // font-synced host on each boot).
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Dracula",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Dracula",
+            "workbench.preferredLightColorTheme": "Alucard",
             "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {
@@ -1615,97 +1616,61 @@ final class CodeServerManager: @unchecked Sendable {
         return wrote
     }
 
-    // MARK: - Built-in theme extension seed
+    // MARK: - Retired built-in theme extension (removal)
 
-    /// The built-in theme extension's identity — the app's OWN generated themes (unlike the
-    /// vendored Monokai Pro data above): `scripts/foundry-code-theme-gen.mjs` emits one JSON per
-    /// seed from the same palettes the client chrome runs on (DESIGN.md), so the workbench, the
-    /// terminal panes and the rail all speak one colour world. Since the round-8 verdict
-    /// (user-directed 2026-08-07) the contents are the Dracula Pro pair; the `slopdesk-foundry`
-    /// id STAYS — it anchors the registry entry, so the 2.0.0 bump cleanly replaces the old
-    /// four-theme folder instead of leaving it registered beside the new one. The Monokai
-    /// extension stays seeded beside it as picker options; the SETTINGS seed selects this pair.
-    static let foundryExtensionName = "slopdesk-foundry"
-    static let foundryExtensionVersion = "2.0.0"
+    /// The retired `slopdesk-foundry` extension — the app's own generated workbench themes (four
+    /// Foundry seeds at 1.0.0, the Dracula / Alucard pair at 2.0.0). The chrome revert
+    /// (user-directed 2026-08-08) returns the workbench to the vendored Monokai Pro pair, so the
+    /// ensure chain now REMOVES the folder and its registry entry instead of seeding it: a host
+    /// that never saw the extension is a no-op, and an upgraded host loses the leftover themes
+    /// the settings seed no longer selects.
+    static let foundryExtensionID = "\(themeExtensionPublisher).slopdesk-foundry"
 
-    /// `publisher.name-version` — same re-seed-on-bump contract as
-    /// ``themeExtensionDirectoryName``.
-    static let foundryExtensionDirectoryName =
-        "\(themeExtensionPublisher).\(foundryExtensionName)-\(foundryExtensionVersion)"
-
-    /// Every built-in seed the generator emits — the same single-source contract as
-    /// ``themeExtensionThemes``: the manifest is generated from this table and the seeder writes
-    /// one resource per row. The labels MIRROR the app's built-in `SlateTheme` names.
-    static let foundryExtensionThemes: [(label: String, dark: Bool, resource: String)] = [
-        ("Dracula", true, "dracula"),
-        ("Alucard", false, "alucard"),
+    /// Every folder name the retired extension ever shipped under — swept like
+    /// ``legacyBridgeExtensionDirectoryNames``.
+    static let foundryExtensionDirectoryNames = [
+        "\(themeExtensionPublisher).slopdesk-foundry-1.0.0",
+        "\(themeExtensionPublisher).slopdesk-foundry-2.0.0",
     ]
 
-    /// The Foundry extension's manifest — generated from ``foundryExtensionThemes``.
-    static let foundryExtensionManifest: String = {
-        let themes = foundryExtensionThemes.map { theme in
-            """
-                        {
-                            "label": "\(theme.label)",
-                            "uiTheme": "\(theme.dark ? "vs-dark" : "vs")",
-                            "path": "./themes/\(theme.resource).json"
-                        }
-            """
-        }.joined(separator: ",\n")
-        return """
-        {
-            "name": "\(foundryExtensionName)",
-            "displayName": "SlopDesk Themes",
-            "description": "The SlopDesk built-in themes (Dracula / Alucard) — generated from the app's own seed palettes.",
-            "publisher": "\(themeExtensionPublisher)",
-            "version": "\(foundryExtensionVersion)",
-            "engines": { "vscode": "^1.0.0" },
-            "categories": ["Themes"],
-            "contributes": {
-                "themes": [
-        \(themes)
-                ]
-            }
-        }
-        """
-    }()
-
-    /// Writes the Foundry theme extension under `extensionsDir` and registers it — the same
-    /// overwrite-on-drift terms as ``seedThemeExtension(into:themeData:fileManager:)`` (the folder
-    /// is namespaced `slopdesk.*`, so it is ours to keep current).
+    /// Deletes the retired extension's folders and prunes its registry entry. Returns whether
+    /// anything changed; failures are silent no-ops (the seeder convention).
     @discardableResult
-    static func seedFoundryThemeExtension(
-        into extensionsDir: URL,
-        themeData: (String) -> Data? = { themeExtensionThemeData(resource: $0) },
-        fileManager: FileManager = .default,
+    static func removeFoundryThemeExtension(
+        from extensionsDir: URL, fileManager: FileManager = .default,
     ) -> Bool {
-        let root = extensionsDir.appendingPathComponent(foundryExtensionDirectoryName)
-        var files: [(URL, Data)] = [
-            (root.appendingPathComponent("package.json"), Data(foundryExtensionManifest.utf8)),
-        ]
-        for theme in foundryExtensionThemes {
-            guard let data = themeData(theme.resource) else { return false }
-            files.append((root.appendingPathComponent("themes/\(theme.resource).json"), data))
-        }
-        var wrote = false
-        for (url, data) in files where (try? Data(contentsOf: url)) != data {
-            do {
-                try fileManager.createDirectory(
-                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-                )
-                try data.write(to: url)
-                wrote = true
-            } catch {
-                return wrote
+        var removed = false
+        for name in foundryExtensionDirectoryNames {
+            let url = extensionsDir.appendingPathComponent(name)
+            if fileManager.fileExists(atPath: url.path), (try? fileManager.removeItem(at: url)) != nil {
+                removed = true
             }
         }
-        let registered = registerExtension(
-            id: "\(themeExtensionPublisher).\(foundryExtensionName)",
-            version: foundryExtensionVersion,
-            directoryName: foundryExtensionDirectoryName,
-            in: extensionsDir,
-        )
-        return wrote || registered
+        let unregistered = unregisterExtension(id: foundryExtensionID, in: extensionsDir)
+        return removed || unregistered
+    }
+
+    /// Removes `id`'s entry from the profile registry (`extensions.json`) — the inverse of
+    /// ``registerExtension(id:version:directoryName:in:)``, on the same terms: foreign entries
+    /// are preserved, and a missing or unparseable registry is left alone (the workbench
+    /// self-heals its own file).
+    static func unregisterExtension(id: String, in extensionsDir: URL) -> Bool {
+        let registryURL = extensionsDir.appendingPathComponent("extensions.json")
+        guard let bytes = try? Data(contentsOf: registryURL),
+              let entries = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+        else { return false }
+        let kept = entries.filter {
+            (($0["identifier"] as? [String: Any])?["id"] as? String) != id
+        }
+        guard kept.count != entries.count,
+              let encoded = try? JSONSerialization.data(withJSONObject: kept)
+        else { return false }
+        do {
+            try encoded.write(to: registryURL)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Registers the seeded theme folder in the profile registry (`extensions.json`) beside it.
@@ -1864,13 +1829,14 @@ final class CodeServerManager: @unchecked Sendable {
     // MARK: - Production seams
 
     /// The production ``SettingsSeeder``: ``seedUserSettings(at:)`` on the resolved settings path,
-    /// plus the theme extensions — ``seedFoundryThemeExtension(into:themeData:fileManager:)`` (the
-    /// pair the seeded settings select) and ``seedThemeExtension(into:themeData:fileManager:)``
-    /// (the vendored Monokai Pro family, kept as picker options).
+    /// plus the theme extension — ``seedThemeExtension(into:themeData:fileManager:)`` (the
+    /// vendored Monokai Pro family the seeded settings select). The retired `slopdesk-foundry`
+    /// generated-theme extension is swept here too
+    /// (``removeFoundryThemeExtension(from:fileManager:)``).
     static let defaultSettingsSeeder: SettingsSeeder = {
         seedUserSettings(at: userSettingsURL())
         let extensions = dataDirURL().appendingPathComponent("extensions")
-        seedFoundryThemeExtension(into: extensions)
+        removeFoundryThemeExtension(from: extensions)
         seedThemeExtension(into: extensions)
         seedBridgeExtension(into: extensions)
     }

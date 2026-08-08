@@ -1,5 +1,5 @@
-// NavigatorColumn — the left sidebar navigator: a flat tabs panel on the ONE window field
-// (`Slate.Surface.face` — NOT native `.sidebar` vibrancy; the host split item is a PLAIN item), a header
+// NavigatorColumn — the left sidebar navigator: a flat tabs panel on the `Slate.Surface.field`
+// chrome floor (NOT native `.sidebar` vibrancy — the host split item is a PLAIN item), a header
 // SEARCH FIELD spanning the full row width (it shares the tab cards' gutter — no trailing
 // controls), and rows ALWAYS grouped into By-Project sections under a gutter-chevron + NAME group
 // header that shares ONE left rail with its rows — the live git line (mono metadata) on a second
@@ -41,8 +41,8 @@ struct NavigatorColumn: View {
 
     /// The app-global connection — resting home is the SIDEBAR FOOTER (one status line on the
     /// sidebar's rails: host leading, ping trailing, pure text; never jammed into the traffic-light
-    /// strip). While the sidebar is MINIMIZED the rail's own compact readout stands in
-    /// (``RailConnectionButton``). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
+    /// strip). While the sidebar is COLLAPSED the titlebar hosts the trailing fallback
+    /// (`SlateTitlebar`). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
     /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
     /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
@@ -66,6 +66,8 @@ struct NavigatorColumn: View {
     @State private var rowsMemo = RailRowsMemo()
 
     #if os(macOS)
+    /// Pointer-in-strip — the collapse toggle's hover-reveal gate.
+    @State private var stripHover = false
     /// The COLLAPSED project groups (header chevron toggled shut), keyed by ``collapseKey(_:)``.
     /// Session-scoped presentation state — a fresh launch opens every group.
     @State private var collapsedSections: Set<String> = []
@@ -109,23 +111,7 @@ struct NavigatorColumn: View {
     var body: some View {
         Group {
             #if os(macOS)
-            // RAIL ⇄ PANEL (user-directed 2026-08-07, rail round): "collapsed" no longer removes
-            // this column — the split narrows it to the rail width and the two renderings
-            // crossfade while the width slides. The expanded panel keeps its full-width layout
-            // during the slide (minWidth pin + the clip below), so its rows glide out under the
-            // shrinking edge instead of crushing their text mid-animation.
-            ZStack(alignment: .topLeading) {
-                if chrome?.sidebarCollapsed == true {
-                    railSidebar
-                        .transition(.opacity)
-                } else {
-                    macSidebar
-                        .frame(minWidth: Slate.Metric.sidebarWidth, alignment: .topLeading)
-                        .transition(.opacity)
-                }
-            }
-            .clipped()
-            .animation(Slate.Anim.standard, value: chrome?.sidebarCollapsed == true)
+            macSidebar
             #else
             iosSidebar
             #endif
@@ -170,9 +156,9 @@ struct NavigatorColumn: View {
     }
 
     #if os(macOS)
-    /// macOS: the flat "TABS" panel — name rows + solid-chip active, grouped By-Project sections.
-    /// Paints the shared window field (the host `NSSplitViewItem` is a plain item, so there is no
-    /// native vibrancy/rounding — deliberately: one floor colour under the islands).
+    /// macOS: the flat "TABS" panel — name rows + white-card active, grouped By-Project sections.
+    /// Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
+    /// native vibrancy/rounding).
     private var macSidebar: some View {
         let allRows = renderedRows
         let sections = buildSections(allRows, query: query)
@@ -181,21 +167,30 @@ struct NavigatorColumn: View {
             // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
             // Top 3 centres the 24pt plate on the traffic-light row (y≈15).
             //
-            // The toggle is a PERMANENT control (user-directed 2026-08-07, rail round — the
-            // hover-revealed plate read as unanchored): lights leading, toggle trailing, one
-            // settled control band. Collapsing swaps this whole rendering for the rail, whose
-            // expand toggle stands in the SAME spot the panel's own strip puts this one — the
-            // control holds still while the panel breathes.
+            // The toggle is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide —
+            // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
+            // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
+            // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
+            // collapse animation; 0.15 still caught the tail). On top of that it is HOVER-REVEALED:
+            // at rest the strip is empty; the pointer entering the strip fades it in (`HoverSensor` —
+            // hit-test-transparent, the strip stays draggable).
             ZStack(alignment: .topTrailing) {
                 Color.clear
                 if let chrome {
                     PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                        .help("Hide the tabs panel")
+                        .opacity(!chrome.sidebarCollapsed && stripHover ? 1 : 0)
+                        .allowsHitTesting(!chrome.sidebarCollapsed && stripHover)
+                        .animation(
+                            chrome.sidebarCollapsed ? nil : Slate.Anim.standard.delay(0.25),
+                            value: chrome.sidebarCollapsed,
+                        )
+                        .animation(Slate.Anim.smallFade, value: stripHover)
                         .padding(.top, 3)
-                        .padding(.trailing, Slate.Metric.space2)
+                        .padding(.trailing, 8)
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
+            .background(HoverSensor { stripHover = $0 })
             // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
             // "TABS" label AND its trailing groups menu, both user-retired): a quiet inset field
             // on the hover tint, filtering the rows below through the SAME pure
@@ -224,14 +219,10 @@ struct NavigatorColumn: View {
             }
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
-            // The quiet HOVER wash, restored user-directed 2026-08-08: on the flat chrome floor
-            // the whisper reads fine again (the coloured frame floor that once swallowed it is
-            // gone), and the solid system `chip` fill it briefly wore sat off-hue as a neutral
-            // grey plate. No stroke — the field is a recess in the column, not an island.
             .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
-            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.horizontal, 8)
             .padding(.bottom, 6)
 
             ScrollView {
@@ -268,7 +259,7 @@ struct NavigatorColumn: View {
                         }
                     }
                 }
-                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.horizontal, 8)
                 // Captures the enclosing NSScrollView (must sit INSIDE the scroll content) so a pane
                 // drag parked at the list's top/bottom edge auto-scrolls rows into reach.
                 .background(sidebarScrollCapturer)
@@ -302,10 +293,6 @@ struct NavigatorColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The ONE window field (user-directed 2026-08-07, islands round) — the same floor tone the
-        // content column and the divider gaps paint, so the ground under the islands is a single
-        // uninterrupted colour. The earlier `.sidebar` vibrancy material gave this column its own
-        // tone and a visible seam; it is gone.
         .background(Slate.Surface.field)
     }
 
@@ -365,59 +352,6 @@ struct NavigatorColumn: View {
             .padding(.horizontal, Slate.Metric.tabRowInset) // the rows' text rail
             .padding(.vertical, 6)
     }
-
-    /// The RAIL — the minimized tabs panel (user-directed 2026-08-07, rail round). A narrow column
-    /// that keeps the traffic lights grounded on chrome, folds each project group to one
-    /// identity-hued folder chip (its attention roll-up riding the corner — a minimized panel must
-    /// never mute a waiting agent), and ends in the two verbs that survive minimization: New Tab
-    /// and the connection readout. The expand toggle leads the rail's centered column just under
-    /// the lights band — the band itself stays clear (the lights own nearly its full width).
-    private var railSidebar: some View {
-        let sections = buildSections(renderedRows, query: "")
-        return VStack(spacing: 0) {
-            // The traffic lights' band — the rail exists so this strip keeps a floor under the
-            // window controls (they floated over the island when the column vanished entirely).
-            // The band stays EMPTY: the lights run to ~74pt of the rail's 80, so a trailing
-            // control here lands under the green light (measured — the first cut did exactly
-            // that and vanished behind it).
-            Color.clear
-                .frame(height: Slate.Metric.titlebarHeight)
-            // The expand toggle heads the rail's own column, centered like everything below it —
-            // first control under the lights, so the eye finds it where the panel's strip toggle
-            // was without it fighting the window controls for the band.
-            if let chrome {
-                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                    .help("Show the tabs panel")
-                    .padding(.bottom, Slate.Metric.space1)
-            }
-            ScrollView {
-                LazyVStack(spacing: Slate.Metric.space1) {
-                    ForEach(sections) { section in
-                        RailProjectChip(
-                            store: store,
-                            title: section.header ?? "Other",
-                            projectKey: section.projectKey,
-                            rows: section.rows,
-                            onSelect: { select($0) },
-                        )
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, Slate.Metric.space2)
-            }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: .infinity)
-            PlateIconButton(symbol: .plus) { store.newTerminalPane(.newTab) }
-                .help("New Tab")
-                .padding(.bottom, Slate.Metric.space1)
-            if let connection {
-                RailConnectionButton(store: store, connection: connection, onConnect: onConnect)
-                    .padding(.bottom, Slate.Metric.space2)
-            }
-        }
-        .frame(width: Slate.Metric.railWidth)
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
     #else
     /// iOS: a system `List(selection:)` so NavigationSplitView pushes to content on compact; themed to match. Gains
     /// the system `.searchable` field (keeps the `List` as the column root so the navigation push is unchanged),
@@ -449,7 +383,7 @@ struct NavigatorColumn: View {
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         .tint(Slate.State.accent)
         .searchable(text: $query, prompt: "Search tabs")
         .toolbar {
@@ -672,9 +606,8 @@ struct SidebarSectionHeaderRow: View {
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-            // The folder — the group is a place. MUTED header ink, not the identity hue (flat
-            // round restraint, user-directed 2026-08-08: a full-strength tinted folder per project
-            // read as ornament — icon colour tracks the muted text tone, the name is the identity).
+            // The folder — the group is a place, spoken in the header's own muted ink; the one
+            // pictogram the monochrome rail keeps.
             Image(systemSymbol: .folderFill)
                 .font(.system(size: Slate.Typeface.small))
                 .foregroundStyle(Slate.State.header)
@@ -713,7 +646,7 @@ struct SidebarSectionHeaderRow: View {
             }
         }
         .padding(.trailing, Slate.Metric.tabRowInset) // the rows' trailing-slot x
-        .padding(.vertical, Slate.Metric.space1)
+        .padding(.vertical, 4)
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)
         .contentShape(.rect)
@@ -1097,18 +1030,9 @@ private struct SidebarLiveRow: View {
         // same class of bug as the frozen title). `nil` (the resting state, or a row past ⌘9)
         // keeps the row's normal leading run.
         let shortcutHint = store.shortcutHintActive ? store.shortcutNumber(for: row.id) : nil
-        let receipt = RailRowsBuilder.commandReceipt(
-            badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
-            failedBlock: failedBlock, processLabel: chrome.processLabel,
-        )
         SlateTabRow(
             title: shownTitle,
             active: active,
-            // The active card's second register — WHERE the pane is (home-abbreviated, the same
-            // display bridge the palette's cwd pill uses). Only the active row spends the extra
-            // rung; every other row keeps the single-line beat (instrument-rows round,
-            // user-directed 2026-08-08).
-            subtitle: active ? row.cwd.map(CwdDisplay.abbreviate) : nil,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
             shortcutHint: shortcutHint,
@@ -1131,15 +1055,10 @@ private struct SidebarLiveRow: View {
             processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
             // A finished COMMAND takes that same slot and names itself in the outcome's ink — the
             // whole rendering of an exit on this rail, since round 24 pulled the outcome marks.
-            commandReceipt: receipt,
-            // The slot's live readings (instrument-rows round): the working turn clock, the
-            // finish's age beside its receipt / ring-close, the question's wait beside the hand.
-            // All gated on the same raw status/receipt facts the marks key on, so a reading can
-            // never outlive the state it dates.
-            workingSince: chrome.status == .working ? store.paneWorkingSince[row.id] : nil,
-            finishedAt: (receipt != nil || agentFinish)
-                ? (store.paneCompletedAt[row.id] ?? store.paneAttentionAt[row.id]) : nil,
-            awaitingSince: chrome.status == .needsPermission ? store.paneAttentionAt[row.id] : nil,
+            commandReceipt: RailRowsBuilder.commandReceipt(
+                badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
+                failedBlock: failedBlock, processLabel: chrome.processLabel,
+            ),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
@@ -1277,128 +1196,6 @@ private struct IOSSidebarLiveRow: View {
 }
 
 #if os(macOS)
-/// One rail project chip — the group header folded to a muted folder glyph (icon colour tracks
-/// the muted header ink — flat-round restraint, user-directed 2026-08-08), the ACTIVE project
-/// standing on the plain solid chip fill (the same chip the active tab row wears; the
-/// reverse-video flip is retired), and the group's attention roll-up as a corner dot in the
-/// strongest ink of the rows it hides (``StatusPresentation/attentionRollupInk(_:)``). Volatile
-/// chrome (selection, badges) is read INSIDE this leaf so a status tick re-renders one chip,
-/// never the rail body.
-private struct RailProjectChip: View {
-    let store: WorkspaceStore
-    let title: String
-    let projectKey: String?
-    let rows: [RailRow]
-    let onSelect: (PaneID) -> Void
-
-    @State private var hovering = false
-    var body: some View {
-        let activePane = store.tree.activeSession?.activeTab?.activePane
-        let active = rows.contains { $0.id == activePane }
-        let rollup = StatusPresentation.attentionRollupInk(
-            rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge },
-        )
-        Button {
-            // The active project's chip re-focuses its live pane; another project lands on its
-            // first row (creation order — the same row its expanded section leads with).
-            if let target = rows.first(where: { $0.id == activePane }) ?? rows.first {
-                onSelect(target.id)
-            }
-        } label: {
-            ZStack {
-                // Muted header ink, not the identity hue (flat round restraint, user-directed
-                // 2026-08-08 — same call as the section header's folder): the rail tells projects
-                // apart by position and tooltip, not by a hue carnival.
-                Image(systemSymbol: .folderFill)
-                    .font(.system(size: Slate.Typeface.title))
-                    .foregroundStyle(Slate.State.header)
-                if let rollup {
-                    Circle()
-                        .fill(rollup)
-                        .frame(width: Slate.Metric.dot, height: Slate.Metric.dot)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(Slate.Metric.space2)
-                }
-            }
-            .frame(width: Slate.Metric.railChip, height: Slate.Metric.railChip)
-            .contentShape(.rect(cornerRadius: Slate.Metric.radiusCard))
-        }
-        .buttonStyle(.plain)
-        // The ACTIVE chip is the translucent overlay card — a `raised` wash plus the `Line.card`
-        // hairline, the same pre-rounds selection the active tab row wears (user-directed
-        // 2026-08-08). A wash TINTS the chrome floor and stays in its hue family; the solid
-        // system `chip` fill it briefly replaced sat off-family as a neutral grey plate.
-        .background(
-            active ? Slate.Surface.raised : (hovering ? Slate.State.hover : Color.clear),
-            in: .rect(cornerRadius: Slate.Metric.radiusCard),
-        )
-        .overlay {
-            if active {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
-            }
-        }
-        .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
-        .help(rows.count == 1 ? "\(title) — 1 tab" : "\(title) — \(rows.count) tabs")
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(.isButton)
-    }
-}
-
-/// The rail's connection readout — the sidebar footer's instrument folded to its one metric: the
-/// mono ping while connected (climbing the same alarm ladder the footer's link line climbs), an
-/// ellipsis while a dial is in flight, and a dim em-dash otherwise (a stale ping must never
-/// brighten it). Click opens the Connect editor, exactly like the footer it stands in for.
-private struct RailConnectionButton: View {
-    let store: WorkspaceStore
-    let connection: AppConnection
-    let onConnect: () -> Void
-
-    @State private var hovering = false
-
-    /// The readout's text + ink for one LED state — pure, so the fold is one expression per rung.
-    private static func readout(led: ConnectionCluster.LedState, pingMS: Double?) -> (String, Color) {
-        switch led {
-        case .dim: ("—", Slate.Text.tertiary)
-        case .dialing: ("…", Slate.Text.secondary)
-        case .bad,
-             .good,
-             .slow: (
-                ConnectionCluster.pingLabel(pingMS) ?? "—",
-                ConnectionCluster.alarmInk(ConnectionCluster.linkAlarm(led)),
-            )
-        }
-    }
-
-    var body: some View {
-        let pingMS = ConnectionTelemetry.pingMS(store)
-        let led = ConnectionCluster.ledState(status: connection.status, pingMS: pingMS)
-        let (label, ink) = Self.readout(led: led, pingMS: pingMS)
-        Button(action: onConnect) {
-            Text(label)
-                .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                .foregroundStyle(ink)
-                .lineLimit(1)
-                .padding(.horizontal, Slate.Metric.space2)
-                .frame(height: Slate.Metric.heightControl)
-                .contentShape(.rect(cornerRadius: Slate.Metric.radiusControl))
-        }
-        .buttonStyle(.plain)
-        .background(
-            hovering ? Slate.State.hover : Color.clear,
-            in: .rect(cornerRadius: Slate.Metric.radiusControl),
-        )
-        .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
-        .help(StatusPresentation.connectionHelp(
-            host: connection.hostDisplayName ?? connection.target.host,
-            status: connection.status,
-        ))
-        .accessibilityLabel("Connection")
-    }
-}
-
 /// The accent ring a sidebar row wears while it is the live pane drag's resolved destination. Its own
 /// leaf view so the per-transition Observation invalidation re-renders these cheap bodies only — never
 /// the sidebar body (which would re-derive the whole rail per destination change).
@@ -1446,7 +1243,7 @@ private struct NewTabDropSlot: View {
                     ),
             )
             .background(DropTargetFrameReader(key: .newTabZone, coordinator: coordinator))
-            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
         }
     }

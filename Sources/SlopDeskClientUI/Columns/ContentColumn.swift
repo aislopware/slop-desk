@@ -1,8 +1,8 @@
 // ContentColumn — the centre content area. Renders the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab).
-// The old hover-reveal titlebar overlay is GONE (user-directed 2026-08-07, rail round): its
-// controls all found anchored homes — the sidebar toggle in the sidebar/rail strip, the panel
-// reopen as the trailing `PanelEdgeHandle`, the connection cluster in the sidebar footer / rail.
+// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab),
+// with a hover-reveal titlebar floating as a TOP overlay. The titlebar lives here (not at window level)
+// so its centred title menu centres over the content area for free, and the terminal extends under it
+// for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -27,11 +27,6 @@ struct ContentColumn: View {
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
-    /// The inherited CHROME scheme (the split subtree's frame-polarity pin) — what the edge
-    /// handle reads while it floats over chrome (the empty state); over the island it flips to
-    /// the glass polarity instead.
-    @Environment(\.colorScheme) private var chromeColorScheme
-
     var body: some View {
         content
             // The chrome model rides the environment so DEEP descendants (a terminal leaf actuating
@@ -39,27 +34,22 @@ struct ContentColumn: View {
             // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
             .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // The ONE window field — the same floor tone all three columns and the divider gaps
-            // paint (user-directed 2026-08-07, islands round), so the island floats on an
-            // uninterrupted ground.
-            .background(Slate.Surface.field)
+            // MERIDIAN L5, scoped by the user reporting that a titlebar tone differing from the pane below it read as jarringly out of place:
+            // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone
+            // (the terminal glass), never the dimmed chrome floor. Panes are flush under the band (no gap, no
+            // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed
+            // housing is the SIDEBAR column only.
+            .background(Slate.Surface.terminal)
         #if os(macOS)
-            // The collapsed RIGHT panel's reopen affordance — an EDGE HANDLE hugging the window's
-            // trailing edge (user-directed 2026-08-07, rail round). The floating titlebar reopen
-            // plates are GONE with the titlebar itself: the left toggle lives in the sidebar/rail
-            // strip now, and a drawer pull fused to the edge it opens from is the one placement
-            // that cannot read as adrift over the glass. Glass scheme while an island is under it.
-            .overlay(alignment: .trailing) {
-                if chrome.codeSidebarCollapsed {
-                    PanelEdgeHandle { chrome.toggleCodeSidebar() }
-                        .environment(
-                            \.colorScheme, hasActiveTab ? Slate.glassColorScheme : chromeColorScheme,
-                        )
-                }
+            // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
+            // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
+            // own explicit shortcuts).
+            .overlay(alignment: .top) {
+                SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
             }
         #endif
-            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the edge-handle
-            // overlay too. This column lives in its OWN NSHostingView inside the AppKit split, and the
+            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay
+            // too. This column lives in its OWN NSHostingView inside the AppKit split, and the
             // floating overlay layer lives in the window root's — so a card floating over this
             // column does NOT occlude its hover tracking: AppKit tracking areas are rect-based and
             // keep firing under the card, and the hover-reveal titlebar (and any row hover) lit up
@@ -70,20 +60,25 @@ struct ContentColumn: View {
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
-    /// The pane area fills the whole column — the island runs FULL top→bottom (Canario; no
-    /// reserved titlebar band, user-directed 2026-08-07). Nothing floats over its top edge.
+    /// On macOS the pane area is pushed below the hover-reveal titlebar strip (so the terminal starts under
+    /// it, not under the centred title); iOS has no titlebar so the pane area fills directly.
     private var content: some View {
+        #if os(macOS)
+        VStack(spacing: 0) {
+            Color.clear.frame(height: Slate.Metric.titlebarHeight)
+            paneArea
+        }
+        #else
         paneArea
+        #endif
     }
 
     private var paneArea: some View {
         Group {
             if hasActiveTab {
-                // The terminal surface runs FULL-BLEED (flat round, user-directed 2026-08-08 —
-                // the floating island, its margins and its radius are retired with the frame):
-                // the column IS the glass, edge to edge, and the 1px split dividers are the only
-                // structure between columns. The forced colour scheme stays: everything drawn ON
-                // the glass resolves its semantic colours against the profile, not the OS.
+                // The forced colour scheme stays with the pane grid across the layout revert:
+                // everything drawn ON the glass resolves its semantic colours against the
+                // profile's polarity, not the OS.
                 SplitContainer(store: store, paneDrag: paneDrag)
                     .environment(\.colorScheme, Slate.glassColorScheme)
             } else {

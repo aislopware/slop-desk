@@ -3,10 +3,10 @@
 // macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
 // `SlopDeskSplitViewController` (sidebar | content `NSSplitViewController` items, each an
 // `NSHostingController` over a SwiftUI column; modelled on CodeEdit's split shell). The window runs
-// `.hiddenTitleBar` — NO system toolbar and no titlebar overlay either (user-directed 2026-08-07,
-// rail round): the chrome controls live in the sidebar/rail strip and the trailing edge handle.
-// iOS: a stock `NavigationSplitView` over the same two columns + its own toolbar. (Right-hand
-// inspector / Details column REMOVED — keyboard-centric.)
+// `.hiddenTitleBar` — NO system toolbar; the workspace's own hover-reveal titlebar (`SlateTitlebar`, a
+// top overlay in `ContentColumn`) IS the chrome (sidebar toggle, "New Tab", centred title menu). iOS: a
+// stock `NavigationSplitView` over the same two columns + its own toolbar. (Right-hand inspector /
+// Details column REMOVED — keyboard-centric.)
 //
 // NO custom design-system / token target: SYSTEM semantic colours + fonts + SF Symbols.
 
@@ -128,8 +128,8 @@ public struct WorkspaceRootView: View {
 
     public var body: some View {
         #if os(macOS)
-        // No system toolbar — the window runs `.hiddenTitleBar`; the chrome controls live in the
-        // sidebar/rail strip and the trailing edge handle (rail round, user-directed 2026-08-07).
+        // No system toolbar — the window runs `.hiddenTitleBar`; its own hover-reveal titlebar
+        // (`SlateTitlebar`, inside `ContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
             preferences: preferencesStore, paneDrag: paneDrag,
