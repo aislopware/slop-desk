@@ -336,6 +336,14 @@ enum Slate {
         static let subtle = Color(uiColor: .separator).opacity(Opacity.muted)
         static let active = Color(uiColor: .tertiaryLabel)
         #endif
+
+        /// The INPUT plate's boundary — see ``slateFieldPlate()``. Its own token, and NOT
+        /// ``divider``: measured on the cream ground the separator lands at 1.25:1, which is a rule
+        /// between two visible things, not an edge that can say where a field starts.
+        static let field = Color(
+            slateDynamicLight: 0x000000, dark: 0xFFFFFF,
+            lightAlpha: Opacity.edge, darkAlpha: Opacity.edge,
+        )
     }
 
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
@@ -346,6 +354,10 @@ enum Slate {
         static let faint = 0.12
         /// The selection/latch wash (``State/selected``'s dose).
         static let wash = 0.15
+        /// An INPUT's boundary (``Line/field``). Its own rung because a field's edge answers to a
+        /// different question than a hairline's: a rule separates two things that are both already
+        /// visible, while this is the only mark saying where the typing area begins.
+        static let edge = 0.28
         /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
         static let dim = 0.35
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.

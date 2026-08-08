@@ -169,7 +169,7 @@ struct AndroidDeviceList: View {
         .animation(Slate.Anim.smallFade, value: query.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightControl)
-        .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .slateChromeFieldPlate()
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space2)
     }

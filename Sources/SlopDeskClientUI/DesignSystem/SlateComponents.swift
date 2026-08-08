@@ -178,6 +178,26 @@ private struct SlateCardModifier: ViewModifier {
 }
 
 extension View {
+    /// The CHROME panel's text-input plate: the hover fill every panel search field already stood
+    /// on, plus the boundary it never had. The overlay family's ``slateFieldPlate()`` is this one's
+    /// twin — it has ringed its fields all along, on the reasoning that an unringed field is
+    /// indistinguishable from a label, and the panels are what never got the same treatment.
+    ///
+    /// The fill alone is `quinarySystemFill` — 1.02:1 against the cream ground, which is to say the
+    /// field had no perceivable edge at all and read as a gap in the panel rather than a place to
+    /// type. The border is what makes it a field. It is deliberately kept LIGHT (1.99:1, user-chosen
+    /// 2026-08-08 over a heavier edge that clears the 3.0 non-text floor): the control is still
+    /// identified by its own magnifier and placeholder, both well above the reading floor, so the
+    /// edge reinforces a boundary rather than carrying it alone.
+    ///
+    /// Four call sites shared this plate by hand before it was one modifier; the button plates
+    /// (``SlatePlateGroup``) deliberately do NOT take it — a button group is not somewhere to type.
+    func slateChromeFieldPlate() -> some View {
+        let shape = RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
+        return background(Slate.State.hover, in: shape)
+            .overlay { shape.strokeBorder(Slate.Line.field, lineWidth: Slate.Metric.hairline) }
+    }
+
     /// Wraps the view in a card surface (element fill + hairline border + rounded corners).
     func slateCard(
         radius: CGFloat = Slate.Metric.radiusControl,

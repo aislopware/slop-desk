@@ -219,7 +219,7 @@ struct NavigatorColumn: View {
             }
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
-            .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .slateChromeFieldPlate()
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
             .padding(.horizontal, 8)

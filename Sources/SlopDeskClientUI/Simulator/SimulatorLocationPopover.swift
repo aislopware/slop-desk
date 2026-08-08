@@ -75,7 +75,7 @@ struct SimulatorLocationPopover: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightControl)
-        .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .slateChromeFieldPlate()
     }
 
     /// The footer says what is true now and offers the one verb that undoes it. "Clear" is absent
