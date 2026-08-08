@@ -7309,4 +7309,6 @@ cap is now the system face, which is also the register macOS draws the same glyp
 Settings is deliberately NOT swept. It stays in pure system semantics (`SettingsInk`) for the reason
 that file already gives — a preferences window full of native `Toggle`/`Picker`/`Stepper` controls
 that draw themselves from the OS accent no matter what, so it should look like System Settings
-rather than half like it.
+rather than half like it. The user confirmed that verdict when it was put to them (2026-08-08):
+both alternatives — repaint the ground and keep the native controls, or carry the island vocabulary
+all the way into its rows — were offered and declined. Do not propose it again.
