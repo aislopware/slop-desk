@@ -1324,12 +1324,12 @@ private struct RailProjectChip: View {
             .contentShape(.rect(cornerRadius: Slate.Metric.radiusCard))
         }
         .buttonStyle(.plain)
-        // The ACTIVE chip is the translucent ACCENT card — the `State.selected` wash plus the
-        // `Line.selected` hairline, the same accent-card selection the active tab row wears
-        // (accent-card round, user-directed 2026-08-08): one selection voice whether the sidebar
-        // is expanded or railed. Hover keeps the neutral wash — pointer, not selection.
+        // The ACTIVE chip is the accent-EDGED overlay card — the neutral `raised` wash plus the
+        // `Line.selected` hairline, the same border-only accent dose the active tab row wears
+        // (accent-card round, user-directed 2026-08-08: the full accent wash was pulled back to
+        // the edge the same hour): one selection voice whether the sidebar is expanded or railed.
         .background(
-            active ? Slate.State.selected : (hovering ? Slate.State.hover : Color.clear),
+            active ? Slate.Surface.raised : (hovering ? Slate.State.hover : Color.clear),
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
         )
         .overlay {
