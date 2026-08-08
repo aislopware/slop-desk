@@ -516,4 +516,41 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertFalse(RailRowsBuilder.isAgentSession(status: .none, processLabel: "make"))
         XCTAssertFalse(RailRowsBuilder.isAgentSession(status: .none, processLabel: "vim"))
     }
+
+    // MARK: - The slot readouts (turn clock + coarse ages — restored round 14)
+
+    /// The trailing-slot elapsed format: seconds under a minute, `m`+zero-padded seconds under an
+    /// hour, `h`+zero-padded minutes beyond; clock skew (a stamp ahead of "now") clamps to `0s`.
+    func testWorkingElapsedLabelFormats() {
+        let start = Date(timeIntervalSinceReferenceDate: 1000)
+        func label(_ seconds: TimeInterval) -> String {
+            RailRowsBuilder.workingElapsedLabel(from: start, now: start.addingTimeInterval(seconds))
+        }
+        XCTAssertEqual(label(0), "0s")
+        XCTAssertEqual(label(42), "42s")
+        XCTAssertEqual(label(59), "59s")
+        XCTAssertEqual(label(60), "1m00s")
+        XCTAssertEqual(label(135), "2m15s")
+        XCTAssertEqual(label(3599), "59m59s")
+        XCTAssertEqual(label(3600), "1h00m")
+        XCTAssertEqual(label(3720), "1h02m")
+        XCTAssertEqual(label(-5), "0s", "clock skew clamps, never renders garbage")
+    }
+
+    /// The coarse age format: one unit, no composite — `45s`, `3m`, `2h`, `5d`; skew clamps.
+    func testAgeLabelIsOneCoarseUnit() {
+        let start = Date(timeIntervalSinceReferenceDate: 1000)
+        func label(_ seconds: TimeInterval) -> String {
+            RailRowsBuilder.ageLabel(from: start, now: start.addingTimeInterval(seconds))
+        }
+        XCTAssertEqual(label(0), "0s")
+        XCTAssertEqual(label(45), "45s")
+        XCTAssertEqual(label(60), "1m")
+        XCTAssertEqual(label(59 * 60), "59m")
+        XCTAssertEqual(label(60 * 60), "1h")
+        XCTAssertEqual(label(23 * 3600), "23h")
+        XCTAssertEqual(label(24 * 3600), "1d")
+        XCTAssertEqual(label(5 * 24 * 3600 + 7200), "5d")
+        XCTAssertEqual(label(-5), "0s", "clock skew clamps, never renders garbage")
+    }
 }

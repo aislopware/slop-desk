@@ -1097,9 +1097,18 @@ private struct SidebarLiveRow: View {
         // same class of bug as the frozen title). `nil` (the resting state, or a row past ⌘9)
         // keeps the row's normal leading run.
         let shortcutHint = store.shortcutHintActive ? store.shortcutNumber(for: row.id) : nil
+        let receipt = RailRowsBuilder.commandReceipt(
+            badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
+            failedBlock: failedBlock, processLabel: chrome.processLabel,
+        )
         SlateTabRow(
             title: shownTitle,
             active: active,
+            // The active card's second register — WHERE the pane is (home-abbreviated, the same
+            // display bridge the palette's cwd pill uses). Only the active row spends the extra
+            // rung; every other row keeps the single-line beat (instrument-rows round,
+            // user-directed 2026-08-08).
+            subtitle: active ? row.cwd.map(CwdDisplay.abbreviate) : nil,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
             shortcutHint: shortcutHint,
@@ -1122,10 +1131,15 @@ private struct SidebarLiveRow: View {
             processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
             // A finished COMMAND takes that same slot and names itself in the outcome's ink — the
             // whole rendering of an exit on this rail, since round 24 pulled the outcome marks.
-            commandReceipt: RailRowsBuilder.commandReceipt(
-                badge: chrome.badge, agentFinish: agentFinish, blocks: blocks,
-                failedBlock: failedBlock, processLabel: chrome.processLabel,
-            ),
+            commandReceipt: receipt,
+            // The slot's live readings (instrument-rows round): the working turn clock, the
+            // finish's age beside its receipt / ring-close, the question's wait beside the hand.
+            // All gated on the same raw status/receipt facts the marks key on, so a reading can
+            // never outlive the state it dates.
+            workingSince: chrome.status == .working ? store.paneWorkingSince[row.id] : nil,
+            finishedAt: (receipt != nil || agentFinish)
+                ? (store.paneCompletedAt[row.id] ?? store.paneAttentionAt[row.id]) : nil,
+            awaitingSince: chrome.status == .needsPermission ? store.paneAttentionAt[row.id] : nil,
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,

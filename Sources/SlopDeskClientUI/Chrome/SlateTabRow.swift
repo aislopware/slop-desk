@@ -19,8 +19,14 @@
 // ornament and were removed). ACTIVE is the translucent overlay card: a `raised` wash plus the
 // `Line.card` hairline — the pre-rounds selection, restored user-directed 2026-08-08 after both
 // the reverse-video flip (retired same day) and the solid neutral `chip` fill (off-hue on the
-// authored chrome floor) were rejected. Nothing else rides the row: no subtitle, no readout, no
-// telemetry — the richness lives in the hover tooltip and the context menu.
+// authored chrome floor) were rejected. The row DOES carry telemetry again (user-directed
+// 2026-08-08, the instrument-rows round): the ACTIVE row shows its cwd as a second mono line,
+// a WORKING agent row shows the live turn-elapsed readout in the slot, an AWAITING row shows how
+// long the question has waited, and a finished row dates its receipt. The earlier "no readout"
+// verdict leaned on the title shimmer, which has since been retired — the readouts are now the
+// only place duration lives on the rail. All readouts speak the instrument mono at the caption
+// size; hue stays on the marks (the awaiting age alone takes the attention ink, pairing with
+// the hand mark the way the receipt pairs with its outcome ink).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -31,6 +37,10 @@ import SwiftUI
 struct SlateTabRow: View {
     let title: String
     let active: Bool
+    /// The ACTIVE row's second line — the pane's home-abbreviated cwd in the instrument mono
+    /// (user-directed 2026-08-08: the active card answers "where am I" without the tooltip).
+    /// `nil` ⇒ the single-line row every non-active pane keeps.
+    var subtitle: String?
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
@@ -70,6 +80,17 @@ struct SlateTabRow: View {
     /// command's exit reads on this rail (there is no outcome MARK: see ``StatusDot``). Outranks
     /// the resting process label, which by then names the shell the command exited back into.
     var commandReceipt: RailRowsBuilder.CommandReceipt?
+    /// The WORKING turn's start instant — non-`nil` only while the agent works. The slot then
+    /// carries a live 1 Hz elapsed readout ("42s", "2m15s"): the duration is the one thing the
+    /// eye wants from a busy agent row, and the shimmer that once stood in for it is retired
+    /// (restored user-directed 2026-08-08 after the instrument-rows mock round).
+    var workingSince: Date?
+    /// When the row's finish (receipt / agent ring-close) LANDED — ages the outcome ("3m") so a
+    /// glance separates the just-finished row from the one that has been waiting all afternoon.
+    var finishedAt: Date?
+    /// When the agent's QUESTION was raised (`needsPermission` entry) — the age reads in the
+    /// attention ink, pairing with the hand mark the way the receipt pairs with its outcome ink.
+    var awaitingSince: Date?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
@@ -116,28 +137,42 @@ struct SlateTabRow: View {
                 // already led by the normalized mark (`normalizedProgramTitle`) single-marked.
                 // `nerdAware` so a private-use glyph riding a program title draws from the bundled
                 // symbols face.
-                Text.nerdAware(
-                    agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
-                    size: Slate.Typeface.body,
-                )
-                // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
-                // bold says "something changed", the ring's hue says what) — the same
-                // `.medium` step the active card takes, so the two signals share one scale.
-                .font(.system(
-                    size: Slate.Typeface.body,
-                    weight: active || attentionLabel != nil ? .medium : .regular,
-                ))
-                .foregroundStyle(titleInk)
-                .lineLimit(1)
-                // The state the ink and the AX-hidden trailing mark speak visually, kept
-                // legible for VoiceOver.
-                .accessibilityValue(workingLabel ?? attentionLabel ?? "")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text.nerdAware(
+                        agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
+                        size: Slate.Typeface.body,
+                    )
+                    // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
+                    // bold says "something changed", the ring's hue says what) — the same
+                    // `.medium` step the active card takes, so the two signals share one scale.
+                    .font(.system(
+                        size: Slate.Typeface.body,
+                        weight: active || attentionLabel != nil ? .medium : .regular,
+                    ))
+                    .foregroundStyle(titleInk)
+                    .lineLimit(1)
+                    // The state the ink and the AX-hidden trailing mark speak visually, kept
+                    // legible for VoiceOver.
+                    .accessibilityValue(workingLabel ?? attentionLabel ?? "")
+                    if let subtitle {
+                        // The active card's second register — WHERE the pane is, in the
+                        // instrument mono (a path is data). Head-truncated: the leaf name is
+                        // the part worth keeping when the rail runs narrow.
+                        Text(subtitle)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                }
             }
             Spacer(minLength: 6)
             if !isEditing { trailing }
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
-        .frame(height: Slate.Metric.heightTabRow)
+        // A subtitled (active) row steps up to the two-register rung — the same 13-over-small
+        // stack the ⌃⇥ switcher rows use; every other row keeps the single-line beat.
+        .frame(height: subtitle == nil ? Slate.Metric.heightTabRow : Slate.Metric.heightRowStacked)
         .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
         .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
             Slate.Line.card,
@@ -254,6 +289,38 @@ struct SlateTabRow: View {
                             .foregroundStyle(StatusPresentation.outcomeInk(commandReceipt.outcome))
                             .lineLimit(1)
                             .fixedSize()
+                    } else if let workingSince {
+                        // The 1 Hz turn clock — `TimelineView` scopes the tick to THIS slot, so
+                        // a thinking row re-renders one small text leaf per second, never the
+                        // sidebar. Secondary ink: the duration is a live reading, one step up
+                        // from the resting metadata voice.
+                        TimelineView(.periodic(from: workingSince, by: 1)) { context in
+                            let label = RailRowsBuilder.workingElapsedLabel(
+                                from: workingSince, now: context.date,
+                            )
+                            Text(label)
+                                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                .foregroundStyle(Slate.Text.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .accessibilityLabel("Working for \(label)")
+                        }
+                    } else if let awaitingSince {
+                        // How long the QUESTION has waited — in the attention ink, pairing with
+                        // the amber hand mark the way the receipt pairs with its outcome ink.
+                        // Coarse cadence: an age readout only needs to move once in a while.
+                        TimelineView(.periodic(from: awaitingSince, by: 10)) { context in
+                            let label = RailRowsBuilder.ageLabel(from: awaitingSince, now: context.date)
+                            Text(label)
+                                .font(Slate.Typeface.instrument(
+                                    Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
+                                ))
+                                .foregroundStyle(StatusPresentation.attentionInk(.awaitingInput)
+                                    ?? Slate.Text.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .accessibilityLabel("Waiting for \(label)")
+                        }
                     } else if let processLabel {
                         // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
                         // in the instrument mono at the caption size on the tertiary ink — one
@@ -263,6 +330,18 @@ struct SlateTabRow: View {
                             .foregroundStyle(Slate.Text.tertiary)
                             .lineLimit(1)
                             .fixedSize()
+                    }
+                    if let finishedAt, workingSince == nil, awaitingSince == nil {
+                        // The finish's AGE — dates the receipt / ring-close so a fresh finish
+                        // and an hour-old one stop reading identically. Tertiary: the age is
+                        // metadata beside the outcome, never a second outcome voice.
+                        TimelineView(.periodic(from: finishedAt, by: 10)) { context in
+                            Text(RailRowsBuilder.ageLabel(from: finishedAt, now: context.date))
+                                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                .foregroundStyle(Slate.Text.tertiary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                     }
                 }
                 // The status mark — RIGHTMOST, so state reads down one fixed column no matter

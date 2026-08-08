@@ -10,8 +10,8 @@
 // panes). The leaf is keyed `.id(PaneID)` by PaneContainer so the surface / connection is never reused
 // across panes (identity hazard). SYSTEM colours only.
 //
-// DEFERRED (clean seam, not wired yet):
-//   - TODO: the `TerminalBlocksView` command-block decoration overlay.
+// The command-block decoration overlay this file long reserved a seam for is LIVE as
+// `CommandLadderOverlay` (round 14) — the per-command tick rail on the trailing edge.
 
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
@@ -191,8 +191,17 @@ struct TerminalLeafView: View {
                     )
                     .transition(.opacity)
                 }
-                // TODO(L3): layer `TerminalBlocksView` here as a decoration OVERLAY (never a content
-                // branch — libghostty-freeze guardrail).
+                // The command LADDER (round 14) — the thin per-command tick rail down the
+                // trailing edge, the block chrome this seam was reserved for. A DECORATION
+                // overlay (never a content branch — libghostty-freeze guardrail); it hit-tests
+                // only its own strip, and the pills/find-bar overlays mount LATER in the chain,
+                // so transient chrome draws over it.
+                if !staticMirror, let paneID = live?.id {
+                    CommandLadderOverlay(
+                        model: model,
+                        onJump: { index in store.jumpToBlock(index: index, pane: paneID) },
+                    )
+                }
             } else {
                 Color.clear
             }

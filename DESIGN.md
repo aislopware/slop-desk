@@ -87,8 +87,11 @@ components:
     backgroundColor: "Slate.Surface.raised translucent wash + Line.card hairline border — the overlay card, NOT a solid fill (restored user-directed 2026-08-08; both the reverse-video flip and the solid chip plate are retired)"
     textColor: "labelColor"
     rounded: "{rounded.control}"
-    height: "32px"
+    height: "48px — the two-register rung: the active row alone carries its home-abbreviated cwd as a second mono line (instrument rows, user-directed 2026-08-08)"
     padding: "0 12px"
+  list-row-readouts:
+    textColor: "instrument mono at the caption size — working turn clock (secondary, 1 Hz), finish age (tertiary, coarse one-unit), awaiting age (the attention ink, pairing with the hand mark)"
+    note: "the trailing slot's live readings (instrument rows round): duration is back on the rail — the shimmer that once stood in for it is long retired"
   terminal-column:
     backgroundColor: "{colors.glass-dracula}"
     note: "full-bleed flat column — no card, no radius, no margin; splits inside are divided by the profile's terminalEdge line"
@@ -99,6 +102,12 @@ components:
     backgroundColor: "transparent at rest; State.hover wash on hover; selected = Slate.Surface.raised + Line.card hairline with primary ink — the sidebar row's overlay-card language, followed user-directed 2026-08-08 (the filled-at-rest chip row and its accent selection tint are retired)"
     rounded: "capsule"
     height: "24px"
+  command-ladder:
+    textColor: "status inks only — running = accent, clean = Status.ok, failed = Status.err; never a new hue"
+    note: "the terminal pane's trailing-edge tick rail (round 14): one 6x2 tick per OSC-133 command block, evenly pitched (10pt, compressing to a 4pt floor, then dropping oldest), newest at the bottom; muted at rest, full ink under the pointer; click = the navigator's own re-anchor jump + landed flash. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
+  footer-cockpit:
+    textColor: "instrument mono on the alarm ladder (quiet/raised/loud) — unchanged"
+    note: "the sidebar footer is an instrument BLOCK (round 14): a top hairline sets it off the list, and the two percent readings trade their SF-symbol marks for filling ARC GAUGES (11pt ring, 2pt stroke, subtle track, sweep in the reading's own alarm ink). Disk keeps its glyph — the host reports free space only, and an arc without a denominator would lie"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -169,6 +178,16 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
   floor and stays in its hue family; a solid fill does not (the system `chip` plate read as
   off-family neutral grey and is retired, as is the reverse-video colour-scheme flip of the
   2026-08-07 polish round — both user-directed 2026-08-08). Do not reintroduce either.
+  **Rows are INSTRUMENTS** (instrument rows, user-directed 2026-08-08): the active card alone
+  carries its home-abbreviated cwd as a second mono line (the two-register 48pt rung); a WORKING
+  agent row's slot runs the 1 Hz turn clock ("42s", "2m15s"); a finished row dates its receipt /
+  ring-close with a coarse one-unit age ("3m"); an AWAITING row ages its question in the
+  attention ink, pairing with the hand mark the way the receipt pairs with its outcome ink. Hue
+  stays on the marks; the readings are the instrument mono at the caption size.
+  **The footer is the cockpit** (round 14): a top hairline sets the connection footer off the
+  list, and cpu/mem trade their glyphs for filling ARC GAUGES — the arc is the reading's
+  silhouette, sweeping in the reading's own alarm ink (fill + brightness, never a new hue).
+  Disk keeps its glyph: free-space-only data has no denominator to sweep.
 - **Surfaces** (`Slate.Surface`): `field` → the chrome floor (above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
@@ -192,6 +211,13 @@ info status. Everything else interactive is the system's.
 - The content column is the glass FLAT and full-bleed: no card, no radius, no margin, no ring, no
   shadow. Panes are flush inside it; splits are divided by the profile's `terminalEdge` line — a
   subtle line ON the glass, never a chrome-coloured gap, never per-pane cards.
+- **The command LADDER** (round 14) rides each terminal pane's trailing edge: one short tick per
+  OSC-133 command block, oldest→newest top→down, in the status inks only (running = accent,
+  clean = ok, failed = err). Muted at rest, full ink under the pointer; a tick click is the
+  navigator's own re-anchor jump, confirmed by the existing landed flash. Ticks are EVENLY
+  pitched, never scroll-proportional — blocks carry prompt ordinals, not rows, and this house
+  draws what it knows (absent-never-wrong). An ordinal-less tick (mid-stream join) dims and
+  goes inert.
 - The column subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
   profile's own polarity — so every semantic colour used inside resolves against the glass.
   Satellite pane windows are glass edge-to-edge and adopt the same forced scheme.
@@ -279,5 +305,10 @@ outside every palette.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
 - DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a
   rung of `Slate.Opacity` / `Slate.Elevation` / the tracking trio, or the ladder needs a rung.
+- DO keep row telemetry in the instrument voice and the trailing slot: the turn clock, the
+  finish age and the awaiting age are the rail's live readings (instrument rows round) — never
+  recolour the TITLE for state, and never let a reading outlive the state it dates.
+- DON'T draw the command ladder proportionally to scrollback rows, and don't give it hues
+  beyond the status trio — the even pitch is the honesty contract; the fill is the vocabulary.
 - DON'T hand-roll a zero-state: list surfaces speak `SlateNoResultsLine`, panes speak
   `SlateEmptyState` — text-only, never an illustration, never a decorative glyph.

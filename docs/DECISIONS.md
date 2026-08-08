@@ -7068,3 +7068,20 @@ workbench on the next launch; a root never opened still gets the gate — the ga
 grows by explicit opens only; there is no eviction, because a stale root costs nothing until its
 project is focused again (the membership check is the only reader). The pin test flipped from
 asserting a fresh chrome is empty to asserting the round-trip restores the admitted root.
+
+**Round 14 — the rail becomes an instrument panel (2026-08-08, user-directed via mock round).**
+Three visible moves shipped together after a four-variant mock comparison (the blueprint
+dot-grid variant was declined): (1) INSTRUMENT ROWS — the active sidebar card carries its
+home-abbreviated cwd as a second mono line (the 48pt two-register rung), a working agent row
+runs the 1 Hz turn clock in the trailing slot, a finished row dates its receipt with a coarse
+one-unit age, an awaiting row ages its question in the attention ink. This REVERSES round 4.2's
+"trailing text goes silent": that verdict leaned on the title shimmer, which has since been
+retired — the readouts are again the only place duration lives on the rail. (2) COMMAND LADDER —
+a per-command tick rail down each terminal pane's trailing edge (evenly pitched on purpose:
+blocks carry prompt ordinals, not rows, so a proportional minimap would fabricate geometry),
+clicking a tick reuses the navigator's re-anchor jump + landed flash. It fills the seam
+`TerminalLeafView` reserved for `TerminalBlocksView`. (3) COCKPIT FOOTER — the connection
+footer gains a top hairline and swaps the cpu/mem SF-symbol marks for filling arc gauges in the
+reading's own alarm ink; disk keeps its glyph (free-space-only data has no denominator). A
+Canario-style hover live-peek of pane content was considered and DECLINED outright in the same
+round — do not re-propose it.

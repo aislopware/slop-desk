@@ -331,4 +331,18 @@ public extension WorkspaceStore {
             model.notePromptJumpIssued() // landed flash — same settle contract as the delta jump
         }
     }
+
+    /// Jumps a SPECIFIC pane's viewport to the block with `index` — the command LADDER's per-tick
+    /// jump (round 14). The same absolute re-anchor choreography as
+    /// ``jumpToNavigatorBlockInActivePane(index:)`` but PANE-addressed: the ladder rides every
+    /// terminal pane, active or not, and a tick click must land in its OWN pane's scrollback.
+    /// Same no-op guarantees (non-terminal pane / no seam / evicted index / ordinal-less block).
+    func jumpToBlock(index: UInt32, pane: PaneID) {
+        guard let model = (handle(for: pane) as? TerminalModelProviding)?.terminalModel,
+              let actions = model.surface as? TerminalSurfaceActions,
+              let block = model.blocks.block(at: index) else { return }
+        if BlockJump.toPromptOrdinal(block.promptOrdinal, using: actions) {
+            model.notePromptJumpIssued() // landed flash — same settle contract as the delta jump
+        }
+    }
 }

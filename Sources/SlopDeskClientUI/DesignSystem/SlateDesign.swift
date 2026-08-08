@@ -443,6 +443,12 @@ enum Slate {
         /// x-height so it reads as punctuation, not as a badge.
         static let dot: CGFloat = 6
 
+        /// The footer ARC GAUGE (``PulseGauge``): a ring the size of a footnote glyph box, so it
+        /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.
+        static let gaugeDiameter: CGFloat = 11
+        /// The gauge's ring weight — two hairlines: one reads as a slot, two read as a filling band.
+        static let gaugeStroke: CGFloat = 2
+
         // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
         // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
         /// Popover/menu rows, chips, the titlebar clusters, plate buttons.
