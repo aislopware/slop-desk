@@ -1,14 +1,15 @@
 // SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
 // window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
-//   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed (expanded
-//     toggle lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system
-//     lights.
+//   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed, ALWAYS VISIBLE
+//     (user-directed 2026-08-09) at ``Slate/Metric/windowControlsLead`` — the same window x as the
+//     hide twin inside the navigator's own strip, so the toggle never appears to move.
+//   • then  — the ``WorkspaceTabStrip``, also collapsed-only: the tab list the hidden sidebar took
+//     with it, laid horizontally on the project beds it already had.
 //   • right — the RIGHT-panel REOPEN (`sidebar.right`), only while the panel is collapsed — the
 //     expanded-state hide toggle lives in the panel's OWN strip trailing corner (user-directed
 //     2026-08-03; the same split the left sidebar has: reopen in the titlebar, hide inside the
 //     surface it hides). The `sidebar.*` glyph pair stays: otty's `inset.filled.*third.square`
-//     pair was tried and user-rejected 2026-08-03. The connection cluster shows here ONLY while
-//     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
+//     pair was tried and user-rejected 2026-08-03.
 // The CENTRE IS EMPTY (user-directed 2026-08-08): the pane title and its `⋯` menu are gone. With the
 // terminal lifted as an island, the band above it is the island's top moat — a strip of bare ground —
 // and a label floating in it read as chrome the layout no longer has room for. Nothing was lost: split
@@ -16,11 +17,17 @@
 // palette's DIRECTORY section. The window title itself is unaffected (`.navigationTitle` still feeds
 // Mission Control, the window menu and screenshots).
 //
-// The plate buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
-// faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
-// strip stays draggable/clickable). The connection cluster stays always-visible: it is STATUS, not a
-// control. The reopen button flips the shared `WorkspaceChromeState` flag that the split
-// representable reads to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
+// NO CONNECTION STATUS (user-directed 2026-08-09). The cluster used to appear here whenever the
+// sidebar was collapsed, mirroring the sidebar footer's resting copy; both are gone from the macOS
+// chrome. The link still speaks where it MATTERS — the empty pane area names not-connected /
+// link-down as its cause and carries the Connect action — and Connect-to-Host stays reachable from
+// the palette. `ConnectionCluster` itself lives on: iOS mounts it in the navigation toolbar.
+//
+// The RIGHT-panel reopen plate is still HOVER-REVEALED (the otty behavior): hidden at rest, faded in
+// while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the strip
+// stays draggable/clickable). The reopen buttons flip the shared `WorkspaceChromeState` flag that
+// the split representable reads to collapse the matching `NSSplitViewItem` — same machinery the old
+// toolbar drove.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -35,11 +42,12 @@ import AppKit // NSPasteboard for "Copy Path"
 struct SlateTitlebar: View {
     let store: WorkspaceStore
     let chrome: WorkspaceChromeState
-    /// The app-global connection — drives the trailing status cluster. Optional so the titlebar stays
-    /// standalone-mountable in previews / snapshot tests (`nil` simply hides the cluster).
-    var connection: AppConnection?
-    /// Tapping the status cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
-    var onConnect: () -> Void = {}
+    /// The memoized structural rows the collapsed-state tab strip renders — handed down from the
+    /// content column so the strip and the sidebar share ONE rows build. Empty (previews / iOS /
+    /// tests) simply mounts no strip.
+    var rows: [RailRow] = []
+    /// Focus a pane from the strip. No-op default keeps the titlebar standalone-mountable.
+    var onSelectPane: (PaneID) -> Void = { _ in }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
     private var codeSidebarVisible: Bool { !chrome.codeSidebarCollapsed }
@@ -48,38 +56,39 @@ struct SlateTitlebar: View {
     @State private var topHover = false
 
     var body: some View {
-        // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
-        // centres at y≈15 (the row the red/yellow/green buttons sit on), NOT the vertical centre of the 40pt
-        // strip.
-        let rowTop: CGFloat = 3
-        return ZStack(alignment: .top) {
-            // Left: sidebar REOPEN only while collapsed AND the top strip is hovered. On reveal-by-collapse
-            // fade in after the slide settles (never ride it, x 80→300); on reveal-by-hover just small-fade.
-            PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                .opacity(!sidebarVisible && topHover ? 1 : 0)
-                .allowsHitTesting(!sidebarVisible && topHover)
-                .padding(.leading, 80)
-                .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
-                .animation(Slate.Anim.smallFade, value: topHover)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, rowTop)
+        // Everything in the band is CENTRED on it. That used to be wrong — AppKit's default corner
+        // inset put the traffic lights high in the 40pt band, so the controls had to be top-anchored
+        // to meet them. `SlopDeskClientApp.positionWindowControls` now centres the lights instead
+        // (user-directed 2026-08-09), so the band has ONE row and plain centring finds it.
+        ZStack {
+            // Left: the sidebar REOPEN and, beside it, the tabs the hidden sidebar took with it.
+            // Both are collapsed-only; the button is ALWAYS visible in that state (it is the only
+            // way back without knowing ⌘⇧L) and stands at the same window x as its hide twin inside
+            // the navigator strip, so the toggle reads as one button that stays put.
+            HStack(spacing: Slate.Metric.space2) {
+                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
+                    .help("Show the tabs panel")
+                if !rows.isEmpty {
+                    WorkspaceTabStrip(store: store, rows: rows, onSelect: onSelectPane)
+                }
+            }
+            .opacity(sidebarVisible ? 0 : 1)
+            .allowsHitTesting(!sidebarVisible)
+            .padding(.leading, Slate.Metric.windowControlsLead)
+            // Reserve the trailing plate's slot so a long run of tabs scrolls instead of sliding
+            // under the right-panel reopen button.
+            .padding(.trailing, Slate.Metric.plate + 2 * Slate.Metric.space3)
+            // Never RIDE the collapse slide (the column edge travels x 80→300): fade in only once
+            // it has settled.
+            .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Right: the RIGHT-panel REOPEN — only while the panel is COLLAPSED and the top strip
             // is hovered (user-directed 2026-08-03: the expanded-state hide toggle moved into the
             // panel's own strip, so this slot mirrors the left sidebar's reopen exactly). On
             // reveal-by-collapse fade in after the slide settles; on reveal-by-hover just
-            // small-fade. The slot is ALWAYS reserved (hidden ⇒ transparent, not absent) so the
-            // connection cluster never shifts — the zero-shift rule.
+            // small-fade.
             HStack(spacing: Slate.Metric.space2) {
-                if let connection, !sidebarVisible {
-                    ConnectionCluster(
-                        connection: connection,
-                        pingMS: ConnectionTelemetry.pingMS(store),
-                        fps: ConnectionTelemetry.fps(store),
-                        kbps: ConnectionTelemetry.kbps(store),
-                        onConnect: onConnect,
-                    )
-                }
                 PlateIconButton(symbol: .sidebarRight) { chrome.toggleCodeSidebar() }
                     .opacity(!codeSidebarVisible && topHover ? 1 : 0)
                     .allowsHitTesting(!codeSidebarVisible && topHover)
@@ -92,9 +101,8 @@ struct SlateTitlebar: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)
-            .padding(.top, rowTop)
         }
-        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+        .frame(height: Slate.Metric.titlebarHeight)
         #if os(macOS) // HoverSensor is AppKit; this titlebar only MOUNTS on macOS but compiles for iOS
             .background(HoverSensor { topHover = $0 })
         #endif

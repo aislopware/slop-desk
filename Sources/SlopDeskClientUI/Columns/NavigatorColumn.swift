@@ -39,18 +39,11 @@ struct NavigatorColumn: View {
     /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — resting home is the SIDEBAR FOOTER (one status line on the
-    /// sidebar's rails: host leading, ping trailing, pure text; never jammed into the traffic-light
-    /// strip). While the sidebar is COLLAPSED the titlebar hosts the trailing fallback
-    /// (`SlateTitlebar`). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
-    var connection: AppConnection?
     /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
     /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
     /// while a drag is in flight. Threaded in like `preferences` (the sidebar's `NSHostingController`
     /// inherits no environment); `nil` (previews / iOS) leaves the rows plain.
     var paneDrag: PaneDragCoordinator?
-    /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
-    var onConnect: () -> Void = {}
 
     /// The transient sidebar search query — narrows the rows via the pure
     /// ``RailRowsBuilder/filtered``. On iOS it feeds the system `.searchable`; on macOS the
@@ -66,8 +59,6 @@ struct NavigatorColumn: View {
     @State private var rowsMemo = RailRowsMemo()
 
     #if os(macOS)
-    /// Pointer-in-strip — the collapse toggle's hover-reveal gate.
-    @State private var stripHover = false
     /// The COLLAPSED project groups (header chevron toggled shut), keyed by ``collapseKey(_:)``.
     /// Session-scoped presentation state — a fresh launch opens every group.
     @State private var collapsedSections: Set<String> = []
@@ -163,34 +154,26 @@ struct NavigatorColumn: View {
         let allRows = renderedRows
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
-            // Traffic-light strip: ONLY the sidebar-collapse toggle (top-trailing). Connection lives in the
-            // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
-            // Top 3 centres the 24pt plate on the traffic-light row (y≈15).
+            // Traffic-light strip: ONLY the sidebar-collapse toggle, parked immediately RIGHT of the
+            // system lights (``Slate/Metric/windowControlsLead``) and ALWAYS VISIBLE (user-directed
+            // 2026-08-09). It CENTRES in the band, which is also where the traffic lights now sit
+            // (``SlopDeskClientApp.positionWindowControls``) — the band carries one row.
             //
-            // The toggle is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide —
-            // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
-            // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
-            // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
-            // collapse animation; 0.15 still caught the tail). On top of that it is HOVER-REVEALED:
-            // at rest the strip is empty; the pointer entering the strip fades it in (`HoverSensor` —
-            // hit-test-transparent, the strip stays draggable).
-            ZStack(alignment: .topTrailing) {
+            // It used to hang off the sidebar's TRAILING edge and reveal on hover, which cost it
+            // twice: the trailing edge RIDES the collapse slide, so the button had to be timed
+            // around the animation, and a control that hides at rest is a control you have to know
+            // is there. Anchored to the leading edge it does not move when the sidebar does — and it
+            // now sits at the SAME window x as the titlebar's reopen twin, so the toggle reads as
+            // one button that stays put while the sidebar comes and goes.
+            ZStack(alignment: .leading) {
                 Color.clear
                 if let chrome {
                     PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                        .opacity(!chrome.sidebarCollapsed && stripHover ? 1 : 0)
-                        .allowsHitTesting(!chrome.sidebarCollapsed && stripHover)
-                        .animation(
-                            chrome.sidebarCollapsed ? nil : Slate.Anim.standard.delay(0.25),
-                            value: chrome.sidebarCollapsed,
-                        )
-                        .animation(Slate.Anim.smallFade, value: stripHover)
-                        .padding(.top, 3)
-                        .padding(.trailing, 8)
+                        .padding(.leading, Slate.Metric.windowControlsLead)
+                        .help("Hide the tabs panel")
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
-            .background(HoverSensor { stripHover = $0 })
             // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
             // "TABS" label AND its trailing groups menu, both user-retired): a quiet inset field
             // on the hover tint, filtering the rows below through the SAME pure
@@ -259,21 +242,13 @@ struct NavigatorColumn: View {
                 NewTabDropSlot(coordinator: paneDrag)
             }
 
-            // Connection footer — the full-width status block under the tab list (ScrollView
-            // maxHeight: .infinity pins it to the bottom): the link line, plus the host-pulse line
-            // once the machine reports. NO rule above it: the panel separates its bands by AIR (the
-            // section headers' own dialect), and a hairline here drew a seam across a sidebar that
-            // has none anywhere else. The `space3` gap is the separator — the same inter-group band
-            // the groups use. Full-width so hover/hit read as one sidebar item.
-            if let connection {
-                // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) and the ~4 s host pulse
-                // are read inside `SidebarConnectionFooter` so their ticks re-render that leaf,
-                // never this sidebar body.
-                SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
-                    .padding(.horizontal, Slate.Metric.space2)
-                    .padding(.top, Slate.Metric.space3)
-                    .padding(.bottom, Slate.Metric.space2)
-            }
+            // NO CONNECTION FOOTER (user-directed 2026-08-09). The link line + host pulse used to
+            // stand under the tab list and the same cluster mirrored into the titlebar whenever this
+            // panel was hidden. Both are gone from the macOS chrome: a status block that reads
+            // "connected" ~100% of the time was spending the sidebar's most permanent slot on a
+            // constant. The link still speaks where it is actionable — the empty pane area names
+            // not-connected / link-down as its CAUSE and carries the Connect action — and
+            // Connect-to-Host stays in the palette. iOS keeps `ConnectionCluster` in its toolbar.
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Slate.Surface.field)
@@ -1298,27 +1273,6 @@ private struct NewTabDropSlot: View {
     }
 }
 #endif
-
-/// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
-/// reads tick at ~1 Hz off the live session models — read HERE so each tick re-renders this footer
-/// only, never the sidebar body (which would re-derive the whole rail every second). The visible
-/// readout is the PING alone; the stream numbers ride the tooltip (`ConnectionCluster` header note).
-private struct SidebarConnectionFooter: View {
-    let store: WorkspaceStore
-    let connection: AppConnection
-    let onConnect: () -> Void
-
-    var body: some View {
-        ConnectionCluster(
-            connection: connection,
-            pingMS: ConnectionTelemetry.pingMS(store),
-            fps: ConnectionTelemetry.fps(store),
-            kbps: ConnectionTelemetry.kbps(store),
-            onConnect: onConnect,
-            railFooter: true,
-        )
-    }
-}
 
 /// A small self-focusing inline rename `TextField` (iOS list rows) — owns its own draft `@State` so
 /// a `@ViewBuilder` row helper (which cannot hold state) can drop it in. Seeds from `seed` on open, commits on

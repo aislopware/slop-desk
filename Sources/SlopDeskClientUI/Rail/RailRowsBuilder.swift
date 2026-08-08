@@ -291,6 +291,37 @@ enum RailRowsBuilder {
         )
     }
 
+    /// The title a row SHOWS right now — the whole live chain (rename → agent intent → structural →
+    /// running command → last executed command → generic) resolved off the store in one call.
+    ///
+    /// Two surfaces render the same panes and must never disagree about what one is called: the
+    /// sidebar's rows and the collapsed-sidebar TAB STRIP. The sidebar leaf keeps computing the
+    /// intermediates it also needs for its tooltip; this is the same resolution for a caller that
+    /// wants only the string.
+    @MainActor
+    static func liveTitle(
+        for row: RailRow, chrome: RailRowChrome, store: WorkspaceStore, fallback: String,
+    ) -> String {
+        let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
+            ? store.liveRunningCommand(
+                for: row.id, processLabel: processDisplayName(chrome.processLabel),
+            )
+            : nil
+        return liveRowTitle(
+            structuralTitle: row.title,
+            userRenamed: store.tree.activeSession?.specs[row.id]?.userRenamed == true,
+            isAgent: isAgentSession(status: chrome.status, processLabel: chrome.processLabel),
+            intent: store.paneAgentIntent[row.id],
+            runningCommand: runningCommand,
+            programTitle: normalizedProgramTitle(store.liveProgramTitle(for: row.id)),
+            processTitle: processDisplayName(chrome.processLabel),
+            blocks: store.commandBlocks(for: row.id),
+            kind: row.kind,
+            cwdTitle: cwdFolderName(row.cwd),
+            fallback: fallback,
+        )
+    }
+
     /// For any TITLE shared by more than one row, replace each colliding row's folder-name title
     /// with its parent-qualified form (`parent/leaf`). Only folder-derived titles are rewritten (an explicit
     /// rename that happens to collide is left verbatim), and only when a distinct parent segment exists; rows

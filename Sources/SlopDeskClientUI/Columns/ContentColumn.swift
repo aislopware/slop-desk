@@ -25,6 +25,12 @@ struct ContentColumn: View {
     /// tests) reads as "no modal up".
     @Environment(\.overlayCoordinator) private var overlayCoordinator
 
+    /// The row model for the collapsed-state tab strip — the SAME memo class the navigator uses, so
+    /// the strip pays the structural build only when something structural actually moved. Plain
+    /// class in `@State` (NOT `@Observable`): its mutation during a body eval must not re-invalidate
+    /// anything.
+    @State private var rowsMemo = RailRowsMemo()
+
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
     var body: some View {
@@ -46,7 +52,20 @@ struct ContentColumn: View {
             // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
             // own explicit shortcuts).
             .overlay(alignment: .top) {
-                SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
+                // The titlebar carries the collapsed-state tab strip, so it needs the same rows the
+                // navigator renders. They are built HERE rather than inside the titlebar because
+                // this column is not lazy: a rows build in the overlay would re-register every
+                // volatile per-pane dict as a dependency of the titlebar body and re-run on each
+                // status tick. `RailRowsMemo` returns the cached array when nothing structural
+                // moved (`WorkspaceRootView`'s own memo contract), and the strip's chips read their
+                // volatile chrome in their own leaves.
+                SlateTitlebar(
+                    store: store, chrome: chrome,
+                    rows: chrome.sidebarCollapsed ? rowsMemo.rows(for: store) : [],
+                    // ONE select path with the sidebar's rows: switch to the owning tab, focus the
+                    // pane, clear the tab's agent badges.
+                    onSelectPane: { NavigatorColumn.selectRow($0, in: store) },
+                )
             }
         #endif
             // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay

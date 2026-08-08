@@ -648,6 +648,19 @@ enum Slate {
         /// The hover-reveal titlebar strip height — the content area reserves this at its top so the
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
         static let titlebarHeight: CGFloat = heightStrip
+        /// Where chrome may start on the traffic-light row: clear of the three system window
+        /// controls. Measured off the repositioned cluster (three 14pt discs on a 23pt pitch from
+        /// ``windowControlsInset`` ⇒ a trailing edge at 72), plus a control's worth of air. Both
+        /// sidebar-toggle mounts — the one in the navigator's own strip and the reopen twin in the
+        /// titlebar — sit here, which is what keeps the button at ONE window x whether the sidebar
+        /// is showing or not.
+        static let windowControlsLead: CGFloat = 80
+        /// The system window controls' own inset from the window's top-left corner — applied by
+        /// `SlopDeskClientApp.positionWindowControls(in:)`, because AppKit's default hugs the corner
+        /// at 9/9 and the lights then read top-heavy in a 40pt band that is twice a titlebar's
+        /// height. 13 is `(bandHeight - 14) / 2`: the discs CENTRE on the band, and the same number
+        /// on the leading edge makes the corner one inset rather than two arbitrary ones.
+        static let windowControlsInset: CGFloat = (bandHeight - 14) / 2
         static let sidebarWidth: CGFloat = 220
         /// The MINIMIZED sidebar — the rail (user-directed 2026-08-07, rail round): collapsing the
         /// tabs panel narrows it to this instead of removing it, so the window controls keep a

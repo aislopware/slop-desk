@@ -113,12 +113,18 @@ struct SlateCompactIsland<Content: View>: View {
 struct SlateProjectIsland<Content: View>: View {
     /// The project's normalized key — `nil` is the keyless bucket, which gets a neutral bed.
     let projectKey: String?
+    /// How far the bed extends past its content vertically. The sidebar spends a full `space2` — its
+    /// beds stack down a column and the gap between two of them is what separates the projects. The
+    /// titlebar strip spends `space1` instead (user-directed 2026-08-09): there the bed has to leave
+    /// clearance ABOVE and BELOW itself inside a fixed 40pt band, and a full rung made it fill the
+    /// band edge to edge and read as a painted header rather than a bed.
+    var verticalInset: CGFloat = Slate.Metric.space2
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         content()
             .padding(.horizontal, Slate.Metric.projectIslandInset)
-            .padding(.vertical, Slate.Metric.space2)
+            .padding(.vertical, verticalInset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 Slate.ProjectTint.wash(for: projectKey),
