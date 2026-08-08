@@ -161,7 +161,7 @@ private final class DockProgressContentView: NSView {
         )
         guard track.width > 0 else { return }
         let radius = barHeight / 2
-        NSColor.black.withAlphaComponent(0.35).setFill()
+        NSColor.black.withAlphaComponent(Slate.Opacity.dim).setFill()
         NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
 
         (model.tint == .error ? NSColor.systemRed : NSColor.controlAccentColor).setFill()

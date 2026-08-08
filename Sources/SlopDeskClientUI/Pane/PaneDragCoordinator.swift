@@ -683,7 +683,7 @@ struct PaneDragChipView: View, Equatable {
                         ),
                 ),
         )
-        .shadow(color: Slate.State.shadow, radius: 8, y: 2)
+        .slateShadow(.ghost)
         .fixedSize()
         .padding(6) // keep the shadow inside the borderless panel's bounds
     }

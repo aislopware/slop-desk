@@ -193,7 +193,7 @@ struct KeybindingsEditorView: View {
             // clears it, and the header's "Reset to Default" reverts everything at once.
             chordChip(for: binding, isRecording: isRecording)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Slate.Metric.space1)
     }
 
     /// The trailing chord chip — the effective shortcut glyph, tappable to start recording. While recording

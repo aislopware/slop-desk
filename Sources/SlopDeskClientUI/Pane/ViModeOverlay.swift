@@ -61,7 +61,7 @@ struct ViModePill: View {
                 .foregroundStyle(Slate.Text.primary)
             Text(modeLabel)
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .tracking(0.5) // the small-caps / uppercase spacing the visual labels share
+                .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.primary)
                 .lineLimit(1)
                 .fixedSize()
@@ -90,7 +90,7 @@ struct ViModePill: View {
                     lineWidth: Slate.Metric.hairline,
                 ),
         )
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .slateShadow(.chip)
         .animation(Slate.Anim.smallFade, value: model.viPendingCount)
         .animation(Slate.Anim.smallFade, value: model.viVisualMode)
         // Belt-and-suspenders Escape dismiss: the primary exit is the renderer's `keyDown` →
@@ -223,7 +223,7 @@ struct ViKeyHintBar: View {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
         )
-        .shadow(color: Slate.State.shadow, radius: 12, x: 0, y: 4)
+        .slateShadow(.panel)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Vi mode key hints")
     }
@@ -233,7 +233,7 @@ struct ViKeyHintBar: View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text(heading)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .tracking(0.5)
+                .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.tertiary)
                 .padding(.bottom, Slate.Metric.space1)
             ForEach(hints) { hint in

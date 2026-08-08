@@ -419,7 +419,7 @@ struct GuiLeafView: View {
             tint: hasLatchedMode ? Slate.State.accent : Slate.Text.icon,
         ) { controlsExpanded = true }
             .background(
-                Slate.Surface.ground.opacity(0.88),
+                Slate.Surface.ground.opacity(Slate.Opacity.scrim),
                 in: .rect(cornerRadius: Slate.Metric.radiusControl),
             )
     }
@@ -576,7 +576,7 @@ private struct StreamStallCaption: View {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
             .background(
-                Slate.Surface.ground.opacity(0.88),
+                Slate.Surface.ground.opacity(Slate.Opacity.scrim),
                 in: .rect(cornerRadius: Slate.Metric.radiusSmall),
             )
         }
@@ -824,7 +824,7 @@ private struct GuiStatsReadout: View {
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .background(
-            Slate.Surface.ground.opacity(0.88),
+            Slate.Surface.ground.opacity(Slate.Opacity.scrim),
             in: .rect(cornerRadius: Slate.Metric.radiusSmall),
         )
     }
@@ -1036,7 +1036,7 @@ private struct FileUploadOverlay: View {
         }
         .padding(Slate.Metric.space2)
         .background(
-            Slate.Surface.ground.opacity(0.9),
+            Slate.Surface.ground.opacity(Slate.Opacity.scrim),
             in: .rect(cornerRadius: Slate.Metric.radiusSmall),
         )
         .frame(maxWidth: 320)

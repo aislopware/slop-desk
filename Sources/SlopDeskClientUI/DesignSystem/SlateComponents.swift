@@ -138,6 +138,28 @@ struct SlatePill: View {
     }
 }
 
+/// The quiet ZERO-STATE line for a list surface — one tertiary-ink body line, centred, with
+/// breathing room. Every "no results / no matches / nothing yet" in a palette, search or popover
+/// list is this one object (round 13 — four surfaces had hand-rolled the identical block), so the
+/// app's empty voice stays text-only and uniform: no illustration, no glyph, no card.
+/// The full-pane empty state with its display glyph is a different intent — ``SlateEmptyState``.
+struct SlateNoResultsLine: View {
+    let message: String
+    /// Overlay cards pass their own neutral world's ink (`SlateOverlayInk.tertiary`).
+    var ink: Color = Slate.Text.tertiary
+    /// The vertical breathing room — the roomy default for a results pane; a dense popover
+    /// passes a tighter rung.
+    var inset: CGFloat = Slate.Metric.space4
+
+    var body: some View {
+        Text(message)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(ink)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, inset)
+    }
+}
+
 /// A "card" surface: element background, hairline border, rounded corners. The floating-card idiom
 /// for inset content (command output, detail boxes). Use `.slateCard()` on any view.
 private struct SlateCardModifier: ViewModifier {

@@ -237,11 +237,7 @@ struct OpenQuicklyView: View {
     }
 
     private var emptyState: some View {
-        Text(emptyMessage)
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(SlateOverlayInk.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, Slate.Metric.space4)
+        SlateNoResultsLine(message: emptyMessage, ink: SlateOverlayInk.tertiary)
     }
 
     private func row(_ item: OpenQuicklyItem, selectableIndex: Int) -> some View {
@@ -418,11 +414,10 @@ struct OpenQuicklyView: View {
             actionsSearchField
             divider
             if actions.isEmpty {
-                Text("No actions")
-                    .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(SlateOverlayInk.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, Slate.Metric.space2)
+                SlateNoResultsLine(
+                    message: "No actions", ink: SlateOverlayInk.tertiary,
+                    inset: Slate.Metric.space2,
+                )
             } else {
                 ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
                     actionRow(action, index: index, isHighlighted: index == actionsSelection)

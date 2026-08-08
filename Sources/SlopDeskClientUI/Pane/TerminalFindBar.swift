@@ -303,7 +303,7 @@ struct TerminalFindBar: View {
         // (verified by pixel-scanning: the pane→shadow gradient runs straight into the card fill, no border
         // line). Only the `Aa`/`ab`/`.*` mode chips keep their OWN hairline outlines (FindTogglePill).
         .background(Slate.Surface.raised, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
-        .shadow(color: Slate.State.shadow, radius: 12, x: 0, y: 4)
+        .slateShadow(.panel)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / cheat-sheet idiom).

@@ -112,7 +112,7 @@ private struct HintLabelBadge: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                     // A thin dark hairline so the yellow plate reads on a light background too.
-                    .strokeBorder(Color.black.opacity(0.35), lineWidth: Slate.Metric.hairline),
+                    .strokeBorder(Slate.Text.onWarn.opacity(Slate.Opacity.dim), lineWidth: Slate.Metric.hairline),
             )
             .opacity(dimmed ? 0.2 : 1)
             .fixedSize()
@@ -125,7 +125,8 @@ private struct HintLabelBadge: View {
         // Splice the per-character `Text` runs left-to-right into one run (`Text.spliced`).
         Text.spliced(Array(label.uppercased()).enumerated().map { offset, element in
             let faded = offset < typed.count
-            return Text(String(element)).foregroundStyle(faded ? Color.black.opacity(0.35) : Color.black)
+            let ink = faded ? Slate.Text.onWarn.opacity(Slate.Opacity.dim) : Slate.Text.onWarn
+            return Text(String(element)).foregroundStyle(ink)
         })
     }
 }
@@ -153,23 +154,23 @@ private struct HintModeBadge: View {
         HStack(spacing: Slate.Metric.space1) {
             Text("HINTS")
                 .font(.system(size: Slate.Typeface.footnote, weight: .bold))
-                .tracking(0.5)
-                .foregroundStyle(Color.black)
+                .tracking(Slate.Typeface.pillTracking)
+                .foregroundStyle(Slate.Text.onWarn)
             Text(intentLabel)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .tracking(0.5)
-                .foregroundStyle(Color.black.opacity(0.6))
+                .tracking(Slate.Typeface.pillTracking)
+                .foregroundStyle(Slate.Text.onWarn.opacity(Slate.Opacity.muted))
             if !typed.isEmpty {
                 Text(typed.uppercased())
                     .font(.system(size: Slate.Typeface.footnote, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(Slate.Text.onWarn)
             }
             closeButton
         }
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .background(Slate.Status.warn, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .slateShadow(.chip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Hint mode \(intentLabel)")
         .accessibilityHint("Press a label, or Escape to exit")
@@ -180,7 +181,7 @@ private struct HintModeBadge: View {
         Button(action: onExit) {
             Image(systemName: "xmark")
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Color.black.opacity(closeHover ? 1 : 0.6))
+                .foregroundStyle(Slate.Text.onWarn.opacity(closeHover ? 1 : Slate.Opacity.muted))
                 .frame(width: 16, height: 16)
                 .contentShape(.rect)
         }

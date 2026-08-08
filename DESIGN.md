@@ -99,6 +99,9 @@ components:
     backgroundColor: "transparent at rest; State.hover wash on hover; selected = Slate.Surface.raised + Line.card hairline with primary ink — the sidebar row's overlay-card language, followed user-directed 2026-08-08 (the filled-at-rest chip row and its accent selection tint are retired)"
     rounded: "capsule"
     height: "24px"
+  no-results-line:
+    textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
+    note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
 ---
 
 # SlopDesk Design System — DRACULA FLAT
@@ -220,18 +223,35 @@ the fresh-install default) follows the OS through the pair — OS dark → Dracu
 — flipping live on an OS switch. The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit
 outside every palette.
 
-## Structure, type, motion (unchanged ladders)
+## Structure, type, motion (closed ladders)
 
 - **Metrics**: 8pt grid; closed height ladder (`heightControl` 24 → `heightDrawer` 180); closed
   radius family; `check-ds-leaks.sh` enforces no raw font/radius/height literals in
   `Sources/SlopDeskClientUI`.
+- **Alpha** (`Slate.Opacity`, round 13): the closed translucency scale — `faint` 0.12 (accent
+  muted wash) / `wash` 0.15 (selection dose) / `dim` 0.35 (de-emphasised ink on a plate) /
+  `muted` 0.6 (soft hairlines, secondary badge ink) / `scrim` 0.88 (HUD backdrop over live
+  content). Chrome code picks a rung, never a raw `.opacity(N)`.
+- **Elevation** (`Slate.Elevation` via `.slateShadow`, round 13): the closed shadow ladder —
+  `card` 2/1 (the active card's whisper, `cardShadow` colour) / `chip` 4/1 (pills, mode badges,
+  instrument chips) / `ghost` 8/2 (a pane mid-drag) / `panel` 12/4 (find bar, overlay cards) /
+  `palette` 30/12 (the command palette, the deepest float). Radius/y never appear at a call site.
 - **Type**: system face for prose; **JetBrains Mono instrument voice** for the rail, readouts,
   numbers, caps micro-labels — the terminal's own register bleeding into the chrome. This, not
-  colour, is where the product's character lives.
+  colour, is where the product's character lives. Three tracking rungs: `instrumentTracking` 1.2
+  (mono engraving), `capsTracking` 0.6 (sidebar caps), `pillTracking` 0.5 (caps on a pill plate —
+  measured off the system secure-input pill).
+- **Pinned-fill inks**: `Text.onAccent` (white) on the saturated fill band (secure blue, sync
+  amber, `Accent.deep`); `Text.onWarn` (black) on the warn/hazard plate (hint badges). Both
+  appearance-independent because the fills they sit on are pinned.
 - **Motion**: cubic-bezier only, no springs; one orchestrated moment (the connect handshake
-  needle). Timing tokens in `Slate.Anim`.
+  needle). Timing tokens in `Slate.Anim`; `pulse` is the ONE repeating shape and lives only in a
+  preview that demonstrates blinking — the at-rest-motion purge stands.
+- **Interaction states**: rest / hover / selected everywhere; a true PRESSED fill exists only on
+  the plate idiom (`SlatePlateStyle`, whose press previews the latch it lands on) — rows and tabs
+  act instantly, so they do not carry one. Do not add pressed fills to instant-action rows.
 - **Overlays**: `SlateOverlayCard` glass/material + `Color.primary` ink. Settings stays pure
-  system semantics (`SettingsInk`).
+  system semantics (`SettingsInk` — a deliberate second world; do not route it through `Slate`).
 
 ## Do / Don't
 
@@ -257,3 +277,7 @@ outside every palette.
   on selection (tried both doses the same day, both pulled), no underlines for selection.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
+- DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a
+  rung of `Slate.Opacity` / `Slate.Elevation` / the tracking trio, or the ladder needs a rung.
+- DON'T hand-roll a zero-state: list surfaces speak `SlateNoResultsLine`, panes speak
+  `SlateEmptyState` — text-only, never an illustration, never a decorative glyph.

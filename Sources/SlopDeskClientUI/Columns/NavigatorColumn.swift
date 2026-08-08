@@ -192,7 +192,7 @@ struct NavigatorColumn: View {
                     PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
                         .help("Hide the tabs panel")
                         .padding(.top, 3)
-                        .padding(.trailing, 8)
+                        .padding(.trailing, Slate.Metric.space2)
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
@@ -231,7 +231,7 @@ struct NavigatorColumn: View {
             .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
-            .padding(.horizontal, 8)
+            .padding(.horizontal, Slate.Metric.space2)
             .padding(.bottom, 6)
 
             ScrollView {
@@ -268,7 +268,7 @@ struct NavigatorColumn: View {
                         }
                     }
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, Slate.Metric.space2)
                 // Captures the enclosing NSScrollView (must sit INSIDE the scroll content) so a pane
                 // drag parked at the list's top/bottom edge auto-scrolls rows into reach.
                 .background(sidebarScrollCapturer)
@@ -713,7 +713,7 @@ struct SidebarSectionHeaderRow: View {
             }
         }
         .padding(.trailing, Slate.Metric.tabRowInset) // the rows' trailing-slot x
-        .padding(.vertical, 4)
+        .padding(.vertical, Slate.Metric.space1)
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)
         .contentShape(.rect)
@@ -1432,7 +1432,7 @@ private struct NewTabDropSlot: View {
                     ),
             )
             .background(DropTargetFrameReader(key: .newTabZone, coordinator: coordinator))
-            .padding(.horizontal, 8)
+            .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, 6)
         }
     }

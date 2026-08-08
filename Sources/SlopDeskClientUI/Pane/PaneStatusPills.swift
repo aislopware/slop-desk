@@ -46,7 +46,7 @@ struct ReadOnlyPill: View {
                 .foregroundStyle(Slate.Text.primary)
             Text("READ ONLY")
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                .tracking(0.5) // the screenshot's small-caps / uppercase spacing
+                .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.primary)
                 .lineLimit(1)
                 .fixedSize()
@@ -62,7 +62,7 @@ struct ReadOnlyPill: View {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
         )
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .slateShadow(.chip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Read only")
         .accessibilityHint("Disable read-only mode to allow input again")
@@ -116,11 +116,11 @@ struct SecureInputPill: View {
             // secure-input idiom (NOT the plain padlock the read-only pill uses).
             Image(systemSymbol: .lockShieldFill)
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Slate.Text.onAccent)
             Text("SECURE INPUT")
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .tracking(0.5)
-                .foregroundStyle(.white)
+                .tracking(Slate.Typeface.pillTracking)
+                .foregroundStyle(Slate.Text.onAccent)
                 .lineLimit(1)
                 .fixedSize()
         }
@@ -129,7 +129,7 @@ struct SecureInputPill: View {
         // VIVID-BLUE FILLED chip in the FIXED security-blue (theme-INDEPENDENT, never the theme accent) — the
         // screenshot's bold royal-blue badge. A small shadow lifts it off busy terminal output.
         .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .slateShadow(.chip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Secure input")
         .accessibilityHint("Secure keyboard entry is active — other apps cannot read your keystrokes")
@@ -168,11 +168,11 @@ struct SyncInputPill: View {
             // command that armed it read as one feature.
             Image(systemSymbol: .rectangle3Group)
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Slate.Text.onAccent)
             Text("SYNC INPUT")
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .tracking(0.5)
-                .foregroundStyle(.white)
+                .tracking(Slate.Typeface.pillTracking)
+                .foregroundStyle(Slate.Text.onAccent)
                 .lineLimit(1)
                 .fixedSize()
             closeButton
@@ -182,7 +182,7 @@ struct SyncInputPill: View {
         // VIVID-AMBER FILLED chip in the FIXED sync-amber (theme-INDEPENDENT, never the theme accent) —
         // a mode this dangerous must never blend with the chrome. A small shadow lifts it off busy output.
         .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .slateShadow(.chip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Sync input")
         .accessibilityHint("Keystrokes typed here are mirrored into every other pane in this tab")
@@ -194,7 +194,7 @@ struct SyncInputPill: View {
         Button(action: onDisarm) {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(Slate.Text.onAccent)
                 .frame(width: 16, height: 16)
                 .background(
                     closeHover ? Slate.State.selected : .clear,

@@ -209,7 +209,7 @@ struct PaneMoveHandle: View {
                             .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                     )
                     .frame(width: 44, height: 10)
-                    .shadow(color: Slate.State.shadow, radius: 3, y: 1)
+                    .slateShadow(.chip)
                     .opacity(revealed ? 1 : 0)
                     .scaleEffect(hovering && !isDragging ? 1.15 : 1)
             }
@@ -385,7 +385,7 @@ struct PaneMoveOverlay: View {
                         ),
                 ),
         )
-        .shadow(color: Slate.State.shadow, radius: 8, y: 2)
+        .slateShadow(.ghost)
         .fixedSize()
     }
 

@@ -122,7 +122,7 @@ struct SlateGlassCard: ViewModifier {
                 Button {} label: { Color.clear.contentShape(Rectangle()) }.buttonStyle(.plain)
             }
         }
-        .shadow(color: shadow, radius: Slate.Metric.panelShadowRadius, y: Slate.Metric.panelShadowY)
+        .slateShadow(.panel, color: shadow)
     }
 }
 

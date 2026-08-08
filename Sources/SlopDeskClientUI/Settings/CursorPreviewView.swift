@@ -217,7 +217,7 @@ struct CursorPreviewView: View {
     private func restartBlink() {
         blinkVisible = true
         guard previewBlinks else { return }
-        withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+        withAnimation(Slate.Anim.pulse) {
             blinkVisible = false
         }
     }

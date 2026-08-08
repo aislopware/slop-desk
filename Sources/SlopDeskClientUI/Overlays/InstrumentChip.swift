@@ -95,7 +95,7 @@ struct InstrumentChipShell: ViewModifier {
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                     .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
             )
-            .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+            .slateShadow(.chip)
             .accessibilityLabel(accessibility)
     }
 }

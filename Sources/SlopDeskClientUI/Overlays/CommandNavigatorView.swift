@@ -103,7 +103,7 @@ struct CommandNavigatorView: View {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
                 .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
         )
-        .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
+        .slateShadow(.palette)
         .onChange(of: query) { _, _ in selection = 0 }
         .onChange(of: filter) { _, _ in selection = 0 }
         // Keyboard: the focused search field consumes typed text + plain ↩ (`onSubmit`); bare arrows / Esc
@@ -237,11 +237,7 @@ struct CommandNavigatorView: View {
     }
 
     private var emptyState: some View {
-        Text(baseBlocks.isEmpty ? emptyMessage : "No matches")
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(Slate.Text.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, Slate.Metric.space4)
+        SlateNoResultsLine(message: baseBlocks.isEmpty ? emptyMessage : "No matches")
     }
 
     /// The zero-state message for the empty pane, scoped to the active segment (no commands / none failed /

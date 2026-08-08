@@ -301,6 +301,14 @@ enum Slate {
         static let tertiary = Color(uiColor: .tertiaryLabel)
         static let icon = Color(uiColor: .secondaryLabel)
         #endif
+
+        /// Ink ON a saturated fill band — the fixed pills (secure blue / sync amber) and the
+        /// accent's deep band. Appearance-INDEPENDENT white on purpose: those fills are pinned,
+        /// so their ink must be too (a semantic label would flip against an unmoving plate).
+        static let onAccent = Color.white
+        /// Ink ON the warn/hazard plate (hint badges) — black stays legible on amber in both
+        /// appearances, the same pinned-fill rationale as ``onAccent``.
+        static let onWarn = Color.black
     }
 
     @MainActor
@@ -308,14 +316,30 @@ enum Slate {
         #if canImport(AppKit)
         static let divider = Color(nsColor: .separatorColor)
         static let card = Color(nsColor: .separatorColor)
-        static let subtle = Color(nsColor: .separatorColor).opacity(0.6)
+        static let subtle = Color(nsColor: .separatorColor).opacity(Opacity.muted)
         static let active = Color(nsColor: .tertiaryLabelColor)
         #else
         static let divider = Color(uiColor: .separator)
         static let card = Color(uiColor: .separator)
-        static let subtle = Color(uiColor: .separator).opacity(0.6)
+        static let subtle = Color(uiColor: .separator).opacity(Opacity.muted)
         static let active = Color(uiColor: .tertiaryLabel)
         #endif
+    }
+
+    /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
+    /// tokens did not govern (round 13): every `.opacity(N)` in chrome code picks a rung here, so
+    /// two washes that mean the same thing can never drift apart by a few hundredths again.
+    enum Opacity {
+        /// The faint accent wash (``State/accentMuted``'s dose).
+        static let faint = 0.12
+        /// The selection/latch wash (``State/selected``'s dose).
+        static let wash = 0.15
+        /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
+        static let dim = 0.35
+        /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.
+        static let muted = 0.6
+        /// The near-opaque backdrop a readout stands on over live content (video HUD chips).
+        static let scrim = 0.88
     }
 
     @MainActor
@@ -327,9 +351,9 @@ enum Slate {
         static let hover = Color(uiColor: .quaternarySystemFill)
         #endif
         /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
-        static let selected = Slate.accentPurple.opacity(0.15)
+        static let selected = Slate.accentPurple.opacity(Opacity.wash)
         static let accent = Slate.accentPurple
-        static let accentMuted = Slate.accentPurple.opacity(0.12)
+        static let accentMuted = Slate.accentPurple.opacity(Opacity.faint)
         static let header = Text.secondary
         /// Floating-panel drop shadow — soft black, heavier on dark appearances.
         static let shadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45)
@@ -455,7 +479,9 @@ enum Slate {
         static let heightDrawer: CGFloat = 180
 
         // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
-        static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
+        static let cardMargin = EdgeInsets(
+            top: space1, leading: space4, bottom: space4, trailing: space4,
+        )
 
         /// A FORM card's fixed width (connect, peek-reply) — one width for every dialog-shaped overlay,
         /// so two cards summoned in a row read as the same object at the same distance. List overlays
@@ -464,13 +490,6 @@ enum Slate {
         /// A PORT number's field on a form card — five digits wide, never the card's width: a field's
         /// width is part of what it says about its answer.
         static let portFieldWidth: CGFloat = 96
-
-        // The floating GLASS card's cast shadow (``SlateGlassCard``) — soft and low, so the card reads as
-        // hovering a short way above the workspace rather than pasted onto a far wall. Tokens because every
-        // overlay now shares one surface: a card that cast a different shadow would read as a different
-        // depth, which is exactly the drift this vocabulary exists to stop.
-        static let panelShadowRadius: CGFloat = 12
-        static let panelShadowY: CGFloat = 4
 
         // Chrome dimensions (semantic aliases INTO the height ladder — never a sixth literal)
         static let paneHeaderHeight: CGFloat = heightBar
@@ -635,6 +654,48 @@ enum Slate {
         /// Tracking (pt) for the SIDEBAR's caps labels ("TABS", project headers) — the otty
         /// measurement (`.tracking(0.6)` on the system face), narrower than the instrument engraving.
         static let capsTracking: CGFloat = 0.6
+        /// Tracking (pt) for caps micro-labels on a PILL/BADGE plate (the secure-input pill, the
+        /// mode badges) — measured off the system secure-input pill's own small-caps spacing, one
+        /// shade tighter than the sidebar's ``capsTracking``; its own rung because it is a
+        /// measurement, not a preference.
+        static let pillTracking: CGFloat = 0.5
+    }
+
+    /// The SHADOW ladder (round 13) — one named rung per depth a floating object can sit at, so a
+    /// chip in one file can never cast a slightly different shadow than the same chip in another.
+    /// Each rung bundles radius + y; the colour stays the caller's (``State/shadow`` for true
+    /// floats, ``State/cardShadow`` for the active card's whisper) via ``SwiftUICore/View/slateShadow(_:color:)``.
+    enum Elevation {
+        /// The active card's whisper — the overlay card sitting IN a surface, barely off it.
+        case card
+        /// A pill/chip floating over the glass: status pills, mode badges, instrument chips.
+        case chip
+        /// A pane ghost mid-drag — clearly lifted, still near.
+        case ghost
+        /// A floating panel: the find bar, the overlay cards.
+        case panel
+        /// The command palette — the deepest float in the app.
+        case palette
+
+        var radius: CGFloat {
+            switch self {
+            case .card: 2
+            case .chip: 4
+            case .ghost: 8
+            case .panel: 12
+            case .palette: 30
+            }
+        }
+
+        var y: CGFloat {
+            switch self {
+            case .card: 1
+            case .chip: 1
+            case .ghost: 2
+            case .panel: 4
+            case .palette: 12
+            }
+        }
     }
 
     /// Animation timing — extracted verbatim from `ReplicaKit.Anim` (cubic-bezier, NO springs anywhere).
@@ -658,6 +719,21 @@ enum Slate {
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.
         static let stackReflow = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.28)
+        /// The ONE repeating shape in the vocabulary — a slow symmetric breathe for a preview that
+        /// demonstrates blinking (the cursor preview). EaseInEaseOut 0.55s, autoreversing forever;
+        /// never used on live chrome (the at-rest-motion purge stands).
+        static let pulse = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.55)
+            .repeatForever(autoreverses: true)
+    }
+}
+
+extension View {
+    /// Cast the shadow of a named ``Slate/Elevation`` rung. The colour defaults to the floating
+    /// object's soft black (``Slate/State/shadow``); the active card passes its own whisper
+    /// (``Slate/State/cardShadow``). Radius/y never appear at a call site — the rung is the API.
+    @MainActor
+    func slateShadow(_ elevation: Slate.Elevation, color: Color? = nil) -> some View {
+        shadow(color: color ?? Slate.State.shadow, radius: elevation.radius, y: elevation.y)
     }
 }
 

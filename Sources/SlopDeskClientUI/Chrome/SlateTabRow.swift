@@ -147,7 +147,7 @@ struct SlateTabRow: View {
         // (`cardShadow` resolves clear — fill + hairline carry the lift). Hover/rest cast nothing.
         // The reverse-video colour-scheme flip that used to wrap the row is retired (user-directed
         // 2026-08-08): every colour resolves under the chrome's own scheme.
-        .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
+        .slateShadow(.card, color: active ? Slate.State.cardShadow : .clear)
         .contentShape(.rect)
         // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
         // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap arm

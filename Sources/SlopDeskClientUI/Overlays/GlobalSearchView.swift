@@ -166,13 +166,12 @@ struct GlobalSearchView: View {
 
     /// The blank / no-match state: a hint when the query is empty, a "no results" line when it matched nothing.
     private var emptyState: some View {
-        Text(query.trimmingCharacters(in: .whitespaces).isEmpty
-            ? "Search every tab’s scrollback."
-            : "No results.")
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(SlateOverlayInk.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, Slate.Metric.space4)
+        SlateNoResultsLine(
+            message: query.trimmingCharacters(in: .whitespaces).isEmpty
+                ? "Search every tab’s scrollback."
+                : "No results.",
+            ink: SlateOverlayInk.tertiary,
+        )
     }
 
     // MARK: - Group header (one per tab/pane)
