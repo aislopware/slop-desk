@@ -281,20 +281,37 @@ enum Slate {
         static var accent: Color { Slate.theme.terminalAccent }
     }
 
-    /// The semantic text tiers — resolve per-appearance AND per-vibrancy (a custom RGB here would
-    /// silently opt the label out of vibrancy on the sidebar material).
+    /// The text tiers — a ladder MEASURED against this app's own ground rather than inherited whole
+    /// from the system's.
+    ///
+    /// Apple's label alphas are tuned for a sidebar drawn on a VIBRANT material, which lends its
+    /// labels contrast the flat ground here cannot: this chrome paints one opaque cream (there is no
+    /// `NSVisualEffectView` anywhere under the columns), so the tiers landed on the ground at
+    /// 14.5 : 3.9 : 1.9 — the second rung under the 4.5 reading floor, the third under even the 3.0
+    /// floor for non-text, while carrying real data (the process label, the branch name, a command's
+    /// duration, and the host line exactly when it says DISCONNECTED). Legibility, user-reported
+    /// 2026-08-08. Measured on white as a control: 3.95 : 1.88, so the cream was never the cause.
+    ///
+    /// The two weak rungs are re-solved to 7.0 and 4.5 against `#FFFBEB`, and they are the ground's
+    /// own colour at that depth rather than a foreign neutral, so the ladder keeps the cream's
+    /// warmth. `primary` stays the system semantic — it already measures 14.5 and costs nothing.
+    ///
+    /// ⚠️ PINNED ON THE LIGHT SIDE ONLY. Two subtrees flip `colorScheme` to glass (the selected row's
+    /// ``SlateCompactIsland``, the pane chrome inside the terminal island); a flat hex draws
+    /// dark-on-dark there, which is exactly what the first true-size render of this ladder showed.
+    /// The dark side therefore keeps the system tiers untouched.
     @MainActor
     enum Text {
         #if canImport(AppKit)
         static let primary = Color(nsColor: .labelColor)
-        static let secondary = Color(nsColor: .secondaryLabelColor)
-        static let tertiary = Color(nsColor: .tertiaryLabelColor)
-        static let icon = Color(nsColor: .secondaryLabelColor)
+        static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabelColor)
+        static let tertiary = Color(slatePinnedLight: 0x76746D, darkSystem: .tertiaryLabelColor)
+        static let icon = secondary
         #else
         static let primary = Color(uiColor: .label)
-        static let secondary = Color(uiColor: .secondaryLabel)
-        static let tertiary = Color(uiColor: .tertiaryLabel)
-        static let icon = Color(uiColor: .secondaryLabel)
+        static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabel)
+        static let tertiary = Color(slatePinnedLight: 0x76746D, darkSystem: .tertiaryLabel)
+        static let icon = secondary
         #endif
 
         /// Ink ON a saturated fill band — the fixed pills (secure blue / sync amber) and the
@@ -816,6 +833,27 @@ extension Color {
         })
         #endif
     }
+
+    /// A LIGHT-PINNED ink: an exact colour on the one light ground this app owns, and the SYSTEM
+    /// semantic anywhere the appearance resolves dark. The asymmetry is the point — the light ground
+    /// is a fixed cream this design measured its ladder against, while the dark side is whatever
+    /// surface the glass subtrees happen to be, which only the system tiers can track. See
+    /// ``Slate/Text`` for why the light rungs left the system ladder in the first place.
+    #if canImport(AppKit)
+    init(slatePinnedLight light: UInt32, darkSystem: NSColor) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? darkSystem
+                : NSColor(slateHex: light)
+        })
+    }
+    #elseif canImport(UIKit)
+    init(slatePinnedLight light: UInt32, darkSystem: UIColor) {
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? darkSystem : UIColor(slateHex: light)
+        })
+    }
+    #endif
 }
 
 #if canImport(AppKit)
