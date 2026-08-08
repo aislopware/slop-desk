@@ -34,12 +34,13 @@ struct ContentColumn: View {
             // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
             .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // MERIDIAN L5, scoped by the user reporting that a titlebar tone differing from the pane below it read as jarringly out of place:
-            // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone
-            // (the terminal glass), never the dimmed chrome floor. Panes are flush under the band (no gap, no
-            // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed
-            // housing is the SIDEBAR column only.
-            .background(Slate.Surface.terminal)
+            // ONE ISLAND: this column paints GROUND end-to-end and the pane canvas is lifted off it
+            // as the window's single island (see ``content``). The titlebar band is that island's
+            // top moat — the same ground the navigator and the code panel stand on, so the strip
+            // runs unbroken across all three columns. The old rule ("the band must wear the pane
+            // tone or it reads as a mispainted header") belonged to a world where the panes were
+            // flush under it; with a moat and a corner between them the band is plainly a housing.
+            .background(Slate.Surface.field)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
             // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
@@ -60,14 +61,13 @@ struct ContentColumn: View {
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
-    /// On macOS the pane area is pushed below the hover-reveal titlebar strip (so the terminal starts under
-    /// it, not under the centred title); iOS has no titlebar so the pane area fills directly.
+    /// On macOS the pane canvas is THE ISLAND — glass, concentric corner, a uniform moat of ground on
+    /// every side, the top side of that moat being the hover-reveal titlebar band (so the terminal
+    /// starts under the band, not under the centred title). iOS has no titlebar and no island: the
+    /// pane area fills its column directly.
     private var content: some View {
         #if os(macOS)
-        VStack(spacing: 0) {
-            Color.clear.frame(height: Slate.Metric.titlebarHeight)
-            paneArea
-        }
+        paneArea.slateIsland()
         #else
         paneArea
         #endif

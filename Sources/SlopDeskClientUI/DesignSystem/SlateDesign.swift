@@ -3,27 +3,48 @@
 // A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
 // `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`.
 //
-// Design DNA — DRACULA FLAT (user-directed 2026-08-08, round 10: the islands/inverted-frame world
-// is RETIRED — "back to the divider layout, Dracula Pro as the app's colour set"):
-//   - ONE HUE FAMILY, A LIGHTNESS LADDER. The chrome wears the theme's own band: the sidebar is a
-//     step DARKER than the terminal surface, dividers a step darker again — the structure Dracula's
-//     own published chrome uses (#191A21 → #21222C → #282A36 → #343746, all one blue-violet hue),
-//     and the 2025-26 consensus (Zed, Linear, Raycast all ladder within one hue; nobody paints
-//     chrome a second, saturated hue). The three window columns are FLAT and full-bleed, separated
-//     by 1px dividers; no floating cards, no frame floor, no behind-window material.
+// Design DNA — ONE ISLAND (user-directed 2026-08-08, twice: first "re-implement the floating-island
+// chrome, the Rio-Canario / JetBrains-Islands read", then — on seeing a window where every column and
+// every pane was its own island — "too busy; make it a MODERN island: only ONE big island in the
+// middle, the terminal, splits parted by a divider; the two side panels SINK into the background, the
+// VS Code background matches that background; and make the background the Alucard (light) theme's
+// own bg". FOUR LAWS, in force everywhere:
+//
+//   1. ONE ISLAND. The window holds exactly TWO tones, and only ONE thing is lifted: the terminal
+//      canvas. It wears the theme's glass, rounds at the concentric radius and floats in a uniform
+//      moat. EVERYTHING else — the navigator, the code panel, the top band, the moat — is the GROUND
+//      (``Surface/ground``) and is FLUSH: no rounding, no inset, no second working tone. A panel that
+//      sinks does not compete with the one thing that is meant to read as lifted, which is exactly
+//      what the many-islands pass got wrong.
+//   2. INSIDE THE ISLAND, SEPARATION IS A LINE. Panes tile the island edge-to-edge and are parted by
+//      the ``PaneDivider`` hairline. A channel of ground between panes would restate at pane level
+//      the distinction the island already draws at window level — one lift, one vocabulary.
+//   3. CONCENTRIC GEOMETRY. Window 16 (the macOS Tahoe titlebar-only window radius), moat 8, island
+//      8: Apple's own concentricity rule (inner radius = outer radius − inset). The same 8 falls out
+//      of JetBrains' published `Island.arc.compact = 16` (an arc WIDTH ⇒ radius 8) and out of
+//      measuring Canario (≈7.5), so three independent sources agree on the number.
+//   4. THE GROUND IS ALUCARD'S CREAM `#FFFBEB` IN BOTH PROFILES — the light theme's own published
+//      face, used as the frame under either glass. On Dracula that is the CANARIO read: a light
+//      frame carrying a dark island, ~13:1 apart, the only way to get real drama out of a dark theme
+//      (a dark-on-dark frame caps at 1.32:1 against #22212C even at pure black — arithmetic, not
+//      taste). On Alucard the ground and the glass are the SAME cream, so the window reads as one
+//      calm light surface and structure falls to the dividers and the island's corner alone. This
+//      reverses the earlier "no inverted frame" verdict on the user's explicit instruction.
+//
 //   - Text tiers, hairlines and state fills stay SEMANTIC system colours — they resolve against the
-//     app-level appearance pin, which wears the theme's one polarity (`chromeIsLight == isLight`;
-//     the inverted frame and its two-ring pin are gone).
+//     app-level appearance pin, which is now ALWAYS LIGHT (`chromeIsLight == true`), because law 4
+//     makes the ground light in both profiles. That is a CONSEQUENCE of the ground, not a second
+//     decision: semantic ink pinned dark would draw white-on-cream in the navigator. The glass keeps
+//     its own polarity via ``Slate/glassColorScheme``, so a dark island still carries light ink.
 //   - ONE brand accent: the fixed Dracula purple (light `#644AC9`, the Pro `#9580FF` on dark).
-//     Identity hues stay OFF chrome glyphs (round-10 restraint: tinted per-project folders read as
-//     ornament); the status dot set is the only other colour the sidebar speaks.
+//     Identity hues stay OFF chrome glyphs; the status dot set is the only other colour the sidebar
+//     speaks.
 //   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 //
-// MULTI-THEME is now TERMINAL-PROFILE-ONLY: a theme switch swaps the glass palette (cells, ANSI,
-// selection, cursor, the island's own ink) and touches NO chrome. `Slate.theme` still indirects
-// through ``ThemeStore/shared`` (D3) so a runtime profile switch repoints the glass tokens live;
-// chrome tokens no longer read the store at all — they are semantic and follow the window appearance.
+// MULTI-THEME is TERMINAL-PROFILE-ONLY: a theme switch swaps the glass palette (cells, ANSI,
+// selection, cursor, on-island ink); the GROUND does not move. `Slate.theme` indirects through
+// ``ThemeStore/shared`` (D3) so a runtime profile switch repoints the glass tokens live.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -46,10 +67,12 @@ struct SlateTheme: Equatable {
     /// scheme (``Slate/glassColorScheme``): text drawn ON the glass resolves against the glass, not
     /// against the OS or the chrome.
     let isLight: Bool
-    /// Whether the CHROME is light. EQUAL to ``isLight`` since the flat round (user-directed
-    /// 2026-08-08, round 10): the inverted frame is retired, so the whole app wears the theme's one
-    /// polarity and the app-level pin (`ThemeStore.pinAppAppearance`) is the only appearance voice.
-    /// Kept as its own property because the AppKit shell reads the CHROME's polarity by name.
+    /// Whether the CHROME is light. ALWAYS `true` under ONE ISLAND (user-directed 2026-08-08): law 4
+    /// puts the same cream ground under both profiles, so the semantic ink standing on it must
+    /// resolve light-appearance in both, or the navigator draws white-on-cream. The app-level pin
+    /// (`ThemeStore.pinAppAppearance`) reads THIS, not ``isLight`` — one appearance voice for every
+    /// chrome surface including the auxiliary windows, so nothing is half-and-half; the dark island
+    /// is not an exception to it but a surface outside it, wearing the profile palette directly.
     let chromeIsLight: Bool
 
     // The glass surfaces
@@ -60,23 +83,28 @@ struct SlateTheme: Equatable {
     /// A lifted plate ON the glass (chips, handles) — the selection fill.
     let terminalRaised: Color
 
-    /// The CHROME ground — the sidebar / window-frame surface, a step DARKER (deeper on light
-    /// themes) than the terminal surface, in the theme's own hue band: the relationship Dracula's
-    /// published chrome ships (sidebar #21222C under editor #282A36), transposed onto the Pro
-    /// glass. FIXED per profile, never appearance-resolved (the CGColor-snapshot trap family
-    /// stays dead). Raw hex because the AppKit split shell resolves it as an `NSColor`.
+    /// THE GROUND — everything that is not the one island (law 1): the navigator, the code panel,
+    /// the top band and the moat around the terminal. Alucard's published cream `#FFFBEB` under both
+    /// profiles, never invented (inventing a chrome hex is what sank the five dead worlds). FIXED,
+    /// never appearance-resolved (the CGColor-snapshot trap family stays dead). Raw hex because the
+    /// AppKit split shell resolves it as an `NSColor`.
+    let groundHexValue: UInt32
+    /// The ISLAND tone — the terminal canvas, the ONE lifted surface. EQUAL to the glass face by
+    /// construction, so a profile cannot ship an island in a tone its terminal does not wear. Raw
+    /// hex for the AppKit side.
     let chromeHexValue: UInt32
-    /// The 1px COLUMN DIVIDER tone — the deepest rung of the chrome ladder (Dracula's own border
-    /// tone #191A21, transposed): a quiet seam, structure without a drawn border.
+    /// A hairline rule — the pane seam inside the island, a section rule on the ground.
     let chromeLineHexValue: UInt32
-    /// The LIFTED chrome rung (hover plates, inset fills standing on ``chromeHexValue``) — the
-    /// activity-bar rung of the published ladder (#343746), transposed.
+    /// The LIFTED rung standing on the ground (hover plates, inset fills) — the activity-bar rung of
+    /// the published Dracula ladder (#343746), transposed.
     let chromeLiftHexValue: UInt32
-    /// ``chromeHexValue`` as the SwiftUI colour the sidebar column reads.
+    /// ``groundHexValue`` as the SwiftUI colour the band, the side panels and the moat read.
+    var ground: Color { Color(slateHex: groundHexValue) }
+    /// ``chromeHexValue`` as the SwiftUI colour the island reads.
     var chrome: Color { Color(slateHex: chromeHexValue) }
-    /// ``chromeLineHexValue`` as the SwiftUI colour flat dividers read.
+    /// ``chromeLineHexValue`` as the SwiftUI colour rules read.
     var chromeLine: Color { Color(slateHex: chromeLineHexValue) }
-    /// ``chromeLiftHexValue`` as the SwiftUI colour lifted chrome plates read.
+    /// ``chromeLiftHexValue`` as the SwiftUI colour lifted plates read.
     var chromeLift: Color { Color(slateHex: chromeLiftHexValue) }
 
     // The on-glass ink
@@ -101,9 +129,9 @@ struct SlateTheme: Equatable {
     /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    /// The AUTHORED chrome ladder a profile ships — the published Dracula chrome relationships
-    /// transposed into the profile's own glass band (flat round, user-directed 2026-08-08):
-    /// `ground` (sidebar/frame), `line` (1px dividers), `lift` (hover plates).
+    /// The AUTHORED chrome ladder a profile ships (ONE ISLAND, user-directed 2026-08-08): `ground`
+    /// (everything that is not the island — the SAME cream in both profiles), `line` (rules), `lift`
+    /// (plates). The island itself is not a rung: it IS the glass face.
     struct ChromeLadder {
         let ground: UInt32
         let line: UInt32
@@ -121,7 +149,9 @@ struct SlateTheme: Equatable {
     }
 
     /// Build a profile from 24-bit RGB values (single source for both the `Color` and hex forms).
-    /// The chrome polarity equals the glass polarity — one appearance voice, no frame flip.
+    /// The chrome polarity is LIGHT for every profile — see ``chromeIsLight``; the ground is cream
+    /// in both. The ISLAND tone is not a parameter: it IS `glass.face` (law 1), so a profile cannot
+    /// accidentally ship an island in a tone its terminal does not wear.
     private static func profile(
         id: String, isLight: Bool,
         glass: GlassSet,
@@ -131,11 +161,12 @@ struct SlateTheme: Equatable {
         Self(
             id: id,
             isLight: isLight,
-            chromeIsLight: isLight,
+            chromeIsLight: true,
             terminal: Color(slateHex: glass.face),
             terminalEdge: Color(slateHex: glass.edge),
             terminalRaised: Color(slateHex: glass.edge),
-            chromeHexValue: chrome.ground,
+            groundHexValue: chrome.ground,
+            chromeHexValue: glass.face,
             chromeLineHexValue: chrome.line,
             chromeLiftHexValue: chrome.lift,
             terminalInk: Color(slateHex: glass.ink),
@@ -185,14 +216,12 @@ struct SlateTheme: Equatable {
             0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,
             0x7970A9, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xFFFFFF,
         ],
-        // Ground/lift are the official ladder offsets vs the classic editor, applied to the Pro
-        // face #22212C: sidebar −07/−08/−0A → #1B1922, rail +0C/+0D/+10 → #2E2E3C. The LINE is an
-        // INK TINT, not a darker rung (user-directed 2026-08-08): 10% of the glass ink #F8F8F2
-        // over the ground — a hairline lighter than both surfaces it separates. The fraction pairs
-        // with Alucard's 14.2%: unequal on purpose, solved so both themes step the same perceived
-        // lightness (OKLab ΔL ≈ 0.09 vs their grounds — black into cream moves L slower than
-        // white into near-black, so an equal fraction reads weaker in light).
-        chrome: ChromeLadder(ground: 0x1B1922, line: 0x312F37, lift: 0x2E2E3C),
+        // The GROUND is Alucard's cream #FFFBEB — a LIGHT frame carrying the dark island, the
+        // Canario read (~13:1 apart). Any darker frame is arithmetically stuck: #22212C against
+        // pure black is 1.32:1, so the whole dark half of the axis cannot separate at all. Lift is
+        // the published rail rung (+0C/+0D/+10 on the face → #2E2E3C); the LINE stays the 10%-ink
+        // tint, the pane seam inside the island (it pairs with Alucard's 14.2% at OKLab ΔL ≈ 0.09).
+        chrome: ChromeLadder(ground: 0xFFFBEB, line: 0x312F37, lift: 0x2E2E3C),
     )
 
     /// Alucard — Dracula Pro's official light theme (public spec hexes verbatim): cream glass over
@@ -205,10 +234,11 @@ struct SlateTheme: Equatable {
             0x1F1F1F, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xCFCFDE,
             0x6C664B, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xFFFBEB,
         ],
-        // Ground mirrors the dark ladder's one-step sidebar into the cream; lift steps back toward
-        // the face's white. The LINE is the ink tint (see Dracula): 14.2% of the glass ink #1F1F1F
-        // over the ground — the fraction that matches Dracula's 10% at OKLab ΔL ≈ 0.09.
-        chrome: ChromeLadder(ground: 0xF6F1DE, line: 0xD8D3C3, lift: 0xFFFDF4),
+        // The GROUND is this profile's OWN face — so on Alucard the ground and the island are the
+        // same cream and the window reads as one calm light surface, structure carried by the
+        // dividers and the island's corner alone. (It is also the tone the dark profile borrows.)
+        // Lift steps toward white; the LINE is the 14.2% ink tint (see Dracula).
+        chrome: ChromeLadder(ground: 0xFFFBEB, line: 0xD8D3C3, lift: 0xFFFDF4),
     )
 }
 
@@ -253,12 +283,12 @@ enum Slate {
         /// DARKER than the dark field (island darker than field) — the same deliberate ~1.2:1
         /// whisper their theme ships, from a semantic colour instead of invented hex.
         static let chip = Color(nsColor: .controlBackgroundColor)
-        /// The CHROME ground — the flat sidebar / window-frame surface (flat round, user-directed
-        /// 2026-08-08): the profile's own chrome rung, a step deeper than the terminal surface in
-        /// the same hue band. FIXED per profile (no appearance resolution — the CGColor-snapshot
-        /// trap family stays dead). The liquid-glass floor, its gradient and the behind-window
-        /// material are all RETIRED with the islands.
-        static var field: Color { Slate.theme.chrome }
+        /// THE GROUND — the one sunken tone every column paints: the navigator, the code panel, the
+        /// top band and the island's moat (law 1: they SINK, they are not islands). Kept under its
+        /// old name because the eight column call sites mean exactly this; ``island`` is its
+        /// counterpart, the one lifted surface. `ground` above is a different thing — the semantic
+        /// aux-window backdrop.
+        static var field: Color { Slate.theme.ground }
         #else
         static let void = Color(uiColor: .secondarySystemBackground)
         static let ground = Color(uiColor: .secondarySystemBackground)
@@ -268,10 +298,13 @@ enum Slate {
         /// See the AppKit notes — the solid active-row chip; the chrome ground is the profile's
         /// own rung on iOS too, so both platforms stand on the same flat chrome.
         static let chip = Color(uiColor: .secondarySystemGroupedBackground)
-        static var field: Color { Slate.theme.chrome }
+        static var field: Color { Slate.theme.ground }
         #endif
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }
+        /// THE ISLAND — the terminal canvas, the one lifted surface (law 1). Equal to ``terminal`` by
+        /// construction; spelled separately so the island's own geometry reads by intent.
+        static var island: Color { Slate.theme.chrome }
     }
 
     /// ON-GLASS vocabulary — everything drawn INSIDE the terminal island reads these, never the
@@ -419,6 +452,25 @@ enum Slate {
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
     enum Metric {
+        // MARK: The ONE-ISLAND geometry (law 3)
+
+        /// The WINDOW's own corner radius — macOS 26 Tahoe's titlebar-only window (the app runs
+        /// `.hiddenTitleBar`, so this is the rung, not the 26 a toolbar window gets). Named here
+        /// because the island's radius is DERIVED from it, not because view code sets it.
+        static let windowRadius: CGFloat = 16
+        /// The MOAT — the uniform strip of ground between the island and everything around it. The
+        /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
+        /// misaligned panel.
+        static let islandInset: CGFloat = 8
+        /// The island's corner: `windowRadius − islandInset`, Apple's concentricity rule. The same 8
+        /// falls out of JetBrains' `Island.arc.compact = 16` (an arc WIDTH) and out of measuring
+        /// Canario, so three independent sources agree.
+        static let islandRadius: CGFloat = 8
+        /// The GROUND BAND across the window's top — the strip the traffic lights and the hover
+        /// titlebar stand on, above the island. The height ladder's chrome-strip rung
+        /// (``heightStrip`` / ``titlebarHeight``); the band is not a new measurement.
+        static let bandHeight: CGFloat = heightStrip
+
         // Radii (from design-tokens.css)
         static let radiusCard: CGFloat = 8
         /// A FLOATING panel's corner — the notification card, and any future free-standing panel. One rung

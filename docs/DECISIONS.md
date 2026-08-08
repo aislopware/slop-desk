@@ -7113,3 +7113,59 @@ had to change shape for this: the current seed may never appear in that list (a 
 the current one re-marks every font-synced host as pristine-former and rewrites it each boot),
 so the old Monokai entry LEFT the list as it became current again, and the Dracula trio entered
 as the newest former seed.
+
+## ONE ISLAND — a single lifted terminal on a cream ground (2026-08-08, user-directed)
+
+The window now holds exactly two tones and exactly one lifted surface.
+
+The ask arrived in two steps on the same day. The first was the floating-island chrome in the
+Rio-Canario / JetBrains-Islands register, researched independently rather than patched onto the
+flat layout. The literal answer — every column and every pane its own island, separated by
+channels of floor — came back as too busy, and the correction named the shape exactly: one big
+island in the middle for the terminal, splits inside it parted by a divider, both side panels sunk
+into the background, the VS Code background matching that background, and the background itself
+the Alucard theme's own bg. The archipelago never shipped; what follows is the whole of it.
+
+**Law 1 — one island.** The terminal canvas is the only lifted surface. It wears the profile's
+glass, rounds at 8pt and floats in a uniform moat. The navigator, the code panel, the top band and
+the moat are all GROUND: flush, un-rounded, one tone, no seam between them. `View.slateIsland()`
+has exactly one call site (`ContentColumn.content`); a second is the clutter coming back.
+
+**Law 2 — inside the island, separation is a line.** Panes tile the island edge-to-edge and are
+parted by the `PaneDivider` hairline. A channel between panes would restate at pane level the
+distinction the island already draws at window level. `SplitTreeRenderModel` keeps no island
+geometry, and the libghostty view keeps `cornerRadius = 0` — only the island clips.
+
+**Law 3 — concentric geometry.** Window 16 (macOS Tahoe's titlebar-only radius) − moat 8 = island
+8, which is Apple's own concentricity rule. The same 8 falls out of JetBrains' published
+`Island.arc.compact = 16` (an arc WIDTH) and out of measuring Canario (≈7.5): three independent
+sources, one number.
+
+**Law 4 — the ground is Alucard's cream `#FFFBEB`, under BOTH profiles.** On Dracula that is the
+Canario read: a light frame carrying a dark canvas, ~13:1 apart. It is also the only read
+available — a DARKER ground under the Pro face `#22212C` is 1.32:1 even at pure black, so the
+entire dark half of the axis cannot separate. This reverses the round-10/15 "no inverted frame"
+verdict on explicit instruction. On Alucard the ground and the glass are the same cream, so the
+island is drawn by its corner and a 1px `Line.divider` inset stroke alone.
+
+**The consequence that is not a second decision:** `chromeIsLight == true` in every profile, and
+`ThemeStore.pinAppAppearance` now pins `NSApp.appearance` from the CHROME polarity rather than the
+glass. Semantic ink pinned dark would draw white on cream in the navigator. This is not the
+split-tone half-and-half the 2026-08-07 note guarded against — that note was written when the
+chrome was dark; every chrome surface including the auxiliary windows now shares one light voice,
+and the glass is the single surface outside the pin, opting out via `Slate.glassColorScheme`.
+
+Two supporting moves. The AppKit split view paints its dividers and backing layer in the GROUND
+instead of the `chromeLine` seam, so the three columns read as one continuous sunken field, and the
+window's own `backgroundColor` gets the same tone (a live resize can expose it for a frame, and the
+16pt corners should bite into ground). And the embedded workbench is seeded with a
+`workbench.colorCustomizations` block repainting every VS Code surface — editor, empty group,
+gutter, sidebar, activity bar, tab strip, panel, status bar, title bar — in the ground cream with
+their borders zeroed, with the webviews pinned to the chrome polarity and their
+`underPageBackgroundColor` moved off the glass onto the ground. The obsolete-seed rule held: the
+previous Monokai seed entered the list as it stopped being current, and the current seed is not in
+it.
+
+Verified by pixel in both profiles on the running app: ground sampled `#FFFBEB` in the titlebar
+band, the navigator and the moat; the island's rounded corner and hairline edge resolve against it
+in Alucard, and the dark glass reads as a floating canvas in Dracula.

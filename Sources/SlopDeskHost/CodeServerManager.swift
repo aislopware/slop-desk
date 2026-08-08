@@ -438,6 +438,14 @@ final class CodeServerManager: @unchecked Sendable {
     /// trailing-whitespace rendering. The file tree matches: indent guides always visible (stock
     /// only shows them on hover) over a 16px indent — the default 8px barely steps a deep Swift
     /// tree.
+    /// The workbench PAINTS ITSELF IN THE APP'S GROUND (ONE ISLAND, user-directed 2026-08-08): the
+    /// code panel is a SUNKEN column beside the navigator, not an island, so a
+    /// `workbench.colorCustomizations` block puts every workbench surface — editor, empty group,
+    /// gutter, sticky scroll, widgets, breadcrumb, sidebar, activity bar, tab strip, panel,
+    /// integrated terminal, status bar, title bar, quick input, menus — on the client's ground cream
+    /// `#FFFBEB` and zeroes their borders (`#00000000`), so panel and ground read as one continuous
+    /// field with no seam. The syntax theme is untouched: only chrome keys are overridden, so the
+    /// Monokai pair still colours the code itself.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -448,6 +456,40 @@ final class CodeServerManager: @unchecked Sendable {
         "window.autoDetectColorScheme": true,
         "workbench.preferredDarkColorTheme": "Monokai Pro",
         "workbench.preferredLightColorTheme": "Monokai Pro Light",
+        "workbench.colorCustomizations": {
+            "editor.background": "#FFFBEB",
+            "editorGroup.emptyBackground": "#FFFBEB",
+            "editorGroupHeader.noTabsBackground": "#FFFBEB",
+            "welcomePage.background": "#FFFBEB",
+            "editorGutter.background": "#FFFBEB",
+            "editorStickyScroll.background": "#FFFBEB",
+            "editorWidget.background": "#FFFBEB",
+            "breadcrumb.background": "#FFFBEB",
+            "sideBar.background": "#FFFBEB",
+            "sideBar.border": "#00000000",
+            "sideBarSectionHeader.background": "#FFFBEB",
+            "sideBarSectionHeader.border": "#00000000",
+            "activityBar.background": "#FFFBEB",
+            "activityBar.border": "#00000000",
+            "editorGroupHeader.tabsBackground": "#FFFBEB",
+            "editorGroupHeader.tabsBorder": "#00000000",
+            "editorGroupHeader.border": "#00000000",
+            "editorGroup.border": "#00000000",
+            "tab.activeBackground": "#FFFBEB",
+            "tab.inactiveBackground": "#FFFBEB",
+            "tab.border": "#00000000",
+            "panel.background": "#FFFBEB",
+            "panel.border": "#00000000",
+            "terminal.background": "#FFFBEB",
+            "statusBar.background": "#FFFBEB",
+            "statusBar.noFolderBackground": "#FFFBEB",
+            "statusBar.border": "#00000000",
+            "titleBar.activeBackground": "#FFFBEB",
+            "titleBar.inactiveBackground": "#FFFBEB",
+            "titleBar.border": "#00000000",
+            "quickInput.background": "#FFFBEB",
+            "menu.background": "#FFFBEB"
+        },
         "workbench.iconTheme": "material-icon-theme",
         "workbench.startupEditor": "none",
         "workbench.editorAssociations": {
@@ -1149,6 +1191,52 @@ final class CodeServerManager: @unchecked Sendable {
             "window.autoDetectColorScheme": true,
             "workbench.preferredDarkColorTheme": "Dracula",
             "workbench.preferredLightColorTheme": "Alucard",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v23 — the Monokai trio as it stood before the workbench was asked to paint itself in
+        // the app's own ground: the panel still wore the theme's own backdrop, so it read as a
+        // second surface beside the navigator instead of the same continuous field
+        // (user-directed 2026-08-08).
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
             "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {

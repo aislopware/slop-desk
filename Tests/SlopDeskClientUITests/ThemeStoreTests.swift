@@ -48,26 +48,41 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(SlateTheme.alucard.terminalForegroundHex, "1F1F1F")
     }
 
-    /// Both shipped profiles are FLAT (the divider layout, round-10 verdict — the inverted frame
-    /// and its islands are retired): the chrome polarity EQUALS the glass polarity, and the chrome
-    /// ground/lift are the published Dracula chrome's per-channel offsets transposed onto each
-    /// profile's own face — one hue family, lightness steps only (user-directed 2026-08-08).
-    /// The LINE rung is an INK TINT over the ground (divider round, user-directed 2026-08-08),
-    /// and the two fractions are UNEQUAL by design — 10% dark vs 14.2% light, solved so both
-    /// themes step the same perceived lightness (OKLab ΔL ≈ 0.09 against their grounds).
+    /// ONE ISLAND (user-directed 2026-08-08): the window holds exactly TWO tones. The GROUND —
+    /// Alucard's published cream `#FFFBEB` — is the SAME in both profiles: every sunken surface (the
+    /// navigator, the code panel, the band, the moat) stands on it, and the one lifted surface is
+    /// the terminal canvas, whose tone IS the glass face by construction. Because the ground is
+    /// light in both, the CHROME polarity is light in both — semantic ink pinned dark would draw
+    /// white on cream. LINE is the in-island pane rule, still the ink tint — 10% dark vs 14.2%
+    /// light, unequal on purpose so both themes step the same perceived lightness (OKLab ΔL ≈ 0.09).
     func testChromeLadderStructure() {
-        // Dracula: dark glass, a chrome rung darker, an ink-tint hairline, a lifted rung up.
+        // Dracula: a dark island on the cream ground — the Rio-Canario read.
         XCTAssertFalse(SlateTheme.dracula.isLight, "the glass stays dark")
-        XCTAssertEqual(SlateTheme.dracula.chromeIsLight, SlateTheme.dracula.isLight, "one polarity — no frame flip")
-        XCTAssertEqual(SlateTheme.dracula.chromeHexValue, 0x1B1922, "sidebar offset −07/−08/−0A off the Pro face")
-        XCTAssertEqual(SlateTheme.dracula.chromeLineHexValue, 0x312F37, "10% ink #F8F8F2 over the ground")
+        XCTAssertTrue(SlateTheme.dracula.chromeIsLight, "the ground is light, so the chrome is light")
+        XCTAssertEqual(SlateTheme.dracula.chromeHexValue, 0x22212C, "the island IS the glass face")
+        XCTAssertEqual(SlateTheme.dracula.groundHexValue, 0xFFFBEB, "Alucard's published cream, under both profiles")
+        XCTAssertEqual(SlateTheme.dracula.chromeLineHexValue, 0x312F37, "10% ink #F8F8F2, for in-island rules")
         XCTAssertEqual(SlateTheme.dracula.chromeLiftHexValue, 0x2E2E3C, "rail offset +0C/+0D/+10 off the Pro face")
-        // Alucard: cream glass, the ladder mirrored deeper into the cream.
+        // Alucard: the island and the ground are the SAME cream — the boundary is the corner and
+        // the island's hairline edge, nothing else.
         XCTAssertTrue(SlateTheme.alucard.isLight, "the glass is light")
-        XCTAssertEqual(SlateTheme.alucard.chromeIsLight, SlateTheme.alucard.isLight, "one polarity — no frame flip")
-        XCTAssertEqual(SlateTheme.alucard.chromeHexValue, 0xF6F1DE)
-        XCTAssertEqual(SlateTheme.alucard.chromeLineHexValue, 0xD8D3C3, "14.2% ink #1F1F1F over the ground")
+        XCTAssertTrue(SlateTheme.alucard.chromeIsLight, "the ground is light, so the chrome is light")
+        XCTAssertEqual(SlateTheme.alucard.chromeHexValue, 0xFFFBEB, "the island IS the glass face")
+        XCTAssertEqual(SlateTheme.alucard.groundHexValue, 0xFFFBEB, "its own face — ground and island coincide")
+        XCTAssertEqual(SlateTheme.alucard.chromeLineHexValue, 0xD8D3C3, "14.2% ink #1F1F1F, for in-island rules")
         XCTAssertEqual(SlateTheme.alucard.chromeLiftHexValue, 0xFFFDF4)
+    }
+
+    /// The GROUND is one tone across the whole product — pinned as its own assertion because it is
+    /// the single decision the layout rests on: three columns, one field, one island. A profile that
+    /// re-invented its own ground would bring the many-islands clutter straight back.
+    func testEveryProfileStandsOnTheSameGround() {
+        let grounds = Set([SlateTheme.dracula, SlateTheme.alucard].map(\.groundHexValue))
+        XCTAssertEqual(grounds, [0xFFFBEB], "one ground for every profile")
+        XCTAssertTrue(
+            [SlateTheme.dracula, SlateTheme.alucard].allSatisfy(\.chromeIsLight),
+            "a light ground forces a light chrome polarity in every profile",
+        )
     }
 
     /// A theme change posts the cross-`NSHostingController` repaint notification keyed on theme

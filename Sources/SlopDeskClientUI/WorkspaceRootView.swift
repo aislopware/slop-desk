@@ -135,9 +135,9 @@ public struct WorkspaceRootView: View {
             preferences: preferencesStore, paneDrag: paneDrag,
         )
         .ignoresSafeArea()
-        // The flat chrome ground (flat round, user-directed 2026-08-08): one opaque chrome tone
-        // behind the split — the columns paint their own flat surfaces over it, and it backstops
-        // any transient gap (a mid-animation collapse) so no bare window colour ever shows.
+        // THE GROUND behind the split (law 1) — one opaque tone under all three columns, which
+        // backstops any transient gap (a mid-animation collapse) so no bare window colour ever
+        // shows. It is also what the window's own 16pt corners bite into.
         .background(Slate.Surface.field.ignoresSafeArea())
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
         // composes above the AppKit split (SwiftUI overlays compose over an `NSViewControllerRepresentable`).

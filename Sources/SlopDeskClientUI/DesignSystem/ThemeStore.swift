@@ -111,23 +111,21 @@ final class ThemeStore {
     private func setActive(_ resolved: SlateTheme) {
         let changed = resolved != active
         active = resolved
-        // GLASS polarity — the theme's IDENTITY: a dark theme is a dark APP (Settings, palette,
-        // sheets, menus), even though its frame chrome is inverted. The frame's flipped polarity is
-        // a per-column pin inside `SlopDeskSplitViewController.pinWindowAppearance`, NOT the
-        // app-level appearance (user-directed 2026-08-07: Dracula must not light up Settings).
-        pinAppAppearance(isLight: resolved.isLight)
+        // CHROME polarity, not glass polarity (ONE ISLAND, user-directed 2026-08-08): every chrome
+        // surface in the app now stands on the same light GROUND, so the semantic ink standing on it
+        // must resolve light-appearance or the navigator would draw white-on-cream. The GLASS opts
+        // out locally via `Slate.glassColorScheme` — it is the one surface outside this pin, which
+        // is why the app is still one appearance voice rather than the split-tone half-and-half the
+        // 2026-08-07 note was guarding against (that note was written when the chrome was dark).
+        pinAppAppearance(isLight: resolved.chromeIsLight)
         if changed {
             NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
         }
     }
 
-    /// Pin the WHOLE APP's appearance to the active theme's GLASS polarity (user-directed
-    /// 2026-08-07, polish round): the theme choice drives every window — Settings, overlays,
-    /// sheets, menus — so a dark theme is an all-dark app and a light theme an all-light one,
-    /// never the split-tone half-and-half. The inverted FRAME chrome opts out per column
-    /// (`SlopDeskSplitViewController.pinWindowAppearance`) rather than steering this pin — pinning
-    /// the flip here inverted every auxiliary surface (light Settings under Dracula).
-    /// `NSApp.appearance` (not per-window pins) so auxiliary windows inherit it too.
+    /// Pin the WHOLE APP's appearance to the active theme's CHROME polarity: every window — Settings,
+    /// overlays, sheets, menus — matches the chrome the workspace wears, never the split-tone
+    /// half-and-half. `NSApp.appearance` (not per-window pins) so auxiliary windows inherit it too.
     /// Follow-OS users still follow the OS: the resolver flips the theme on an OS switch and this
     /// re-pins to match. Singleton-only — a test instance must not restyle the test-runner app.
     private func pinAppAppearance(isLight: Bool) {
@@ -159,7 +157,7 @@ final class ThemeStore {
                     NotificationCenter.default.removeObserver(token)
                     self.launchRepinToken = nil
                 }
-                self.pinAppAppearance(isLight: self.active.isLight)
+                self.pinAppAppearance(isLight: self.active.chromeIsLight)
             }
         }
     }
