@@ -316,14 +316,6 @@ enum Slate {
         static let subtle = Color(uiColor: .separator).opacity(0.6)
         static let active = Color(uiColor: .tertiaryLabel)
         #endif
-        /// The SELECTION hairline — the accent at border strength, paired with ``State/selected``
-        /// so a selected card is one wash and one edge from the same colour (accent-card round,
-        /// user-directed 2026-08-08). Fractions solved like the wash: equal OKLab dE off the two
-        /// chrome grounds (0.209 both) needs 42.2% on cream vs 40% on near-black. Also the search
-        /// field's focus ring — focus and selection are one accent voice, never two hues.
-        static let selected = Color(
-            slateDynamicLight: 0x644AC9, dark: 0x9580FF, lightAlpha: 0.422, darkAlpha: 0.40,
-        )
     }
 
     @MainActor
@@ -334,14 +326,8 @@ enum Slate {
         #else
         static let hover = Color(uiColor: .quaternarySystemFill)
         #endif
-        /// Selected row — the brand accent at a wash, so selection carries the one non-system
-        /// colour. The fractions are UNEQUAL by design (the divider's OKLab method, extended to
-        /// dE for a chromatic tint): the purple tints Alucard's cream more slowly than Dracula's
-        /// near-black, so 16.5% light vs 15% dark is what makes the two washes the same
-        /// perceptual step off their grounds (dE 0.082 both).
-        static let selected = Color(
-            slateDynamicLight: 0x644AC9, dark: 0x9580FF, lightAlpha: 0.165, darkAlpha: 0.15,
-        )
+        /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
+        static let selected = Slate.accentPurple.opacity(0.15)
         static let accent = Slate.accentPurple
         static let accentMuted = Slate.accentPurple.opacity(0.12)
         static let header = Text.secondary

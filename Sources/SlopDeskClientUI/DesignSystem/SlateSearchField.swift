@@ -21,11 +21,6 @@ import SwiftUI
 struct SlateSearchField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
-    /// Reports keyboard-focus moves so the caller can draw its focus ring on the plate it owns.
-    /// AppKit-sourced on purpose: focus lands via `becomeFirstResponder` (a click into the field —
-    /// the delegate's `controlTextDidBeginEditing` waits for the first CHANGE, which would leave a
-    /// clicked-but-untyped field ringless) and leaves via `textDidEndEditing`.
-    var onFocusChange: ((Bool) -> Void)?
 
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -47,25 +42,8 @@ struct SlateSearchField: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
-    /// The NSTextField subclass that reports focus moves — see ``SlateSearchField/onFocusChange``.
-    final class FocusReportingField: NSTextField {
-        var onFocusChange: ((Bool) -> Void)?
-
-        override func becomeFirstResponder() -> Bool {
-            let accepted = super.becomeFirstResponder()
-            if accepted { onFocusChange?(true) }
-            return accepted
-        }
-
-        override func textDidEndEditing(_ notification: Notification) {
-            super.textDidEndEditing(notification)
-            onFocusChange?(false)
-        }
-    }
-
     func makeNSView(context: Context) -> NSTextField {
         let field = Self.makeConfiguredField(text: text, delegate: context.coordinator)
-        (field as? FocusReportingField)?.onFocusChange = onFocusChange
         applyInk(field)
         return field
     }
@@ -73,7 +51,7 @@ struct SlateSearchField: NSViewRepresentable {
     /// The jump-critical configuration, factored out so a headless test can pin it (a `Context`
     /// cannot be constructed outside SwiftUI).
     static func makeConfiguredField(text: String, delegate: NSTextFieldDelegate?) -> NSTextField {
-        let field = FocusReportingField(string: text)
+        let field = NSTextField(string: text)
         field.isBezeled = false
         field.isBordered = false
         field.drawsBackground = false
@@ -91,7 +69,6 @@ struct SlateSearchField: NSViewRepresentable {
 
     func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.text = $text
-        (field as? FocusReportingField)?.onFocusChange = onFocusChange
         // External writes only (the clear button) — echoing every keystroke back would fight the
         // field editor's caret.
         if field.stringValue != text { field.stringValue = text }

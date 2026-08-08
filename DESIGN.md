@@ -71,7 +71,7 @@ components:
     textColor: "semantic label tiers"
     note: "collapsing MINIMIZES to an 80pt RAIL, never hides (rail round): lights band, centered expand toggle, one muted folder chip per project group (attention roll-up on its corner), New Tab, compact ping readout"
   sidebar-search-field:
-    backgroundColor: "Slate.State.hover wash, no stroke at rest — a recess in the column, not an island (restored user-directed 2026-08-08); while editing it wears the Line.selected accent focus ring (accent-card round, same day)"
+    backgroundColor: "Slate.State.hover wash, no stroke — a recess in the column, not an island (restored user-directed 2026-08-08)"
     rounded: "{rounded.control}"
     height: "28px"
   panel-edge-handle:
@@ -84,7 +84,7 @@ components:
     height: "32px"
     padding: "0 12px"
   list-row-active:
-    backgroundColor: "Slate.Surface.raised neutral wash + Line.selected accent hairline — the accent-EDGED overlay card, NOT a solid fill and NOT an accent wash (accent-card round, user-directed 2026-08-08: the full accent wash was tried and pulled back to the border-only dose the same hour). Edge fractions per polarity are OKLab-dE-balanced: 40% dark / 42.2% light"
+    backgroundColor: "Slate.Surface.raised translucent wash + Line.card hairline border — the overlay card, NOT a solid fill (restored user-directed 2026-08-08; both the reverse-video flip and the solid chip plate are retired)"
     textColor: "labelColor"
     rounded: "{rounded.control}"
     height: "32px"
@@ -96,7 +96,7 @@ components:
     backgroundColor: "{colors.glass-dracula}"
     note: "the right column — its tab strip sits at the top of the same flat glass surface"
   panel-tab-chip:
-    backgroundColor: "Slate.Surface.raised at rest; lift on hover; selected = the selection tint ({colors.accent} at 15%) with primary ink plus the Line.selected accent hairline (accent-card round) — one selection edge across strip, sidebar and rail (the inverted micro-chip is retired)"
+    backgroundColor: "Slate.Surface.raised at rest; lift on hover; selected = the selection tint ({colors.accent} at 15%) with primary ink — the filled chip row, restored user-directed 2026-08-08 (the inverted micro-chip is retired)"
     rounded: "capsule"
     height: "24px"
 ---
@@ -161,21 +161,18 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
   chrome, flat round), New Tab, compact connection readout. The expanded strip keeps its collapse
   toggle permanent at top-trailing; the right panel's reopen is the `PanelEdgeHandle` drawer pull.
   There is NO titlebar of any kind.
-  The active row is the column's one raised object: the accent-EDGED overlay card — the neutral
-  `Slate.Surface.raised` wash plus the `Line.selected` accent hairline (40% dark / 42.2% light,
-  OKLab-dE-balanced per polarity — the divider's equal-step method extended to a chromatic
-  tint). The brand purple is spent ONLY on the edge: the full accent wash was tried and pulled
-  back the same hour, the solid `chip` plate read as off-family neutral grey, and the
-  reverse-video flip is retired (all user-directed 2026-08-08). Hover stays the NEUTRAL
-  `State.hover` wash: the pointer whispers, only the selection edge speaks the accent.
+  The active row is the column's one raised object: the translucent overlay card — a
+  `Slate.Surface.raised` wash plus the `Line.card` hairline border. The wash TINTS the chrome
+  floor and stays in its hue family; a solid fill does not (the system `chip` plate read as
+  off-family neutral grey and is retired, as is the reverse-video colour-scheme flip of the
+  2026-08-07 polish round — both user-directed 2026-08-08). Do not reintroduce either.
 - **Surfaces** (`Slate.Surface`): `field` → the chrome floor (above), `void`/`ground` →
   `underPageBackgroundColor`, `face` → `windowBackgroundColor`, `raised` → `quaternarySystemFill`,
   `lift` → `tertiarySystemFill`, `chip` → `controlBackgroundColor`.
 - **Text** (`Slate.Text`): the semantic label tiers (`labelColor` → `tertiaryLabelColor`). Never a
   custom RGB for chrome text.
 - **Lines** (`Slate.Line`): `separatorColor`, INSIDE surfaces only; the column seams belong to
-  `chromeLine`. `Line.selected` is the accent at border strength (40% dark / 42.2% light) —
-  every selection edge and the search field's focus ring, one voice.
+  `chromeLine`.
 - **Status** (`Slate.Status`): `systemGreen` / `systemOrange` / `systemRed`; info rides the accent.
   Status dots are budgeted: the attention roll-up is the only dot the sidebar wears.
 
@@ -253,11 +250,9 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T introduce a second selection language: selected = the accent-EDGED overlay card
-  (neutral `raised` wash + `Line.selected` hairline on the sidebar row and rail chip; the strip
-  chip pairs the same hairline with its `State.selected` tint). No reverse-video/colour-scheme
-  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day),
-  no full accent WASH on the sidebar card (tried and pulled back the same hour — the edge is
-  the dose), no underlines for selection; hover and every other state stay neutral.
+- DON'T introduce a second selection language: selected = the translucent overlay card (sidebar
+  `raised` wash + `Line.card` hairline, strip selection tint). No reverse-video/colour-scheme
+  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day —
+  off-family grey on the authored floor), no underlines for selection.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.

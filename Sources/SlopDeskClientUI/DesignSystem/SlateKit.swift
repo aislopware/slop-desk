@@ -161,15 +161,6 @@ struct PanelTabPlate: View {
                 // the icon ink (the pre-inversion pair, restored user-directed 2026-08-08).
                 .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
                 .background(fill, in: .capsule)
-                // The selection hairline the sidebar's accent card wears (accent-card round,
-                // user-directed 2026-08-08) — one selection edge across strip and rail.
-                .overlay {
-                    if selected {
-                        Capsule().strokeBorder(
-                            Slate.Line.selected, lineWidth: Slate.Metric.cardBorderWidth,
-                        )
-                    }
-                }
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)

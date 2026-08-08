@@ -16,12 +16,11 @@
 // coloured ring" the way a mail row reads unread. The rail is monochrome except the marks that
 // carry state; the IDENTITY register lives on the section HEADER's folder mark (the Canario
 // dialect, user-directed 2026-08-07 — the earlier 2px spine + 5% wash read as invisible
-// ornament and were removed). ACTIVE is the accent-EDGED overlay card: the neutral `raised`
-// wash plus the `Line.selected` accent hairline — the overlay-card language of the pre-rounds
-// selection with the brand purple spent only on the edge (accent-card round, user-directed
-// 2026-08-08: the full accent wash was tried the same hour and pulled back to the border-only
-// dose). Nothing else rides the row: no subtitle, no readout, no telemetry — the richness lives
-// in the hover tooltip and the context menu.
+// ornament and were removed). ACTIVE is the translucent overlay card: a `raised` wash plus the
+// `Line.card` hairline — the pre-rounds selection, restored user-directed 2026-08-08 after both
+// the reverse-video flip (retired same day) and the solid neutral `chip` fill (off-hue on the
+// authored chrome floor) were rejected. Nothing else rides the row: no subtitle, no readout, no
+// telemetry — the richness lives in the hover tooltip and the context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -141,7 +140,7 @@ struct SlateTabRow: View {
         .frame(height: Slate.Metric.heightTabRow)
         .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
         .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
-            Slate.Line.selected,
+            Slate.Line.card,
             lineWidth: Slate.Metric.cardBorderWidth,
         ) } }
         // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
@@ -162,11 +161,10 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// ACTIVE = the NEUTRAL translucent fill (`Slate.Surface.raised`) plus the `Line.selected`
-    /// accent hairline drawn in `body` — the border-only accent dose (accent-card round,
-    /// user-directed 2026-08-08: the full accent wash read as too much and was pulled back the
-    /// same hour). The wash tints the floor in its own hue family; the brand purple lives only
-    /// on the edge. Hover keeps the quieter wash — pointer, not selection.
+    /// ACTIVE = the translucent OVERLAY fill (`Slate.Surface.raised`) plus the hairline card
+    /// border drawn in `body` — the pre-rounds selection card, restored user-directed 2026-08-08:
+    /// a wash TINTS the chrome floor (staying in its hue) where the solid `chip` fill replaced it
+    /// with the system's neutral grey and sat visibly off-family. Hover keeps the quieter wash.
     private var rowBackground: Color {
         if active { Slate.Surface.raised }
         else if hovering { Slate.State.hover }

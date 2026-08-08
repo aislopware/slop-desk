@@ -57,9 +57,6 @@ struct NavigatorColumn: View {
     /// panel's own header search field (user-directed 2026-08-03: the header row IS the search
     /// bar — it replaced the caps "TABS" label). Session-scoped, never persisted.
     @State private var query = ""
-    /// Whether the search field owns keyboard focus — drives its accent focus ring (the field's
-    /// AppKit backing reports first-responder moves; SwiftUI focus state can't see them).
-    @State private var searchFocused = false
 
     /// The memoized row model: the sidebar body reads its rows from HERE so a settled body
     /// registers NO Observation dependency on the store's volatile per-pane dicts — a status/git/progress
@@ -212,10 +209,7 @@ struct NavigatorColumn: View {
                 // AppKit-backed on purpose: a SwiftUI `TextField` at footnote size bumps its
                 // text up 1pt on focus (cell-draw vs field-editor baseline split — see
                 // `SlateSearchField`'s header). User-reported 2026-08-03.
-                SlateSearchField(
-                    placeholder: "Search tabs", text: $query,
-                    onFocusChange: { searchFocused = $0 },
-                )
+                SlateSearchField(placeholder: "Search tabs", text: $query)
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -233,16 +227,8 @@ struct NavigatorColumn: View {
             // The quiet HOVER wash, restored user-directed 2026-08-08: on the flat chrome floor
             // the whisper reads fine again (the coloured frame floor that once swallowed it is
             // gone), and the solid system `chip` fill it briefly wore sat off-hue as a neutral
-            // grey plate. No stroke at rest — the field is a recess in the column, not an
-            // island; while EDITING it wears the accent focus ring (`Line.selected`, accent-card
-            // round), the field's one state change and the same voice every selection edge uses.
+            // grey plate. No stroke — the field is a recess in the column, not an island.
             .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-            .overlay {
-                if searchFocused {
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .strokeBorder(Slate.Line.selected, lineWidth: Slate.Metric.cardBorderWidth)
-                }
-            }
             // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
             // share one width.
             .padding(.horizontal, 8)
@@ -1324,10 +1310,10 @@ private struct RailProjectChip: View {
             .contentShape(.rect(cornerRadius: Slate.Metric.radiusCard))
         }
         .buttonStyle(.plain)
-        // The ACTIVE chip is the accent-EDGED overlay card — the neutral `raised` wash plus the
-        // `Line.selected` hairline, the same border-only accent dose the active tab row wears
-        // (accent-card round, user-directed 2026-08-08: the full accent wash was pulled back to
-        // the edge the same hour): one selection voice whether the sidebar is expanded or railed.
+        // The ACTIVE chip is the translucent overlay card — a `raised` wash plus the `Line.card`
+        // hairline, the same pre-rounds selection the active tab row wears (user-directed
+        // 2026-08-08). A wash TINTS the chrome floor and stays in its hue family; the solid
+        // system `chip` fill it briefly replaced sat off-family as a neutral grey plate.
         .background(
             active ? Slate.Surface.raised : (hovering ? Slate.State.hover : Color.clear),
             in: .rect(cornerRadius: Slate.Metric.radiusCard),
@@ -1335,7 +1321,7 @@ private struct RailProjectChip: View {
         .overlay {
             if active {
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.Line.selected, lineWidth: Slate.Metric.cardBorderWidth)
+                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
             }
         }
         .onHover { hovering = $0 }
