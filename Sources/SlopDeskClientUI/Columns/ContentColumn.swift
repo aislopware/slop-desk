@@ -61,13 +61,15 @@ struct ContentColumn: View {
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
-    /// On macOS the pane canvas is THE ISLAND — glass, concentric corner, a uniform moat of ground on
-    /// every side, the top side of that moat being the hover-reveal titlebar band (so the terminal
-    /// starts under the band, not under the centred title). iOS has no titlebar and no island: the
-    /// pane area fills its column directly.
+    /// On macOS the pane canvas is THE ISLAND — glass, a window-scale corner, and a moat of ground
+    /// that is the SAME on all four sides, so the island rises level with the window's top edge
+    /// rather than starting below a band. The navigator carries the traffic lights, so nothing in
+    /// this column needs the clearance — until the navigator is collapsed and this column becomes
+    /// the window's left edge, which is exactly what `clearingWindowControls` answers. iOS has no
+    /// titlebar and no island: the pane area fills its column directly.
     private var content: some View {
         #if os(macOS)
-        paneArea.slateIsland()
+        paneArea.slateIsland(clearingWindowControls: chrome.sidebarCollapsed)
         #else
         paneArea
         #endif

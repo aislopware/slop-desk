@@ -51,8 +51,10 @@ rounded:
   small: "4px"
   control: "6px"
   card: "8px"
+  compact-island: "10px"
   panel: "12px"
   pill: "20px"
+  island: "26px"
 spacing:
   space1: "4px"
   space2: "8px"
@@ -68,8 +70,8 @@ components:
     note: "FlatDividerSplitView paints the divider AND the split-view backing layer in the ground colour, so the three columns read as one continuous sunken field; the only boundary the window draws is the island's own edge
   island:
     backgroundColor: "{colors.glass-dracula} (Alucard: {colors.glass-alucard})"
-    rounded: "14px — strict concentricity (16 − 8) gives 8, but 8 read as a barely-softened rectangle at canvas size, so the corner is opened for the modern read (user-directed 2026-08-08). Stays UNDER the window's own 16: an inner corner rounder than its frame reads as a bubble"
-    inset: "8px moat on the leading/trailing/bottom sides; the top side of the moat is the full 40px band"
+    rounded: "{rounded.island} — a WINDOW-scale corner for a window-scale surface: 26 is what macOS 26 Tahoe puts on a full-chrome window (measured on this OS). The island sits ~230px clear of the frame's own corners, so nothing constrains it to stay under the window's 16 (user-directed 2026-08-08)"
+    inset: "8px moat on ALL FOUR sides — the island rises level with the window's top edge (user-directed 2026-08-08). Only a COLLAPSED navigator widens the top side back to 40px, so the traffic lights keep standing on bare ground"
     border: "1px Slate.Line.divider, inset-stroked inside the clip"
     note: "THE ONE ISLAND (user-directed 2026-08-08) — the terminal canvas, the window's only lifted surface. `View.slateIsland()` is its single call site; a second one is the many-islands clutter coming back. Panes tile it edge-to-edge, parted by the PaneDivider hairline, never by a channel"
   sidebar:
@@ -82,7 +84,7 @@ components:
     height: "28px"
   titlebar:
     backgroundColor: "transparent — a hover-reveal overlay riding the content column's top strip (40px)"
-    note: "the band is EMPTY at rest (user-directed 2026-08-08): the centred pane title and its menu are deleted — with the terminal lifted, this strip is the island's top moat, bare ground. Only the two hover-revealed reopen plates and — while the sidebar is hidden — the connection cluster appear on the traffic-light row"
+    note: "EMPTY at rest and no longer a band across the window (user-directed 2026-08-08): the centred pane title and its menu are deleted, and the island now rises past this line, so the traffic lights stand on the NAVIGATOR's ground with the island beside them. Only the two hover-revealed reopen plates and — while the sidebar is hidden — the connection cluster appear on the traffic-light row"
   list-row:
     backgroundColor: "transparent"
     textColor: "secondaryLabelColor"
@@ -102,8 +104,8 @@ components:
     backgroundColor: "the field (the ground) behind the strip; the workbench/device surfaces fill below a divider hairline"
     note: "the right column SINKS like the navigator. The embedded workbench is seeded with `workbench.colorCustomizations` painting every VS Code surface {colors.ground}, and its webview is pinned to the CHROME polarity — panel and ground read as one continuous field (user-directed 2026-08-08)"
   panel-tab-chip:
-    backgroundColor: "transparent at rest; State.hover wash on hover; selected = the State.selected accent wash — the strip's pre-islands language, restored with the chrome revert (user-directed 2026-08-08)"
-    rounded: "{rounded.control}"
+    backgroundColor: "transparent at rest; State.hover wash on hover; SELECTED = a compact island — the island fill + a divider hairline, ink flipped to the glass polarity (user-directed 2026-08-08)"
+    rounded: "{rounded.compact-island}"
     height: "24px"
   command-ladder:
     textColor: "status inks only — running = accent, clean = Status.ok, failed = Status.err; never a new hue"
@@ -119,9 +121,11 @@ North star: **one ground, one island.** SlopDesk's window holds exactly two tone
 Alucard's published cream `#FFFBEB`, and it is the same cream under both profiles: the navigator,
 the code panel, the top band and the moat all stand on it, flush, un-rounded, with no seam between
 them — they SINK. Lifted off that ground is exactly ONE surface: the terminal canvas, wearing the
-profile's glass, rounded at 14pt, floating in a uniform 8pt moat (the top side of which is the 40pt
-titlebar band, which is now empty). Inside the island, panes tile edge-to-edge and are parted by a hairline, never by a
-channel — one lift, one vocabulary.
+profile's glass, rounded at 26pt, floating in a uniform 8pt moat on ALL FOUR SIDES — it rises level
+with the window's top edge, beside the traffic lights rather than below them. Inside the island, panes tile edge-to-edge and are parted by a
+hairline, never by a channel — one lift, one vocabulary. SELECTION is the island's only echo: the
+chosen tab is a COMPACT island, the same material at row scale, so the window says "this one" in the
+one material it already speaks.
 
 This is the third structure of 2026-08-08 and it was set by the user twice. The first ask was the
 Rio-Canario / JetBrains-Islands read; the literal answer — every column and every pane its own
@@ -146,13 +150,26 @@ the island is drawn by its corner and its hairline edge alone.
 
 ### Geometry
 
-Window 16 (macOS 26 Tahoe's titlebar-only window radius), moat 8, island **14**.
+Window 16, moat 8 on every side, island **26**, compact island (selected tab) **10**.
 
-Three independent sources put the concentric answer at 8 — Apple's inner = outer − inset, JetBrains'
-published `Island.arc.compact = 16` (an arc WIDTH), and a measurement of Rio Canario (≈7.5) — and 8
-is what shipped first. At canvas size it read as a barely-softened rectangle, so the corner was
-opened to 14 for the modern read (user-directed 2026-08-08). The ceiling is the window's own 16: an
-inner corner rounder than the frame around it reads as a bubble, not a panel.
+macOS 26 Tahoe gives a window the corner its titlebar asks for. Measured on this OS, one `NSWindow`
+per configuration, reading the alpha profile of the corner: **no toolbar 16** (what this app gets —
+it runs `.hiddenTitleBar`), **`.unifiedCompact` toolbar 21**, **`.unified` toolbar 26** (Finder and
+System Settings both land there). The same method on Tahoe's smaller surfaces: a grouped content card
+≈ 11, a selected sidebar row ≈ 8.
+
+The island wears **26** — the top of that scale, the corner the OS puts on a full-chrome window —
+because the island IS a window-scale surface (~880 × 775pt), and one wearing a window's corner reads
+as a window floating inside the window, which is the metaphor. The earlier 8, then 14, came from a
+concentricity rule (inner = outer − inset) that does not apply: the island lives in the CENTRE
+column, ~230pt clear of the frame's own corners, so the two are never seen side by side and nothing
+holds the island under 16. Its neighbours are flat dividers and bare ground. JetBrains' `Island.arc`
+and Canario's ≈7.5 are small because their islands tile a window edge to edge; ours is one card in
+the middle of a field.
+
+The compact island is not that number scaled down — a corner is read against the surface it cuts, not
+as a ratio. 10 is one rung above Tahoe's own selected-row 8: clearly a rounded island, still clear of
+the pill a 32pt row reaches at 16.
 
 ## The two worlds — one chrome polarity
 
@@ -252,15 +269,18 @@ info status. Everything else interactive is the system's.
 - Divider at rest: `terminalEdge` hairline; while dragging: accent 2px + the live ratio readout.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
-- **The titlebar band is EMPTY at rest** (user-directed 2026-08-08): the centred pane title and its
-  menu are deleted. With the terminal lifted, the band is the island's top moat — bare ground — and a
-  label floating in it read as chrome the layout no longer has room for. Split / move / close keep
-  their chords; the cwd readout and Copy Path live in the palette's DIRECTORY section. Only the two
-  hover-revealed reopen plates and the connection cluster (while the sidebar is hidden) appear there.
+- **There is no titlebar band left** (user-directed 2026-08-08): the centred pane title and its
+  menu are deleted, and the island rises past that line to the same 8pt moat it keeps on its other
+  three sides. The traffic lights stand on the NAVIGATOR's ground with the island beside them; a
+  COLLAPSED navigator is the one case that reopens the 40pt clearance, because the content column
+  then owns the window's left edge. Nothing was lost with the title: split / move / close keep their
+  chords, and the cwd readout and Copy Path live in the palette's DIRECTORY section. Only the two
+  hover-revealed reopen plates and the connection cluster (while the sidebar is hidden) still ride
+  the traffic-light row.
 - **The panel column** (right) SINKS: it carries the workbench / device surfaces below a TAB
   STRIP band standing on the ground, closed by a `Line.divider` hairline. Its chips are ghost at rest, the hover wash under the
-  pointer, and the SELECTED chip wears the `State.selected` accent wash with primary ink — the
-  strip's own pre-islands language, distinct from the sidebar row's overlay card.
+  pointer, and the SELECTED chip is a COMPACT ISLAND (island fill + hairline, ink on the glass) —
+  the SAME chip the sidebar tab rows wear, because both are tabs answering the same question.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -317,7 +337,7 @@ outside every palette.
 - DO add new chrome colour needs as SEMANTIC system colours; if none fits, the design is wrong.
 - DO put profile-dependent colour behind `SlateTheme` / `Slate.Terminal.*`. New fixed colour
   enters ONLY as a `SlateTheme` field, derived in the Pro hue family as a lightness rung.
-- DON'T make a SECOND island. The archipelago — every column and every pane on its own card,
+- DON'T make a second island SURFACE. The archipelago — every column and every pane on its own card,
   parted by channels of ground — was built and rejected as too busy (user-directed 2026-08-08).
   `slateIsland()` has one call site. Also still dead: floating cards, the liquid-glass floor and
   any translucent window material, plus five chrome worlds that are now the anti-reference — dark
@@ -332,12 +352,15 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T re-dress the sidebar's selection: the active row is the translucent overlay card
-  (`raised` wash + `Line.card` hairline) and nothing else. No reverse-video/colour-scheme
-  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day —
-  off-family grey on the authored floor), no accent tint or accent edge on the ROW (tried both
-  doses the same day, both pulled), no underlines. The panel strip and the plate idiom keep
-  their own `State.selected` wash — that is the latched-control language, not the row's.
+- **Selection is a COMPACT ISLAND** (user-directed 2026-08-08) — the selected TAB, in the sidebar
+  list and on the panel strip alike, is stamped out of the island's own material: island fill +
+  divider hairline at `{rounded.compact-island}`, with the row's colour scheme flipped to the glass
+  polarity so every ink on it resolves against the plate it stands on. Under a dark profile that is
+  a real invert — a dark chip on the cream ground. This REVERSES the 2026-08-07 "no reverse-video,
+  no solid chip" verdict, which was written when the chrome ground was dark and a solid plate meant
+  an off-family grey; on the cream ground the plate is the island tone, in family by construction.
+  Still dead: accent tint or accent edge on the row, and underlines. `SlateListRow` (settings,
+  popovers, generic lists) keeps the semantic raised card — this is a TAB gesture, not a list one.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
 - DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a

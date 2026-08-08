@@ -454,21 +454,35 @@ enum Slate {
     enum Metric {
         // MARK: The ONE-ISLAND geometry (law 3)
 
-        /// The WINDOW's own corner radius — macOS 26 Tahoe's titlebar-only window (the app runs
-        /// `.hiddenTitleBar`, so this is the rung, not the 26 a toolbar window gets). Named here
-        /// because the island's radius is DERIVED from it, not because view code sets it.
+        /// The WINDOW's own corner radius — macOS 26 Tahoe gives a window the corner its titlebar
+        /// asks for, and this app runs `.hiddenTitleBar`. MEASURED on Tahoe 26.5 by rendering one
+        /// `NSWindow` per configuration and reading the alpha profile of its corner: no toolbar 16,
+        /// `.unifiedCompact` toolbar 21, `.unified` toolbar 26 (Finder and System Settings both
+        /// measure 26). Kept because it is a real dimension of the frame — NOT because the island is
+        /// derived from it; see ``islandRadius``.
         static let windowRadius: CGFloat = 16
         /// The MOAT — the uniform strip of ground between the island and everything around it. The
         /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
         /// misaligned panel.
         static let islandInset: CGFloat = 8
-        /// The island's corner. Strict concentricity (`windowRadius − islandInset`) gives 8, and so do
-        /// JetBrains' `Island.arc.compact = 16` (an arc WIDTH) and a measurement of Canario — but 8 read
-        /// as a barely-softened rectangle at this size, and the brief is the MODERN island, so the
-        /// corner is opened to 14 (user-directed 2026-08-08). It stays UNDER the window's own 16: an
-        /// inner corner rounder than the frame it sits in reads as a bubble, not a panel. Everything
-        /// else on the ladder is untouched — this is the island's number, not a new rung.
-        static let islandRadius: CGFloat = 14
+        /// The island's corner — a WINDOW-SCALE corner, because the island is a window-scale surface
+        /// (~880 × 775pt). 26 is what macOS 26 Tahoe puts on a full-chrome window, measured on this
+        /// OS; the island wearing it reads as a window floating inside the window, which is the
+        /// metaphor.
+        ///
+        /// The earlier 8, then 14, came from a concentricity rule — inner = outer − inset — that does
+        /// NOT apply here: the island lives in the CENTRE column, ~230pt clear of the window's own
+        /// corners, so its corners are never seen beside the frame's and nothing constrains them to
+        /// stay under 16. Its neighbours are flat dividers and bare ground. (JetBrains' `Island.arc`
+        /// and Rio Canario's ≈7.5 are small because their islands tile a window edge to edge; ours is
+        /// one card in the middle of a field.) User-directed 2026-08-08, twice.
+        static let islandRadius: CGFloat = 26
+        /// The COMPACT island — the SELECTED tab's chip, at ``heightRow``/``plate`` scale. Not the
+        /// big number scaled down (a corner is read against the surface it cuts, not as a ratio):
+        /// this is one rung above the 8 macOS Tahoe puts on its own selected sidebar row (measured in
+        /// System Settings), so a selected tab reads as a rounded island rather than the squarish
+        /// card it was, while staying clear of the pill a 32pt row reaches at 16.
+        static let islandRadiusCompact: CGFloat = 10
         /// The GROUND BAND across the window's top — the strip the traffic lights and the hover
         /// titlebar stand on, above the island. The height ladder's chrome-strip rung
         /// (``heightStrip`` / ``titlebarHeight``); the band is not a new measurement.

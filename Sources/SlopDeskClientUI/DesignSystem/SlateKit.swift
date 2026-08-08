@@ -152,12 +152,16 @@ struct PanelTabPlate: View {
         )
     }
 
+    /// The SELECTED tab is a COMPACT ISLAND, the same chip the sidebar tab rows wear (user-directed
+    /// 2026-08-08): the panel's four surfaces are tabs, so they answer "which one" in the window's
+    /// one material rather than in an accent wash of their own.
     var body: some View {
         Button(action: action) {
-            plate
-                .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
-                .background(fill, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-                .contentShape(.rect)
+            SlateCompactIsland(selected: selected, hovering: hovering) {
+                plate
+                    .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
+            }
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -203,15 +207,6 @@ struct PanelTabPlate: View {
         case .android:
             AndroidRobotMark(side: Slate.Metric.androidMark)
         }
-    }
-
-    /// The plate rungs a latched control uses everywhere else: ``Slate/State/selected`` for on,
-    /// ``Slate/State/hover`` for the pointer. The earlier tab sat its selected state on the HOVER
-    /// tint and gave the unselected tabs no pointer feedback at all — one rung too faint to read at
-    /// true size, and a control that never moves under the pointer.
-    private var fill: Color {
-        if selected { return Slate.State.selected }
-        return hovering ? Slate.State.hover : .clear
     }
 }
 

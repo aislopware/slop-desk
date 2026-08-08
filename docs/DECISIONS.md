@@ -7169,3 +7169,50 @@ it.
 Verified by pixel in both profiles on the running app: ground sampled `#FFFBEB` in the titlebar
 band, the navigator and the moat; the island's rounded corner and hairline edge resolve against it
 in Alucard, and the dark glass reads as a floating canvas in Dracula.
+
+## The island takes a window's corner, and selection becomes a compact island (2026-08-08, user-directed)
+
+The island's radius was asked to grow twice more (8 → 14 → **26**), so the number was settled by
+measurement instead of another guess. macOS 26 Tahoe gives a window the corner its TITLEBAR asks
+for: rendering one `NSWindow` per configuration and reading the alpha profile of its corner gives
+16 with no toolbar (this app runs `.hiddenTitleBar`, so that is the frame we actually have), 21
+with a `.unifiedCompact` toolbar, and 26 with a `.unified` one — Finder and System Settings both
+measure 26. The same method on Tahoe's smaller surfaces: a grouped content card ≈ 11, a selected
+sidebar row ≈ 8.
+
+The island now wears 26 — the top of the system's own scale — because it is a window-scale surface
+(~880 × 775pt), and a window-scale surface wearing a window's corner reads as a window floating
+inside the window, which is the metaphor the whole design is after. The concentricity rule that
+produced 8 and then capped 14 does not apply here and never did: the island lives in the CENTRE
+column, ~230pt clear of the frame's own corners, so the two corners are never seen beside each
+other. Its neighbours are flat dividers and bare ground. (JetBrains' `Island.arc` and Rio Canario's
+≈7.5 are small because their islands tile a window edge to edge; ours is one card in a field.)
+
+SELECTION changes with it. The selected TAB — the sidebar tab rows and the panel strip's four
+surface tabs — is now stamped out of the island's own material: `Surface.island` fill plus a
+divider hairline at a compact 10pt corner, in the shared `SlateCompactIsland` shell. The shell also
+flips the chip's colour scheme to `Slate.glassColorScheme`, which is what makes it work rather than
+a dozen hand-picked inks: title, mode glyphs, receipts, process labels and the close `×` all keep
+reading their semantic tiers and resolve against the plate they actually stand on. Under a dark
+profile that is a true invert — a dark chip on the cream ground, light ink — and under the light
+profile it is the same cream-on-cream-plus-hairline the big island already is, with the existing
+`cardShadow` whisper keeping it off flat.
+
+This REVERSES the 2026-08-07 "no reverse-video, no solid chip" verdict on the sidebar row. That
+verdict was reached when the chrome ground was dark and any solid plate meant an off-family grey;
+on the cream ground the plate is the island tone, in family by construction. `SlateListRow`
+(settings, popovers, generic lists) keeps the semantic raised card — this is a tab gesture, not a
+list one — and the accent tint / accent edge / underline takes stay dead.
+
+Verified by pixel on the running app in both profiles: island corner extent measured 21–26 against
+Tahoe's 27 for a full-chrome window, terminal content clips cleanly through the corner, and the
+selected tab reads as a dark chip with light ink under Dracula and as a hairlined cream chip under
+Alucard.
+
+**Follow-up the same day: the moat goes uniform.** The island now rises to the same 8pt inset at the
+TOP as it keeps on its other three sides (user-directed), so there is no titlebar band left across
+the window — the traffic lights stand on the NAVIGATOR's ground with the island beside them, not
+below them. `slateIsland(clearingWindowControls:)` names the one exception: with the navigator
+collapsed the content column owns the window's left edge, and an 8pt top moat would slide the island
+under the lights, so that case widens the top side back to `bandHeight`. Verified by pixel — island
+top edge at y = 8 with the navigator open.

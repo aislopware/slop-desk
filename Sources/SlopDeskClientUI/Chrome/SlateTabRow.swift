@@ -103,7 +103,29 @@ struct SlateTabRow: View {
     private static let slotMinWidth: CGFloat = 28
     private static let slotHeight: CGFloat = 18
 
+    /// The SELECTED tab is a COMPACT ISLAND — the chip is stamped out of the terminal island's own
+    /// material (user-directed 2026-08-08), so on a dark profile the active row inverts to a dark
+    /// chip on the cream ground. The shell also flips the row's colour scheme to the island's, which
+    /// is why nothing below hand-picks an "ink on the chip": title, marks, receipts and the close `×`
+    /// all keep reading their semantic tiers and resolve against the plate they actually stand on.
     var body: some View {
+        SlateCompactIsland(selected: active, hovering: hovering) { line }
+            .contentShape(.rect)
+            // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
+            // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap
+            // arm rides `simultaneousGesture` so selection fires on the FIRST click (never waiting
+            // out a double-click window); the second click then opens the field on the already-
+            // selected row.
+            .gesture(TapGesture(count: 2).onEnded { if !isEditing { onBeginRename() } })
+            .simultaneousGesture(TapGesture().onEnded { if !isEditing { onSelect() } })
+            .onHover { hovering = $0 }
+            .animation(Slate.Anim.smallFade, value: hovering)
+            .animation(Slate.Anim.smallFade, value: active)
+            .help(helpText ?? "")
+    }
+
+    /// The row's single line of content — title slot plus the trailing cluster.
+    private var line: some View {
         HStack(spacing: 0) {
             if isEditing {
                 renameField
@@ -135,31 +157,6 @@ struct SlateTabRow: View {
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
         .frame(height: Slate.Metric.heightTabRow)
-        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
-        .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
-            Slate.Line.card,
-            lineWidth: Slate.Metric.cardBorderWidth,
-        ) } }
-        // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
-        // (`cardShadow` resolves clear — fill + hairline carry the lift). Hover/rest cast nothing.
-        .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
-        .contentShape(.rect)
-        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
-        // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap arm
-        // rides `simultaneousGesture` so selection fires on the FIRST click (never waiting out a
-        // double-click window); the second click then opens the field on the already-selected row.
-        .gesture(TapGesture(count: 2).onEnded { if !isEditing { onBeginRename() } })
-        .simultaneousGesture(TapGesture().onEnded { if !isEditing { onSelect() } })
-        .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
-        .animation(Slate.Anim.smallFade, value: active)
-        .help(helpText ?? "")
-    }
-
-    private var rowBackground: Color {
-        if active { Slate.Surface.raised }
-        else if hovering { Slate.State.hover }
-        else { .clear }
     }
 
     /// The title's ink — the NEUTRAL live-otty ladder only (state hue belongs to the trailing
