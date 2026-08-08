@@ -1,5 +1,11 @@
-// ConnectHostView — the Connect-to-Host editor, drawn on the shared floating GLASS CARD
-// (``SlateOverlayCard``) that every overlay now takes from the ⌃⇥ switcher.
+// ConnectHostView — the Connect-to-Host editor, presented in a NATIVE SHEET (user-directed 2026-08-08).
+//
+// It is the only overlay in the set that is a FORM to fill in and commit rather than a picker to skim, so
+// it is the one that takes the platform's own modal: the sheet owns the window (no stray click into the
+// workspace can drop it mid-edit), and Esc / Return reach Cancel and Connect through the buttons' native
+// roles in ``SlateCardFooter`` rather than through the in-window cards' hand-rolled dismiss floor. The
+// PARTS stay the shared floating family (``SlateCardTitle`` / ``SlateLabeledField`` / ``SlateCardFooter``,
+// in the neutral system inks) — what changed is the container, not the vocabulary.
 //
 // It was a grouped `Form` before, under the "everything outside the workspace is native chrome" directive.
 // The Form is gone: its inset grey group boxes are a ground of their own, and a ground inside a floating card

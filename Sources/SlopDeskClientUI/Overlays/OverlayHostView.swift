@@ -1,8 +1,10 @@
 // OverlayHostView — the single mount point that presents EVERY floating overlay above the workspace as
 // NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns no
-// state. Each overlay is an IN-WINDOW paper card (``SlateOverlayCard``) driven by the injected
-// ``OverlayCoordinator`` flags; the pane/tab close confirmation stays a native `.alert` off the store's
-// `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty) is the
+// state. The summoned PICKERS are IN-WINDOW paper cards (``SlateOverlayCard``) driven by the injected
+// ``OverlayCoordinator`` flags; the two surfaces that are DECISIONS rather than pickers use the platform's
+// own modals — Connect-to-Host is a native `.sheet` (user-directed 2026-08-08) and the pane/tab close
+// confirmation a native `.alert` off the store's `pendingClose*` parks. The always-mounted
+// ``ToastStackView`` (which renders nothing when empty) is the
 // host's only other in-tree content — transient notifications float over the workspace without a modal.
 //
 // One host so every overlay shares one presentation point: because the coordinator only ever drives one
@@ -112,6 +114,24 @@ struct OverlayHostView: View {
             // here receives typing and its own ⌘-chords. Esc and click-away are the backdrop's job below.
             modalOverlay
         }
+        // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
+        // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
+        // commits — every other card is a picker you summon, skim and dismiss in a second — and a
+        // form is exactly what the platform's own modal is for: it owns the window, it can't be
+        // dismissed by a stray click into the workspace mid-edit, and Esc/Return land on Cancel and
+        // Connect through the buttons' native roles rather than through a hand-rolled floor.
+        //
+        // The reasons the OTHER cards stay in-window (above) all still hold and none of them applied
+        // here: this card carries no glass, its corner is the family's own rather than the island's,
+        // and the depth cue a summoned picker gets from casting a shadow on the island is not what
+        // makes a modal form legible.
+        //
+        // `connectVisible` is `private(set)`, so the binding is one-way by construction: reads come
+        // from the coordinator, and any system dismissal routes back through `closeConnect()` — which
+        // also bumps `connectGeneration`, invalidating an in-flight connect Task exactly as Cancel does.
+        .sheet(isPresented: connectSheetBinding) {
+            ConnectHostView(connection: connection, coordinator: coordinator)
+        }
         .alert(
             closeAlertTitle,
             isPresented: closeAlertBinding,
@@ -152,7 +172,6 @@ struct OverlayHostView: View {
     /// order. The coordinator drives one flag at a time, so this is unambiguous: exactly one card is
     /// mounted, and one overlay replacing another (palette → connect) is a single swap.
     private enum ActiveSheet: Identifiable {
-        case connect
         case palette
         case cheatSheet
         case openQuickly
@@ -162,7 +181,6 @@ struct OverlayHostView: View {
     }
 
     private var activeSheet: ActiveSheet? {
-        if coordinator.connectVisible { return .connect }
         if coordinator.paletteVisible { return .palette }
         if coordinator.cheatSheetVisible { return .cheatSheet }
         if coordinator.openQuicklyVisible { return .openQuickly }
@@ -216,8 +234,7 @@ struct OverlayHostView: View {
     }
 
     private func closeActiveSheet() {
-        if coordinator.connectVisible { coordinator.closeConnect() }
-        else if coordinator.paletteVisible { coordinator.closePalette() }
+        if coordinator.paletteVisible { coordinator.closePalette() }
         else if coordinator.cheatSheetVisible { coordinator.closeCheatSheet() }
         else if coordinator.openQuicklyVisible { coordinator.closeOpenQuickly() }
         else if coordinator.peekReplyVisible { coordinator.closePeekReply() }
@@ -227,8 +244,6 @@ struct OverlayHostView: View {
     @ViewBuilder
     private func sheetContent(_ sheet: ActiveSheet) -> some View {
         switch sheet {
-        case .connect:
-            ConnectHostView(connection: connection, coordinator: coordinator)
         case .palette:
             PaletteView(coordinator: coordinator, store: store, toggledState: toggledState)
         case .cheatSheet:
@@ -240,6 +255,18 @@ struct OverlayHostView: View {
         case .globalSearch:
             GlobalSearchView(store: store, coordinator: coordinator)
         }
+    }
+
+    // MARK: - Connect-to-Host (native .sheet)
+
+    /// Presentation binding for the Connect sheet. `set(false)` — Esc, the Cancel role, or any system
+    /// dismissal — routes to `closeConnect()` so the coordinator stays the single owner of the flag;
+    /// `set(true)` never happens (a sheet does not present itself) and is deliberately not modelled.
+    private var connectSheetBinding: Binding<Bool> {
+        Binding(
+            get: { coordinator.connectVisible },
+            set: { if !$0 { coordinator.closeConnect() } },
+        )
     }
 
     // MARK: - Close confirmation (native .alert)

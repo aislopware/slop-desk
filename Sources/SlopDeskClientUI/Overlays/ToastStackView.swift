@@ -224,12 +224,10 @@ struct ToastCardView: View {
             .padding(.vertical, Slate.Metric.space3)
             // One uniform column edge — see `Slate.Metric.toastWidth` for why the cards do NOT hug.
             .frame(width: Slate.Metric.toastWidth, alignment: .leading)
-            // The SAME paper every floating surface wears (hairline + cast shadow included). At ROW
-            // scale: a corner is read against the surface it cuts, and this card is a 320pt strip, not a
-            // summoned panel, so it takes the compact island's 10 rather than the palette's 26. No hit
-            // barrier: this card's whole body is already its jump button, and a background barrier would
-            // swallow the very clicks it exists to take.
-            .slatePaperCard(scale: .row, hitBarrier: false)
+            // The SAME paper every floating surface wears — one corner for the whole family, hairline and
+            // cast shadow included. No hit barrier: this card's whole body is already its jump button, and
+            // a background barrier would swallow the very clicks it exists to take.
+            .slatePaperCard(hitBarrier: false)
             // The hover flip must run inside `withAnimation`: expanding this card shifts every SIBLING
             // card in the stack, and a bare assignment animates only this subtree (the keyed `.animation`
             // below) while the siblings snap — the transaction is what carries the curve to the column.

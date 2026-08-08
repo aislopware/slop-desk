@@ -30,8 +30,9 @@ extension View {
     /// The moat is uniform on all four sides — the island runs right up to the top, level with the
     /// window's own top edge (user-directed 2026-08-08). `clearingWindowControls` is the ONE case
     /// that cannot: with the navigator collapsed this column starts at the window's left edge, and a
-    /// top moat of 8 would slide the island under the traffic lights. There the top side widens back
-    /// to the full ``Slate/Metric/bandHeight`` so the lights keep standing on bare ground.
+    /// moat the size of the ordinary one would slide the island under the traffic lights. There the
+    /// top side widens back to the full ``Slate/Metric/bandHeight`` so the lights keep standing on
+    /// bare ground.
     @MainActor
     func slateIsland(clearingWindowControls: Bool = false) -> some View {
         let radius = Slate.Metric.islandRadius

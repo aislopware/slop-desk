@@ -9,8 +9,9 @@
 //
 // The four moves, which is all "the switcher's style" actually is:
 //
-//   1. The SURFACE is PAPER: the ground's own cream, opaque, cut at the island's corner, edged by the
-//      island's hairline and dropped on a real shadow. It was Liquid Glass until 2026-08-08, and ONE
+//   1. The SURFACE is PAPER: the ground's own cream, opaque, cut at the FAMILY's own corner
+//      (``Slate/Metric/radiusPanel`` — not the island's; see ``SlatePaperCard/shape``), edged by a
+//      hairline and dropped on a real shadow. It was Liquid Glass until 2026-08-08, and ONE
 //      ISLAND took that material's reason away. Glass earns its keep by refracting what varies behind
 //      it; behind these cards now lie exactly two flat opaque tones, so the effect degraded to a grey
 //      slab that also flipped relationship halfway across itself — light-over-cream at the edges,
@@ -73,8 +74,8 @@ enum SlateOverlayInk {
 
 // MARK: - The card surface
 
-/// The floating card's SURFACE: PAPER — the ground's cream, opaque, at the island's own corner, edged by
-/// the island's hairline and dropped on the deepest rung of the shadow ladder.
+/// The floating card's SURFACE: PAPER — the ground's cream, opaque, at the floating family's own corner,
+/// edged by a hairline and dropped on the deepest rung of the shadow ladder.
 ///
 /// Nothing here is appearance-directed any more. The app has ONE polarity (`SlateAppearancePin`), one
 /// ground and one glass, so a card that summoned itself over the workspace is either the ground raised or
@@ -83,32 +84,23 @@ enum SlateOverlayInk {
 /// ground at the card's edges the hairline and the cast shadow carry it, exactly as they carry the island
 /// itself. No material, no rim highlight, no Reduce-Transparency branch to keep honest.
 struct SlatePaperCard: ViewModifier {
-    /// Panel-scale (a summoned card) or row-scale (a notification). A corner is read against the surface
-    /// it cuts, so the two do not share a number: the palette is a window-scale object and takes the
-    /// island's own 26; a 320 × 46 notification takes the compact island's 10, one rung above the corner
-    /// Tahoe puts on a selected row.
-    enum Scale {
-        case panel
-        case row
-
-        var radius: CGFloat {
-            switch self {
-            case .panel: Slate.Metric.islandRadius
-            case .row: Slate.Metric.islandRadiusCompact
-            }
-        }
-    }
-
-    var scale: Scale = .panel
-
     /// Whether the card carries the click barrier below. The MODAL cards (which float on a full-bleed
     /// dismiss floor) need it; a card that is ITSELF a button — the notification card, whose whole body
     /// is its jump action — must NOT, because a `Button` in the background outranks the wrapping button
     /// for any click the content declines, and the card's own action would silently stop firing.
     var hitBarrier = true
 
+    /// ⚠️ THE FLOATING FAMILY KEEPS ITS OWN CORNER — ``Slate/Metric/radiusPanel``, the radius every one of
+    /// these cards wore before the island's went to a window scale. Briefly they were re-pointed at
+    /// ``Slate/Metric/islandRadius`` on the reasoning that a summoned card is a window-scale object too;
+    /// that reasoning was wrong twice over. The island's 26 is a WINDOW corner earned by a ~880 × 775pt
+    /// surface, and a switcher or a palette is a fraction of that, so the same number reads as a soft
+    /// blob rather than as a card. And the change had reach nobody asked for: one token moved a corner on
+    /// seven surfaces at once. Only the terminal island takes the island corner (user-directed
+    /// 2026-08-08). Scale used to branch here — panel vs row — and is gone with it: the family is one
+    /// corner again, which is what "the same object" meant in the first place.
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: scale.radius, style: .continuous)
+        RoundedRectangle(cornerRadius: Slate.Metric.radiusPanel, style: .continuous)
     }
 
     func body(content: Content) -> some View {
@@ -136,8 +128,8 @@ struct SlatePaperCard: ViewModifier {
 extension View {
     /// Draw this content as a floating paper card (see ``SlatePaperCard``). `hitBarrier: false` is for a
     /// card whose whole body is already a button (the notification card) — see the modifier's note.
-    func slatePaperCard(scale: SlatePaperCard.Scale = .panel, hitBarrier: Bool = true) -> some View {
-        modifier(SlatePaperCard(scale: scale, hitBarrier: hitBarrier))
+    func slatePaperCard(hitBarrier: Bool = true) -> some View {
+        modifier(SlatePaperCard(hitBarrier: hitBarrier))
     }
 
     /// Sink an editable field into its plate: the pane face, ringed by a hairline, at the small radius.

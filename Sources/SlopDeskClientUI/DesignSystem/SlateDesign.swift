@@ -431,7 +431,13 @@ enum Slate {
         /// The MOAT — the uniform strip of ground between the island and everything around it. The
         /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
         /// misaligned panel.
-        static let islandInset: CGFloat = 8
+        ///
+        /// One rung UP the spacing grid from the 8 it opened at (user-directed 2026-08-08): 8 is the
+        /// grid's inset step, the same distance content keeps from an edge INSIDE a surface, so an
+        /// island wearing it read as padding rather than as clearance. 12 is the first rung that says
+        /// the island is a separate object without turning the moat into a margin. It is the OUTER
+        /// margin only — nothing inside the island moves, so the panes keep their own spacing.
+        static let islandInset: CGFloat = 12
         /// The island's corner — a WINDOW-SCALE corner, because the island is a window-scale surface
         /// (~880 × 775pt). 26 is what macOS 26 Tahoe puts on a full-chrome window, measured on this
         /// OS; the island wearing it reads as a window floating inside the window, which is the
