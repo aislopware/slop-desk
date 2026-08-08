@@ -50,21 +50,23 @@ final class ThemeStoreTests: XCTestCase {
 
     /// Both shipped profiles are FLAT (the divider layout, round-10 verdict — the inverted frame
     /// and its islands are retired): the chrome polarity EQUALS the glass polarity, and the chrome
-    /// ladder is the published Dracula chrome's per-channel offsets (statusbar/sidebar/rail vs the
-    /// classic editor) transposed onto each profile's own face — one hue family, lightness steps
-    /// only (user-directed 2026-08-08).
+    /// ground/lift are the published Dracula chrome's per-channel offsets transposed onto each
+    /// profile's own face — one hue family, lightness steps only (user-directed 2026-08-08).
+    /// The LINE rung is an INK TINT over the ground (divider round, user-directed 2026-08-08),
+    /// and the two fractions are UNEQUAL by design — 10% dark vs 14.2% light, solved so both
+    /// themes step the same perceived lightness (OKLab ΔL ≈ 0.09 against their grounds).
     func testChromeLadderStructure() {
-        // Dracula: dark glass, a chrome rung darker, a divider rung darker again, a lifted rung up.
+        // Dracula: dark glass, a chrome rung darker, an ink-tint hairline, a lifted rung up.
         XCTAssertFalse(SlateTheme.dracula.isLight, "the glass stays dark")
         XCTAssertEqual(SlateTheme.dracula.chromeIsLight, SlateTheme.dracula.isLight, "one polarity — no frame flip")
         XCTAssertEqual(SlateTheme.dracula.chromeHexValue, 0x1B1922, "sidebar offset −07/−08/−0A off the Pro face")
-        XCTAssertEqual(SlateTheme.dracula.chromeLineHexValue, 0x131117, "border offset −0F/−10/−15 off the Pro face")
+        XCTAssertEqual(SlateTheme.dracula.chromeLineHexValue, 0x312F37, "10% ink #F8F8F2 over the ground")
         XCTAssertEqual(SlateTheme.dracula.chromeLiftHexValue, 0x2E2E3C, "rail offset +0C/+0D/+10 off the Pro face")
         // Alucard: cream glass, the ladder mirrored deeper into the cream.
         XCTAssertTrue(SlateTheme.alucard.isLight, "the glass is light")
         XCTAssertEqual(SlateTheme.alucard.chromeIsLight, SlateTheme.alucard.isLight, "one polarity — no frame flip")
         XCTAssertEqual(SlateTheme.alucard.chromeHexValue, 0xF6F1DE)
-        XCTAssertEqual(SlateTheme.alucard.chromeLineHexValue, 0xE3DECB)
+        XCTAssertEqual(SlateTheme.alucard.chromeLineHexValue, 0xD8D3C3, "14.2% ink #1F1F1F over the ground")
         XCTAssertEqual(SlateTheme.alucard.chromeLiftHexValue, 0xFFFDF4)
     }
 

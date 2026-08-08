@@ -185,9 +185,14 @@ struct SlateTheme: Equatable {
             0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,
             0x7970A9, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xFFFFFF,
         ],
-        // Official ladder offsets vs the classic editor, applied to the Pro face #22212C:
-        // sidebar −07/−08/−0A → #1B1922, border −0F/−10/−15 → #131117, rail +0C/+0D/+10 → #2E2E3C.
-        chrome: ChromeLadder(ground: 0x1B1922, line: 0x131117, lift: 0x2E2E3C),
+        // Ground/lift are the official ladder offsets vs the classic editor, applied to the Pro
+        // face #22212C: sidebar −07/−08/−0A → #1B1922, rail +0C/+0D/+10 → #2E2E3C. The LINE is an
+        // INK TINT, not a darker rung (user-directed 2026-08-08): 10% of the glass ink #F8F8F2
+        // over the ground — a hairline lighter than both surfaces it separates. The fraction pairs
+        // with Alucard's 14.2%: unequal on purpose, solved so both themes step the same perceived
+        // lightness (OKLab ΔL ≈ 0.09 vs their grounds — black into cream moves L slower than
+        // white into near-black, so an equal fraction reads weaker in light).
+        chrome: ChromeLadder(ground: 0x1B1922, line: 0x312F37, lift: 0x2E2E3C),
     )
 
     /// Alucard — Dracula Pro's official light theme (public spec hexes verbatim): cream glass over
@@ -200,9 +205,10 @@ struct SlateTheme: Equatable {
             0x1F1F1F, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xCFCFDE,
             0x6C664B, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xFFFBEB,
         ],
-        // The dark ladder's proportions mirrored onto the cream face (darker = deeper here):
-        // a one-step sidebar, a two-step border, and a lifted rung back toward the face's white.
-        chrome: ChromeLadder(ground: 0xF6F1DE, line: 0xE3DECB, lift: 0xFFFDF4),
+        // Ground mirrors the dark ladder's one-step sidebar into the cream; lift steps back toward
+        // the face's white. The LINE is the ink tint (see Dracula): 14.2% of the glass ink #1F1F1F
+        // over the ground — the fraction that matches Dracula's 10% at OKLab ΔL ≈ 0.09.
+        chrome: ChromeLadder(ground: 0xF6F1DE, line: 0xD8D3C3, lift: 0xFFFDF4),
     )
 }
 

@@ -10,10 +10,10 @@ colors:
   glass-dracula-edge: "#454158" # in-glass split divider + selection fill (the Pro selection)
   glass-dracula-accent: "#9580FF" # on-glass accent (focus corner, drag line)
   chrome-dracula: "#1B1922" # sidebar/rail/panel-strip floor — the official Dracula chrome offset (−07/−08/−0A) off the Pro face
-  chrome-dracula-line: "#131117" # the 1px column divider — the official border offset (−0F/−10/−15)
+  chrome-dracula-line: "#312F37" # the 1px column divider — an INK TINT: 10% of the glass ink over the ground (lighter than both surfaces it separates)
   chrome-dracula-lift: "#2E2E3C" # hover/raised rung — the official rail offset (+0C/+0D/+10)
   chrome-alucard: "#F6F1DE" # the cream mirror of the same ladder
-  chrome-alucard-line: "#E3DECB"
+  chrome-alucard-line: "#D8D3C3" # 14.2% ink over the cream ground — unequal to the dark 10% ON PURPOSE: solved for the same perceived step (OKLab ΔL ≈ 0.09) because black into cream moves lightness slower than white into near-black
   chrome-alucard-lift: "#FFFDF4"
   secure-input-blue: "#2D6FE8" # fixed, never themed
   sync-input-amber: "#D97A1F" # fixed, never themed
@@ -108,8 +108,9 @@ classic divider layout (flat round, user-directed 2026-08-08): sidebar | termina
 each a full-bleed flat surface, separated by 1px dividers — no islands, no frame, no floating
 cards, no transparency. The colour world is Dracula Pro's published set worn the way the official
 Dracula editor themes wear it: the glass `#22212C` is the face, and the chrome around it is the
-SAME hue a few lightness rungs darker (`#1B1922` floor, `#131117` divider, `#2E2E3C` lift) — the
-official Dracula chrome's per-channel offsets transposed onto the Pro face. Alucard mirrors the
+SAME hue a few lightness rungs darker (`#1B1922` floor, `#2E2E3C` lift) — the official Dracula
+chrome's per-channel offsets transposed onto the Pro face — while the divider is an ink-tint
+hairline (`#312F37`) that sits LIGHTER than both surfaces it separates, the modern border read. Alucard mirrors the
 ladder into cream. Ink `#F8F8F2`, selection `#454158`, comment `#7970A9`, and the normalized
 accent seven (S100/L75 — red `#FF9580` through pink `#FF80BF`) are the Pro palette verbatim.
 
@@ -145,7 +146,10 @@ scheme). Because chrome and glass share one hue family, the boundary is a lightn
 - **Floor** — `Slate.Surface.field` = the profile's `chrome` (`#1B1922` / `#F6F1DE`), OPAQUE and
   fixed per profile, painted once at the window root. No material, no gradient. (The fixed colour
   also keeps the CGColor-snapshot trap family dead — nothing dynamic reaches a layer.)
-- **Dividers** — the profile's `chromeLine` (`#131117` / `#E3DECB`), 1px, painted by
+- **Dividers** — the profile's `chromeLine` (`#312F37` / `#D8D3C3`): the theme INK tinted over the
+  chrome ground (divider round, user-directed 2026-08-08) — 10% dark / 14.2% light, the unequal
+  pair that lands both themes on the same perceived step (OKLab ΔL ≈ 0.09 vs the ground; equal
+  fractions read weaker in light because black into cream moves lightness slower). 1px, painted by
   `FlatDividerSplitView` in both `drawDivider(in:)` and the split view's backing layer (the layer
   shows through during live column drags). This is the ONLY seam between columns.
 - **Lift** — the profile's `chromeLift` (`#2E2E3C` / `#FFFDF4`) is the hover/raised rung for
@@ -204,8 +208,8 @@ ink tiers, an on-glass accent — and, since the flat round, the authored CHROME
 
 | Profile | Glass | Ink | Edge (selection) | On-glass accent | Chrome ground / line / lift |
 |---|---|---|---|---|---|
-| **Dracula** (default, dark) | `#22212C` | `#F8F8F2` | `#454158` | `#9580FF` | `#1B1922` / `#131117` / `#2E2E3C` |
-| Alucard (light) | `#FFFBEB` | `#1F1F1F` | `#CFCFDE` | `#644AC9` | `#F6F1DE` / `#E3DECB` / `#FFFDF4` |
+| **Dracula** (default, dark) | `#22212C` | `#F8F8F2` | `#454158` | `#9580FF` | `#1B1922` / `#312F37` / `#2E2E3C` |
+| Alucard (light) | `#FFFBEB` | `#1F1F1F` | `#CFCFDE` | `#644AC9` | `#F6F1DE` / `#D8D3C3` / `#FFFDF4` |
 
 ANSI: the Pro accent seven verbatim (no blue — the blue slot carries the purple, Dracula's own
 terminal convention); brights REPEAT the bases; bright-black = the comment tone. The Settings
