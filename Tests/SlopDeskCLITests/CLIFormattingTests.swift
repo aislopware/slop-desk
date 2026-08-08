@@ -111,22 +111,6 @@ final class CLIFormattingTests: XCTestCase {
         XCTAssertTrue(out.contains("/tmp"))
     }
 
-    // MARK: - themes
-
-    func testThemesAppearanceLightActiveMarker() {
-        let rows: [[String: Any]] = [["name": "Paper", "dark": false, "active": true]]
-        let out = CLIFormatting.themes(rows, format: .text, noHeaders: false)
-        XCTAssertTrue(out.contains("APPEARANCE"))
-        XCTAssertTrue(out.contains("Paper"))
-        XCTAssertTrue(out.contains("light"))
-        XCTAssertTrue(out.contains("*"))
-    }
-
-    func testThemesDarkInactiveNoHeaders() {
-        let rows: [[String: Any]] = [["name": "Night", "dark": true, "active": false]]
-        XCTAssertEqual(CLIFormatting.themes(rows, format: .text, noHeaders: true), "Night  dark")
-    }
-
     // MARK: - fonts
 
     func testFontsMonoSystemScope() {

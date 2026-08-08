@@ -350,18 +350,12 @@ final class TerminalConfigBuilderTests: XCTestCase {
         )
     }
 
-    /// The per-scope font override (item 8): a non-nil `fontFamilyOverride` REPLACES the pref's primary
-    /// `font-family` (the seam `PreferencesStore` drives from the active theme slot's `themeFonts` entry); an
-    /// empty / nil override keeps the pref's own family.
-    func testFontFamilyOverrideReplacesPrimaryFamily() {
-        let overridden = TerminalConfigBuilder.string(
-            for: TerminalPreferences(fontFamily: "SF Mono"), fontFamilyOverride: "Fira Code",
-        ).split(separator: "\n").first { $0.hasPrefix("font-family = ") }
-        XCTAssertEqual(overridden, "font-family = Fira Code", "a non-empty override wins over the pref family")
-        let kept = TerminalConfigBuilder.string(
-            for: TerminalPreferences(fontFamily: "SF Mono"), fontFamilyOverride: "   ",
-        ).split(separator: "\n").first { $0.hasPrefix("font-family = ") }
-        XCTAssertEqual(kept, "font-family = SF Mono", "a blank override keeps the pref's own family")
+    /// ONE font slot since the theme picker was retired: the pref's own family IS the primary
+    /// `font-family`, with no scope override able to displace it.
+    func testPrimaryFamilyComesFromThePrefs() {
+        let line = TerminalConfigBuilder.string(for: TerminalPreferences(fontFamily: "SF Mono"))
+            .split(separator: "\n").first { $0.hasPrefix("font-family = ") }
+        XCTAssertEqual(line, "font-family = SF Mono", "the pref family is the primary family")
     }
 
     /// Bold / italic FACE modes: `off` → `font-style-{kind} = false`; `primaryOnly` / `synthetic` feed a

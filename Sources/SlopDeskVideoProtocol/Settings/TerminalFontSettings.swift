@@ -1,7 +1,7 @@
 import Foundation
 
 // The leaf-level FONT-PARITY model: the four font-appearance enums + their libghostty token
-// mapping, plus the pure `FontScopeResolver`.
+// mapping.
 //
 // WHY a separate leaf file: `TerminalConfigBuilder` (also in this leaf `SlopDeskVideoProtocol`) must turn
 // these settings into libghostty `key = value` lines WITHOUT importing any UI; the font UI
@@ -138,71 +138,6 @@ public enum FontBlending: String, Codable, Sendable, Equatable, CaseIterable {
     public var thickens: Bool { self == .macosLike }
 }
 
-// MARK: - FontScopeResolver (Computed scope precedence — pure)
-
-/// The pure precedence resolver for the Font-Family SCOPE tabs (`Computed / Global / Light Theme /
-/// Dark Theme / Fallback`). The "Computed" tab shows the EFFECTIVE family for the active OS-appearance slot.
-///
-/// PRECEDENCE: an explicitly-set ACTIVE-slot per-theme font (`appearance.themeFonts[slug]`) WINS; else the
-/// Global family; else the bundled default — `scopeFont ?? globalFont ?? bundled`.
-///
-/// WHY scope-over-Global: the Global slot (`terminal.fontFamily`) carries a NON-EMPTY
-/// default (the bundled JetBrains Mono is a fallback value, not an explicit override), so it can't represent
-/// "unset". Under a naive "Global wins everywhere" rule that non-empty default would permanently SHADOW a
-/// per-theme font, so setting a Dark-theme font while Global sat at its default did NOTHING (the
-/// silent-no-op the review flagged). Letting an explicitly-set per-scope font win instead means a per-theme
-/// override travels with the theme, and Global only takes priority once the user EXPLICITLY sets it. Trims
-/// whitespace and treats an empty/whitespace value as "unset" at every level.
-public enum FontScopeResolver {
-    /// Resolve the effective terminal font family for the active theme slot.
-    /// - Parameters:
-    ///   - global: the Global-scope override (`terminal.fontFamily` when the Global tab is set); `nil`/empty
-    ///     ⇒ no Global override.
-    ///   - themeFonts: the per-theme font overrides keyed by theme slug (`appearance.themeFonts`).
-    ///   - slug: the active theme's slug (the Light/Dark slot in effect); `nil` ⇒ no per-theme lookup.
-    ///   - fallback: the bundled default family used when neither scope provides a value.
-    public static func resolvedFamily(
-        global: String?,
-        themeFonts: [String: String]?,
-        slug: String?,
-        fallback: String,
-    ) -> String {
-        // Scope-over-Global: an explicitly-set per-theme font for the active slot wins over the Global value
-        // (see the type doc — slopdesk's Global default is non-empty, so it must NOT shadow a per-scope font).
-        if let slug, let perTheme = nonEmpty(themeFonts?[slug]) { return perTheme }
-        if let g = nonEmpty(global) { return g }
-        return fallback
-    }
-
-    // MARK: Per-slot slug resolution (the Light / Dark / Computed scope tabs)
-
-    /// The theme-font key (slug) the Font → **Light Theme** scope tab writes under: the built-in id the light
-    /// slot's ``AppearancePreferences/theme`` choice resolves to under OS-light (so a `.system` light slot
-    /// keys the OS-light default). Pure — mirrors ``ThemeResolution`` slot routing, headless.
-    public static func lightSlotSlug(_ appearance: AppearancePreferences) -> String {
-        ThemeResolution.builtinID(for: appearance.theme, osIsDark: false)
-    }
-
-    /// The theme-font key (slug) the Font → **Dark Theme** scope tab writes under: the built-in id the dark
-    /// slot's ``AppearancePreferences/themeDark`` choice resolves to under OS-dark. INDEPENDENT of
-    /// ``AppearancePreferences/useSeparateDarkTheme`` — the Dark Theme tab always targets the dark slot's own
-    /// theme even when follow-OS dual-slot is off (the slot still has a configured theme).
-    public static func darkSlotSlug(_ appearance: AppearancePreferences) -> String {
-        ThemeResolution.builtinID(for: appearance.themeDark, osIsDark: true)
-    }
-
-    /// The slug of the slot ACTIVE under `osIsDark` — drives the read-only **Computed** scope tab (the
-    /// effective font for whatever theme the current OS appearance resolves to). The light/primary slot unless
-    /// ``AppearancePreferences/useSeparateDarkTheme`` is on AND the OS is dark
-    /// (``ThemeResolution/activeBuiltinID(appearance:osIsDark:)``).
-    public static func activeSlotSlug(_ appearance: AppearancePreferences, osIsDark: Bool) -> String {
-        ThemeResolution.activeBuiltinID(appearance: appearance, osIsDark: osIsDark)
-    }
-
-    /// The trimmed value if it is non-empty, else `nil` (an empty/whitespace string counts as "unset").
-    private static func nonEmpty(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
+// The per-theme font SCOPE resolver that used to live here is gone with the theme picker
+// (user-directed 2026-08-08): with one appearance there is one font slot, so the Global family in
+// ``TerminalPreferences/fontFamily`` is the whole precedence chain.

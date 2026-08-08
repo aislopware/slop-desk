@@ -1,13 +1,13 @@
 // E20 (config review fix) — the LIVE typed-key bridge the `slopdesk config` CLI drives.
 //
 // `WorkspaceControlBackend.configGet/Set/Unset/Show` route the documented render/appearance config
-// keys (`reference__cli.md`: `theme`, `font-family`, `font-size`, `cursor-style`, …) through THESE
+// keys (`font-family`, `font-size`, `cursor-style`, …) through THESE
 // methods so a `config set` genuinely reflows the terminal / retints the chrome live AND persists (the
 // typed model's `didSet`), and `config get`/`config show` reflect the LIVE value — not a dead
 // `slopdesk.cli.config.*` UserDefaults namespace nor a process-overlay write the renderer never reads.
 //
-// `theme` is resolved by the BACKEND (it needs the GUI `ThemeStore` / `ThemeCatalog`); every other render
-// key this store owns outright lives here — pure + headless-testable. A key with NO live binding is
+// Every render key this store owns outright lives here — pure + headless-testable. (The `theme` key is
+// gone with the picker, user-directed 2026-08-08.) A key with NO live binding is
 // intentionally NOT handled here: the backend returns an honest error for it rather than reporting a
 // silent success (the anti-"reports success while doing nothing" rule the team applied to `tab badge`).
 

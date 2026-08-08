@@ -7216,3 +7216,32 @@ below them. `slateIsland(clearingWindowControls:)` names the one exception: with
 collapsed the content column owns the window's left edge, and an 8pt top moat would slide the island
 under the lights, so that case widens the top side back to `bandHeight`. Verified by pixel — island
 top edge at y = 8 with the navigator open.
+
+## ONE appearance — the theme picker is deleted, not defaulted (2026-08-08, user-directed)
+
+The app now ships exactly one appearance: the cream ground `#FFFBEB` carrying the dark Dracula Pro
+glass `#22212C`. The instruction was to keep a single theme with a permanently light background and
+a dark terminal, and the honest reading is that ONE ISLAND had already made the second profile
+pointless. Law 4 of that round forces the cream ground under every profile, so choosing the light
+profile only repainted the island itself cream — flattening the single contrast the design is built
+on into a cream card on a cream field held together by a hairline. A picker whose second setting can
+only degrade the design is not a choice, so it goes rather than acquiring a default.
+
+Deleted outright (no deprecation, no migration — the standing no-backcompat rule): the light/dark
+slots and the follow-OS resolution (`ThemeResolution`, `AppearancePreferences.theme`/`darkTheme`/
+`separateDarkTheme`), the built-in catalogue (`ThemeCatalog`), the runtime store and its
+cross-`NSHostingController` repaint notification (`ThemeStore`), the per-theme font map and its
+resolver (`FontScopeResolver`, `TerminalConfigBuilder.fontFamilyOverride`, the Light/Dark scopes in
+the font settings), the Settings gallery (`ThemeGalleryView`), the palette's Switch Theme verb, the
+first-launch theme step (macOS 5 → 4 steps, iOS 3 → 2), and the `theme` CLI noun plus the `theme`
+config key (`theme list` / `config set theme` / `ThemeColorFilter`). A stored preferences blob still
+carrying the dead keys decodes with them ignored.
+
+What survives is the part the cream ground genuinely needs: `SlateAppearancePin` pins
+`NSApp.appearance = .aqua` once, deferred past `App.init` (NSApp is nil there — a trap this codebase
+has hit before), and the glass opts out locally through the now-constant
+`Slate.glassColorScheme == .dark`. `Slate.theme` stays a `@MainActor` computed property returning the
+single `SlateTheme.app` so no token call site changed; `SlateTheme` lost `id`/`isLight`/
+`chromeIsLight` because a single value has no polarity to branch on. `AppearanceApplier` is down to
+one hook, `resolveTerminalColors`, which the app binds to `SlateTheme.app` so the libghostty CELL
+colours still track the profile headlessly-safely (`nil` hook ⇒ the pref's own colours stand).

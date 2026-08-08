@@ -324,7 +324,7 @@ public enum SettingsKey {
     // and Settings → Advanced → Raw overrides DOES reach the sidecar — so that box is the honest editor.
     // Appearance / chrome
     /// The active ``DSDensity`` tier rawValue. Mirrors ``DSDensity/storageKey`` (the SAME `UserDefaults`
-    /// key ``DSThemeStore`` reads at init + on a Settings change) so the picker, persistence, and the live
+    /// key the scale store reads at init + on a Settings change) so the picker, persistence, and the live
     /// `DSScale`/height tokens all agree on one source.
     public static let density = "appearance.density"
     // (terminal-features__progress-state.md "DOCK ICON" group). macOS-only NSDockTile behaviour;

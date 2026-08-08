@@ -71,39 +71,32 @@ final class PreferencesTests: XCTestCase {
     // MARK: Appearance (client chrome, golden-irrelevant)
 
     func testAppearancePreferencesDefaultIsAllNil() {
-        let def = AppearancePreferences()
-        XCTAssertNil(def.theme)
-        XCTAssertNil(def.density)
+        XCTAssertNil(AppearancePreferences().density)
     }
 
     func testAppearancePreferencesRoundTrip() throws {
-        // Every theme choice (System and the four FOUNDRY seeds) round-trips.
-        for theme in ThemeChoice.allCases {
-            let prefs = AppearancePreferences(theme: theme, density: "comfortable")
-            XCTAssertEqual(try roundTrip(prefs), prefs)
-        }
-        // The default Dracula choice persists explicitly.
-        XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .dracula)).theme, .dracula)
+        let prefs = AppearancePreferences(density: "comfortable")
+        XCTAssertEqual(try roundTrip(prefs), prefs)
         // A partially-set model round-trips too (density unset).
-        let partial = AppearancePreferences(theme: .dracula)
-        XCTAssertEqual(try roundTrip(partial), partial)
-        XCTAssertNil(try roundTrip(partial).density)
+        XCTAssertNil(try roundTrip(AppearancePreferences()).density)
     }
 
     /// A malformed persisted blob must decode-FAIL to the all-`nil` default (validate-then-default, no
     /// migration). The store wraps this in `try? decode ?? .init()`, so the throw is the load-bearing
-    /// behaviour: an unknown `theme` raw value invalidates the WHOLE blob.
+    /// behaviour. A blob carrying the RETIRED theme keys is not malformed — the unknown keys are simply
+    /// ignored, which is what lets an upgraded install keep its density.
     func testAppearancePreferencesMalformedDecodeFails() {
-        // An unknown ThemeChoice raw value → the enum decode throws → the whole struct decode throws.
-        let badTheme = Data(#"{"theme":"midnight"}"#.utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(AppearancePreferences.self, from: badTheme))
-        // Wholly non-object JSON also throws.
         let notObject = Data("[1,2,3]".utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(AppearancePreferences.self, from: notObject))
-        // The store idiom collapses both to the all-nil default.
         XCTAssertEqual(
-            (try? JSONDecoder().decode(AppearancePreferences.self, from: badTheme)) ?? AppearancePreferences(),
+            (try? JSONDecoder().decode(AppearancePreferences.self, from: notObject)) ?? AppearancePreferences(),
             AppearancePreferences(),
+        )
+        // The retired dual-slot keys decode away, leaving density intact.
+        let legacy = Data(#"{"theme":"midnight","density":"compact"}"#.utf8)
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppearancePreferences.self, from: legacy),
+            AppearancePreferences(density: "compact"),
         )
     }
 

@@ -6,8 +6,7 @@ import XCTest
 /// get/set/unset/show` CLI drives. These pin that a `set` mutates the LIVE typed model (reflowing the
 /// terminal — proven by the ``TerminalConfigBroadcaster`` generation bump), a `get` reflects the live
 /// value (round-tripping the set), and an unknown key / unparseable value is honestly REJECTED (`false`),
-/// not a silent success. Headless: an isolated `UserDefaults`, no sidecar, no GUI / ThemeStore (theme is
-/// the backend's job — see `WorkspaceControlBackendConfigTests`).
+/// not a silent success. Headless: an isolated `UserDefaults`, no sidecar, no GUI.
 @MainActor
 final class PreferencesStoreConfigBridgeTests: XCTestCase {
     private func makeStore(_ name: String = #function) -> PreferencesStore {
@@ -20,9 +19,7 @@ final class PreferencesStoreConfigBridgeTests: XCTestCase {
     override func tearDown() {
         // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
         MainActor.assumeIsolated {
-            AppearanceApplier.apply = nil
             AppearanceApplier.resolveTerminalColors = nil
-            AppearanceApplier.resolveActiveThemeSlug = nil
         }
         super.tearDown()
     }

@@ -177,18 +177,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
             name: NSSplitView.didResizeSubviewsNotification,
             object: splitView,
         )
-
-        // D3: SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross into the
-        // `NSHostingController` columns, so a runtime theme change can't be observed inside them. Observe
-        // the appearance-changed notification (posted by the `AppearanceApplier` hook after it repoints
-        // `ThemeStore.shared`) and re-pin the WINDOW appearance + nudge each column to re-read the tokens —
-        // otherwise the window half-repaints (the chrome flips but the columns keep the old palette).
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(themeDidChange),
-            name: ThemeStore.didChangeNotification,
-            object: nil,
-        )
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -225,12 +213,8 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + resizeSettleDelay, execute: work)
     }
 
-    /// Pin the WINDOW's appearance to the active theme. The columns are hosted in
-    /// `NSHostingController`s inside this AppKit split controller, so they do NOT inherit the SwiftUI
-    /// `.preferredColorScheme` set on `WorkspaceRootView` — any system-dynamic colour / material in a column
-    /// would otherwise resolve to the OS appearance and clash with the pinned theme palette (e.g. white text
-    /// on the light Paper chrome when the user's Mac is in Dark mode). Setting it on the NSWindow propagates
-    /// to every hosted NSView. Done in `viewDidAppear` because the window only exists once attached.
+    /// Paint the window-level chrome once the window exists (it only does from `viewDidAppear`), and
+    /// restore the code panel's persisted width in the same beat.
     override func viewDidAppear() {
         super.viewDidAppear()
         pinWindowAppearance()
@@ -262,10 +246,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     }
 
     /// Refresh the window-level chrome. The window and the split view carry NO appearance pin of
-    /// their own: since the flat round (user-directed 2026-08-08) the chrome polarity EQUALS the
-    /// glass polarity, so the app-level pin (`ThemeStore.pinAppAppearance`) is the one appearance
-    /// voice and both historic per-window/per-view pins are cleared here (an upgraded install's
-    /// window may still carry one).
+    /// their own: the app-level light pin (``SlateAppearancePin``) is the one appearance voice, so
+    /// both historic per-window/per-view pins are cleared here (an upgraded install's window may
+    /// still carry one).
     private func pinWindowAppearance() {
         view.window?.appearance = nil
         view.appearance = nil
@@ -279,9 +262,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // gets the same tone — a live resize can expose it for a frame before the columns relayout,
         // and the window's own 16pt corners bite into ground, never into a column.
         //
-        // Repaint on a RUNTIME profile change: `drawDivider` pixels are CACHED in the layer; a
-        // plain `needsDisplay` does NOT re-invoke it for the divider rect. `layer?.setNeedsDisplay()`
-        // invalidates the drawn content so `drawDivider` re-runs; `displayIfNeeded()` forces it synchronously.
+        // `drawDivider` pixels are CACHED in the layer and a plain `needsDisplay` does NOT re-invoke
+        // it for the divider rect, so the invalidation is explicit: `layer?.setNeedsDisplay()` drops
+        // the drawn content and `displayIfNeeded()` forces the redraw synchronously.
         let ground = NSColor(slateHex: Slate.theme.groundHexValue)
         view.window?.backgroundColor = ground
         splitView.wantsLayer = true
@@ -289,20 +272,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         splitView.needsDisplay = true
         splitView.layer?.setNeedsDisplay()
         splitView.displayIfNeeded()
-    }
-
-    /// React to a runtime theme switch (the `AppearanceApplier` hook already repointed `ThemeStore.shared`).
-    /// Re-pin the window appearance AND force each hosted column to re-read the theme tokens — a SwiftUI
-    /// `@Observable` change inside `ThemeStore` re-renders views that READ it, but the AppKit window
-    /// appearance + any system-dynamic resolution must be re-pinned explicitly here (the boundary SwiftUI
-    /// observation does not cross). `needsDisplay` on each column view nudges a redraw so no pane is left
-    /// half-painted in the old palette.
-    @objc
-    private func themeDidChange() {
-        pinWindowAppearance()
-        for item in splitViewItems {
-            item.viewController.view.needsDisplay = true
-        }
     }
 
     /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
@@ -346,11 +315,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 /// three columns read as one continuous sunken field instead of AppKit's default pure-black hairline.
 /// Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
-    /// Re-assign the divider gap's layer colour when the OS appearance flips. The ground tone is
-    /// FIXED per profile, so the assignment itself cannot resolve stale — but under the System
-    /// theme an OS flip re-resolves ``ThemeStore/active`` to the other built-in, and this hook is the
-    /// AppKit-side nudge that re-reads the new profile's tone (the SwiftUI columns re-render on
-    /// their own; the layer does not).
+    /// Re-assign the divider gap's layer colour when the effective appearance changes. The ground
+    /// tone is a FIXED hex, so nothing here can resolve stale — but a layer that was configured
+    /// before an appearance change keeps its old backing store, and this is the AppKit-side nudge
+    /// that repaints it (the SwiftUI columns re-render on their own; the layer does not).
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         layer?.backgroundColor = NSColor(slateHex: Slate.theme.groundHexValue).cgColor

@@ -4,11 +4,11 @@ import Foundation
 // MARK: - The first-launch gating model (PURE, headless-testable)
 
 /// One step of the guided first-launch checklist
-/// (`docs/ui-shell/spec/getting-started__first-launch.md`): On-Launch, Set-as-Default-Terminal, Install-CLI, Theme,
+/// (`docs/ui-shell/spec/getting-started__first-launch.md`): On-Launch, Set-as-Default-Terminal, Install-CLI,
 /// Install-Claude-hooks. PURE (a `String`-raw `CaseIterable`) so the gating is exhaustively unit-pinned and
 /// the view can enumerate it. The two macOS-only steps (the `/usr/local/bin` install + the OS default-handler
 /// registration) are marked ``isMacOnly`` so ``FirstLaunchModel/steps(for:)`` drops them on iOS — iOS keeps
-/// the cross-platform steps (On-Launch, Theme, Install-Claude-hooks).
+/// the cross-platform steps (On-Launch, Install-Claude-hooks).
 public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
     /// Step 1 — On Launch (Restore Last Session vs New Window). Cross-platform.
     case onLaunch
@@ -18,9 +18,7 @@ public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
     /// Step 3 — Install the `slopdesk` CLI (`/usr/local/bin` symlink + Omit-Prefix + Allow-Overwrite).
     /// **macOS-only.**
     case installCLI
-    /// Step 4 — Change Theme (the theme picker). Cross-platform.
-    case theme
-    /// Step 5 — Install Claude Code hooks (the install card). Cross-platform. **Claude only.**
+    /// Step 4 — Install Claude Code hooks (the install card). Cross-platform. **Claude only.**
     case installClaudeHooks
 
     public var id: String { rawValue }
@@ -34,7 +32,6 @@ public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
              .installCLI:
             true
         case .onLaunch,
-             .theme,
              .installClaudeHooks:
             false
         }
@@ -46,7 +43,6 @@ public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
         case .onLaunch: "On Launch"
         case .defaultTerminal: "Set as Default Terminal"
         case .installCLI: "Install the SlopDesk CLI"
-        case .theme: "Change Theme"
         case .installClaudeHooks: "Install Agent Integration"
         }
     }
@@ -60,8 +56,6 @@ public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
             "Register SlopDesk as the system handler for terminal scripts and `ssh://` links."
         case .installCLI:
             "Add `slopdesk` to your PATH so you can drive the app from any shell."
-        case .theme:
-            "Pick a colour theme. You can fine-tune it later in Settings → Appearance."
         case .installClaudeHooks:
             "Let Claude Code stream its live state back to SlopDesk for tab badges and notifications."
         }
@@ -73,7 +67,6 @@ public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
         case .onLaunch: "play.circle"
         case .defaultTerminal: "terminal"
         case .installCLI: "chevron.left.forwardslash.chevron.right"
-        case .theme: "paintpalette"
         case .installClaudeHooks: "bolt.horizontal.circle"
         }
     }

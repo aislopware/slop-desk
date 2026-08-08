@@ -109,7 +109,7 @@ public enum AllSettingsCatalog {
     /// from "restored by nobody".
     public static let modelBackedKeys: Set<String> = [
         "font-family", "font-size", "scrollback-limit",
-        "cursor-style", "cursor-style-blink", "theme",
+        "cursor-style", "cursor-style-blink",
         SettingsKey.density,
     ]
 
@@ -639,15 +639,6 @@ public enum AllSettingsCatalog {
             bucket: .hasDedicatedTab,
             targetSection: "appearance",
             keywords: "cursor blink appearance",
-        ),
-        SettingEntry(
-            key: "theme",
-            label: "Theme",
-            description: "The client chrome and terminal colour theme.",
-            defaultText: "System",
-            bucket: .hasDedicatedTab,
-            targetSection: "appearance",
-            keywords: "theme appearance colour color palette dracula alucard dark light",
         ),
         SettingEntry(
             key: SettingsKey.density,

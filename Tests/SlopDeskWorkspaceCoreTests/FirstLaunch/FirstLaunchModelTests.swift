@@ -28,7 +28,7 @@ final class FirstLaunchModelTests: XCTestCase {
     func testMacOSStepsAreAllFiveInOrder() {
         XCTAssertEqual(
             FirstLaunchModel.steps(for: .macOS),
-            [.onLaunch, .defaultTerminal, .installCLI, .theme, .installClaudeHooks],
+            [.onLaunch, .defaultTerminal, .installCLI, .installClaudeHooks],
         )
     }
 
@@ -37,7 +37,7 @@ final class FirstLaunchModelTests: XCTestCase {
     /// `isMacOnly` would leak the `/usr/local/bin` install step onto iOS.
     func testIOSStepsDropMacOnlySteps() {
         let ios = FirstLaunchModel.steps(for: .iOS)
-        XCTAssertEqual(ios, [.onLaunch, .theme, .installClaudeHooks])
+        XCTAssertEqual(ios, [.onLaunch, .installClaudeHooks])
         XCTAssertFalse(ios.contains(.installCLI))
         XCTAssertFalse(ios.contains(.defaultTerminal))
     }
@@ -47,7 +47,6 @@ final class FirstLaunchModelTests: XCTestCase {
         XCTAssertTrue(FirstLaunchStep.defaultTerminal.isMacOnly)
         XCTAssertTrue(FirstLaunchStep.installCLI.isMacOnly)
         XCTAssertFalse(FirstLaunchStep.onLaunch.isMacOnly)
-        XCTAssertFalse(FirstLaunchStep.theme.isMacOnly)
         XCTAssertFalse(FirstLaunchStep.installClaudeHooks.isMacOnly)
     }
 
@@ -60,7 +59,7 @@ final class FirstLaunchModelTests: XCTestCase {
         XCTAssertFalse(model.isLastStep)
         XCTAssertEqual(model.currentStep, .onLaunch)
         XCTAssertEqual(model.stepNumber, 1)
-        XCTAssertEqual(model.stepCount, 5)
+        XCTAssertEqual(model.stepCount, 4)
 
         // back at the first step is a no-op (returns false, index stays).
         XCTAssertFalse(model.back())
@@ -71,10 +70,9 @@ final class FirstLaunchModelTests: XCTestCase {
         XCTAssertEqual(model.currentStep, .defaultTerminal)
         XCTAssertTrue(model.advance())
         XCTAssertTrue(model.advance())
-        XCTAssertTrue(model.advance())
         XCTAssertEqual(model.currentStep, .installClaudeHooks)
         XCTAssertTrue(model.isLastStep)
-        XCTAssertEqual(model.stepNumber, 5)
+        XCTAssertEqual(model.stepNumber, 4)
 
         // advance at the last step is a no-op (returns false).
         XCTAssertFalse(model.advance())
@@ -82,7 +80,7 @@ final class FirstLaunchModelTests: XCTestCase {
 
         // back walks it down again.
         XCTAssertTrue(model.back())
-        XCTAssertEqual(model.currentStep, .theme)
+        XCTAssertEqual(model.currentStep, .installCLI)
         XCTAssertFalse(model.isLastStep)
     }
 
@@ -91,16 +89,16 @@ final class FirstLaunchModelTests: XCTestCase {
     @MainActor
     func testGoToStep() {
         let mac = FirstLaunchModel(platform: .macOS, onFinish: { _ in })
-        mac.go(to: .theme)
-        XCTAssertEqual(mac.currentStep, .theme)
+        mac.go(to: .installClaudeHooks)
+        XCTAssertEqual(mac.currentStep, .installClaudeHooks)
 
         let ios = FirstLaunchModel(platform: .iOS, onFinish: { _ in })
         ios.go(to: .installCLI) // not in the iOS set → no-op
         XCTAssertEqual(ios.currentStep, .onLaunch)
         ios.go(to: .installClaudeHooks)
         XCTAssertEqual(ios.currentStep, .installClaudeHooks)
-        XCTAssertTrue(ios.isLastStep) // iOS last step is Claude-hooks (3 steps)
-        XCTAssertEqual(ios.stepCount, 3)
+        XCTAssertTrue(ios.isLastStep) // iOS last step is Claude-hooks (2 steps)
+        XCTAssertEqual(ios.stepCount, 2)
     }
 
     // MARK: - Completion + finish persistence

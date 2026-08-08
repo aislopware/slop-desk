@@ -54,7 +54,6 @@ public enum ClientControlProtocol {
         /// Dump the full effective config.
         public static let configShow = "config-show"
         /// Enumerate themes (filtered by color appearance).
-        public static let themeList = "theme-list"
         /// Enumerate fonts.
         public static let fontList = "font-list"
         /// Enumerate keybindings (optionally filtered by action substring).
@@ -70,7 +69,7 @@ public enum ClientControlProtocol {
         public static let all: Set<String> = [
             windows, tabs, panes, tabBadge, jump, learn, ignore, view, edit,
             configGet, configSet, configUnset, configReload, configShow,
-            themeList, fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
+            fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
         ]
     }
 
@@ -131,19 +130,7 @@ public enum ClientControlProtocol {
         Placement(rawValue: token)
     }
 
-    // MARK: - Theme color filter / font scope tokens
-
-    /// `theme list --color <dark|light|all>` filter.
-    public enum ThemeColorFilter: String, Sendable, Equatable, CaseIterable {
-        case dark
-        case light
-        case all
-    }
-
-    /// Parse a theme-color filter token; `nil` for unknown.
-    public static func themeColorFilter(forToken token: String) -> ThemeColorFilter? {
-        ThemeColorFilter(rawValue: token)
-    }
+    // MARK: - Font scope token
 
     /// `font list --system`/`--user` scope.
     public enum FontScope: String, Sendable, Equatable, CaseIterable {
@@ -231,11 +218,6 @@ public enum ClientControlProtocol {
 
     /// `config-show` — no params.
     public static func configShowParams() -> [String: Any] { [:] }
-
-    /// `theme-list` — optional `color` filter token (default `all`).
-    public static func themeListParams(color: ThemeColorFilter = .all) -> [String: Any] {
-        ["color": color.rawValue]
-    }
 
     /// `font-list` — optional `monospace` filter, `family` substring, and `scope` token.
     public static func fontListParams(

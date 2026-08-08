@@ -144,7 +144,7 @@ struct AllSettingsListView: View {
                 onAfterReset()
             }
         } message: {
-            Text("This restores every setting to its default — font, theme, keybindings, and all expert "
+            Text("This restores every setting to its default — font, keybindings, and all expert "
                 + "keys. This cannot be undone.")
         }
         .alert("Reset Advanced Settings?", isPresented: $confirmResetAdvanced) {
@@ -155,7 +155,7 @@ struct AllSettingsListView: View {
             }
         } message: {
             Text("This restores the advanced keys (video, agent, and raw overrides) to their defaults, "
-                + "leaving your font, theme, and keybinding choices intact. This cannot be undone.")
+                + "leaving your font and keybinding choices intact. This cannot be undone.")
         }
     }
 
@@ -214,7 +214,6 @@ struct AllSettingsListView: View {
         case "scrollback-limit": "\(store.terminal.scrollbackLines)"
         case "cursor-style": store.terminal.cursorStyle.displayName
         case "cursor-style-blink": store.terminal.cursorBlink.rawValue.capitalized
-        case "theme": themeLabel(store.appearance.theme ?? .system)
         case SettingsKey.density: (store.appearance.density ?? "comfortable").capitalized
         // Device-local, so it is read from the `WorkspaceStore` rather than a typed prefs model.
         case SharedFocusSetting.catalogKey: SharedFocusSetting.valueText(workspaceStore)
@@ -422,15 +421,6 @@ struct AllSettingsListView: View {
         case inherit
         case home
         var id: String { rawValue }
-    }
-
-    /// A friendly display name for a theme choice (mirrors the Appearance picker labels).
-    private func themeLabel(_ theme: ThemeChoice) -> String {
-        switch theme {
-        case .system: "System"
-        case .dracula: "Dracula"
-        case .alucard: "Alucard"
-        }
     }
 }
 #endif

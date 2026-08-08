@@ -6,7 +6,7 @@ import Foundation
 //
 // The CLI renders list output as an aligned column table by default and as structured JSON under
 // `--json` / `--format json` (for scripting); `--no-headers` strips the header row for piping. The
-// per-list helpers (`windows`/`tabs`/`panes`/`themes`/`fonts`/`keybinds`/`config`)
+// per-list helpers (`windows`/`tabs`/`panes`/`fonts`/`keybinds`/`config`)
 // pick the columns + cell formatting; ``renderTable(headers:rows:noHeaders:)`` and
 // ``renderJSON(_:)`` are the shared low-level renderers.
 //
@@ -53,16 +53,6 @@ public enum CLIFormatting {
                     string($0, "kind"), marker($0, "focused"), string($0, "cwd"),
                 ]
             },
-            noHeaders: noHeaders,
-        )
-    }
-
-    /// `theme list` → `NAME · APPEARANCE · ACTIVE` (`dark`/`light`; active marked `*`).
-    public static func themes(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["NAME", "APPEARANCE", "ACTIVE"],
-            rows: rows.map { [string($0, "name"), bool($0, "dark") ? "dark" : "light", marker($0, "active")] },
             noHeaders: noHeaders,
         )
     }

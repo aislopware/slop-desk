@@ -5,8 +5,8 @@ import SlopDeskAgentDetect
 //
 // The protocol the ``ClientControlDispatcher`` calls to actually drive the running client GUI.
 // The concrete conformance (`WorkspaceControlBackend`) adapts `WorkspaceStore` /
-// `PreferencesStore` / `ThemeStore` / `WorkspaceBindingRegistry` / `FolderFrecencyStore`; the
-// dispatcher is unit-tested against a FAKE conformance (no GUI, no socket — hang-safety).
+// `PreferencesStore` / `WorkspaceBindingRegistry` / `FolderFrecencyStore`; the dispatcher is
+// unit-tested against a FAKE conformance (no GUI, no socket — hang-safety).
 //
 // `@MainActor`: every concrete client store is `@MainActor`, so the seam — and therefore the
 // dispatch that calls it — is main-actor isolated. The dispatch logic stays PURE (deterministic,
@@ -78,20 +78,6 @@ public struct ClientPaneInfo: Sendable, Equatable {
         self.kind = kind
         self.isFocused = isFocused
         self.cwd = cwd
-    }
-}
-
-/// One theme in a `theme list`. `isDark` drives the `--color dark|light` filter; `isActive` marks
-/// the currently-applied theme.
-public struct ClientThemeInfo: Sendable, Equatable {
-    public let name: String
-    public let isDark: Bool
-    public let isActive: Bool
-
-    public init(name: String, isDark: Bool, isActive: Bool) {
-        self.name = name
-        self.isDark = isDark
-        self.isActive = isActive
     }
 }
 
@@ -224,9 +210,6 @@ public protocol ClientControlBackend: AnyObject {
 
     /// The full effective config, ordered for display.
     func configShow() -> [ClientConfigEntry]
-
-    /// Themes filtered by color appearance.
-    func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo]
 
     /// Fonts filtered by monospace / family substring / scope.
     func listFonts(

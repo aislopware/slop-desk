@@ -62,17 +62,16 @@ public enum TerminalConfigBuilder {
         keybinds: [String] = [],
         backgroundOverride: String? = nil,
         foregroundOverride: String? = nil,
-        fontFamilyOverride: String? = nil,
         paletteOverride: [String]? = nil,
         selectionBackgroundOverride: String? = nil,
         controls: TerminalControlsConfig? = nil,
     ) -> String {
         var lines: [String] = []
 
-        // PRIMARY font family — the resolved override (``PreferencesStore`` passes the active Light/Dark
-        // theme font via `fontFamilyOverride`) wins over the pref's own; empty is skipped (an empty
-        // `font-family =` would CLEAR Ghostty's default).
-        let family = resolved(fontFamilyOverride, or: prefs.fontFamily)
+        // PRIMARY font family. There is ONE font slot since the theme picker was retired
+        // (user-directed 2026-08-08), so the pref's own family is the whole chain; empty is skipped (an
+        // empty `font-family =` would CLEAR Ghostty's default).
+        let family = prefs.fontFamily.trimmingCharacters(in: .whitespaces)
         if !family.isEmpty {
             lines.append("font-family = \(family)")
             // ghostty has NO `font-family-fallback` key — `font-family` is a

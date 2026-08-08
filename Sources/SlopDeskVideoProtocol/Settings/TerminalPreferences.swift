@@ -19,7 +19,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// not bundled, so the explicit `background`/`foreground`/palette lines are the whole theme.
     public var theme: String
     /// Terminal background colour (libghostty `background`, 6-hex). Defaults to the Dracula
-    /// `face` so the terminal surface matches the chrome even before the ``ThemeStore`` overrides land.
+    /// `face` so the terminal surface matches the glass even before the resolved overrides land.
     public var background: String
     /// Terminal foreground / text colour (libghostty `foreground`, 6-hex). Dracula's primary ink.
     public var foreground: String

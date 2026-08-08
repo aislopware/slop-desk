@@ -437,26 +437,17 @@ final class CodeSidebarWebViewPool {
                 Self.shared.noteWindowUpdate(window)
             }
         })
-        // The workbench is a SUNKEN PANEL, not an island (ONE ISLAND law 1, user-directed
-        // 2026-08-08): it stands on the same ground as the navigator, so its `prefers-color-scheme`
-        // follows the CHROME polarity and its seeded colour customizations paint the workbench in
-        // the ground tone — panel and ground read as one continuous field. Re-pinned on every theme
-        // change; creation pins new webviews the same way.
-        keyWindowObservers.append(NotificationCenter.default.addObserver(
-            forName: ThemeStore.didChangeNotification, object: nil, queue: .main,
-        ) { _ in
-            MainActor.assumeIsolated {
-                Self.shared.pinPooledWebViewsToGroundPolarity()
-            }
-        })
     }
 
-    /// Pin every pooled webview's effective appearance (and first-paint backdrop) to the active
-    /// profile's CHROME polarity and GROUND — see the observer in `init` for why the panel follows
-    /// the chrome and not the glass.
+    /// Pin every pooled webview's effective appearance (and first-paint backdrop) to the GROUND.
+    ///
+    /// The workbench is a SUNKEN PANEL, not an island (ONE ISLAND law 1, user-directed 2026-08-08):
+    /// it stands on the same cream ground as the navigator, so it follows the chrome's LIGHT
+    /// appearance and its seeded colour customizations paint the workbench in the ground tone —
+    /// panel and ground read as one continuous field. Creation pins new webviews the same way.
     private func pinPooledWebViewsToGroundPolarity() {
         for webView in webViews.values {
-            webView.appearance = NSAppearance(named: Slate.theme.chromeIsLight ? .aqua : .darkAqua)
+            webView.appearance = NSAppearance(named: .aqua)
             webView.underPageBackgroundColor = NSColor(slateHex: Slate.theme.groundHexValue)
         }
     }
@@ -519,7 +510,7 @@ final class CodeSidebarWebViewPool {
         webView.underPageBackgroundColor = NSColor(slateHex: Slate.theme.groundHexValue)
         // CHROME polarity — the workbench is a sunken panel on the ground, not an island
         // (see `pinPooledWebViewsToGroundPolarity`).
-        webView.appearance = NSAppearance(named: Slate.theme.chromeIsLight ? .aqua : .darkAqua)
+        webView.appearance = NSAppearance(named: .aqua)
         // WebKit's own base canvas is WHITE until the page's first paint — with a multi-second
         // workbench boot that is a visible flash between the dark chrome and the dark editor. There
         // is no public macOS API for it; the long-standing KVC key makes the canvas transparent so

@@ -123,21 +123,17 @@ public struct SlopDeskClientApp: App {
         // only remote channel).
         Self.applyLaunchArgumentEnvironment()
 
-        // Register the runtime-theme hook BEFORE building `PreferencesStore` so its init-time
-        // `applyAppearance` repoints `ThemeStore.shared` (and the persisted theme is live from the first
-        // frame). `WorkspaceCore` owns the `AppearanceApplier` seam but cannot import this SwiftUI layer, so
-        // the closure lives here, taking the WHOLE `AppearancePreferences` so
-        // `ThemeStore` resolves the dual-slot / custom-slug / follow-OS selection and posts the
-        // cross-`NSHostingController` repaint notification the split controller re-pins on.
-        AppearanceApplier.apply = { appearance in
-            ThemeStore.shared.apply(appearance: appearance)
-        }
-        // The terminal CELLS adopt the active theme's flat palette: this hook reads the
-        // already-resolved `ThemeStore.active` (so the dual-slot / `.system` selection is concrete) and hands
-        // its libghostty 6-hex background/foreground plus the 16-entry ANSI palette + selection
-        // colour to `PreferencesStore` when it (re)builds the terminal config.
+        // Pin the whole app to the LIGHT appearance — the ground is cream, so semantic chrome ink
+        // must resolve light or the navigator draws white-on-cream under an OS in dark mode. Armed
+        // here and re-fired at didFinishLaunching, because `NSApp` does not exist yet inside
+        // `App.init`.
+        SlateAppearancePin.install()
+        // The terminal CELLS adopt the app palette's flat colours: this hook hands the libghostty
+        // 6-hex background/foreground plus the 16-entry ANSI palette + selection colour to
+        // `PreferencesStore` when it (re)builds the terminal config. `WorkspaceCore` owns the
+        // `AppearanceApplier` seam but cannot import this SwiftUI layer, so the closure lives here.
         AppearanceApplier.resolveTerminalColors = {
-            let theme = ThemeStore.shared.active
+            let theme = SlateTheme.app
             return ResolvedTerminalTheme(
                 background: theme.terminalBackgroundHex,
                 foreground: theme.terminalForegroundHex,
@@ -145,13 +141,6 @@ public struct SlopDeskClientApp: App {
                 selectionBackground: theme.selectionBackgroundHex,
             )
         }
-        // The per-scope (Light/Dark-theme) font override reaches the live terminal. The active
-        // slot's resolved theme slug (`ThemeStore.active.id` — dual-slot / `.system` already concrete) keys
-        // `appearance.themeFonts`, which `PreferencesStore.applyTerminal` looks up via `FontScopeResolver`.
-        AppearanceApplier.resolveActiveThemeSlug = { ThemeStore.shared.active.id }
-        // Start the macOS OS-appearance observer so a dual-slot / `.system` user follows the system
-        // colour scheme LIVE (a no-op on iOS).
-        ThemeStore.shared.observeOSAppearanceChanges()
 
         // Build the GUI Settings store FIRST so its apply paths run before the video pipeline / any
         // `static let` env flag is forced (folds persisted prefs into `EnvConfig.overlay`).
@@ -311,15 +300,6 @@ public struct SlopDeskClientApp: App {
         // `_folderFrecency` below.
         let overlay = OverlayCoordinator(store: store, folders: folderFrecency)
         overlay.connectionTarget = { [weak appConnection] in appConnection?.target ?? .default }
-        // The palette's "Switch Theme" verb is a LOCAL client action over the
-        // live ``PreferencesStore`` (the SAME `appearance` slot Settings → Appearance edits) — it advances the
-        // primary slot through the built-in themes (chrome retint + terminal cells repaint live).
-        overlay.switchTheme = { [weak preferences] in
-            guard let preferences else { return }
-            var appearance = preferences.appearance
-            appearance.theme = Self.nextBuiltinTheme(after: appearance.theme)
-            preferences.appearance = appearance
-        }
         // SCREENSHOT FIXTURE ONLY (default-OFF): `SLOPDESK_TOAST_DEMO=<page>` seeds a STICKY
         // notification page at launch, because the card's glass surface is a GPU backdrop effect that
         // `ImageRenderer` cannot rasterise — the real window is the only place the shipping card can be
@@ -1034,20 +1014,6 @@ public struct SlopDeskClientApp: App {
             }
         }
         return nil
-    }
-
-    /// The next built-in theme after `current` for the palette "Switch Theme"
-    /// verb — advances the primary slot through the shipped built-ins (Settings → Appearance order), wrapping. A
-    /// `nil` / `.system` / custom-slug current resolves to the compile-time default (Dracula) and
-    /// advances from there, so the FIRST "Switch Theme" is always a visible change rather than a no-op. PURE (no
-    /// GUI dependency) — mirrors ``ThemeCatalog/builtinThemes`` order via the matching ``ThemeChoice`` cases.
-    private static func nextBuiltinTheme(after current: ThemeChoice?) -> ThemeChoice {
-        let order: [ThemeChoice] = [
-            .dracula, .alucard,
-        ]
-        let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .dracula
-        let idx = order.firstIndex(of: resolved) ?? 0
-        return order[(idx + 1) % order.count]
     }
 
     /// Promotes every `SLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via `setenv`.

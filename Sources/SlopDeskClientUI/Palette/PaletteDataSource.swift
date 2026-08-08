@@ -323,16 +323,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.openSettings", icon: "slider.horizontal.3", title: "Open Settings",
             subtitle: nil, shortcut: nil, filter: .actions, category: .settings, action: .openSettings,
         ),
-        // Theme verb — the "Switch Theme" row. Theme is LOCAL client state in
-        // slopdesk (``ThemeStore`` / ``PreferencesStore``), so this is a pure client action routed by the
-        // coordinator to the injected handler (the SAME live `appearance` Settings → Appearance edits).
-        // Chord-less ⇒ no hint chip. Grouped under the SETTINGS section (slopdesk has no separate Theme
-        // palette category).
-        PaletteItem(
-            id: "action.switchTheme", icon: "paintpalette", title: "Switch Theme",
-            subtitle: nil, keywords: "theme switch appearance color scheme dark light dracula alucard palette",
-            shortcut: nil, filter: .actions, category: .settings, action: .switchTheme,
-        ),
         // The cheat sheet is also reachable by ⌘/; surfacing it here means the keyboard reference is
         // discoverable without knowing the chord. Its hint derives from the registry (no drift).
         PaletteItem(

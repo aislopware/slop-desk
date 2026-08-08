@@ -1315,12 +1315,12 @@ private struct EditorSettingsTab: View {
 
 // MARK: - Appearance section
 
-/// Appearance: the TABS group (New Tab Position — `tab-setting.png` shows it here, NOT Shell), the theme
-/// picker (via `AppearancePreferences` → `ThemeStore`), the density tier, the terminal FONT (family + size)
-/// and CURSOR (style + blink) — font/cursor belong here, not the Editor/Controls tabs, per
-/// `font-setting.png` / `cursor-style.png` — plus the chrome toggles. All LIVE (theme repoints every token;
-/// font/cursor rebuild the libghostty config string and bump `TerminalConfigBroadcaster`; New Tab Position +
-/// chrome toggles are read at fire-time / next render).
+/// Appearance: the TABS group (New Tab Position — `tab-setting.png` shows it here, NOT Shell), the
+/// density tier, the terminal FONT (family + size) and CURSOR (style + blink) — font/cursor belong here,
+/// not the Editor/Controls tabs, per `font-setting.png` / `cursor-style.png` — plus the chrome toggles.
+/// All LIVE (font/cursor rebuild the libghostty config string and bump `TerminalConfigBroadcaster`; New
+/// Tab Position + chrome toggles are read at fire-time / next render). There is no theme picker: the app
+/// ships ONE appearance (user-directed 2026-08-08).
 private struct AppearanceSettingsTab: View {
     @Bindable var store: PreferencesStore
 
@@ -1395,19 +1395,10 @@ private struct AppearanceSettingsTab: View {
             windowSection
             #endif
 
-            // TERMINAL THEME: a GALLERY, not a dropdown — each card is a miniature of that theme's own
-            // terminal (`ThemeGalleryView`). Picking one writes `theme`/`themeDark`. The theme is
-            // TERMINAL-ONLY (the chrome rides the OS appearance and is not themable — user-directed
-            // 2026-08-07). With "Use separated theme for dark mode" ON the OS appearance selects the
-            // slot, so a Dark Theme gallery appears below the toggle (`dark-mode-theme.png`).
-            slateFormSection("Terminal Theme") {
-                ThemeGalleryView(
-                    title: "Terminal Theme",
-                    subtitle: "The terminal glass: cells, ANSI palette, selection and caret — applied live. "
-                        + "App chrome follows the system appearance.",
-                    selection: themeSelectionBinding(forDarkSlot: false),
-                )
-                Divider()
+            // DENSITY. The theme GALLERY that used to head this section is gone with the picker
+            // (user-directed 2026-08-08): the app has one appearance, so there is nothing to choose
+            // between and a one-card gallery would be a control that cannot be actuated.
+            slateFormSection("Appearance") {
                 SettingsOptionCards(
                     "Density",
                     subtitle: "How much air each sidebar row gets.",
@@ -1415,30 +1406,6 @@ private struct AppearanceSettingsTab: View {
                     selection: densityBinding,
                 ) { option in
                     SettingsDensityArt(compact: option.value == SettingsOptionCatalog.densityCompact)
-                }
-            }
-
-            Section {
-                Toggle(isOn: separateDarkBinding) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Use separated theme for dark mode")
-                        Text(
-                            "Follow the system color scheme: theme above is used in light mode, "
-                                + "the dark theme below in dark mode.",
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            if store.appearance.useSeparateDarkTheme ?? false {
-                slateFormSection("Dark Terminal Theme") {
-                    ThemeGalleryView(
-                        title: "Dark Terminal Theme",
-                        subtitle: "Used while the system is in dark mode.",
-                        selection: themeSelectionBinding(forDarkSlot: true),
-                    )
                 }
             }
 
@@ -1497,37 +1464,6 @@ private struct AppearanceSettingsTab: View {
             Section { timingFooter(.live) }
         }
         .formStyle(.grouped)
-    }
-
-    /// Bridge the picker selection to one theme SLOT's model field (`theme` for the light/primary slot,
-    /// `themeDark` for the dark slot). An unset slot reads as its default (unset light ⇒ `.system`, unset
-    /// dark ⇒ Dracula). Writing always sets an explicit choice so the user's pick persists.
-    private func themeSelectionBinding(forDarkSlot dark: Bool) -> Binding<ThemeChoice> {
-        Binding(
-            get: {
-                let choice = dark ? store.appearance.themeDark : store.appearance.theme
-                return choice ?? (dark ? .dracula : .system)
-            },
-            set: { choice in
-                // Mutate a local copy and assign ONCE so the store's `appearance` didSet (which re-applies the
-                // theme) fires a single time.
-                var appearance = store.appearance
-                if dark {
-                    appearance.themeDark = choice
-                } else {
-                    appearance.theme = choice
-                }
-                store.appearance = appearance
-            },
-        )
-    }
-
-    /// The "Use separated theme for dark mode" toggle (`useSeparateDarkTheme`): `nil` reads as OFF.
-    private var separateDarkBinding: Binding<Bool> {
-        Binding(
-            get: { store.appearance.useSeparateDarkTheme ?? false },
-            set: { store.appearance.useSeparateDarkTheme = $0 },
-        )
     }
 
     private var densityBinding: Binding<String> {

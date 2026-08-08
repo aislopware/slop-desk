@@ -118,7 +118,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         ] {
             XCTAssertEqual(bucket(key), .advancedOnly, "'\(key)' should be advancedOnly (inline)")
         }
-        for key in ["font-family", "font-size", "theme", "cursor-style", "cursor-style-blink"] {
+        for key in ["font-family", "font-size", "cursor-style", "cursor-style-blink"] {
             XCTAssertEqual(bucket(key), .hasDedicatedTab, "'\(key)' should be hasDedicatedTab (jump)")
         }
         // Every hasDedicatedTab entry names a target section; every advancedOnly entry does NOT.
@@ -136,7 +136,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     /// (`docs/ui-shell/screenshots/font-setting.png` shows FONT FAMILY under Appearance;
     /// `cursor-style.png` shows the CURSOR group under Appearance; `terminal-features__scroll.md` puts
     /// Scrollback under Controls → Scroll). Pins — against an INDEPENDENT expectation table, not the catalog's
-    /// own derivation — that font + cursor + theme + density jump to **appearance** and scrollback jumps to
+    /// own derivation — that font + cursor + density jump to **appearance** and scrollback jumps to
     /// **controls**. Revert-to-fail: the pre-fix catalog routed font/scrollback → `editor` and cursor →
     /// `controls`, which fails this.
     func testDedicatedTabTargetSectionsMatchSlateTaxonomy() {
@@ -146,7 +146,6 @@ final class AllSettingsCatalogTests: XCTestCase {
             "cursor-style": "appearance",
             "cursor-style-blink": "appearance",
             "scrollback-limit": "controls",
-            "theme": "appearance",
             SettingsKey.density: "appearance",
         ]
         for (key, section) in expected {
@@ -192,7 +191,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     /// intact: font (`terminal`), theme (`appearance`), keybindings, AND the General/Shell/Controls/
     /// Appearance/Agents `Defaults.Keys` toggles. Per `customization__advanced-settings.md`: "restores only
     /// the advanced-only keys (those not reachable from General, Shell, Appearance, or Key Bindings), leaving
-    /// font, theme, and keybinding choices intact."
+    /// font and keybinding choices intact."
     ///
     /// Revert-to-fail: before the data-loss fix, `resetAdvancedOnly()` reset the ENTIRE global toggle set, so
     /// `copyOnSelect` / `oscNotifications` / `autoSwitchLayouts` were wrongly cleared — the
@@ -200,7 +199,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     func testResetAdvancedOnlyPreservesAppearanceFontKeybindings() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
-        store.appearance = AppearancePreferences(theme: .dracula)
+        store.appearance = AppearancePreferences(density: "compact")
         store.keybindings = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "e", command: true)])
         store.video = VideoPreferences(qpSharp: 30)
         store.agent = AgentPreferences(preventSleep: true)
@@ -220,9 +219,9 @@ final class AllSettingsCatalogTests: XCTestCase {
         XCTAssertEqual(store.video, VideoPreferences())
         XCTAssertEqual(store.agent, AgentPreferences())
         XCTAssertTrue(store.rawOverrides.isEmpty)
-        // Font / theme / keybindings preserved.
+        // Font / density / keybindings preserved.
         XCTAssertEqual(store.terminal.fontSize, 18)
-        XCTAssertEqual(store.appearance.theme, .dracula)
+        XCTAssertEqual(store.appearance.density, "compact")
         XCTAssertEqual(store.keybindings.overrides["pane.splitRight"]?.key, "e")
         // Tab-reachable toggles PRESERVED — the data-loss fix. None of these is advanced-only.
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled, "Controls toggle survives Reset-Advanced-Only")
@@ -236,7 +235,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     func testResetAllRestoresOrphanToggleToDefault() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
-        store.appearance = AppearancePreferences(theme: .dracula)
+        store.appearance = AppearancePreferences(density: "compact")
         SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts) // flip OFF the default-ON toggle
         XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
 

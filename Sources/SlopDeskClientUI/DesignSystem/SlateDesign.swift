@@ -23,28 +23,28 @@
 //      8: Apple's own concentricity rule (inner radius = outer radius − inset). The same 8 falls out
 //      of JetBrains' published `Island.arc.compact = 16` (an arc WIDTH ⇒ radius 8) and out of
 //      measuring Canario (≈7.5), so three independent sources agree on the number.
-//   4. THE GROUND IS ALUCARD'S CREAM `#FFFBEB` IN BOTH PROFILES — the light theme's own published
-//      face, used as the frame under either glass. On Dracula that is the CANARIO read: a light
-//      frame carrying a dark island, ~13:1 apart, the only way to get real drama out of a dark theme
-//      (a dark-on-dark frame caps at 1.32:1 against #22212C even at pure black — arithmetic, not
-//      taste). On Alucard the ground and the glass are the SAME cream, so the window reads as one
-//      calm light surface and structure falls to the dividers and the island's corner alone. This
-//      reverses the earlier "no inverted frame" verdict on the user's explicit instruction.
+//   4. THE GROUND IS ALUCARD'S CREAM `#FFFBEB` — the light theme's own published face, used as the
+//      frame under the dark glass. That is the CANARIO read: a light frame carrying a dark island,
+//      ~13:1 apart, the only way to get real drama out of a dark terminal (a dark-on-dark frame caps
+//      at 1.32:1 against #22212C even at pure black — arithmetic, not taste). It reverses the
+//      earlier "no inverted frame" verdict on the user's explicit instruction.
+//
+// ONE APPEARANCE (user-directed 2026-08-08): the theme PICKER is gone and so is its machinery —
+// there is no light/dark slot, no follow-OS resolution, no per-theme font map, no runtime store. The
+// app is a cream ground carrying a dark terminal, always, and law 4 is the reason a second profile
+// had nothing left to vary: the ground was already the same cream under both, so an "Alucard" pick
+// only flattened the one contrast the design is built on. `Slate.theme` is therefore a CONSTANT.
 //
 //   - Text tiers, hairlines and state fills stay SEMANTIC system colours — they resolve against the
-//     app-level appearance pin, which is now ALWAYS LIGHT (`chromeIsLight == true`), because law 4
-//     makes the ground light in both profiles. That is a CONSEQUENCE of the ground, not a second
-//     decision: semantic ink pinned dark would draw white-on-cream in the navigator. The glass keeps
-//     its own polarity via ``Slate/glassColorScheme``, so a dark island still carries light ink.
+//     app-level appearance pin, which is ALWAYS LIGHT, because law 4 makes the ground light. That is
+//     a CONSEQUENCE of the ground, not a second decision: semantic ink pinned dark would draw
+//     white-on-cream in the navigator. The glass keeps its own polarity via
+//     ``Slate/glassColorScheme``, so the dark island still carries light ink.
 //   - ONE brand accent: the fixed Dracula purple (light `#644AC9`, the Pro `#9580FF` on dark).
 //     Identity hues stay OFF chrome glyphs; the status dot set is the only other colour the sidebar
 //     speaks.
 //   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
-//
-// MULTI-THEME is TERMINAL-PROFILE-ONLY: a theme switch swaps the glass palette (cells, ANSI,
-// selection, cursor, on-island ink); the GROUND does not move. `Slate.theme` indirects through
-// ``ThemeStore/shared`` (D3) so a runtime profile switch repoints the glass tokens live.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -60,21 +60,7 @@ import UIKit
 /// paints, the ANSI set, and the ink/edge/accent the SwiftUI chrome floating inside the island uses
 /// (status line, chips, focus corner) — ON-GLASS text must read against the profile, not against the
 /// OS appearance, because the glass does not follow the OS appearance.
-struct SlateTheme: Equatable {
-    /// Stable identity for change-detection + persistence (`ThemeChoice.builtinID`).
-    let id: String
-    /// Whether the GLASS is light — the profile's own polarity. Drives the forced on-glass colour
-    /// scheme (``Slate/glassColorScheme``): text drawn ON the glass resolves against the glass, not
-    /// against the OS or the chrome.
-    let isLight: Bool
-    /// Whether the CHROME is light. ALWAYS `true` under ONE ISLAND (user-directed 2026-08-08): law 4
-    /// puts the same cream ground under both profiles, so the semantic ink standing on it must
-    /// resolve light-appearance in both, or the navigator draws white-on-cream. The app-level pin
-    /// (`ThemeStore.pinAppAppearance`) reads THIS, not ``isLight`` — one appearance voice for every
-    /// chrome surface including the auxiliary windows, so nothing is half-and-half; the dark island
-    /// is not an exception to it but a surface outside it, wearing the profile palette directly.
-    let chromeIsLight: Bool
-
+struct SlateTheme: Equatable, Sendable {
     // The glass surfaces
     /// The terminal cell surface — the island's ground.
     let terminal: Color
@@ -84,8 +70,8 @@ struct SlateTheme: Equatable {
     let terminalRaised: Color
 
     /// THE GROUND — everything that is not the one island (law 1): the navigator, the code panel,
-    /// the top band and the moat around the terminal. Alucard's published cream `#FFFBEB` under both
-    /// profiles, never invented (inventing a chrome hex is what sank the five dead worlds). FIXED,
+    /// the top band and the moat around the terminal. Alucard's published cream `#FFFBEB`, never
+    /// invented (inventing a chrome hex is what sank the five dead worlds). FIXED,
     /// never appearance-resolved (the CGColor-snapshot trap family stays dead). Raw hex because the
     /// AppKit split shell resolves it as an `NSColor`.
     let groundHexValue: UInt32
@@ -129,9 +115,9 @@ struct SlateTheme: Equatable {
     /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    /// The AUTHORED chrome ladder a profile ships (ONE ISLAND, user-directed 2026-08-08): `ground`
-    /// (everything that is not the island — the SAME cream in both profiles), `line` (rules), `lift`
-    /// (plates). The island itself is not a rung: it IS the glass face.
+    /// The AUTHORED chrome ladder (ONE ISLAND, user-directed 2026-08-08): `ground` (everything that
+    /// is not the island), `line` (rules), `lift` (plates). The island itself is not a rung: it IS
+    /// the glass face.
     struct ChromeLadder {
         let ground: UInt32
         let line: UInt32
@@ -148,20 +134,15 @@ struct SlateTheme: Equatable {
         let accent: UInt32
     }
 
-    /// Build a profile from 24-bit RGB values (single source for both the `Color` and hex forms).
-    /// The chrome polarity is LIGHT for every profile — see ``chromeIsLight``; the ground is cream
-    /// in both. The ISLAND tone is not a parameter: it IS `glass.face` (law 1), so a profile cannot
+    /// Build the profile from 24-bit RGB values (single source for both the `Color` and hex forms).
+    /// The ISLAND tone is not a parameter: it IS `glass.face` (law 1), so the profile cannot
     /// accidentally ship an island in a tone its terminal does not wear.
     private static func profile(
-        id: String, isLight: Bool,
         glass: GlassSet,
         ansi: [UInt32],
         chrome: ChromeLadder,
     ) -> Self {
         Self(
-            id: id,
-            isLight: isLight,
-            chromeIsLight: true,
             terminal: Color(slateHex: glass.face),
             terminalEdge: Color(slateHex: glass.edge),
             terminalRaised: Color(slateHex: glass.edge),
@@ -193,24 +174,22 @@ struct SlateTheme: Equatable {
         return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
-    // MARK: - Built-in profiles (user-directed 2026-08-07, round 8 verdict: exactly TWO)
+    // MARK: - THE profile (user-directed 2026-08-08: exactly ONE)
 
     //
     // The app wears DRACULA PRO verbatim — the published Pro glass (#22212C face, #F8F8F2 ink,
     // #454158 selection, #7970A9 comment) and the normalized accent seven (S100/L75 in HSL, hue
-    // rotated: the Pro method), plus its official light counterpart ALUCARD from the public spec.
-    // The CHROME ladder is the published Dracula chrome TRANSPOSED into each glass's band (flat
-    // round, user-directed 2026-08-08): the official VS Code Dracula chrome steps its surfaces
-    // inside one hue (statusbar #191A21 → sidebar #21222C → editor #282A36 → rail #343746), and
-    // each rung here applies that ladder's per-channel offsets to the Pro face instead of the
-    // classic one. No frame, no second hue: depth is the only chrome voice.
+    // rotated: the Pro method). The CHROME ladder is the published Dracula chrome TRANSPOSED into
+    // the glass's band (flat round, user-directed 2026-08-08): the official VS Code Dracula chrome
+    // steps its surfaces inside one hue (statusbar #191A21 → sidebar #21222C → editor #282A36 →
+    // rail #343746), and each rung here applies that ladder's per-channel offsets to the Pro face
+    // instead of the classic one. No frame, no second hue: depth is the only chrome voice.
 
-    /// Dracula — the DEFAULT: Dracula Pro glass over a chrome ladder one band darker.
+    /// THE appearance — Dracula Pro glass standing on Alucard's cream.
     /// ANSI note: the Pro seven has no blue — the blue slot carries the purple, per Dracula's own
     /// terminal convention. Brights repeat the bases: the Pro accents are already
     /// lightness-normalized at the top of the band, so a +L derivation only washes them out.
-    static let dracula = profile(
-        id: "dracula", isLight: false,
+    static let app = profile(
         glass: GlassSet(face: 0x22212C, ink: 0xF8F8F2, ink2: 0x7970A9, edge: 0x454158, accent: 0x9580FF),
         ansi: [
             0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,
@@ -220,42 +199,25 @@ struct SlateTheme: Equatable {
         // Canario read (~13:1 apart). Any darker frame is arithmetically stuck: #22212C against
         // pure black is 1.32:1, so the whole dark half of the axis cannot separate at all. Lift is
         // the published rail rung (+0C/+0D/+10 on the face → #2E2E3C); the LINE stays the 10%-ink
-        // tint, the pane seam inside the island (it pairs with Alucard's 14.2% at OKLab ΔL ≈ 0.09).
+        // tint, the pane seam inside the island.
         chrome: ChromeLadder(ground: 0xFFFBEB, line: 0x312F37, lift: 0x2E2E3C),
-    )
-
-    /// Alucard — Dracula Pro's official light theme (public spec hexes verbatim): cream glass over
-    /// a cream chrome ladder one band deeper. Its accents are darkness-normalized for the light
-    /// ground, so brights repeat the bases here too.
-    static let alucard = profile(
-        id: "alucard", isLight: true,
-        glass: GlassSet(face: 0xFFFBEB, ink: 0x1F1F1F, ink2: 0x6C664B, edge: 0xCFCFDE, accent: 0x644AC9),
-        ansi: [
-            0x1F1F1F, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xCFCFDE,
-            0x6C664B, 0xCB3A2A, 0x14710A, 0x846E15, 0x644AC9, 0xA3144D, 0x036A96, 0xFFFBEB,
-        ],
-        // The GROUND is this profile's OWN face — so on Alucard the ground and the island are the
-        // same cream and the window reads as one calm light surface, structure carried by the
-        // dividers and the island's corner alone. (It is also the tone the dark profile borrows.)
-        // Lift steps toward white; the LINE is the 14.2% ink tint (see Dracula).
-        chrome: ChromeLadder(ground: 0xFFFBEB, line: 0xD8D3C3, lift: 0xFFFDF4),
     )
 }
 
 /// Static token namespace. CHROME tokens are semantic system colours (appearance-following, fixed at
-/// compile time); GLASS tokens read the active terminal profile through ``ThemeStore`` (D3).
+/// compile time); GLASS tokens read the one terminal profile.
 enum Slate {
-    /// The active TERMINAL PROFILE. Indirected through ``ThemeStore/shared`` (D3) so a runtime
-    /// profile switch repoints the glass tokens live — `@MainActor` because the store is.
-    /// ``ThemeStore``'s default (`.dracula`) means a headless render resolves a real palette.
-    @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
+    /// THE terminal profile. A constant since the theme picker was retired (user-directed
+    /// 2026-08-08) — the runtime store that used to indirect this is gone with it. Kept `@MainActor`
+    /// (and a computed property) so no call site of the token layer had to move.
+    @MainActor static var theme: SlateTheme { .app }
 
-    /// The colour scheme of the GLASS (the terminal profile's own polarity) — forced onto the island
-    /// subtree (`ContentColumn` / the satellite roots) so every semantic colour drawn ON the glass
-    /// (status line, chips, overlays) resolves against the profile's polarity instead of the OS
-    /// appearance: the glass does not follow the OS, so its ink must not either. This is the native
-    /// dark-content-well idiom (a video player's letterbox, a dark artboard) applied to the terminal.
-    @MainActor static var glassColorScheme: ColorScheme { theme.isLight ? .light : .dark }
+    /// The colour scheme of the GLASS — forced onto the island subtree (`ContentColumn` / the
+    /// satellite roots) so every semantic colour drawn ON the glass (status line, chips, overlays)
+    /// resolves DARK, against the terminal, instead of following the app's light chrome pin. This is
+    /// the native dark-content-well idiom (a video player's letterbox, a dark artboard) applied to
+    /// the terminal, and it is the ONE place in the app that opts out of the light pin.
+    @MainActor static var glassColorScheme: ColorScheme { .dark }
 
     /// The FIXED brand accent (Dracula purple) as an appearance-dynamic pair: Alucard's `#644AC9`
     /// on light appearances, the Pro `#9580FF` on dark. The ONLY chrome colour that is not the

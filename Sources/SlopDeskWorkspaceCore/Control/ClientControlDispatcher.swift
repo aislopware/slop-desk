@@ -95,8 +95,6 @@ public struct ClientControlDispatcher {
             configReload(id: id)
         case ClientControlProtocol.Method.configShow:
             configShow(id: id)
-        case ClientControlProtocol.Method.themeList:
-            themeList(id: id, params: params)
         case ClientControlProtocol.Method.fontList:
             fontList(id: id, params: params)
         case ClientControlProtocol.Method.keybindList:
@@ -278,23 +276,6 @@ public struct ClientControlDispatcher {
     private func configShow(id: String) -> [String: Any] {
         let entries = backend.configShow().map { ["key": $0.key, "value": $0.value] }
         return Self.success(id: id, result: ["config": entries])
-    }
-
-    /// `theme-list` → `{themes: [{name, dark, active}]}`. Optional `color` token (default `all`).
-    private func themeList(id: String, params: [String: Any]) -> [String: Any] {
-        let color: ClientControlProtocol.ThemeColorFilter
-        if let token = params["color"] as? String {
-            guard let parsed = ClientControlProtocol.themeColorFilter(forToken: token) else {
-                return Self.error(id: id, message: "invalid color filter '\(token)'")
-            }
-            color = parsed
-        } else {
-            color = .all
-        }
-        let items = backend.listThemes(color: color).map { t -> [String: Any] in
-            ["name": t.name, "dark": t.isDark, "active": t.isActive]
-        }
-        return Self.success(id: id, result: ["themes": items])
     }
 
     /// `font-list` → `{fonts: [{family, monospace, system}]}`. Optional `monospace`/`family`/`scope`.

@@ -66,9 +66,9 @@ public final class PreferencesStore {
         } }
     }
 
-    /// CLIENT-chrome appearance (theme + density). A `didSet` persists + applies. CRITICAL: pure client
-    /// chrome — NEVER folded into ``EnvConfig/overlay`` nor the sidecar (golden corpus untouched); repoints
-    /// the runtime ``ThemeStore`` (via ``AppearanceApplier``) and writes ``SettingsKey/density`` only.
+    /// CLIENT-chrome appearance (density). A `didSet` persists + applies. CRITICAL: pure client
+    /// chrome — NEVER folded into ``EnvConfig/overlay`` nor the sidecar (golden corpus untouched); writes
+    /// ``SettingsKey/density`` only.
     /// Default (all-`nil`) ⇒ no behaviour change.
     public var appearance: AppearancePreferences {
         didSet { if appearance != oldValue { persistAppearance()
@@ -166,33 +166,18 @@ public final class PreferencesStore {
     /// fire-time Controls toggles) and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
     /// re-applies it live.
     private func applyTerminal() {
-        // The active THEME pins the terminal CELL bg/fg (flat design) — `resolveTerminalColors` reads
-        // the resolved `ThemeStore.active` (GUI only; `nil` headless ⇒ the pref's own colours stand).
+        // The app's one terminal profile pins the CELL bg/fg (flat design) — `resolveTerminalColors`
+        // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the pref's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
         // Resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
         // ⇧+arrow select). The Controls toggles live in the global `SettingsKey.store` namespace (NOT the
         // per-instance injected `defaults`, which stays test-isolated for the typed models), so read from
         // `SettingsKey.store`; the builder maps an absent key to its declared default.
         let controls = TerminalControls.from(defaults: SettingsKey.store)
-        // Resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
-        // keyed by the slot's theme slug in `appearance.themeFonts`; that override never reached the live
-        // terminal before (the builder read `terminal.fontFamily` raw). Resolve via the pure
-        // ``FontScopeResolver`` precedence (explicit ACTIVE-slot per-theme font WINS; else Global
-        // `terminal.fontFamily`; else the bundled fallback), keyed by the GUI-resolved active theme slug.
-        // Scope-over-Global is deliberate: slopdesk's Global default is non-empty, so "Global wins
-        // everywhere" would silently SHADOW a per-theme font (see ``FontScopeResolver``).
-        // `nil` hook (headless) ⇒ no slug ⇒ Global stands, so a default build is byte-identical.
-        let resolvedFontFamily = FontScopeResolver.resolvedFamily(
-            global: terminal.fontFamily,
-            themeFonts: appearance.themeFonts,
-            slug: AppearanceApplier.resolveActiveThemeSlug?(),
-            fallback: terminal.fontFamily,
-        )
         let config = TerminalConfigBuilder.string(
             for: terminal,
             backgroundOverride: themeColors?.background,
             foregroundOverride: themeColors?.foreground,
-            fontFamilyOverride: resolvedFontFamily,
             // The active theme's ANSI palette + selection colour reach the terminal cells. Both are
             // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no GUI hook)
             // or a theme with no palette is byte-identical.
@@ -300,32 +285,27 @@ public final class PreferencesStore {
         WorkspaceBindingRegistry.activeOverrides = keybindings
     }
 
-    /// Apply the CLIENT-chrome appearance: repoint the runtime ``ThemeStore`` (via ``AppearanceApplier`` —
-    /// the GUI layer's injected closure; `nil` on headless) and write ``SettingsKey/density`` when set.
+    /// Apply the CLIENT-chrome appearance: write ``SettingsKey/density`` when set.
     ///
     /// GOLDEN-SAFE BY CONSTRUCTION: appearance NEVER touches ``EnvConfig/overlay`` nor the sidecar — pure
     /// client chrome. A `nil` density leaves the key untouched (default ``AppearancePreferences`` is a pure
-    /// no-op, behaviour-preserving). The theme hook gets the WHOLE model (the GUI layer resolves
-    /// the dual-slot / custom-slug / follow-OS selection) so it can fall back to its compile-time default
-    /// when appearance is reset.
+    /// no-op, behaviour-preserving). Since the theme picker was retired (user-directed 2026-08-08) this no
+    /// longer repoints any runtime token, so it also no longer rebuilds the terminal config — the one
+    /// appearance's cell palette is fixed, and the reload path below asks for that rebuild explicitly.
     private func applyAppearance() {
-        AppearanceApplier.apply?(appearance)
-        // The theme also drives the terminal CELL bg/fg (flat design), so rebuild the terminal config AFTER
-        // the theme is repointed — a theme switch then repaints the terminal surface, not just the chrome.
-        applyTerminal()
         if let density = appearance.density {
             defaults.set(density, forKey: SettingsKey.density)
         }
     }
 
-    /// Re-fire the live CLIENT apply paths (theme retint + terminal reflow + keybinding overrides) WITHOUT
+    /// Re-fire the live CLIENT apply paths (density + terminal reflow + keybinding overrides) WITHOUT
     /// mutating any model — the effect behind `slopdesk config reload`. Deliberately SKIPS
     /// ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and the path rewrites the
     /// process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the realtime pipeline reads), so a
-    /// reload must not race-rewrite it. ``applyAppearance()`` already rebuilds the terminal config, so chrome
-    /// + terminal cells both re-apply.
+    /// reload must not race-rewrite it.
     public func reapplyLiveSettings() {
         applyAppearance()
+        applyTerminal()
         applyKeybindings()
     }
 

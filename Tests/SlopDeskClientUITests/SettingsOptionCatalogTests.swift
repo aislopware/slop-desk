@@ -73,14 +73,6 @@ final class SettingsOptionCatalogTests: XCTestCase {
         )
     }
 
-    func testThemeGalleryCoversEveryThemeChoice() {
-        assertCoversAllCases(
-            SettingsThemeGallery.entries.map(\.value),
-            ThemeChoice.allCases,
-            "theme",
-        )
-    }
-
     #if os(macOS)
     func testWindowSizeCardsCoverEveryMode() {
         assertCoversAllCases(

@@ -20,9 +20,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
         MainActor.assumeIsolated {
             EnvConfig.overlay = [:]
             WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
-            AppearanceApplier.apply = nil
             AppearanceApplier.resolveTerminalColors = nil
-            AppearanceApplier.resolveActiveThemeSlug = nil
         }
         super.tearDown()
     }
@@ -116,43 +114,6 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(config.contains("keybind = shift+left="), "the ⇧+arrow select keybind is emitted")
     }
 
-    /// The per-SCOPE (Light/Dark-theme) font override REACHES the live terminal. With Global
-    /// (`terminal.fontFamily`) unset, the active slot's `appearance.themeFonts[slug]` resolves into the
-    /// builder's primary `font-family` line. If the builder instead read the raw `terminal.fontFamily`,
-    /// the per-scope font would never apply (revert-to-confirm-fail).
-    func testPerScopeThemeFontReachesTheBuilderOutput() {
-        // The GUI hook reports the active slot's resolved theme slug.
-        AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        // Global unset (so the per-theme override wins — the "Global overrides theme" precedence) + a
-        // per-theme font for the active slug.
-        store.terminal.fontFamily = ""
-        store.appearance.themeFonts = ["dracula": "Fira Code"]
-
-        let config = TerminalConfigBroadcaster.shared.configString
-        XCTAssertTrue(
-            config.contains("font-family = Fira Code"),
-            "the active scope's per-theme font reaches the live terminal config",
-        )
-    }
-
-    /// An explicitly-set per-SCOPE font WINS over a non-empty Global `terminal.fontFamily` — so
-    /// the non-empty Global DEFAULT can never silently shadow a Light/Dark-theme font. The builder emits the
-    /// per-theme family, not the Global one. FAILS on a "Global overrides theme" resolver.
-    func testPerScopeFontWinsOverSetGlobalFont() {
-        AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        store.terminal.fontFamily = "JetBrains Mono"
-        store.appearance.themeFonts = ["dracula": "Fira Code"]
-
-        let config = TerminalConfigBroadcaster.shared.configString
-        XCTAssertTrue(config.contains("font-family = Fira Code"), "the per-theme font wins over a set Global")
-        XCTAssertFalse(
-            config.contains("font-family = JetBrains Mono"),
-            "the Global font no longer shadows the explicit per-scope override",
-        )
-    }
-
     // MARK: Appearance (client chrome; NEVER touches the overlay/sidecar)
 
     /// A default ``AppearancePreferences`` + a default ``PreferencesStore`` leaves ``EnvConfig/overlay``
@@ -165,13 +126,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(EnvConfig.overlay.isEmpty, "default appearance must not write the env overlay")
     }
 
-    func testAppearanceApplyRepointsThemeAndWritesDensityWithoutOverlayOrSidecar() {
+    func testAppearanceApplyWritesDensityWithoutOverlayOrSidecar() {
         EnvConfig.overlay = [:]
-        // Capture the WHOLE model the GUI-layer ThemeStore hook receives (the seam passes the full
-        // `AppearancePreferences`, not a bare `ThemeChoice?`; the store can't import ClientUI).
-        var appliedAppearance: AppearancePreferences?
-        AppearanceApplier.apply = { appliedAppearance = $0 }
-
         let defaults = makeIsolatedDefaults()
         // A temp sidecar URL that must NOT be written by an appearance change.
         let sidecar = FileManager.default.temporaryDirectory
@@ -179,78 +135,31 @@ final class PreferencesStoreApplyTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: sidecar) }
 
         let store = PreferencesStore(defaults: defaults, sidecarURL: sidecar)
-        // init applies the default (all-nil) appearance once → hook fired with the default model.
-        XCTAssertEqual(appliedAppearance, AppearancePreferences(), "init applies the default appearance")
-        appliedAppearance = nil
         // init's applyVideoAndAgent already wrote the (default) sidecar; capture its bytes to prove an
         // appearance change does NOT re-touch it.
         let sidecarBefore = try? Data(contentsOf: sidecar)
 
-        store.appearance = AppearancePreferences(theme: .dracula, density: "compact")
+        store.appearance = AppearancePreferences(density: "compact")
 
-        // 1) Repoints the theme (via the AppearanceApplier hook → ThemeStore.shared in the GUI layer) — the
-        //    WHOLE model is handed over so the GUI resolves the dual-slot / custom-slug / follow-OS selection.
-        XCTAssertEqual(
-            appliedAppearance, AppearancePreferences(theme: .dracula, density: "compact"),
-            "appearance apply hands the GUI layer the whole model",
-        )
-        // 2) Persists under settings.appearance.v1.
+        // 1) Persists under settings.appearance.v1.
         let blob = defaults.data(forKey: "settings.appearance.v1")
         XCTAssertNotNil(blob)
         let decoded = try? JSONDecoder().decode(AppearancePreferences.self, from: blob ?? Data())
-        XCTAssertEqual(decoded, AppearancePreferences(theme: .dracula, density: "compact"))
-        // 3) Writes SettingsKey.density.
+        XCTAssertEqual(decoded, AppearancePreferences(density: "compact"))
+        // 2) Writes SettingsKey.density.
         XCTAssertEqual(defaults.string(forKey: SettingsKey.density), "compact")
-        // 4) Does NOT mutate the env overlay …
+        // 3) Does NOT mutate the env overlay …
         XCTAssertTrue(EnvConfig.overlay.isEmpty, "appearance must not touch EnvConfig.overlay")
-        // 5) … and does NOT re-touch the sidecar (the only writer is the video/agent apply path; an
+        // 4) … and does NOT re-touch the sidecar (the only writer is the video/agent apply path; an
         //    appearance change leaves the sidecar bytes exactly as init left them).
         let sidecarAfter = try? Data(contentsOf: sidecar)
         XCTAssertEqual(sidecarAfter, sidecarBefore, "an appearance change must not rewrite the sidecar")
     }
 
-    /// Golden-safety: the dual-slot / follow-OS / per-theme-font appearance fields
-    /// are PURE client chrome — setting them must NOT mutate ``EnvConfig/overlay`` nor rewrite the sidecar (the
-    /// frozen golden corpus would shift otherwise). The whole model still reaches the GUI hook for resolution.
-    func testDualSlotAppearanceFieldsStayOutOfOverlayAndSidecar() {
-        EnvConfig.overlay = [:]
-        var appliedAppearance: AppearancePreferences?
-        AppearanceApplier.apply = { appliedAppearance = $0 }
-
-        let defaults = makeIsolatedDefaults()
-        let sidecar = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-dualslot-sidecar-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: sidecar) }
-
-        let store = PreferencesStore(defaults: defaults, sidecarURL: sidecar)
-        let sidecarBefore = try? Data(contentsOf: sidecar)
-        appliedAppearance = nil
-
-        let dualSlot = AppearancePreferences(
-            theme: .alucard,
-            themeDark: .dracula,
-            useSeparateDarkTheme: true,
-            themeFonts: ["dark": "Fira Code"],
-        )
-        store.appearance = dualSlot
-
-        // The whole dual-slot model reaches the GUI hook …
-        XCTAssertEqual(appliedAppearance, dualSlot, "the whole dual-slot model reaches the GUI hook")
-        // … it round-trips through UserDefaults …
-        let blob = defaults.data(forKey: "settings.appearance.v1")
-        XCTAssertEqual(try? JSONDecoder().decode(AppearancePreferences.self, from: blob ?? Data()), dualSlot)
-        // … and NOTHING leaked into the overlay or the sidecar (the golden canary).
-        XCTAssertTrue(EnvConfig.overlay.isEmpty, "dual-slot appearance must not touch EnvConfig.overlay")
-        XCTAssertEqual(
-            try? Data(contentsOf: sidecar), sidecarBefore,
-            "dual-slot appearance must not rewrite the sidecar",
-        )
-    }
-
     func testResetAllResetsAppearance() {
         let defaults = makeIsolatedDefaults()
         let store = PreferencesStore(defaults: defaults, sidecarURL: nil)
-        store.appearance = AppearancePreferences(theme: .dracula, density: "compact")
+        store.appearance = AppearancePreferences(density: "compact")
         XCTAssertNotEqual(store.appearance, AppearancePreferences())
         store.resetAll()
         XCTAssertEqual(store.appearance, AppearancePreferences(), "resetAll restores the default appearance")
@@ -258,8 +167,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     func testMalformedPersistedAppearanceDecodesToDefault() {
         let defaults = makeIsolatedDefaults()
-        // Seed a malformed blob under the appearance key (unknown theme raw → whole-struct decode fails).
-        defaults.set(Data(#"{"theme":"midnight"}"#.utf8), forKey: "settings.appearance.v1")
+        // Seed a malformed blob under the appearance key (a non-object → whole-struct decode fails).
+        defaults.set(Data("[1,2,3]".utf8), forKey: "settings.appearance.v1")
         let store = PreferencesStore(defaults: defaults, sidecarURL: nil)
         XCTAssertEqual(store.appearance, AppearancePreferences(), "a malformed blob decode-fails to default")
     }

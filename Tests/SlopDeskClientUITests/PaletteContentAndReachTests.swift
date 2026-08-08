@@ -173,31 +173,7 @@ final class PaletteContentAndReachTests: XCTestCase {
         )
     }
 
-    // MARK: - Batch 4 (catalog completeness): theme verb, layout presets
-
-    /// The Theme verb ("Switch Theme") is in the catalog under SETTINGS, routing its coordinator action.
-    /// REVERT-TO-CONFIRM-FAIL: it was absent (the palette had Open Settings only), so `catalog.first` is
-    /// nil → `XCTUnwrap` trips.
-    func testSwitchThemeVerbIsInTheCatalog() throws {
-        let item = try row("action.switchTheme")
-        XCTAssertEqual(item.title, "Switch Theme", "the 'action.switchTheme' row's title")
-        XCTAssertEqual(item.category, .settings, "the theme verb groups under SETTINGS")
-        XCTAssertEqual(item.filter, .actions, "the theme verb is a verb (Actions filter)")
-        XCTAssertTrue(searchIDs("theme").contains("action.switchTheme"), "typing 'theme' surfaces Switch Theme")
-    }
-
-    /// CLOSED loop: the Switch Theme row runs the injected ``OverlayCoordinator`` closure (the app binds it
-    /// to ``PreferencesStore``), then closes the palette. FAILS if the row's run arm dropped its closure
-    /// (the dead-control regression the audit flags).
-    func testRunningSwitchThemeRowFiresInjectedCoordinatorClosure() throws {
-        let (overlay, _) = makeOverlay()
-        var fired = false
-        overlay.switchTheme = { fired = true }
-        overlay.openPalette()
-        try overlay.run(row("action.switchTheme"))
-        XCTAssertTrue(fired, "running 'action.switchTheme' fires its injected coordinator closure")
-        XCTAssertFalse(overlay.paletteVisible, "running 'action.switchTheme' closes the palette")
-    }
+    // MARK: - Batch 4 (catalog completeness): layout presets
 
     /// The five NAMED layout presets (tmux/zellij `select-layout`; registry-documented "menu/palette only") are
     /// now palette rows under PANE, each a `.store` arm calling ``WorkspaceStore/applyLayout(_:)``. REVERT-TO-

@@ -131,7 +131,7 @@ struct ToastStackView: View {
     /// state — and spends the status quartet's unused fourth rung on the case it was minted for.
     ///
     /// Pure + `static` so it can be pinned by a unit test without instantiating the view. `@MainActor`
-    /// because the `Slate.*` token accessors read the runtime `ThemeStore`.
+    /// because the `Slate.*` token accessors are main-actor isolated.
     @MainActor
     static func tint(for flavor: Toast.Flavor) -> Color {
         switch flavor {

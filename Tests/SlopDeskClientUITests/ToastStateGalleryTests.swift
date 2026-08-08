@@ -27,14 +27,6 @@ import XCTest
 
 @MainActor
 final class ToastStateGalleryTests: XCTestCase {
-    override func tearDown() {
-        // The theme is process-wide (`ThemeStore.shared`), so a light-theme group must not leak into
-        // whatever test runs next.
-        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
-        MainActor.assumeIsolated { ThemeStore.shared.active = .dracula }
-        super.tearDown()
-    }
-
     // MARK: - The gallery groups
 
     /// Every (source, flavour) pair — the full headline vocabulary. This is the group that shows the
@@ -154,24 +146,6 @@ final class ToastStateGalleryTests: XCTestCase {
                 .frame(width: 400, height: 300)
                 .background(Slate.Surface.face),
         )
-    }
-
-    /// The same eyebrow vocabulary under a LIGHT theme. Every token repoints through `ThemeStore`, so a card
-    /// that only reads on dark is a broken card — the `raised`-over-`face` step and the four status hues
-    /// both have to survive the swap.
-    func testGalleryLightTheme() throws {
-        ThemeStore.shared.active = .alucard
-        try dump("5-light", captioned: [
-            ("light · agent attention", card(.agent, .attention, "Claude", "slop-desk ▸ api")),
-            ("light · agent finished", card(.agent, .success, "Claude", "refactor the reducer")),
-            ("light · command failed", card(.command, .error, "make check", "exit 1 · 42s")),
-            ("light · command clean", card(.command, .success, "make check", "exit 0 · 42s")),
-            (
-                "light · collapsed spine row",
-                card(.command, .default, "npm run dev", "listening on :3000", expanded: false),
-            ),
-            ("light · hovered", card(.agent, .attention, "Claude", "slop-desk ▸ api", hovering: true)),
-        ])
     }
 
     // MARK: - Card builders

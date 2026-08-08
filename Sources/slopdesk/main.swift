@@ -66,7 +66,6 @@ func printUsage() {
       font list [--monospace] [--family <s>] [--system|--user]   List fonts.
       font apply "<name>"                  Set the terminal font family (running app).
       font import <path> [--apply]         Install a font into ~/Library/Fonts (optionally apply).
-      theme list [--color <dark|light|all>]    List themes.
       keybind list [--action <s>]          List keybindings.
       jump [query] [--no-cd]               cd the focused pane to a frecency-ranked dir.
       learn [path]                         Record a directory visit (no path = focused pane cwd).
@@ -701,7 +700,7 @@ func cmdConfigValidate(_ args: [String]) -> Never {
     exit(0)
 }
 
-// MARK: - font / theme / keybind
+// MARK: - font / keybind
 
 func cmdFontList(_ rest: [String]) -> Never {
     var monospace = false
@@ -833,37 +832,6 @@ func cmdFont(_ rest: [String]) -> Never {
     case "apply": cmdFontApply(Array(rest.dropFirst()))
     case "import": cmdFontImport(Array(rest.dropFirst()))
     default: die("font: expected 'list', 'apply', or 'import'", code: 2)
-    }
-}
-
-func cmdThemeList(_ rest: [String]) -> Never {
-    var color: ClientControlProtocol.ThemeColorFilter = .all
-    var idx = 0
-    while idx < rest.count {
-        switch rest[idx] {
-        case "--color":
-            guard idx + 1 < rest.count else { die("theme list: --color requires dark|light|all", code: 2) }
-            idx += 1
-            guard let parsed = ClientControlProtocol.themeColorFilter(forToken: rest[idx]) else {
-                die("theme list: invalid --color '\(rest[idx])' (dark|light|all)", code: 2)
-            }
-            color = parsed
-        default: die("theme list: unknown flag '\(rest[idx])'", code: 2)
-        }
-        idx += 1
-    }
-    emitList(
-        method: ClientControlProtocol.Method.themeList,
-        params: ClientControlProtocol.themeListParams(color: color),
-        key: "themes",
-        render: CLIFormatting.themes,
-    )
-}
-
-func cmdTheme(_ rest: [String]) -> Never {
-    switch rest.first {
-    case "list": cmdThemeList(Array(rest.dropFirst()))
-    default: die("theme: expected 'list'", code: 2)
     }
 }
 
@@ -1234,8 +1202,6 @@ case "config":
     cmdConfig(invocation.rest)
 case "font":
     cmdFont(invocation.rest)
-case "theme":
-    cmdTheme(invocation.rest)
 case "keybind":
     cmdKeybind(invocation.rest)
 case "jump":

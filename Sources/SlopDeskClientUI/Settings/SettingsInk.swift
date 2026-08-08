@@ -1,8 +1,8 @@
 // SettingsInk / SettingsType — the SYSTEM colour + type vocabulary the Settings surface is drawn in.
 //
-// WHY THIS EXISTS: Settings used to paint itself from `Slate.*`, which resolves through `ThemeStore` to
-// whichever FOUNDRY seed the TERMINAL is wearing. That is right for the workspace — the pane, the rail
-// and the chrome around them are one instrument, and the theme is their subject. It is wrong for Settings.
+// WHY THIS EXISTS: Settings used to paint itself from `Slate.*`, i.e. from whatever seed the TERMINAL
+// is wearing. That is right for the workspace — the pane, the rail and the chrome around them are one
+// instrument, and the terminal's colour world is their subject. It is wrong for Settings.
 // Settings is a stock `Settings` scene in a system-chromed window full of native `Form` / `Toggle` / `Picker` /
 // `Stepper` controls: those draw themselves from the OS appearance and the system accent no matter what, so a
 // theme-tinted label beside a system-blue switch reads as two apps in one window. A preferences window is
@@ -29,8 +29,8 @@ import UIKit
 /// The Settings surface's colour vocabulary — one name per role, every one resolved from an OS semantic
 /// colour so the page tracks the system appearance and accent instead of the terminal theme.
 ///
-/// Nonisolated on purpose: unlike `Slate.*` (which reads the `@MainActor` `ThemeStore`), nothing here has
-/// app state behind it, so a header helper or a pure preview can use it off the main actor.
+/// Nonisolated on purpose: unlike the `@MainActor` `Slate.*` accessors, nothing here has app state
+/// behind it, so a header helper or a pure preview can use it off the main actor.
 enum SettingsInk {
     // MARK: Text
 

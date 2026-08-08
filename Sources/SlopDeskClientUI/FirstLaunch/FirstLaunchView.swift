@@ -3,17 +3,16 @@
 // A non-blocking, one-time setup flow composing already-built settings into a first-launch checklist
 // (`spec/getting-started__first-launch.md`, governed by the 6 screenshots): On-Launch, Set-as-Default-
 // Terminal (LOCAL handler; the remote "Common Apps" case honestly-DISABLED with a note), Install-CLI (the
-// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite), Theme picker, and Install-Claude-hooks
+// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite) and Install-Claude-hooks
 // (the `AgentHooksController` card). The gating + step order live in the PURE `FirstLaunchModel`
 // (`SlopDeskWorkspaceCore`); this is the view layer only — compiled + HW-verified, never unit-tested.
 //
-// iOS keeps the cross-platform steps (On-Launch, Theme, Claude-hooks); `FirstLaunchModel.steps(for: .iOS)`
+// iOS keeps the cross-platform steps (On-Launch, Claude-hooks); `FirstLaunchModel.steps(for: .iOS)`
 // drops the two macOS-only OS-integration steps, so the macOS-only step bodies (`#if os(macOS)`) are never
 // reached on iOS.
 
 #if canImport(SwiftUI)
 import Defaults
-import SlopDeskVideoProtocol // ThemeChoice
 import SlopDeskWorkspaceCore // FirstLaunchModel, PreferencesStore
 import SwiftUI
 
@@ -77,8 +76,6 @@ public struct FirstLaunchView: View {
         switch model.currentStep {
         case .onLaunch:
             FirstLaunchOnLaunchStep()
-        case .theme:
-            FirstLaunchThemeStep(store: store, model: model)
         case .installClaudeHooks:
             FirstLaunchClaudeHooksStep(model: model)
         case .defaultTerminal:
@@ -170,76 +167,9 @@ private struct FirstLaunchOnLaunchStep: View {
     }
 }
 
-// MARK: - Step 4 · Theme (cross-platform)
+// MARK: - Step 4 · Install Claude Code hooks (cross-platform, Claude only)
 
-/// Step 4 — a compact theme grid (the built-ins). Picking a swatch writes the light/primary slot
-/// (`store.appearance.theme`) exactly like Settings → Appearance, so the whole app retints LIVE. A "more in
-/// Settings" note points at the full grid + the ⌘⇧P palette flow.
-private struct FirstLaunchThemeStep: View {
-    @Bindable var store: PreferencesStore
-    let model: FirstLaunchModel
-
-    /// The built-ins offered in the first-launch grid (light-then-dark ordering, curated).
-    private let choices: [(ThemeChoice, String)] = [
-        (.alucard, "Alucard"),
-        (.dracula, "Dracula"),
-    ]
-
-    private let columns = [GridItem(.adaptive(minimum: 150), spacing: Slate.Metric.space2)]
-
-    private var selected: ThemeChoice {
-        store.appearance.theme ?? .dracula
-    }
-
-    var body: some View {
-        FirstLaunchCard {
-            LazyVGrid(columns: columns, spacing: Slate.Metric.space2) {
-                ForEach(choices, id: \.0) { choice, label in
-                    themeSwatch(choice, label)
-                }
-            }
-            FirstLaunchNote("See every theme — and tweak colours, fonts, and padding — in Settings → Appearance.")
-        }
-    }
-
-    private func themeSwatch(_ choice: ThemeChoice, _ label: String) -> some View {
-        let isSelected = selected == choice
-        return Button {
-            select(choice)
-        } label: {
-            HStack(spacing: Slate.Metric.space2) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Slate.State.accent : Slate.Text.tertiary)
-                Text(label)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
-                Spacer(minLength: 0)
-            }
-            .padding(Slate.Metric.space2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .fill(isSelected ? Slate.State.selected : Slate.Surface.face),
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .stroke(isSelected ? Slate.State.accent : Slate.Line.card, lineWidth: Slate.Metric.hairline),
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func select(_ choice: ThemeChoice) {
-        var appearance = store.appearance
-        appearance.theme = choice
-        store.appearance = appearance // didSet re-applies the theme LIVE (ThemeStore repoints every token).
-        model.markComplete(.theme)
-    }
-}
-
-// MARK: - Step 5 · Install Claude Code hooks (cross-platform, Claude only)
-
-/// Step 5 — reuses the `AgentHooksController` install card (Claude only). The controller is injected
+/// Step 4 — reuses the `AgentHooksController` install card (Claude only). The controller is injected
 /// by the app scene (`\.agentHooksController`); when no pane backs it the card shows the honest "Connect a
 /// session" disabled state rather than a dead button.
 private struct FirstLaunchClaudeHooksStep: View {

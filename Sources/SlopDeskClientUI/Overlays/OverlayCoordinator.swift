@@ -142,11 +142,6 @@ public final class OverlayCoordinator {
     /// `nil` (iOS / tests / a pre-`onAppear` scene) falls back to ``WorkspaceStore/requestCloseWindow()`` — the
     /// SAME parked-confirmation fallback the ⌘⇧W route arm uses, never a dead control.
     @ObservationIgnored public var closeWindow: (@MainActor () -> Void)?
-    /// Switches the active local theme (the palette "Switch Theme" row). Bound app-side
-    /// to ``PreferencesStore`` (advances the primary slot through the built-in themes), so the row retints
-    /// chrome + terminal cells through the SAME live `appearance.theme` that Settings → Appearance edits. No-op
-    /// by default (tests / previews), so the row is never a trap.
-    @ObservationIgnored public var switchTheme: @MainActor () -> Void = {}
     /// EAGERLY resolve the focused pane's cwd (host `cwd()` RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY header's cwd pill is populated the
     /// moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``. WITHOUT this
@@ -524,11 +519,6 @@ public final class OverlayCoordinator {
         case .openCheatSheet:
             closePalette()
             openCheatSheet()
-        // A live theme switch — chainable (⌘↩ keep-open) like `.store` rows, so the
-        // user can cycle themes without re-opening. No-op by default (tests / previews).
-        case .switchTheme:
-            switchTheme()
-            if !keepOpen { closePalette() }
         case .noOp:
             break
         }

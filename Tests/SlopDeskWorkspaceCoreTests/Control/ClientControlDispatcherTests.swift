@@ -28,7 +28,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var configUnsetReturn = true
     var configReloadReturn = true
     var configShowReturn: [ClientConfigEntry] = []
-    var themesReturn: [ClientThemeInfo] = []
     var fontsReturn: [ClientFontInfo] = []
     var keybindsReturn: [ClientKeybindInfo] = []
     var capturePaneReturn: [String]? = []
@@ -56,7 +55,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var recordedConfigSetTransient: Bool?
     var recordedConfigUnsetKey: String?
     var recordedConfigUnsetTransient: Bool?
-    var recordedThemeColor: ClientControlProtocol.ThemeColorFilter?
     var recordedFontMonospace: Bool?
     var recordedFontFamily: String?
     var recordedFontScope: ClientControlProtocol.FontScope?
@@ -131,11 +129,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     func configReload() -> Bool { configReloadReturn }
 
     func configShow() -> [ClientConfigEntry] { configShowReturn }
-
-    func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo] {
-        recordedThemeColor = color
-        return themesReturn
-    }
 
     func listFonts(
         monospaceOnly: Bool,
@@ -529,34 +522,16 @@ final class ClientControlDispatcherTests: XCTestCase {
 
     func testConfigShowOrderedEntries() {
         backend.configShowReturn = [
-            ClientConfigEntry(key: "theme", value: "Dracula"),
+            ClientConfigEntry(key: "cursor-style", value: "block"),
             ClientConfigEntry(key: "font-size", value: "14"),
         ]
         let entries = result(run(ClientControlProtocol.Method.configShow))["config"] as? [[String: Any]]
         XCTAssertEqual(entries?.count, 2)
-        XCTAssertEqual(entries?.first?["key"] as? String, "theme")
+        XCTAssertEqual(entries?.first?["key"] as? String, "cursor-style")
         XCTAssertEqual(entries?.last?["key"] as? String, "font-size")
     }
 
-    // MARK: theme / font / keybind
-
-    func testThemeListDefaultColorAll() {
-        backend.themesReturn = [ClientThemeInfo(name: "Paper", isDark: false, isActive: true)]
-        let obj = run(ClientControlProtocol.Method.themeList)
-        XCTAssertEqual(backend.recordedThemeColor, .all)
-        let themes = result(obj)["themes"] as? [[String: Any]]
-        XCTAssertEqual(themes?.first?["name"] as? String, "Paper")
-        XCTAssertEqual(themes?.first?["active"] as? Bool, true)
-    }
-
-    func testThemeListColorFilter() {
-        _ = run(ClientControlProtocol.Method.themeList, ["color": "dark"])
-        XCTAssertEqual(backend.recordedThemeColor, .dark)
-    }
-
-    func testThemeListInvalidColorErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.themeList, ["color": "ultraviolet"])))
-    }
+    // MARK: font / keybind
 
     func testFontListFilters() throws {
         let obj = run(

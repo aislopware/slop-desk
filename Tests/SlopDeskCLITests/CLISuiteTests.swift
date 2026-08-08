@@ -263,7 +263,7 @@ final class CLICompletionsTests: XCTestCase {
     /// an accidental `codex`/`opencode` entry — FAILS this test.
     private let expectedSurface = [
         "open", "view", "edit",
-        "config", "font", "theme", "keybind",
+        "config", "font", "keybind",
         "window", "windows", "tab", "tabs", "pane", "panes",
         "watch", "watch:claude",
         "jump", "learn", "ignore",

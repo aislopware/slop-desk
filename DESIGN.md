@@ -5,16 +5,13 @@ colors:
   # The whole app is ONE hue family (OKLCH H≈289) at different lightness rungs. These are the only fixed colours.
   accent: "#644AC9" # brand Dracula purple, light appearances (dark appearances use the Pro #9580FF)
   accent-deep: "#4B29A7" # fill/badge band (dark appearances #6B4BD6)
-  glass-dracula: "#22212C" # default terminal profile — the Dracula Pro glass, verbatim
+  glass-dracula: "#22212C" # THE terminal profile — the Dracula Pro glass, verbatim
   glass-dracula-ink: "#F8F8F2"
   glass-dracula-edge: "#454158" # in-glass split divider + selection fill (the Pro selection)
   glass-dracula-accent: "#9580FF" # on-glass accent (focus corner, drag line)
-  ground: "#FFFBEB" # THE GROUND — Alucard's published face, under BOTH profiles: the navigator, the code panel, the top band, the island's moat
+  ground: "#FFFBEB" # THE GROUND — Alucard's published face: the navigator, the code panel, the top band, the island's moat
   chrome-dracula-line: "#312F37" # the in-island pane seam — an INK TINT: 10% of the glass ink over the ground (lighter than both surfaces it separates)
   chrome-dracula-lift: "#2E2E3C" # hover/raised rung — the official rail offset (+0C/+0D/+10)
-  glass-alucard: "#FFFBEB" # the light profile's glass — the SAME cream as the ground, so its island reads by corner + hairline alone
-  chrome-alucard-line: "#D8D3C3" # 14.2% ink over the cream ground — unequal to the dark 10% ON PURPOSE: solved for the same perceived step (OKLab ΔL ≈ 0.09) because black into cream moves lightness slower than white into near-black
-  chrome-alucard-lift: "#FFFDF4"
   secure-input-blue: "#2D6FE8" # fixed, never themed
   sync-input-amber: "#D97A1F" # fixed, never themed
 typography:
@@ -62,14 +59,14 @@ spacing:
   space4: "16px"
 components:
   field:
-    backgroundColor: "{colors.ground} — the OPAQUE ground, the SAME cream under both profiles, painted at the window root and under all three columns"
-    note: "no material, no gradient, no transparency. Because the ground is light in both profiles the CHROME polarity is light in both (`chromeIsLight == true`); the glass opts out locally via `Slate.glassColorScheme`"
+    backgroundColor: "{colors.ground} — the OPAQUE ground, painted at the window root and under all three columns"
+    note: "no material, no gradient, no transparency. Because the ground is light the CHROME polarity is light (the app pins `.aqua`); the glass opts out locally via `Slate.glassColorScheme`"
   column-divider:
     backgroundColor: "{colors.ground} — GROUND, not a seam"
     width: "1px"
     note: "FlatDividerSplitView paints the divider AND the split-view backing layer in the ground colour, so the three columns read as one continuous sunken field; the only boundary the window draws is the island's own edge
   island:
-    backgroundColor: "{colors.glass-dracula} (Alucard: {colors.glass-alucard})"
+    backgroundColor: "{colors.glass-dracula}"
     rounded: "{rounded.island} — a WINDOW-scale corner for a window-scale surface: 26 is what macOS 26 Tahoe puts on a full-chrome window (measured on this OS). The island sits ~230px clear of the frame's own corners, so nothing constrains it to stay under the window's 16 (user-directed 2026-08-08)"
     inset: "8px moat on ALL FOUR sides — the island rises level with the window's top edge (user-directed 2026-08-08). Only a COLLAPSED navigator widens the top side back to 40px, so the traffic lights keep standing on bare ground"
     border: "1px Slate.Line.divider, inset-stroked inside the clip"
@@ -118,10 +115,9 @@ components:
 # SlopDesk Design System — ONE ISLAND
 
 North star: **one ground, one island.** SlopDesk's window holds exactly two tones. The GROUND is
-Alucard's published cream `#FFFBEB`, and it is the same cream under both profiles: the navigator,
-the code panel, the top band and the moat all stand on it, flush, un-rounded, with no seam between
-them — they SINK. Lifted off that ground is exactly ONE surface: the terminal canvas, wearing the
-profile's glass, rounded at 26pt, floating in a uniform 8pt moat on ALL FOUR SIDES — it rises level
+Alucard's published cream `#FFFBEB`: the navigator, the code panel, the top band and the moat all
+stand on it, flush, un-rounded, with no seam between them — they SINK. Lifted off that ground is
+exactly ONE surface: the terminal canvas, wearing the Dracula Pro glass, rounded at 26pt, floating in a uniform 8pt moat on ALL FOUR SIDES — it rises level
 with the window's top edge, beside the traffic lights rather than below them. Inside the island, panes tile edge-to-edge and are parted by a
 hairline, never by a channel — one lift, one vocabulary. SELECTION is the island's only echo: the
 chosen tab is a COMPACT island, the same material at row scale, so the window says "this one" in the
@@ -132,7 +128,8 @@ Rio-Canario / JetBrains-Islands read; the literal answer — every column and ev
 island — came back **too busy**, and the correction named the shape precisely: one big island in
 the middle for the terminal, splits parted by a divider, both side panels sunk into the background,
 the VS Code background matching that background, and the background itself the Alucard theme's own
-bg. Everything below follows from those five sentences.
+bg. Everything below follows from those five sentences. Later the same day the theme PICKER went
+too — see **ONE appearance**.
 
 The colour world is still Dracula Pro's published set, but it now lives entirely on the GLASS: face
 `#22212C`, ink `#F8F8F2`, selection `#454158`, comment `#7970A9`, and the normalized accent seven
@@ -140,13 +137,24 @@ The colour world is still Dracula Pro's published set, but it now lives entirely
 indicators beyond the attention roll-up, no per-project identity hues on chrome, colour lives in the
 terminal's ANSI and the one accent.
 
-### Why a light ground under a dark theme
+### Why a light ground under a dark terminal
 
 Arithmetic, not taste. A DARKER ground under the Pro face `#22212C` cannot separate: even at pure
 black the ratio is 1.32:1, so the entire dark half of the axis is unusable for a lift. A light
-ground gives ~13:1 — the Canario read, a bright frame carrying a dark canvas. On Alucard the ground
-and the glass are the same cream by construction, so the window reads as one calm light surface and
-the island is drawn by its corner and its hairline edge alone.
+ground gives ~13:1 — the Canario read, a bright frame carrying a dark canvas.
+
+### ONE appearance
+
+There is no theme picker (user-directed 2026-08-08: *one theme — the background always white, the
+terminal dark*). The app ships a single appearance — Alucard's cream ground carrying Dracula Pro's
+glass — and the machinery that used to choose between two is gone: no light/dark slots, no
+follow-OS resolution, no per-theme font map, no runtime `ThemeStore`, no `theme` CLI noun or config
+key, no first-launch theme step. `Slate.theme` is a constant.
+
+The second profile had already lost its reason to exist: law 4 put the SAME cream ground under both,
+so picking "Alucard" only flattened the one contrast this design is built on — a cream frame around
+a dark canvas — leaving a window with no island in it. What survives of the old machinery is the
+app-level LIGHT pin (`SlateAppearancePin`), which the cream ground still requires.
 
 ### Geometry
 
@@ -176,16 +184,14 @@ the pill a 32pt row reaches at 16.
 | World | Where | Colour source |
 |---|---|---|
 | **Chrome** | the ground, sidebar, dividers, the hover-reveal titlebar, the panel tab strip, the embedded workbench, overlays, Settings, empty states | Semantic system colours resolving LIGHT, on the one cream ground |
-| **Glass** | the terminal island, the device streams, satellite pane windows | The active **terminal profile** (`SlateTheme`) |
+| **Glass** | the terminal island, the device streams, satellite pane windows | The one **terminal profile** (`SlateTheme.app`) |
 
-**One chrome polarity, always light**: `chromeIsLight == true` in every profile. That is a
-CONSEQUENCE of the ground, not a second decision — semantic ink pinned dark would draw white on
-cream in the navigator. `ThemeStore.pinAppAppearance` pins `NSApp.appearance` from the CHROME
-polarity, so every auxiliary window matches the workspace chrome and nothing is half-and-half; the
-glass is the one surface outside that pin, opting out locally via `Slate.glassColorScheme`. The
-"System" choice follows the OS by resolving to
-the pair (dark → Dracula, light → Alucard); a concrete choice ignores the OS — the GLASS moves, the
-ground never does. The embedded workbench webviews are pinned per-webview to the chrome polarity and
+**One chrome polarity, always light.** That is a CONSEQUENCE of the ground, not a second decision —
+semantic ink pinned dark would draw white on cream in the navigator. `SlateAppearancePin` pins
+`NSApp.appearance` to `.aqua` once at launch, so every auxiliary window matches the workspace chrome
+and nothing is half-and-half; the glass is the one surface outside that pin, opting out locally via
+`Slate.glassColorScheme` (a constant `.dark`). The app does not follow the OS appearance at all.
+The embedded workbench webviews are pinned per-webview to the chrome polarity and
 seeded to the Monokai Pro / Monokai Pro Light pair with `window.autoDetectColorScheme`, plus a
 `workbench.colorCustomizations` block that repaints every VS Code surface — editor, gutter, sidebar,
 activity bar, tab strip, panel, status bar, title bar — in the ground cream and zeroes their borders,
@@ -205,13 +211,10 @@ boundary is exactly one edge in the whole window — the island's.
 - **Column dividers** — GROUND, not a seam. `FlatDividerSplitView` fills both `drawDivider(in:)`
   and the split view's backing layer with the ground tone, so the three columns read as one
   continuous sunken field. The ONE edge the window draws is the island's.
-- **Rules** — the profile's `chromeLine` (`#312F37` / `#D8D3C3`): the theme INK tinted over the
-  ground (user-directed 2026-08-08) — 10% dark / 14.2% light, the unequal pair that lands both
-  themes on the same perceived step (OKLab ΔL ≈ 0.09 vs the ground; equal fractions read weaker in
-  light because black into cream moves lightness slower). For pane seams inside the island and
-  section rules on the ground.
-- **Lift** — the profile's `chromeLift` (`#2E2E3C` / `#FFFDF4`) is the hover/raised rung for
-  chrome objects that need a step up from the ground.
+- **Rules** — the profile's `chromeLine` `#312F37`: the ink tinted 10% over the ground
+  (user-directed 2026-08-08), for pane seams inside the island and section rules on the ground.
+- **Lift** — the profile's `chromeLift` `#2E2E3C` is the hover/raised rung for chrome objects that
+  need a step up from the ground.
 - **Sidebar** = flat on the ground, with a 40pt traffic-light reserve at its top holding the
   collapse toggle and New Tab plate. Collapsing HIDES the column (chrome revert, user-directed
   2026-08-08 — the 80pt rail is retired with the islands layout it belonged to); the reopen
@@ -282,25 +285,20 @@ info status. Everything else interactive is the system's.
   pointer, and the SELECTED chip is a COMPACT ISLAND (island fill + hairline, ink on the glass) —
   the SAME chip the sidebar tab rows wear, because both are tabs answering the same question.
 
-## Terminal profiles (`SlateTheme`)
+## The terminal profile (`SlateTheme.app`)
 
-A profile is Terminal.app-style: cells bg/fg, 16-slot ANSI, selection, caret, edge line, on-glass
-ink tiers, an on-glass accent — plus the chrome ladder, whose `ground` rung is now the SAME in both
-profiles. The island tone is not a rung at all: it IS the glass face, so a profile cannot ship an
-island in a tone its terminal does not wear. Exactly TWO built-ins:
+The profile is Terminal.app-style: cells bg/fg, 16-slot ANSI, selection, caret, edge line, on-glass
+ink tiers, an on-glass accent — plus the chrome ladder. The island tone is not a rung at all: it IS
+the glass face, so the island can never ship in a tone the terminal does not wear. There is exactly
+ONE:
 
-| Profile | Glass = island | Ink | Edge (selection) | On-glass accent | Ground / line / lift |
-|---|---|---|---|---|---|
-| **Dracula** (default, dark) | `#22212C` | `#F8F8F2` | `#454158` | `#9580FF` | `#FFFBEB` / `#312F37` / `#2E2E3C` |
-| Alucard (light) | `#FFFBEB` | `#1F1F1F` | `#CFCFDE` | `#644AC9` | `#FFFBEB` / `#D8D3C3` / `#FFFDF4` |
+| Glass = island | Ink | Edge (selection) | On-glass accent | Ground / line / lift |
+|---|---|---|---|---|
+| `#22212C` | `#F8F8F2` | `#454158` | `#9580FF` | `#FFFBEB` / `#312F37` / `#2E2E3C` |
 
 ANSI: the Pro accent seven verbatim (no blue — the blue slot carries the purple, Dracula's own
-terminal convention); brights REPEAT the bases; bright-black = the comment tone. The Settings
-gallery previews each profile as a miniature of its own terminal. A profile choice is a WHOLE-APP
-choice: one polarity pins the app appearance and forces the glass scheme. The "System" choice (and
-the fresh-install default) follows the OS through the pair — OS dark → Dracula, OS light → Alucard
-— flipping live on an OS switch. The FIXED pills (secure blue `#2D6FE8`, sync amber `#D97A1F`) sit
-outside every palette.
+terminal convention); brights REPEAT the bases; bright-black = the comment tone. The FIXED pills
+(secure blue `#2D6FE8`, sync amber `#D97A1F`) sit outside the palette.
 
 ## Structure, type, motion (closed ladders)
 
@@ -349,14 +347,14 @@ outside every palette.
 - DON'T float per-pane cards, add pane shadows, or tint any column per project.
 - DON'T give any column its own material, tone or rounding — the ground is one opaque colour and
   the columns sink into it; only the terminal canvas is lifted.
-- DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
+- DON'T add appearance pins beyond the ONE `SlateAppearancePin` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
 - **Selection is a COMPACT ISLAND** (user-directed 2026-08-08) — the selected TAB, in the sidebar
   list and on the panel strip alike, is stamped out of the island's own material: island fill +
   divider hairline at `{rounded.compact-island}`, with the row's colour scheme flipped to the glass
-  polarity so every ink on it resolves against the plate it stands on. Under a dark profile that is
-  a real invert — a dark chip on the cream ground. This REVERSES the 2026-08-07 "no reverse-video,
+  polarity so every ink on it resolves against the plate it stands on: a real invert — a dark chip on
+  the cream ground. This REVERSES the 2026-08-07 "no reverse-video,
   no solid chip" verdict, which was written when the chrome ground was dark and a solid plate meant
   an off-family grey; on the cream ground the plate is the island tone, in family by construction.
   Still dead: accent tint or accent edge on the row, and underlines. `SlateListRow` (settings,

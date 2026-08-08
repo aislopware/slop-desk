@@ -1,20 +1,22 @@
 // FontSettingsView — the Appearance → Font section.
 //
 // Follows the design spec `docs/ui-shell/screenshots/font-setting.png` + `font-setting-bold.png`: the
-// "FONT FAMILY" section opens with a "Settings for" pill row of SCOPE TABS — Computed / Global / Light Theme
-// / Dark Theme / Fallback — then a contextual note, the "Auto-match weight & style" toggle, the Font Family
-// combobox with "Aa" specimens (and, when auto-match is OFF, the Bold / Italic / Bold-Italic face pickers),
-// then Text (size + line-height), Ligatures, and the Style & Rendering controls (bold / italic / underline /
-// blink / blending) with deferred-apply notes. This is the whole Font section for `AppearanceSettingsTab` —
-// a single family TextField + size Stepper can't express scope tabs, per-face pickers, or deferred-apply notes.
+// "FONT FAMILY" section opens with a "Settings for" pill row of SCOPE TABS — Global / Fallback — then a
+// contextual note, the "Auto-match weight & style" toggle, the Font Family combobox with "Aa" specimens
+// (and, when auto-match is OFF, the Bold / Italic / Bold-Italic face pickers), then Text (size +
+// line-height), Ligatures, and the Style & Rendering controls (bold / italic / underline / blink /
+// blending) with deferred-apply notes. This is the whole Font section for `AppearanceSettingsTab` — a
+// single family TextField + size Stepper can't express scope tabs, per-face pickers, or deferred-apply
+// notes.
+//
+// The Computed / Light Theme / Dark Theme tabs went with the theme picker (user-directed 2026-08-08):
+// with one appearance there is one font slot, so Global IS the computed family and there is no per-theme
+// map for it to lose against.
 //
 // BINDINGS (golden-safe — pure client chrome, never the wire/sidecar/`EnvConfig`): every render control binds
 // `store.terminal` (a ``TerminalPreferences`` font-parity field), so a change flows through the store's
 // `terminal` `didSet` → `applyTerminal()` → `TerminalConfigBroadcaster` and re-applies live via the
-// font-parity keys the builder emits. The per-theme scope tabs (Light / Dark) write
-// `store.appearance.themeFonts[slug]`, keyed by the slot's resolved theme slug (pure
-// ``FontScopeResolver/lightSlotSlug(_:)`` / `darkSlotSlug(_:)`); the read-only Computed tab shows
-// ``FontScopeResolver/resolvedFamily(global:themeFonts:slug:fallback:)`` for the active OS-appearance slot.
+// font-parity keys the builder emits.
 //
 // EVERY CONTROL HERE ACTUATES. Ligatures, fallback, per-face families, bold/italic mode, line-height and
 // `macos-like` blending (→ `font-thicken`) all map to a verified libghostty key and re-render live. The
@@ -77,7 +79,7 @@ struct FontSettingsView: View {
         }
     }
 
-    /// The "Settings for" label + the pill row of scope tabs (Computed / Global / Light / Dark / Fallback).
+    /// The "Settings for" label + the pill row of scope tabs (Global / Fallback).
     private var scopeTabs: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text("Settings for")
@@ -104,43 +106,22 @@ struct FontSettingsView: View {
         .buttonStyle(.plain)
     }
 
-    /// The contextual note under the tab row — the muted "saved into …" line, or (Global) the precedence
-    /// banner. NOTE: slopdesk resolves a per-theme font OVER Global (scope-over-Global, see
-    /// ``FontScopeResolver``), so the banner states the real precedence — Global applies only where a theme
-    /// sets no font of its own, not "takes priority everywhere".
+    /// The contextual note under the tab row.
     @ViewBuilder private var scopeNote: some View {
         switch scope {
-        case .computed:
-            note("Read-only — the effective font for the active theme. Edit Global, Light Theme, or Dark "
-                + "Theme to change it.")
         case .global:
-            warnNote("Applies everywhere a theme sets no font of its own; a Light or Dark theme font "
-                + "overrides this.")
-        case .light:
-            note("Saved into the light theme — travels with that theme.")
-        case .dark:
-            note("Saved into the dark theme — travels with that theme.")
+            note("The terminal's primary family, and the faces derived from it.")
         case .fallback:
             note("Fonts used, in order, when the primary font lacks a glyph (e.g. CJK or Nerd-Font icons).")
         }
     }
 
-    /// The body for the active scope — the read-only Computed value, the Global auto-match + four face
-    /// pickers, a single per-theme family picker for Light / Dark, or the Fallback list editor.
+    /// The body for the active scope — the Global auto-match + four face pickers, or the Fallback list
+    /// editor.
     @ViewBuilder private var scopeBody: some View {
         switch scope {
-        case .computed:
-            LabeledContent("Font Family") {
-                Text(computedFamily)
-                    .font(SettingsType.mono)
-                    .foregroundStyle(SettingsInk.secondary)
-            }
         case .global:
             globalFamilyEditors
-        case .light:
-            primaryFamilyRow(themeFontBinding(slug: lightSlug), placeholder: "Default (Global)")
-        case .dark:
-            primaryFamilyRow(themeFontBinding(slug: darkSlug), placeholder: "Default (Global)")
         case .fallback:
             FallbackListEditor(raw: $store.terminal.fontFamilyFallback)
         }
@@ -249,47 +230,6 @@ struct FontSettingsView: View {
         Text("macOS-like").tag(FontBlending.macosLike)
     }
 
-    // MARK: - Scope slug resolution + bindings
-
-    /// The slug the Light Theme tab writes under (pure ``FontScopeResolver``).
-    private var lightSlug: String { FontScopeResolver.lightSlotSlug(store.appearance) }
-    /// The slug the Dark Theme tab writes under.
-    private var darkSlug: String { FontScopeResolver.darkSlotSlug(store.appearance) }
-
-    /// The read-only Computed family for the slot active under the current OS appearance: Global wins, else the
-    /// active slot's per-theme font, else the bundled default. `ThemeStore.shared.osIsDark()` is the live OS
-    /// appearance probe (a closure → safe to read in `body`).
-    private var computedFamily: String {
-        let slug = FontScopeResolver.activeSlotSlug(store.appearance, osIsDark: ThemeStore.shared.osIsDark())
-        return FontScopeResolver.resolvedFamily(
-            global: store.terminal.fontFamily,
-            themeFonts: store.appearance.themeFonts,
-            slug: slug,
-            fallback: TerminalPreferences().fontFamily,
-        )
-    }
-
-    /// Bind a per-theme font (`appearance.themeFonts[slug]`): an empty write CLEARS the entry (and empties the
-    /// dict to `nil` when it was the last) so the slot reverts to Global — keeping the all-`nil` golden-safe
-    /// default. Mutating `store.appearance` once routes through its `didSet` (theme repoint), persisting only
-    /// to `UserDefaults`.
-    private func themeFontBinding(slug: String) -> Binding<String> {
-        Binding(
-            get: { store.appearance.themeFonts?[slug] ?? "" },
-            set: { newValue in
-                var appearance = store.appearance
-                var map = appearance.themeFonts ?? [:]
-                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
-                    map.removeValue(forKey: slug)
-                } else {
-                    map[slug] = newValue
-                }
-                appearance.themeFonts = map.isEmpty ? nil : map
-                store.appearance = appearance
-            },
-        )
-    }
-
     /// Bridge ``LineHeightMode`` (an associated-value enum) to the four-case picker. A `.custom` pick seeds
     /// from the live `customMultiplier`; switching back preserves the model.
     private var lineHeightChoiceBinding: Binding<LineHeightChoice> {
@@ -333,49 +273,21 @@ struct FontSettingsView: View {
             .foregroundStyle(SettingsInk.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
-
-    /// The red/amber-tinted banner styling (`font-setting-bold.png`), reused for the Global-scope
-    /// precedence call-out (a per-theme font can override Global).
-    private func warnNote(_ text: String) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Image(systemSymbol: .exclamationmarkTriangle)
-            Text(text)
-        }
-        .font(SettingsType.subtitle)
-        .foregroundStyle(SettingsInk.warn)
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .fill(SettingsInk.warn.opacity(0.12)),
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(SettingsInk.warn.opacity(0.4), lineWidth: 1),
-        )
-    }
 }
 
-// MARK: - FontScope (the five "Settings for" tabs)
+// MARK: - FontScope (the "Settings for" tabs)
 
-/// The Font-Family scope tabs (`font-setting.png`): the read-only effective family, the global override, the
-/// per-theme slots, and the fallback list. UI-only (the per-scope write target lives in `FontSettingsView`).
+/// The Font-Family scope tabs (`font-setting.png`): the primary family and the fallback list. UI-only
+/// (the per-scope write target lives in `FontSettingsView`).
 private enum FontScope: String, CaseIterable, Identifiable {
-    case computed
     case global
-    case light
-    case dark
     case fallback
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .computed: "Computed"
         case .global: "Global"
-        case .light: "Light Theme"
-        case .dark: "Dark Theme"
         case .fallback: "Fallback"
         }
     }

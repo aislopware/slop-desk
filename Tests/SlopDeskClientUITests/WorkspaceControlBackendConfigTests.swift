@@ -1,14 +1,13 @@
 // WorkspaceControlBackendConfigTests — pins the E20 `config get/set/unset/show/reload` path on the REAL
 // `WorkspaceControlBackend` (not the dispatcher's FAKE backend). The pre-fix backend wrote
 // `EnvConfig.overlay[key]` plus a dead `slopdesk.cli.config.*` UserDefaults namespace and ALWAYS
-// returned `true`, so `config set theme <X>` reported success while the GUI never retinted, and
-// `config get theme` returned the catalog default ("System"), not the live theme. Each assertion below
-// fails on that pre-fix backend (the theme never changes / the unknown key lyingly succeeds), so none is
-// tautological.
+// returned `true`, so a `config set` reported success while the GUI never changed and `config get`
+// returned the catalog default rather than the live value. Each assertion below fails on that pre-fix
+// backend (the live model never changes / the unknown key lyingly succeeds), so none is tautological.
 //
 // Hang-safe (CLAUDE.md rule #6): a tree-model store over the `MountTestPaneSession` fake, an isolated
-// `PreferencesStore`, a temp-file `FolderFrecencyStore`, and the GUI apply hook wired exactly as the app
-// does at launch (so a model change retints `ThemeStore`) — no socket, no window, no video/SCStream/Metal.
+// `PreferencesStore` and a temp-file `FolderFrecencyStore` — no socket, no window, no
+// video/SCStream/Metal.
 //
 // NOTE: `WorkspaceControlBackend` holds its store / preferences / folders WEAKLY (the app owns them), so
 // every test keeps all three in locals for the backend's lifetime.
@@ -44,79 +43,6 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
         return Harness(backend: backend, store: store, preferences: preferences, folders: folders)
     }
 
-    override func setUp() {
-        super.setUp()
-        // The nonisolated XCTestCase override runs on the main thread — enter the actor for the state it touches.
-        MainActor.assumeIsolated {
-            // Wire the GUI apply hook exactly as `SlopDeskClientUI` does at launch, so mutating the live
-            // `PreferencesStore.appearance` retints the shared `ThemeStore` — the mechanism `config set theme`
-            // relies on to drive the running app.
-            AppearanceApplier.apply = { ThemeStore.shared.apply(appearance: $0) }
-            // Deterministic OS-appearance probe (no NSApp in a test). Dark ⇒ the unset/default slot resolves to
-            // Dracula — the product default the finding expects `config get theme` to report.
-            ThemeStore.shared.osIsDark = { true }
-            ThemeStore.shared.apply(appearance: AppearancePreferences()) // reset to the default theme
-        }
-    }
-
-    override func tearDown() {
-        MainActor.assumeIsolated {
-            AppearanceApplier.apply = nil
-            AppearanceApplier.resolveTerminalColors = nil
-            AppearanceApplier.resolveActiveThemeSlug = nil
-            ThemeStore.shared.osIsDark = { ThemeStore.systemIsDark() }
-            ThemeStore.shared.apply(appearance: AppearancePreferences()) // leave the singleton at its default
-        }
-        super.tearDown()
-    }
-
-    // MARK: - config set theme drives the running app (the headline fix)
-
-    func testConfigSetThemeChangesActiveTheme() {
-        let h = makeHarness(#function)
-
-        // Default live theme = Dracula, NOT the catalog default "System".
-        XCTAssertEqual(h.backend.configGet(key: "theme"), "dracula")
-        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
-
-        // A built-in id (as listed by `theme list`) switches the ACTIVE theme + round-trips via `config get`.
-        let lightID = "alucard"
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: lightID, transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, lightID, "config set theme retints the running app")
-        XCTAssertEqual(h.backend.configGet(key: "theme"), lightID, "config get theme reflects the live theme")
-        XCTAssertEqual(
-            h.preferences.appearance.theme, .alucard,
-            "the selection is persisted to the typed model",
-        )
-
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "dracula", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
-    }
-
-    func testConfigSetThemeAcceptsAChoiceRawValueAndRejectsUnknown() {
-        let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "alucard")
-
-        // An unknown theme name is an HONEST error (false), not a silent success, and leaves the theme put.
-        XCTAssertFalse(h.backend.configSet(key: "theme", value: "Foundry Ember", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "alucard", "a rejected theme set does not change it")
-
-        // A ThemeChoice raw value that is NOT a built-in id also resolves: "system" follows the
-        // stubbed dark OS to the dark default.
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "system", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "dracula")
-    }
-
-    func testConfigUnsetThemeRestoresDefault() {
-        let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "alucard")
-
-        XCTAssertTrue(h.backend.configUnset(key: "theme", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "dracula", "unset restores the default theme")
-    }
-
     // MARK: - render keys + honest rejection of non-live keys
 
     func testConfigSetGetFontSizeRoundTrips() {
@@ -135,14 +61,9 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     func testConfigShowReportsLiveValues() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "alucard", transient: false))
         XCTAssertTrue(h.backend.configSet(key: "font-size", value: "15", transient: false))
 
         let shown = h.backend.configShow()
-        XCTAssertEqual(
-            shown.first { $0.key == "theme" }?.value, "alucard",
-            "config show reflects the live theme",
-        )
         XCTAssertEqual(shown.first { $0.key == "font-size" }?.value, "15", "config show reflects the live size")
     }
 
@@ -166,10 +87,8 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
             before,
             "a rejected transient set must NOT mutate the live value",
         )
-        // A transient theme set is likewise rejected and leaves the theme put.
-        let theme = ThemeStore.shared.active.id
-        XCTAssertFalse(h.backend.configSet(key: "theme", value: "paper", transient: true))
-        XCTAssertEqual(ThemeStore.shared.active.id, theme)
+        // A key with no live binding is likewise rejected under `--transient`.
+        XCTAssertFalse(h.backend.configSet(key: "totally.made.up", value: "x", transient: true))
     }
 
     func testConfigUnsetTransientIsRejected() {

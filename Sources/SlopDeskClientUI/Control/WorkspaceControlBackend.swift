@@ -2,7 +2,7 @@
 //
 // The concrete ``ClientControlBackend`` the ``ClientControlServer`` drives: adapts the running client
 // GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree), ``PreferencesStore``
-// (render/appearance), ``ThemeStore`` / ``ThemeCatalog``, ``WorkspaceBindingRegistry`` (keybinds), and
+// (render/appearance), ``WorkspaceBindingRegistry`` (keybinds), and
 // ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` calls.
 //
 // ## Compiled-only (hang-safety)
@@ -20,7 +20,7 @@
 // ## Known gaps
 // Every method wires against an existing seam so the socket is functional end-to-end. The scrollback
 // `pane capture` read's DEPTH is shallow (marked inline). `config get/set/unset/show/reload` drive the
-// LIVE settings — `theme` retints via ``ThemeStore``, render keys reflow/retint via ``PreferencesStore``,
+// LIVE settings — render keys reflow/retint via ``PreferencesStore``,
 // unknown keys honestly error (no dead namespace / no `EnvConfig.overlay` write). `tab badge --kind`
 // writes the store-side per-tab override the rail + `tab list` render. None of these are on the golden
 // wire; this is the NDJSON control plane only.
@@ -29,7 +29,6 @@
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution
-import SlopDeskVideoProtocol // ThemeChoice — the typed theme selection the `config set theme` write maps onto
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 #if canImport(AppKit)
@@ -271,23 +270,16 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     // MARK: - config
 
-    /// The config key whose value is the active theme NAME — `reference__cli.md` line 34 documents
-    /// `config set theme <name>` as THE CLI theme switch. Resolved here (not in ``PreferencesStore``)
-    /// because it needs the GUI ``ThemeStore`` / ``ThemeCatalog`` the headless store cannot import.
-    private static let themeConfigKey = "theme"
-
     /// Resolve a config key's value for the running app, reflecting the LIVE settings (not a catalog default
-    /// or dead namespace): `theme` → the active ``ThemeStore`` theme id; render keys → the live
-    /// ``PreferencesStore`` typed model. A key not bound live falls back to its catalog default, or `nil`
-    /// when the catalog has no entry either.
+    /// or dead namespace): render keys → the live ``PreferencesStore`` typed model. A key not bound live
+    /// falls back to its catalog default, or `nil` when the catalog has no entry either.
     func configGet(key: String) -> String? {
-        if key == Self.themeConfigKey { return liveThemeName() }
         if let value = preferences?.renderConfigValue(forKey: key) { return value }
         return AllSettingsCatalog.entries.first { $0.key == key }?.defaultText
     }
 
-    /// Write one config key to the LIVE running app: `theme` retints via ``PreferencesStore/appearance``;
-    /// render keys reflow/retint via the live typed model (which also persists). A key with NO live binding —
+    /// Write one config key to the LIVE running app: render keys reflow/retint via the live typed model
+    /// (which also persists). A key with NO live binding —
     /// or a value that fails to parse — returns `false` → dispatcher's honest `config set rejected` (NEVER a
     /// silent success, the `setTabBadge` lesson).
     ///
@@ -303,27 +295,19 @@ final class WorkspaceControlBackend: ClientControlBackend {
     func configSet(key: String, value: String, transient: Bool) -> Bool {
         guard !transient else { return false }
         guard let preferences else { return false }
-        if key == Self.themeConfigKey { return applyThemeByName(value, on: preferences) }
         return preferences.setRenderConfig(value, forKey: key)
     }
 
-    /// Remove one config key — reset it to its model default. `theme` clears the primary slot back to the
-    /// compile-time default; the render keys reset via ``PreferencesStore/unsetRenderConfig(forKey:)``. A
-    /// key with no live binding → `false` (honest error). `transient` is rejected for the same reason as
+    /// Remove one config key — reset it to its model default via
+    /// ``PreferencesStore/unsetRenderConfig(forKey:)``. A key with no live binding → `false` (honest error). `transient` is rejected for the same reason as
     /// ``configSet(key:value:transient:)`` — there is no non-persisting render layer to unset.
     func configUnset(key: String, transient: Bool) -> Bool {
         guard !transient else { return false }
         guard let preferences else { return false }
-        if key == Self.themeConfigKey {
-            var appearance = preferences.appearance
-            appearance.theme = nil
-            preferences.appearance = appearance
-            return true
-        }
         return preferences.unsetRenderConfig(forKey: key)
     }
 
-    /// Re-apply the live settings to the running app (theme retint + terminal reflow + keybinding
+    /// Re-apply the live settings to the running app (density + terminal reflow + keybinding
     /// overrides) AND post the config-change notification — a CONCRETE reload, not a dead broadcast. The
     /// `--reload`/`reload` CLI op therefore re-applies the current config to the GUI.
     func configReload() -> Bool {
@@ -333,7 +317,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// The full known-settings catalog, in display order, each paired with its EFFECTIVE value — the LIVE
-    /// render/appearance value where slopdesk binds it (`theme`, font, cursor, scrollback, density), else
+    /// render/appearance value where slopdesk binds it (font, cursor, scrollback, density), else
     /// the catalog default.
     func configShow() -> [ClientConfigEntry] {
         AllSettingsCatalog.entries.map { entry in
@@ -341,46 +325,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
         }
     }
 
-    /// The LIVE active theme's name — the resolved ``ThemeStore`` theme id, which already collapses the
-    /// default and the dual-slot / follow-OS selection to a concrete id matching the `theme list` `name`
-    /// column (so `config get theme` round-trips a `theme list` entry).
-    private func liveThemeName() -> String {
-        ThemeStore.shared.active.id
-    }
-
-    /// Switch the active theme by NAME — a built-in theme id (from `theme list`, e.g. `dracula`) or
-    /// a ``ThemeChoice`` raw value (e.g. `system`) — routed through ``PreferencesStore/appearance`` so the
-    /// chrome retints + the terminal cells repaint LIVE (and the choice persists). Sets the PRIMARY (light /
-    /// single) slot, the slot every OS appearance resolves to unless the user separately enabled a dark-slot
-    /// override. Returns `false` for an UNKNOWN name (honest error, never a silent no-op).
-    private func applyThemeByName(_ name: String, on preferences: PreferencesStore) -> Bool {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        guard let choice = ThemeChoice.allCases.first(where: { $0.builtinID == trimmed })
-            ?? ThemeChoice(rawValue: trimmed)
-        else { return false }
-        var appearance = preferences.appearance
-        appearance.theme = choice
-        preferences.appearance = appearance
-        return true
-    }
-
-    // MARK: - theme / font / keybind
-
-    func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo] {
-        let activeID = ThemeStore.shared.active.id
-        var out: [ClientThemeInfo] = []
-        for theme in ThemeCatalog.builtinThemes {
-            let isDark = !theme.isLight
-            switch color {
-            case .dark where !isDark: continue
-            case .light where isDark: continue
-            default: break
-            }
-            out.append(ClientThemeInfo(name: theme.id, isDark: isDark, isActive: theme.id == activeID))
-        }
-        return out
-    }
+    // MARK: - font / keybind
 
     /// Enumerate font families (macOS via `NSFontManager`; iOS returns empty — no `font list` surface there).
     /// `monospaceOnly` filters by fixed-pitch; `family` is a case-insensitive substring filter. `scope` honors
