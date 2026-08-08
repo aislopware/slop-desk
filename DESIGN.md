@@ -96,7 +96,7 @@ components:
     backgroundColor: "{colors.glass-dracula}"
     note: "the right column — its tab strip sits at the top of the same flat glass surface"
   panel-tab-chip:
-    backgroundColor: "Slate.Surface.raised at rest; lift on hover; selected = the selection tint ({colors.accent} at 15%) with primary ink — the filled chip row, restored user-directed 2026-08-08 (the inverted micro-chip is retired)"
+    backgroundColor: "transparent at rest; State.hover wash on hover; selected = Slate.Surface.raised + Line.card hairline with primary ink — the sidebar row's overlay-card language, followed user-directed 2026-08-08 (the filled-at-rest chip row and its accent selection tint are retired)"
     rounded: "capsule"
     height: "24px"
 ---
@@ -196,10 +196,10 @@ info status. Everything else interactive is the system's.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
 - **The panel column** (right) is the second glass surface, same anatomy. Its TAB STRIP sits at
-  its top, on the glass. The strip chips are the filled chip row (restored user-directed
-  2026-08-08 — the inverted micro-chip is retired): `raised` at rest, `lift` on hover, and the
-  SELECTED chip wears the selection tint (accent 15%) with primary ink — the same rung every other
-  latched control uses.
+  its top, on the glass. The strip chips speak the sidebar row's own language (followed
+  user-directed 2026-08-08; the filled-at-rest chip row and its accent tint are retired): ghost
+  at rest, the hover wash under the pointer, and the SELECTED chip is the one raised overlay
+  card — `raised` wash plus the `Line.card` hairline, primary ink.
 
 ## Terminal profiles (`SlateTheme`)
 
@@ -250,9 +250,10 @@ outside every palette.
 - DON'T add appearance pins beyond the ONE `ThemeStore` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
   glass (use the forced glass scheme).
-- DON'T introduce a second selection language: selected = the translucent overlay card (sidebar
-  `raised` wash + `Line.card` hairline, strip selection tint). No reverse-video/colour-scheme
-  inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral `chip` plate (same day —
-  off-family grey on the authored floor), no underlines for selection.
+- DON'T introduce a second selection language: selected = the translucent overlay card (`raised`
+  wash + `Line.card` hairline) on sidebar row, rail chip AND strip chip alike. No
+  reverse-video/colour-scheme inversion (tried 2026-08-07, retired 2026-08-08), no solid neutral
+  `chip` plate (same day — off-family grey on the authored floor), no accent tint or accent edge
+  on selection (tried both doses the same day, both pulled), no underlines for selection.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
