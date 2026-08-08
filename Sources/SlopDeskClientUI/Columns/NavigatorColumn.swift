@@ -192,11 +192,18 @@ struct NavigatorColumn: View {
             .frame(height: Slate.Metric.titlebarHeight)
             .background(HoverSensor { stripHover = $0 })
             // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
-            // "TABS" label AND its trailing groups menu, both user-retired): a quiet inset field
-            // on the hover tint, filtering the rows below through the SAME pure
-            // `RailRowsBuilder.filtered` the iOS `.searchable` rides. Clearing is one click (the
-            // ⓧ appears only while a query is live). Full-row width — the field shares the LIST's
-            // 8pt gutter, so it reads as wide as the tab cards under it.
+            // "TABS" label AND its trailing groups menu, both user-retired), filtering the rows
+            // below through the SAME pure `RailRowsBuilder.filtered` the iOS `.searchable` rides.
+            // Clearing is one click (the ⓧ appears only while a query is live).
+            //
+            // It is the panel's HEAD, not a control in the list (user-directed 2026-08-08). It was
+            // a 24pt pill on the hover tint — the sidebar-search shape of every app of the era, and
+            // the one thing here that read as a form field dropped into a list. So: no fill, the
+            // row rung for height, the tab rows' own inset so the query sits on their left edge, and
+            // ONE hairline underneath. That line is not decoration — the rows SCROLL under this
+            // band, and without it the topmost row slides into the query text as it passes (the same
+            // reason ``SlateCardSeparator`` exists, and the same rule: a line only where content
+            // moves past content, which is why the footer below still has none).
             HStack(spacing: Slate.Metric.space1) {
                 Image(systemSymbol: .magnifyingglass)
                     .font(.system(size: Slate.Typeface.footnote))
@@ -204,7 +211,7 @@ struct NavigatorColumn: View {
                 // AppKit-backed on purpose: a SwiftUI `TextField` at footnote size bumps its
                 // text up 1pt on focus (cell-draw vs field-editor baseline split — see
                 // `SlateSearchField`'s header). User-reported 2026-08-03.
-                SlateSearchField(placeholder: "Search tabs", text: $query)
+                SlateSearchField(placeholder: "Search tabs", text: $query, size: Slate.Typeface.body)
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -217,13 +224,14 @@ struct NavigatorColumn: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, Slate.Metric.space2)
-            .frame(height: Slate.Metric.heightControl)
-            .background(Slate.State.hover, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-            // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
-            // share one width.
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
+            .padding(.horizontal, Slate.Metric.tabRowInset)
+            .frame(height: Slate.Metric.heightRow)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Slate.Line.subtle)
+                    .frame(height: Slate.Metric.hairline)
+            }
+            .padding(.bottom, Slate.Metric.space2)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
@@ -232,7 +240,7 @@ struct NavigatorColumn: View {
                     } else if sections.isEmpty {
                         emptyLabel("No matching tabs")
                     } else {
-                        ForEach(sections) { section in
+                        ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
                             let collapseKey = Self.collapseKey(section.projectKey)
                             let collapsed = collapsedSections.contains(collapseKey)
                             if let header = section.header {
@@ -250,6 +258,12 @@ struct NavigatorColumn: View {
                                         }
                                     },
                                 )
+                                // THE TWO-LEVEL RHYTHM (user-directed 2026-08-08). Rows inside a
+                                // group stay tight at 2; the band BETWEEN groups opens to `space4`.
+                                // Before this the two distances were 2 and 4 — near enough that the
+                                // list read as one undifferentiated column, and no amount of work on
+                                // the ROWS could fix a rhythm problem that lives between them.
+                                .padding(.top, index == 0 ? 0 : Slate.Metric.space4)
                             }
                             if !collapsed {
                                 ForEach(section.rows) { row in
@@ -278,18 +292,24 @@ struct NavigatorColumn: View {
 
             // Connection footer — the full-width status block under the tab list (ScrollView
             // maxHeight: .infinity pins it to the bottom): the link line, plus the host-pulse line
-            // once the machine reports. NO rule above it: the panel separates its bands by AIR (the
-            // section headers' own dialect), and a hairline here drew a seam across a sidebar that
-            // has none anywhere else. The `space3` gap is the separator — the same inter-group band
-            // the groups use. Full-width so hover/hit read as one sidebar item.
+            // once the machine reports. Full-width so hover/hit read as one sidebar item.
+            //
+            // It stands on a translucent LIFT band (user-directed 2026-08-08), which is the frame
+            // saying "chrome" in the vocabulary this design already has. Air alone could not do it:
+            // separated by a gap the footer read as the last ROW of a scrolling list rather than as
+            // the panel's floor, and it is the one band here that never scrolls. Still NO rule —
+            // a hairline would draw a seam across a sidebar that has one only where content moves
+            // past content (the search band above). A translucent fill is not a second tone: the
+            // ground shows through it, which is the whole difference from painting a band.
             if let connection {
                 // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) and the ~4 s host pulse
                 // are read inside `SidebarConnectionFooter` so their ticks re-render that leaf,
                 // never this sidebar body.
                 SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
-                    .padding(.horizontal, Slate.Metric.space2)
-                    .padding(.top, Slate.Metric.space3)
-                    .padding(.bottom, Slate.Metric.space2)
+                    .padding(.horizontal, Slate.Metric.space3)
+                    .padding(.vertical, Slate.Metric.space2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Slate.Surface.lift)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -557,18 +577,18 @@ enum SidebarRowTooltip {
 }
 
 /// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
-/// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
-/// under it (the instrument mono — data, not identity) both start on the SAME x as every row
-/// title is x-anchored by the disclosure chevron's `tabRowInset` gutter; the FOLDER glyph stands
-/// between chevron and name (both always visible — the otty header anatomy: chevron, folder,
-/// name), so the parent's label indents PAST its rows'. The name is the basename `section.header` already carries
+/// (the rows' own `body` size, semibold, on the PRIMARY ink — the parent reads heavier and darker
+/// than the children it holds) and the live git line under it (the instrument mono — data, not
+/// identity) both start on the SAME x as every row title, x-anchored by the disclosure chevron's
+/// `tabRowInset` gutter. The name is the basename `section.header` already carries
 /// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
 /// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
 /// one row; while collapsed the header folds to one line with the hidden-row COUNT trailing — mono
 /// metadata that borrows the strongest ATTENTION ink of the rows it hides
 /// (``StatusPresentation/attentionRollupInk(_:)``), so folding a group never mutes a waiting
-/// agent. No caps, no rule: groups separate by the header band's own air (a bare header keeps the
-/// 24pt band; a git-lined one grows to fit). Tapping toggles the group shut. Reads its git summary
+/// agent. No caps, no rule, no folder glyph: groups separate by the BAND above the header (the
+/// caller's `space4`, against the 2pt gap between rows — the two-level rhythm), and a bare header
+/// keeps the 24pt row while a git-lined one grows to fit. Tapping toggles the group shut. Reads its git summary
 /// + roll-up chrome INSIDE its own body so a git/status tick re-renders only the (cheap) header
 /// leaves, mirroring ``SidebarLiveRow``. Internal (not private) so the opt-in snapshot render can
 /// mount the REAL header.
@@ -590,11 +610,13 @@ struct SidebarSectionHeaderRow: View {
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The header's leading anatomy (the otty grouped-header trio, both glyphs ALWAYS visible):
-        // the collapse chevron in the `tabRowInset` gutter, the dim folder beside it, then the
-        // name — which therefore indents PAST the row titles, the parent standing left-and-above
-        // its children. Baseline-aligned: the glyphs sit on the NAME line; the git line hangs
-        // beneath.
+        // The header's leading anatomy: the collapse chevron in the `tabRowInset` gutter, then the
+        // name. Baseline-aligned — the chevron sits on the NAME line; the git line hangs beneath.
+        //
+        // The FOLDER is gone (user-directed 2026-08-08). It was drawn on every header and said the
+        // same thing every time — the chevron already marks a group, and the rows below already
+        // stand indented under it. A pictogram that repeats on every instance of a thing carries no
+        // information; it only sets the era.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             // One chevron glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS
             // with the group animation instead of teleporting between two symbols. Leading-aligned
@@ -606,18 +628,20 @@ struct SidebarSectionHeaderRow: View {
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-            // The folder — the group is a place, spoken in the header's own muted ink; the one
-            // pictogram the monochrome rail keeps.
-            Image(systemSymbol: .folderFill)
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.State.header)
-                .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
+                // ⚠️ THE PARENT OUTRANKS ITS CHILDREN, which is the correction (user-directed
+                // 2026-08-08). The group name used to be set at `footnote`/semibold on SECONDARY —
+                // SMALLER and QUIETER than the `body` rows it contains — so the tree read upside
+                // down: every project title looked subordinate to its own tabs. It goes to the rows'
+                // own size on the PRIMARY ink and keeps semibold, which is the whole hierarchy: the
+                // parent is heavier and darker at the same size, the children lighter and greyer.
+                // Nothing about it is bigger — a header that outgrows its list is the opposite tic.
+                //
                 // `nerdAware` — a project folder named with a nerd-font glyph draws it from the
                 // bundled symbols face instead of a notdef box.
-                Text.nerdAware(title, size: Slate.Typeface.footnote)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                    .foregroundStyle(Slate.Text.secondary)
+                Text.nerdAware(title, size: Slate.Typeface.body)
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 let segments = Self.detailSegments(collapsed: collapsed, summary: summary)

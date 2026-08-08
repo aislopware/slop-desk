@@ -122,6 +122,9 @@ struct ConnectHostView: View {
         #if os(macOS)
         .frame(width: Slate.Metric.cardFormWidth) // a fixed-width macOS card; iOS presents full-width
         #endif
+        // The sheet wears the FAMILY's corner, not the system's — see ``SlateSheetSurface``. Without
+        // this the one native surface in the set rounds differently from the seven in-window cards.
+        .slateSheetSurface()
         .onAppear {
             // Seed the fields from the committed target (re-editing the live host), then defer focus a runloop
             // hop (a `@FocusState` set the same tick the sheet appears is dropped before its responder exists).
