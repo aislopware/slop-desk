@@ -21,11 +21,6 @@ import SwiftUI
 struct SlateSearchField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
-    /// The text size. Defaults to the footnote this field was written for; the navigator's search
-    /// band asks for ``Slate/Typeface/body`` so its query reads at the same size as the tab titles
-    /// under it. AppKit is jump-free at every size — the footnote default is about the SwiftUI
-    /// alternative being unusable at 11, not about this control being pinned there.
-    var size: CGFloat = Slate.Typeface.footnote
 
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -48,16 +43,14 @@ struct SlateSearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = Self.makeConfiguredField(text: text, delegate: context.coordinator, size: size)
+        let field = Self.makeConfiguredField(text: text, delegate: context.coordinator)
         applyInk(field)
         return field
     }
 
     /// The jump-critical configuration, factored out so a headless test can pin it (a `Context`
     /// cannot be constructed outside SwiftUI).
-    static func makeConfiguredField(
-        text: String, delegate: NSTextFieldDelegate?, size: CGFloat = Slate.Typeface.footnote,
-    ) -> NSTextField {
+    static func makeConfiguredField(text: String, delegate: NSTextFieldDelegate?) -> NSTextField {
         let field = NSTextField(string: text)
         field.isBezeled = false
         field.isBordered = false
@@ -65,7 +58,7 @@ struct SlateSearchField: NSViewRepresentable {
         field.focusRingType = .none // the plate is the affordance; no system halo
         field.usesSingleLineMode = true
         field.cell?.isScrollable = true // long queries scroll horizontally, never wrap/clip
-        field.font = .systemFont(ofSize: size)
+        field.font = .systemFont(ofSize: Slate.Typeface.footnote)
         field.delegate = delegate
         // Intrinsic height is the jump-free invariant (see header) — refuse vertical stretch.
         field.setContentHuggingPriority(.required, for: .vertical)
@@ -89,7 +82,7 @@ struct SlateSearchField: NSViewRepresentable {
             string: placeholder,
             attributes: [
                 .foregroundColor: NSColor(Slate.Text.tertiary),
-                .font: NSFont.systemFont(ofSize: size),
+                .font: NSFont.systemFont(ofSize: Slate.Typeface.footnote),
             ],
         )
     }
