@@ -54,6 +54,16 @@ final class TerminalSnapshotRendererTests: XCTestCase {
             sa.scrollback.map(\.cells), sb.scrollback.map(\.cells),
             "scrollback diverged", file: file, line: line,
         )
+        // OSC 133 `A` prompt marks are visible state for `jump_to_prompt` even though they
+        // paint nothing — a re-feed of the render must land them on the SAME rows, or a
+        // state-transferred pane's command-ladder jumps go to the wrong command (or nowhere).
+        XCTAssertEqual(
+            sa.mainPrompt, sb.mainPrompt, "main prompt marks diverged", file: file, line: line,
+        )
+        XCTAssertEqual(
+            sa.scrollback.map(\.isPrompt), sb.scrollback.map(\.isPrompt),
+            "scrollback prompt marks diverged", file: file, line: line,
+        )
         XCTAssertEqual(sa.cursorRow, sb.cursorRow, "cursorRow", file: file, line: line)
         XCTAssertEqual(sa.cursorCol, sb.cursorCol, "cursorCol", file: file, line: line)
         XCTAssertEqual(sa.wrapPending, sb.wrapPending, "wrapPending", file: file, line: line)
@@ -347,7 +357,100 @@ final class TerminalSnapshotRendererTests: XCTestCase {
         }
     }
 
+    // MARK: OSC 133 `A` prompt marks (what `jump_to_prompt` counts after a state transfer)
+
+    /// The regression this whole flag exists for: a state-transferred pane must arrive with its
+    /// PROMPT ROWS, not just its text. Without the re-emitted marks libghostty's `PageList`
+    /// holds zero `.prompt` rows, so `jump_to_prompt` — the command ladder's, the navigator's
+    /// and jump-to-failed's one jump primitive — walks nothing and the click does nothing
+    /// (user-reported 2026-08-09).
+    func testPromptMarksSurviveStateTransfer() {
+        // Four prompts through a 6-row grid, so the earliest ones scroll into history and the
+        // last one is still on the grid — both carriers have to keep the mark.
+        let mark = "\(ESC)]133;A\u{07}"
+        var input = ""
+        for n in 1...4 {
+            input += "\(mark)$ cmd\(n)\r\nout\(n)\r\n"
+        }
+        input += mark + "$ "
+        let a = makeModel(Data(input.utf8))
+        let sa = a.replaySnapshot()
+        let marked = sa.scrollback.filter(\.isPrompt).count + sa.mainPrompt.filter(\.self).count
+        XCTAssertEqual(marked, 5, "every OSC 133 A must have stamped exactly one row")
+
+        let rendered = TerminalSnapshotRenderer.render(sa)
+        let text = String(data: rendered, encoding: .utf8) ?? ""
+        XCTAssertEqual(
+            text.components(separatedBy: mark).count - 1, 5,
+            "the render must re-emit one mark per marked row",
+        )
+        assertRoundTrip(Data(input.utf8))
+    }
+
+    /// The mark lands on the row the shell put it on — the row that then carries the prompt
+    /// text — because that is the row libghostty stamps and therefore the row a jump lands on.
+    func testPromptMarkStampsTheCursorRow() {
+        var model = TerminalScreenModel(rows: 4, cols: 20, scrollbackLimit: 0)
+        model.feed(Data("first\r\nsecond\r\n\(ESC)]133;A\u{07}$ ".utf8))
+        XCTAssertEqual(model.replaySnapshot().mainPrompt, [false, false, true, false])
+    }
+
+    /// The ST-terminated spelling is the same mark, and parameters (`133;A;aid=…`, which real
+    /// shell integrations emit) do not stop it being one.
+    func testPromptMarkAcceptsStTerminatorAndParameters() {
+        var st = TerminalScreenModel(rows: 2, cols: 10, scrollbackLimit: 0)
+        st.feed(Data("\(ESC)]133;A\(ESC)\\$ ".utf8))
+        XCTAssertEqual(st.replaySnapshot().mainPrompt, [true, false])
+
+        var params = TerminalScreenModel(rows: 2, cols: 10, scrollbackLimit: 0)
+        params.feed(Data("\(ESC)]133;A;aid=7;cl=m\u{07}$ ".utf8))
+        XCTAssertEqual(params.replaySnapshot().mainPrompt, [true, false])
+    }
+
+    /// Only `133;A` is a prompt START. The other OSC-133 verbs (`B` command start, `C` output
+    /// start, `D` command end) and every unrelated OSC must leave the row unmarked — a mark on
+    /// the wrong row shifts every ordinal after it and mis-lands every later jump.
+    func testPromptMarkRejectsOtherVerbsAndOtherOSC() {
+        for body in ["133;B", "133;C", "133;D;0", "1337;A", "0;a title", "8;;https://x", "13"] {
+            var model = TerminalScreenModel(rows: 2, cols: 10, scrollbackLimit: 0)
+            model.feed(Data("\(ESC)]\(body)\u{07}x".utf8))
+            XCTAssertEqual(
+                model.replaySnapshot().mainPrompt, [false, false],
+                "OSC \(body) must not stamp a prompt row",
+            )
+        }
+        // A DCS body that happens to spell the OSC verb is not an OSC.
+        var dcs = TerminalScreenModel(rows: 2, cols: 10, scrollbackLimit: 0)
+        dcs.feed(Data("\(ESC)P133;A\(ESC)\\x".utf8))
+        XCTAssertEqual(dcs.replaySnapshot().mainPrompt, [false, false])
+    }
+
+    /// `ED 3` (erase saved lines) and RIS clear the screen's marks with the rows they belong to,
+    /// so a cleared pane cannot re-emit prompts for content that is gone.
+    func testPromptMarksClearedWithTheirRows() {
+        var cleared = TerminalScreenModel(rows: 3, cols: 10, scrollbackLimit: 100)
+        cleared.feed(Data("\(ESC)]133;A\u{07}$ one\r\n\(ESC)[3J\(ESC)[2J".utf8))
+        let snap = cleared.replaySnapshot()
+        XCTAssertEqual(snap.mainPrompt, [false, false, false])
+        XCTAssertTrue(snap.scrollback.isEmpty)
+
+        var reset = TerminalScreenModel(rows: 3, cols: 10, scrollbackLimit: 0)
+        reset.feed(Data("\(ESC)]133;A\u{07}$ one\(ESC)c".utf8))
+        XCTAssertEqual(reset.replaySnapshot().mainPrompt, [false, false, false])
+    }
+
     // MARK: Transcript compose (PATH B — fresh-spawn journal restore)
+
+    /// PATH B fronts a BRAND-NEW shell whose segmenter restarts its prompt ordinals at 1. A
+    /// mark left by the dead life would make ordinal #1 an old prompt, so every jump in the new
+    /// session would land on the wrong command — the transcript therefore carries no marks.
+    func testTranscriptEmitsNoPromptMarks() {
+        let raw = Data("\(ESC)]133;A\u{07}$ old command\r\nold output\r\n".utf8)
+        let out = TerminalReplaySnapshot.composeTranscript(raw: raw, rows: 6, cols: 30)
+        let text = String(data: out, encoding: .utf8) ?? ""
+        XCTAssertFalse(text.contains("133;A"), "the dead life's prompt marks must not front a new shell")
+        XCTAssertTrue(text.contains("$ old command"), "its CONTENT is still the transcript")
+    }
 
     /// The transcript is CONTENT-ONLY: no private modes (mouse/alt/cursor-visibility), no
     /// cursor positioning, no DECSCUSR — everything about the DEAD life's terminal state must

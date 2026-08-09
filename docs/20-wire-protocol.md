@@ -645,6 +645,20 @@ unchanged: the rendered bytes ride the SAME ascending replay seqs (re-chunked, l
 covered so the client's ack releases every retained entry), and the client needs no new
 capability — it is `output` frames like any other replay. See docs/DECISIONS.md 2026-07-25.
 
+**The render carries OSC 133 `A` (2026-08-09).** A rendered state transfer must reproduce the
+source's PROMPT ROWS, not only its text: `jump_to_prompt` — the one primitive under the command
+ladder's per-tick jump, the navigator's per-row jump and Jump-to-Failed — counts rows libghostty
+stamped from an OSC-133 `A` mark, and `CommandBlock.promptOrdinal` is an index into exactly that
+count. The first snapshot renderer emitted content only, so a reattached pane arrived with a
+complete-looking scrollback and ZERO prompt rows and every jump silently landed nowhere
+(user-reported 2026-08-09). `TerminalScreenModel` therefore keeps a per-row prompt flag beside its
+soft-wrap flag, and the renderer re-emits `ESC ] 133 ; A BEL` ahead of each marked line. The host's
+snapshot scrollback budget (10 000 lines) equals the client's own scrollback cap, so the prompt
+window after a transfer is the window the client would have held live — the ordinal base does not
+shift. The `renderTranscript` (PATH B journal restore) path deliberately emits NO marks: those bytes
+front a brand-new shell whose segmenter restarts its ordinals at 1, so an inherited mark would make
+ordinal #1 a dead session's prompt.
+
 ### 8.3.2 Mux path: `channelClose.reason` (2026-07-28)
 
 `channelClose`'s body is

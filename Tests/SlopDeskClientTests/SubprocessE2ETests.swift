@@ -410,10 +410,13 @@ final class SubprocessE2ETests: XCTestCase {
             return (client, collected)
         }
 
-        // --- Life 1: churn, the marker, then a bar cursor (the zsh integration's prompt shape). ---
+        // --- Life 1: churn, the marker, a shell-prompt mark, then a bar cursor (the zsh
+        // integration's prompt shape). `/bin/sh` ships no shell integration, so the OSC 133 `A`
+        // is emitted by hand — it is the same byte sequence a real integration sends.
         let script = """
         i=0; while [ $i -lt 500 ]; do echo "CHURN LINE $i ================================"; i=$((i+1)); done
         echo \(marker)
+        printf '\\033]133;A\\007'
         printf '\\033[5 q'
 
         """
@@ -446,6 +449,14 @@ final class SubprocessE2ETests: XCTestCase {
         XCTAssertTrue(
             out2.string.contains("\u{1B}[5 q"),
             "the reattached pane must re-emit the bar cursor shape",
+        )
+        // The PROMPT MARKS must survive too, and for a harder reason than the cursor shape: they
+        // paint nothing, so a snapshot that drops them looks perfect and leaves the reattached
+        // terminal with zero prompt ROWS — which is what `jump_to_prompt` counts, so every
+        // command-ladder / navigator / jump-to-failed jump silently lands nowhere.
+        XCTAssertTrue(
+            out2.string.contains("\u{1B}]133;A"),
+            "the state transfer must re-emit the shell-prompt marks, not just the text",
         )
     }
 

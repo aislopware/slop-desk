@@ -28,6 +28,9 @@ import Foundation
 /// state, and rendering is a CANONICALIZATION: `render(feed(render(A))) == render(A)`
 /// byte-exact — the differential + idempotence pin the tests enforce over the VT vocabulary.
 ///
+/// The one OSC that IS modeled is `133;A` — see ``promptMark``: it paints nothing, but it is the
+/// only thing that makes a row a prompt row, and prompt rows are what every jump counts.
+///
 /// Accepted gaps (docs/DECISIONS.md 2026-07-25): OSC 8 hyperlinks and app-set palette colors
 /// are not modeled; `REP` across the snapshot boundary repeats nothing; the saved-cursor slot
 /// restores position, not its saved SGR/charset.
@@ -50,11 +53,15 @@ enum TerminalSnapshotRenderer {
         let scrollback = snapshot.scrollback
         while i < scrollback.count {
             var logical = scrollback[i].cells
+            let isPrompt = scrollback[i].isPrompt
             while scrollback[i].softWrapped, i + 1 < scrollback.count {
                 i += 1
                 logical.append(contentsOf: scrollback[i].cells)
             }
             i += 1
+            // The prompt mark belongs to the logical line's FIRST row — emitted before its
+            // content so the receiving terminal stamps the row the content lands on.
+            if isPrompt { out.append(contentsOf: promptMark) }
             appendCells(logical, trimmed: true, to: &out, sgr: &sgr)
             // Reset BEFORE the line feed: the scroll this feed causes in the receiving
             // terminal BCE-fills the new bottom row with the LIVE background — a lingering
@@ -65,6 +72,9 @@ enum TerminalSnapshotRenderer {
 
         // 3. Main grid, sequentially — EVERY row, so the viewport lands exactly on the grid.
         for (index, row) in snapshot.mainCells.enumerated() {
+            if index < snapshot.mainPrompt.count, snapshot.mainPrompt[index] {
+                out.append(contentsOf: promptMark)
+            }
             appendCells(row, trimmed: true, to: &out, sgr: &sgr)
             if index < snapshot.mainCells.count - 1 {
                 sgr.reset(into: &out) // same BCE discipline as the scrollback feed above
@@ -201,6 +211,20 @@ enum TerminalSnapshotRenderer {
     // MARK: Pieces
 
     private static let crlf: [UInt8] = [0x0D, 0x0A]
+
+    /// OSC 133 `A` — the shell-integration PROMPT-START mark, BEL-terminated.
+    ///
+    /// Re-emitted for every row the source model saw one on, because the marks are the only
+    /// thing that makes a row a `.prompt` row in libghostty's `PageList` — and prompt rows are
+    /// what `jump_to_prompt` counts. Without this a state-transferred pane arrives with a
+    /// complete-looking scrollback and ZERO prompt rows, so every command-ladder / navigator
+    /// jump silently lands nowhere (user-reported 2026-08-09: "after the client reconnects,
+    /// clicking the command ladder no longer jumps").
+    ///
+    /// Deliberately NOT emitted by ``renderTranscript``: that path fronts a BRAND-NEW shell
+    /// whose segmenter restarts its prompt ordinals at 1, so marks left by the dead life would
+    /// make ordinal #1 an old prompt and every jump would land on the wrong command.
+    private static let promptMark: [UInt8] = Array("\u{1B}]133;A\u{07}".utf8)
 
     private enum Preamble {
         /// `?1049l` main screen · `SGR 0` · `?25h` visible · `r` full region · `?6l` origin

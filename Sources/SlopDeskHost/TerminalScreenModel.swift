@@ -73,9 +73,16 @@ public struct TerminalScreenModel {
         /// DECAWM autowrap (the two are one logical line). Shifted with the rows by every
         /// scroll/insert/delete; a freshly-filled (blank) row is never wrapped.
         var wrapped: [Bool]
+        /// Per-row SHELL-PROMPT flag: `prompt[r]` means the shell emitted an OSC 133 `A`
+        /// (prompt start) while the cursor stood on row `r`. Carried for exactly one reason —
+        /// the snapshot renderer re-emits the mark so a cold-reattached client's terminal gets
+        /// its prompt ROWS back, which is what `jump_to_prompt` (the command ladder's jump)
+        /// counts. Shifted with the rows exactly like ``wrapped``.
+        var prompt: [Bool]
         init(rows: Int, cols: Int, fill: Cell = Cell()) {
             cells = Array(repeating: Array(repeating: fill, count: cols), count: rows)
             wrapped = Array(repeating: false, count: rows)
+            prompt = Array(repeating: false, count: rows)
         }
     }
 
@@ -98,6 +105,9 @@ public struct TerminalScreenModel {
         /// full to the last column (a stale flag on a since-rewritten short row must not
         /// merge unrelated lines).
         var softWrapped: Bool
+        /// The line carried an OSC 133 `A` shell-prompt mark (see ``Grid/prompt``). Defaulted so
+        /// the many test/fixture constructions of a plain line keep compiling unchanged.
+        var isPrompt = false
     }
 
     // MARK: Public snapshot
@@ -257,6 +267,10 @@ public struct TerminalScreenModel {
         var scrollback: [ScrollbackLine]
         var mainCells: [[Cell]]
         var mainWrapped: [Bool]
+        /// Per-main-row OSC 133 `A` prompt mark (see ``Grid/prompt``). Defaulted empty so the
+        /// snapshot still constructs from older call sites; the renderer treats a short array as
+        /// "no marks".
+        var mainPrompt: [Bool] = []
         var altCells: [[Cell]]
         var usingAlt: Bool
         var cursorRow: Int
@@ -291,6 +305,7 @@ public struct TerminalScreenModel {
             scrollback: Array(scrollbackStorage[scrollbackHead...]),
             mainCells: main.cells,
             mainWrapped: main.wrapped,
+            mainPrompt: main.prompt,
             altCells: alt.cells,
             usingAlt: usingAlt,
             cursorRow: cursorRow,
@@ -402,11 +417,13 @@ public struct TerminalScreenModel {
             csiIntermediate = 0
         case UInt8(ascii: "]"): // OSC
             state = .stringBody(belTerminates: true, sawESC: false)
+            promptMarkMatch = 0 // arm the OSC 133 `A` matcher for this body
         case UInt8(ascii: "P"),
              UInt8(ascii: "X"),
              UInt8(ascii: "^"),
              UInt8(ascii: "_"): // DCS/SOS/PM/APC
             state = .stringBody(belTerminates: false, sawESC: false)
+            promptMarkMatch = Self.promptMarkFailed
         case UInt8(ascii: "("),
              UInt8(ascii: ")"),
              UInt8(ascii: "#"),
@@ -510,16 +527,71 @@ public struct TerminalScreenModel {
     private mutating func consumeStringBody(_ byte: UInt8, belTerminates: Bool, sawESC: Bool) {
         if sawESC {
             // ESC \ = ST ends the body; ESC + anything else stays in the body (xterm eats it).
-            state = byte == UInt8(ascii: "\\")
-                ? .ground
-                : .stringBody(belTerminates: belTerminates, sawESC: false)
+            if byte == UInt8(ascii: "\\") {
+                state = .ground
+                finishStringBody()
+            } else {
+                state = .stringBody(belTerminates: belTerminates, sawESC: false)
+                promptMarkMatch = Self.promptMarkFailed
+            }
             return
         }
         if byte == 0x1B {
             state = .stringBody(belTerminates: belTerminates, sawESC: true)
         } else if belTerminates, byte == 0x07 {
             state = .ground
+            finishStringBody()
+        } else {
+            advancePromptMarkMatch(byte)
         }
+    }
+
+    // MARK: OSC 133 `A` (shell-prompt mark)
+
+    /// The one OSC body this model INSPECTS: `133;A` — the OSC-133 shell-integration prompt-start
+    /// mark. Everything else about an OSC body is still skipped byte-for-byte.
+    private static let promptMarkPattern: [UInt8] = Array("133;A".utf8)
+    /// Sentinel for "this body can no longer be the prompt mark" (a mismatch, or a non-OSC string).
+    private static let promptMarkFailed = -1
+
+    /// How much of ``promptMarkPattern`` the CURRENT string body has matched, or
+    /// ``promptMarkFailed``. Reset on every `ESC ]`; forced to failed for DCS/SOS/PM/APC.
+    private var promptMarkMatch = promptMarkFailed
+
+    /// Folds one body byte into the prompt-mark matcher. Past the pattern the body may only
+    /// continue with `;` + parameters (`133;A;aid=…`), which shells do emit — anything else
+    /// (e.g. the `133;B` / `133;C` marks) is a different mark and fails.
+    private mutating func advancePromptMarkMatch(_ byte: UInt8) {
+        guard promptMarkMatch != Self.promptMarkFailed else { return }
+        if promptMarkMatch < Self.promptMarkPattern.count {
+            if byte == Self.promptMarkPattern[promptMarkMatch] {
+                promptMarkMatch += 1
+            } else {
+                promptMarkMatch = Self.promptMarkFailed
+            }
+            return
+        }
+        // Only the parameter separator may follow a complete `133;A`; once inside the parameter
+        // tail every byte is accepted (it is the shell's own payload, not part of the verb).
+        if promptMarkMatch == Self.promptMarkPattern.count, byte != UInt8(ascii: ";") {
+            promptMarkMatch = Self.promptMarkFailed
+        } else {
+            promptMarkMatch += 1
+        }
+    }
+
+    /// A string body just terminated: stamp the prompt mark if it was `133;A`, then re-arm.
+    private mutating func finishStringBody() {
+        if promptMarkMatch >= Self.promptMarkPattern.count { markPromptRow() }
+        promptMarkMatch = Self.promptMarkFailed
+    }
+
+    /// Records that the shell's prompt begins on the CURSOR's row — the same row libghostty
+    /// stamps as a `.prompt` row, and therefore the row a re-emitted mark has to land on for
+    /// `jump_to_prompt` to count it after a state-transfer reattach.
+    private mutating func markPromptRow() {
+        guard cursorRow >= 0, cursorRow < rows else { return }
+        if usingAlt { alt.prompt[cursorRow] = true } else { main.prompt[cursorRow] = true }
     }
 
     // MARK: CSI dispatch
@@ -790,6 +862,7 @@ public struct TerminalScreenModel {
         style = .plain
         applicationKeypad = false
         cursorShape = 0
+        promptMarkMatch = Self.promptMarkFailed
         // Scrollback survives RIS (xterm: only `ED 3` erases saved lines).
     }
 
@@ -907,6 +980,7 @@ public struct TerminalScreenModel {
                     // last column (a since-rewritten short row must not merge with its old
                     // continuation).
                     softWrapped: grid.wrapped[r] && rowReachesLastColumn(grid.cells[r]),
+                    isPrompt: grid.prompt[r],
                 ))
             }
             let overflow = scrollbackStorage.count - scrollbackHead - scrollbackLimit
@@ -923,9 +997,11 @@ public struct TerminalScreenModel {
             if source <= scrollBottom {
                 grid.cells[r] = grid.cells[source]
                 grid.wrapped[r] = grid.wrapped[source]
+                grid.prompt[r] = grid.prompt[source]
             } else {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
         }
         setGrid(grid)
@@ -945,9 +1021,11 @@ public struct TerminalScreenModel {
             if source >= scrollTop {
                 grid.cells[r] = grid.cells[source]
                 grid.wrapped[r] = grid.wrapped[source]
+                grid.prompt[r] = grid.prompt[source]
             } else {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
         }
         setGrid(grid)
@@ -963,11 +1041,13 @@ public struct TerminalScreenModel {
             for r in (cursorRow + 1)..<rows {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
         case 1:
             for r in 0..<cursorRow {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
             eraseCells(&grid, row: cursorRow, columns: 0..<(cursorCol + 1))
         case 2,
@@ -1011,9 +1091,11 @@ public struct TerminalScreenModel {
             if source >= cursorRow {
                 grid.cells[r] = grid.cells[source]
                 grid.wrapped[r] = grid.wrapped[source]
+                grid.prompt[r] = grid.prompt[source]
             } else {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
         }
         setGrid(grid)
@@ -1030,9 +1112,11 @@ public struct TerminalScreenModel {
             if source <= scrollBottom {
                 grid.cells[r] = grid.cells[source]
                 grid.wrapped[r] = grid.wrapped[source]
+                grid.prompt[r] = grid.prompt[source]
             } else {
                 grid.cells[r] = blankRowCells()
                 grid.wrapped[r] = false
+                grid.prompt[r] = false
             }
         }
         setGrid(grid)
@@ -1103,10 +1187,12 @@ public struct TerminalScreenModel {
             grid = alt
             alt.cells = []
             alt.wrapped = []
+            alt.prompt = []
         } else {
             grid = main
             main.cells = []
             main.wrapped = []
+            main.prompt = []
         }
         return grid
     }
