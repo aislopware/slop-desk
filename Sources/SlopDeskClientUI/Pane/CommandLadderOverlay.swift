@@ -9,7 +9,7 @@
 //
 // IT STANDS IN THE PANE'S GUTTER, NOT ON THE TERMINAL (user-reported 2026-08-09: the rail was
 // cutting into the content). ``TerminalLeafView`` already holds the terminal
-// surface a ``Slate/Metric/space2`` off the pane's edges; the ladder is mounted OUTSIDE that padding
+// surface a ``Slate/Metric/paneGutter`` off the pane's sides; the ladder is mounted OUTSIDE that padding
 // and is exactly that wide, so the whole instrument — marks and hit area alike — lives in ground the
 // pane had already cleared. Two things follow, and both were bugs before: no tick can be drawn over
 // a cell, and no click near the trailing edge is taken from the terminal (the rail used to hit-test a
@@ -38,7 +38,11 @@ enum CommandLadderLayout {
     /// preferred spacing EVERY tick shifted by a fraction of a point each time a command ran — a
     /// ladder that re-drew itself continuously while nothing about the old commands had changed.
     /// Quantized, the whole rail holds still until a rung is genuinely outgrown, and then moves once.
-    static let pitchLadder: [CGFloat] = [10, 8, 6, 5, 4]
+    ///
+    /// The rungs were stepped UP a notch (user-directed 2026-08-09): the pitch is also the tick's hit
+    /// HEIGHT, so a roomier ladder is a bigger target as much as it is a calmer drawing — with the
+    /// wider rail it takes a tick's band from 8 × 10 to 12 × 14 points, a bit over twice the area.
+    static let pitchLadder: [CGFloat] = [14, 12, 10, 8, 6]
 
     /// The preferred centre-to-centre tick pitch — roomy enough to pick one tick with a pointer.
     static var preferredPitch: CGFloat { pitchLadder[0] }
@@ -188,8 +192,10 @@ struct CommandLadderOverlay: View {
     }
 
     /// Fetches `block`'s output excerpt ONCE and caches it (wire type 15 → 29 through
-    /// ``TerminalViewModel/copyBlockOutput(index:onResult:)``, which already coalesces a duplicate
-    /// request and times out a lost reply). A RUNNING block is never fetched and never cached — the
+    /// ``TerminalViewModel/requestBlockOutputBytes(index:onResult:)``, which already coalesces a
+    /// duplicate request and times out a lost reply). The RAW bytes, not the clipboard's stripped
+    /// text: the excerpt keeps the colours the terminal drew it in, so the SGR runs must survive the
+    /// trip. A RUNNING block is never fetched and never cached — the
     /// host retains a block's output only once it completes, so the request would come back empty
     /// and then be remembered as "unavailable" for a command that is about to have output.
     private func load(_ block: CommandBlock, live: [CommandBlock]) {
@@ -208,13 +214,13 @@ struct CommandLadderOverlay: View {
         peeks[block.index] = .loading
         let failed = block.isFailed
         let index = block.index
-        model.copyBlockOutput(index: index) { text in
-            guard let text else {
+        model.requestBlockOutputBytes(index: index) { bytes in
+            guard let bytes else {
                 peeks[index] = .unavailable
                 return
             }
             peeks[index] = .ready(
-                BlockOutputPreviewBuilder.make(plainText: text, failed: failed),
+                BlockOutputPreviewBuilder.make(rawOutput: bytes, failed: failed),
             )
         }
     }
@@ -246,6 +252,10 @@ private struct LadderTick: View {
     /// A mid-stream-join block (ordinal 0) cannot be jumped to — it renders dimmed and inert.
     private var jumpable: Bool { block.promptOrdinal != 0 }
 
+    /// Whether the pointer has this tick AND this tick can be acted on — an inert rung must not grow
+    /// under the pointer, or it advertises a jump it will refuse.
+    private var caught: Bool { hovering && jumpable }
+
     var body: some View {
         Button {
             if jumpable { onJump(block.index) }
@@ -253,8 +263,8 @@ private struct LadderTick: View {
             Capsule()
                 .fill(ink)
                 .frame(
-                    width: hovering && jumpable ? Slate.Metric.ladderTickActive : Slate.Metric.ladderTick,
-                    height: Slate.Metric.ladderTickWeight,
+                    width: caught ? Slate.Metric.ladderTickActive : Slate.Metric.ladderTick,
+                    height: caught ? Slate.Metric.ladderTickWeightActive : Slate.Metric.ladderTickWeight,
                 )
                 .opacity(jumpable ? 1 : Slate.Opacity.dim)
                 // The hit target is the tick's whole pitch band across the rail, and the mark is

@@ -98,7 +98,11 @@ struct TerminalLeafView: View {
                 // the inset gutter (flat, no card). NB the inset shrinks the libghostty surface, so the host PTY
                 // grid loses ~1 col/row each side — it reflows through the existing PaneContainer.size →
                 // resize-scrim → host TIOCSWINSZ path, no new signal needed.
-                .padding(Slate.Metric.space2)
+                .padding(.vertical, Slate.Metric.space2)
+                // WIDER at the sides than at the ends (user-directed 2026-08-09): the side gutter is
+                // the one the command ladder stands in, and the ladder is an instrument that has to
+                // be aimed at. `paneGutter` is that width, and the ladder is exactly it.
+                .padding(.horizontal, Slate.Metric.paneGutter)
                 // The command LADDER stands in the gutter that padding just opened, on the trailing
                 // side — mounted OUT here (not inside `terminalSurface`) precisely so it is beside
                 // the terminal rather than on it. See `CommandLadderOverlay`'s own note.

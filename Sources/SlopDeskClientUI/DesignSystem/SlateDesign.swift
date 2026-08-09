@@ -744,26 +744,37 @@ enum Slate {
         // The COMMAND LADDER (`CommandLadderOverlay`) — the per-command tick rail on a terminal
         // pane's trailing edge.
 
-        /// The ladder's RAIL — its full width, hit area included. It is the pane's own inner gutter
-        /// (`space2`, the breathing room `TerminalLeafView` already holds the terminal surface off
-        /// its edges) and not one point more, which is the whole rule: the ladder stands in ground
-        /// the pane had already cleared, so it can neither draw over a cell nor swallow a click meant
-        /// for one. Its first pass was a `plate`-wide column INSIDE the surface and did both
-        /// (user-reported 2026-08-09).
-        static let ladderRail: CGFloat = space2
+        /// The pane's SIDE gutter — the breathing room `TerminalLeafView` holds the terminal surface
+        /// off its left and right edges, and therefore the ladder's whole width. Wider than the
+        /// pane's vertical breathing room (`space2`) because this gutter carries an INSTRUMENT and
+        /// that one carries nothing: at 8 the rail was a target the pointer had to be placed on
+        /// rather than aimed at (user-directed 2026-08-09). It costs about one terminal column each
+        /// side, which reflows through the existing resize path.
+        static let paneGutter: CGFloat = space3
+        /// The ladder's RAIL — its full width, hit area included. It is exactly ``paneGutter`` and
+        /// not one point more, which is the whole rule: the ladder stands in ground the pane had
+        /// already cleared, so it can neither draw over a cell nor swallow a click meant for one. Its
+        /// first pass was a `plate`-wide column INSIDE the surface and did both (user-reported
+        /// 2026-08-09).
+        static let ladderRail: CGFloat = paneGutter
         /// One tick's length at rest — half the rail, centred, so the mark reads as a rung on an edge
         /// rather than as something poking out of the text.
-        static let ladderTick: CGFloat = 4
+        static let ladderTick: CGFloat = 6
         /// A tick's length under the pointer. Still inside the rail with a point to spare on each
         /// side: the growth is symmetric about the rail's centre line, so hovering can never push the
         /// mark back over the terminal — the earlier trailing-anchored 6 → 12 growth did.
-        static let ladderTickActive: CGFloat = 6
+        static let ladderTickActive: CGFloat = 10
         /// A tick's thickness — two points, the smallest mark that still reads as a deliberate rung
         /// at the pitch the ladder runs.
         static let ladderTickWeight: CGFloat = 2
+        /// A tick's thickness under the pointer. The rung thickens as well as lengthens, so the mark
+        /// the pointer has caught is unmistakable at a glance down a rail of dashes — the growth
+        /// stays symmetric about the centre line on BOTH axes.
+        static let ladderTickWeightActive: CGFloat = 3
         /// How far the ladder holds off the pane's top and bottom. Sized to clear the ISLAND'S OWN
-        /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 7pt up
-        /// from the bottom, so a shorter inset would let the last tick slide under the rounded corner.
+        /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 4pt up
+        /// from the bottom (it cut ~7 when the rail was 8 in — the further in, the shallower the
+        /// cut), so a shorter inset would let the last tick slide under the rounded corner.
         static let ladderInset: CGFloat = space4
         /// The hover PEEK card's width — the excerpt of a block's output the ladder shows while the
         /// pointer dwells on a tick. Wide enough for a build log's ordinary line, narrow enough that

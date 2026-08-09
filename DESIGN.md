@@ -117,7 +117,7 @@ components:
     height: "24px"
   command-ladder:
     textColor: "the GLASS's status inks — running = Terminal.accent, clean = Terminal.ok, failed = Terminal.err (the profile's OWN ANSI green/red); NEVER Status.ok/.err, which is the SYSTEM palette and read as a foreign signal green beside the Dracula Pro cells (user-reported 2026-08-09)"
-    note: "PEEK: a 1s dwell on a tick ARMS a preview MODE (not a tooltip) — the card carries the command, its outcome and an excerpt of its output, and while armed moving down the rail swaps it instantly; leaving the rail disarms after a 400ms grace. The excerpt follows the OUTCOME: clean = first lines, failed = LAST lines (the first lines of a failing build are the banner every build prints), and the card names which end it took. Drawn in the GLASS vocabulary + mono face (it is terminal output inside the island) and NEVER hit-testable. One wire fetch per block, cached, never for a running one (the host retains output only on completion). The tick's AppKit `.help` is GONE — it would open a second, poorer tooltip over this. || the terminal pane's trailing-edge tick rail (round 14): one 4x2 tick per OSC-133 command block (6x2 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {space.2} padding, mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (10/8/6/5/4): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 4pt floor and drops oldest. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
+    note: "PEEK: a 1s dwell on a tick ARMS a preview MODE (not a tooltip) — the card carries the command, its outcome and an excerpt of its output, and while armed moving down the rail swaps it instantly; leaving the rail disarms after a 400ms grace. The excerpt follows the OUTCOME: clean = first lines, failed = LAST lines (the first lines of a failing build are the banner every build prints), and the card names which end it took. Drawn in the GLASS vocabulary + the TERMINAL's own face (pane family → Nerd Font → system mono, so PUA glyphs are glyphs) and NEVER hit-testable; the excerpt keeps its ANSI COLOURS, parsed from the block's RAW bytes and resolved against the profile's own palette. One wire fetch per block, cached, never for a running one (the host retains output only on completion). The tick's AppKit `.help` is GONE — it would open a second, poorer tooltip over this. || the terminal pane's trailing-edge tick rail (round 14): one 6x2 tick per OSC-133 command block (10x3 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {metric.paneGutter} SIDE padding (wider than its {space.2} ends), mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (14/12/10/8/6): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 6pt floor and drops oldest. The pitch is also a tick's hit HEIGHT, which is why the rungs were stepped up (2026-08-09): a band is 12x14, a bit over twice the old target. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -326,20 +326,29 @@ info status. Everything else interactive is the system's.
   never the system `Status` palette: a mark drawn on the terminal answers to the profile the
   terminal wears). Muted at rest, full ink under the pointer; a tick click focuses the pane and
   then runs the navigator's own re-anchor jump, confirmed by the existing landed flash. It lives in
-  the pane's GUTTER, not on the terminal — the leaf holds its surface a `space2` off its edges and
-  the ladder is mounted outside that padding and is exactly that wide, so no mark and no hit area
-  is ever over a cell (before 2026-08-09 a `plate`-wide hit column sat on the last two text columns
-  and swallowed selection drags there). The pitch is quantized to a closed rung set — it steps down
-  10 → 4 before dropping any tick, so a running pane does not re-lay its whole rail by a fraction of
-  a point per command. Ticks are EVENLY pitched, never scroll-proportional — blocks carry prompt
+  the pane's GUTTER, not on the terminal — the leaf holds its surface a `paneGutter` off its SIDES
+  (wider than the `space2` at its ends, because this gutter carries an instrument and that one
+  carries nothing) and the ladder is mounted outside that padding and is exactly that wide, so no
+  mark and no hit area is ever over a cell (before 2026-08-09 a `plate`-wide hit column sat on the
+  last two text columns and swallowed selection drags there). The pitch is quantized to a closed
+  rung set — it steps down 14 → 6 before dropping any tick, so a running pane does not re-lay its
+  whole rail by a fraction of a point per command. Rail and rungs were BOTH stepped up on
+  2026-08-09 (user-directed): the pitch is also a tick's hit height, so the roomier ladder is a
+  bigger target as much as it is a calmer drawing — a band went from 8 × 10 to 12 × 14 points, and
+  the caught rung thickens as well as lengthens so it is unmistakable down a rail of dashes. Ticks are EVENLY pitched, never scroll-proportional — blocks carry prompt
   ordinals, not rows, and this house draws what it knows (absent-never-wrong). An ordinal-less tick
   (mid-stream join) dims and goes inert.
 - **The ladder's PEEK** (user-directed 2026-08-09) is a MODE, not a tooltip: a one-second dwell on a
   tick arms it, and from then on moving down the rail swaps the card at once — reading back through a
   session is one gesture rather than a second per command. It disarms 400ms after the rail is left.
-  The card is drawn on the glass in the mono face, because it is terminal output shown inside the
-  terminal island; a paper card here would be a bright plate carrying dark-on-light terminal text.
-  It never takes a hit. Its excerpt follows the OUTCOME — a clean command is read from its first
+  The card is drawn on the glass in the TERMINAL'S OWN FACE — the pane's configured family, falling
+  back to a Nerd Font build before the system mono, so a prompt's private-use glyphs draw as glyphs
+  and not as boxes — because it is terminal output shown inside the terminal island; a paper card
+  here would be a bright plate carrying dark-on-light terminal text. The excerpt keeps the COLOURS
+  the terminal drew (user-directed 2026-08-09): it is built from the block's raw captured bytes, so
+  a test runner's greens, a compiler's bold error and a `git status` inverse bed all survive, with
+  every palette slot resolved against the PROFILE's own ANSI entries — the same table libghostty is
+  configured with, so a slot means one thing in the card and in the cells. It never takes a hit. Its excerpt follows the OUTCOME — a clean command is read from its first
   lines, a failed one from its LAST, since the opening lines of a failing build are the same banner
   every build prints — and the card says which end it took, because a preview whose provenance is
   invisible is a preview that can mislead.

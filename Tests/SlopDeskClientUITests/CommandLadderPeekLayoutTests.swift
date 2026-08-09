@@ -78,6 +78,10 @@ final class CommandLadderPeekLayoutTests: XCTestCase {
         XCTAssertEqual(twoWithFooter - two, Slate.Metric.ladderPeekLine, accuracy: 0.0001)
     }
 
+    /// One excerpt row of unstyled text — these pin the card's GEOMETRY, so the runs' styles are
+    /// beside the point here.
+    private func row(_ text: String) -> [AnsiRun] { [AnsiRun(text: text, style: .plain)] }
+
     /// Every entry state draws at least one row, so the card never collapses to a bare header while a
     /// fetch is in flight (a card that changes height as the reply lands reads as a glitch).
     func testEveryPeekStateDrawsAtLeastOneRow() {
@@ -85,13 +89,13 @@ final class CommandLadderPeekLayoutTests: XCTestCase {
             .loading,
             .unavailable,
             .ready(BlockOutputPreview(lines: [], hiddenCount: 0, fromTail: false)),
-            .ready(BlockOutputPreview(lines: ["a", "b"], hiddenCount: 4, fromTail: true)),
+            .ready(BlockOutputPreview(lines: [row("a"), row("b")], hiddenCount: 4, fromTail: true)),
         ]
         for state in states { XCTAssertGreaterThanOrEqual(state.lineCount, 1) }
         XCTAssertFalse(CommandLadderPeekEntry.loading.hasFooter)
         XCTAssertTrue(
             CommandLadderPeekEntry
-                .ready(BlockOutputPreview(lines: ["a"], hiddenCount: 1, fromTail: false)).hasFooter,
+                .ready(BlockOutputPreview(lines: [row("a")], hiddenCount: 1, fromTail: false)).hasFooter,
         )
     }
 

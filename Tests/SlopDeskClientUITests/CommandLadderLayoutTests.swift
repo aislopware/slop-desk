@@ -1,5 +1,5 @@
 // CommandLadderLayoutTests — pins the ladder's evenly-pitched fit rule (round 14): the pitch
-// compresses from the preferred 10pt down to the 4pt floor before any tick is dropped, and past
+// compresses from the preferred 14pt down to the 6pt floor before any tick is dropped, and past
 // the floor the ladder DROPS oldest ticks rather than fusing them. Pure geometry, headless.
 //
 // Plus the QUANTIZATION the rail's stability rests on (2026-08-09): the pitch may only take a value
@@ -17,18 +17,18 @@ final class CommandLadderLayoutTests: XCTestCase {
     }
 
     func testPitchCompressesBeforeAnyTickDrops() {
-        // 50 ticks in 300pt: preferred pitch (500pt) does not fit, the floor (200pt) does —
-        // every tick stays, at 6pt pitch.
+        // 50 ticks in 300pt: the preferred pitch (700pt) does not fit, the floor (300pt) does —
+        // every tick stays, at the 6pt floor.
         let fit = CommandLadderLayout.fit(count: 50, available: 300)
         XCTAssertEqual(fit.shown, 50)
         XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 
     func testPastTheFloorTheLadderDropsOldestTicks() {
-        // 64 ticks in 100pt: at the 4pt floor only 25 fit — the ladder shows the newest 25.
+        // 64 ticks in 100pt: at the 6pt floor only 16 fit — the ladder shows the newest 16.
         let fit = CommandLadderLayout.fit(count: 64, available: 100)
-        XCTAssertEqual(fit.shown, 25)
-        XCTAssertEqual(fit.pitch, 4, accuracy: 0.0001)
+        XCTAssertEqual(fit.shown, 16)
+        XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 
     func testDegenerateHeightShowsNothing() {
@@ -61,11 +61,11 @@ final class CommandLadderLayoutTests: XCTestCase {
     }
 
     func testEveryTickStaysWhileAnyRungStillHoldsThem() {
-        // 61 ticks do not fit at 5pt in 300pt, but they do at the 4pt floor — the ladder steps down
+        // 42 ticks do not fit at 8pt in 260pt, but they do at the 6pt floor — the ladder steps down
         // the rung rather than dropping the oldest command.
-        let fit = CommandLadderLayout.fit(count: 61, available: 300)
-        XCTAssertEqual(fit.shown, 61)
-        XCTAssertEqual(fit.pitch, 4, accuracy: 0.0001)
+        let fit = CommandLadderLayout.fit(count: 42, available: 260)
+        XCTAssertEqual(fit.shown, 42)
+        XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 
     /// A pane mid-layout can be proposed a NON-FINITE height; the ladder draws nothing rather than
@@ -76,9 +76,9 @@ final class CommandLadderLayoutTests: XCTestCase {
     }
 
     func testExactFloorCapacityBoundary() {
-        // 8pt fits exactly two floor-pitch ticks.
-        let fit = CommandLadderLayout.fit(count: 3, available: 8)
+        // 12pt fits exactly two floor-pitch ticks.
+        let fit = CommandLadderLayout.fit(count: 3, available: 12)
         XCTAssertEqual(fit.shown, 2)
-        XCTAssertEqual(fit.pitch, 4, accuracy: 0.0001)
+        XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 }

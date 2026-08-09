@@ -94,6 +94,11 @@ struct CommandLadderPeekCard: View {
     let block: CommandBlock
     let entry: CommandLadderPeekEntry
 
+    /// The live preferences, read ONLY for the terminal's configured font family — the card wears the
+    /// face the pane wears, so an excerpt of a prompt or a test runner lines up with the cells above
+    /// it (and its nerd-font glyphs draw as glyphs rather than as boxes).
+    @Environment(\.preferencesStore) private var preferences
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -117,11 +122,15 @@ struct CommandLadderPeekCard: View {
         RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)
     }
 
+    /// The terminal's own family, or `nil` for "no preference" — resolved to an installed face by
+    /// ``Slate/Typeface/terminalFace(_:family:bold:italic:)``.
+    private var family: String? { preferences?.terminal.fontFamily }
+
     /// The command line and its outcome on one row — the command truncates, the outcome never does.
     private var header: some View {
         HStack(spacing: Slate.Metric.space2) {
             Text(block.commandText.isEmpty ? "(command)" : block.commandText)
-                .font(Slate.Typeface.instrument(Slate.Typeface.footnote))
+                .font(Slate.Typeface.terminalFace(Slate.Typeface.footnote, family: family))
                 .foregroundStyle(Slate.Terminal.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -144,15 +153,10 @@ struct CommandLadderPeekCard: View {
             note("no output")
         case let .ready(preview):
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(preview.lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(Slate.Typeface.instrument(Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Terminal.ink)
+                ForEach(Array(preview.lines.enumerated()), id: \.offset) { _, runs in
+                    Text(attributed(runs))
                         .lineLimit(1)
-                        .frame(
-                            height: Slate.Metric.ladderPeekLine,
-                            alignment: .leading,
-                        )
+                        .frame(height: Slate.Metric.ladderPeekLine, alignment: .leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if preview.hiddenCount > 0 { note(hiddenLabel(preview)) }
@@ -160,6 +164,32 @@ struct CommandLadderPeekCard: View {
         case .unavailable:
             note(block.status == .running ? "still running" : "output unavailable")
         }
+    }
+
+    /// One excerpt line as attributed text — each run carries the SGR state it was written under.
+    /// `AttributedString` rather than concatenated `Text`, because a run can carry a BACKGROUND and a
+    /// `Text` cannot.
+    private func attributed(_ runs: [AnsiRun]) -> AttributedString {
+        var line = AttributedString()
+        for run in runs {
+            var piece = AttributedString(run.text)
+            piece.font = Slate.Typeface.terminalFace(
+                Slate.Typeface.footnote, family: family,
+                bold: run.style.bold, italic: run.style.italic,
+            )
+            // INVERSE swaps the pair, and the DEFAULTS it swaps in are the card's own — which is why
+            // the parser reports the flag rather than resolving it.
+            let base = run.style.foreground.map { Slate.Ansi.ink($0) } ?? Slate.Terminal.ink
+            let bed = run.style.background.map { Slate.Ansi.ink($0) }
+            let foreground = run.style.inverse ? (bed ?? Slate.Terminal.raised) : base
+            let background = run.style.inverse ? base : bed
+            // DIM is an alpha on the ink, the one SGR whose meaning is "less of the same".
+            piece.foregroundColor = run.style.dim ? foreground.opacity(Slate.Opacity.muted) : foreground
+            if let background { piece.backgroundColor = background }
+            if run.style.underline { piece.underlineStyle = .single }
+            line.append(piece)
+        }
+        return line
     }
 
     /// A quiet one-row line in the excerpt's own rhythm — the loading beat, the empty case, and the

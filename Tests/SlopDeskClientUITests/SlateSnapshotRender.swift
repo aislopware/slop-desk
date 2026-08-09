@@ -187,8 +187,8 @@ final class SlateSnapshotRender: XCTestCase {
     // MARK: - Opt-in render of the command ladder in its gutter
 
     /// Renders the command LADDER exactly as a pane mounts it — a glass pane, the terminal surface
-    /// held off its edges by the pane's own `space2`, and the rail standing in the TRAILING GUTTER
-    /// that padding opens (`command-ladder.png`, plus an 8× tile so the 4×2 marks can be read).
+    /// held off its sides by the pane's own `paneGutter`, and the rail standing in the TRAILING
+    /// GUTTER that padding opens (`command-ladder.png`, plus an 8× tile so the marks can be read).
     ///
     /// This is the check the round exists for: the rail must be inside the gutter — no mark and no
     /// hit area over a cell — and the ticks must be the GLASS's own green / red / accent rather than
@@ -876,7 +876,8 @@ private struct LadderPaneMock: View {
         VStack(spacing: 0) {
             cells
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(Slate.Metric.space2)
+                .padding(.vertical, Slate.Metric.space2)
+                .padding(.horizontal, Slate.Metric.paneGutter)
                 .overlay(alignment: .trailing) {
                     CommandLadderOverlay(model: model, onJump: { _ in })
                 }
@@ -938,19 +939,26 @@ private struct LadderPeekMock: View {
         )
     }
 
-    /// A clean run read from the TOP, with more below.
+    /// Each string parsed on its own — one line in, one line of styled runs out, so the mock feeds
+    /// the card exactly what the wire path feeds it (``AnsiStyledParser``), escapes and all.
+    private func styled(_ raw: [String]) -> [[AnsiRun]] {
+        raw.map { AnsiStyledParser.lines(from: Data($0.utf8))[0] }
+    }
+
+    /// A clean run read from the TOP, with more below. Carries a nerd-font glyph (U+E0A0, the branch
+    /// mark) so the render also says whether the resolved face has the private-use area.
     private var clean: BlockOutputPreview {
         BlockOutputPreview(
-            lines: [
-                "Building for debugging...",
+            lines: styled([
+                "\u{1B}[1mBuilding for debugging...\u{1B}[0m",
                 "[1/1103] Compiling SlopDeskClientUI CommandLadderOverlay.swift",
                 "[2/1103] Compiling SlopDeskWorkspaceCore BlockOutputPreview.swift",
-                "Test Suite 'All tests' started at 2026-08-09 18:04:11.882",
-                "Test Case '-[CommandLadderLayoutTests testFewTicksKeep]' passed",
-                "Test Suite 'All tests' passed at 2026-08-09 18:04:24.301",
-                "Executed 1103 tests, with 0 failures (0 unexpected) in 12.401s",
+                "\u{1B}[2mTest Suite 'All tests' started at 2026-08-09 18:04:11.882\u{1B}[0m",
+                "\u{1B}[32m✓\u{1B}[0m Test Case '-[CommandLadderLayoutTests testFewTicksKeep]' \u{1B}[32mpassed\u{1B}[0m",
+                "\u{1B}[38;5;208m\u{E0A0} main\u{1B}[0m \u{1B}[36m12 files changed\u{1B}[0m",
+                "\u{1B}[1;32mExecuted 1103 tests, with 0 failures\u{1B}[0m (0 unexpected) in 12.401s",
                 "",
-            ],
+            ]),
             hiddenCount: 214, fromTail: false,
         )
     }
@@ -958,23 +966,26 @@ private struct LadderPeekMock: View {
     /// A failure read from the BOTTOM — the whole reason the excerpt follows the outcome.
     private var failure: BlockOutputPreview {
         BlockOutputPreview(
-            lines: [
-                "   Compiling slopdesk v0.1.0 (/Volumes/Lacie/Workspace/oss/slop-desk)",
-                "error[E0433]: failed to resolve: use of undeclared crate or module",
-                "  --> src/main.rs:42:9",
-                "   |",
-                "42 |         foo::bar();",
-                "   |         ^^^ use of undeclared crate or module `foo`",
+            lines: styled([
+                "   \u{1B}[1;32mCompiling\u{1B}[0m slopdesk v0.1.0 (/Volumes/Lacie/Workspace/oss/slop-desk)",
+                "\u{1B}[1;31merror[E0433]\u{1B}[0m\u{1B}[1m: failed to resolve: use of undeclared crate\u{1B}[0m",
+                "  \u{1B}[1;34m-->\u{1B}[0m src/main.rs:42:9",
+                "   \u{1B}[1;34m|\u{1B}[0m",
+                "\u{1B}[1;34m42 |\u{1B}[0m         foo::bar();",
+                "   \u{1B}[1;34m|\u{1B}[0m         \u{1B}[1;31m^^^ use of undeclared crate `foo`\u{1B}[0m",
                 "",
-                "error: could not compile `slopdesk` (bin \"slopdesk\") due to 1 error",
-            ],
+                "\u{1B}[1;31merror\u{1B}[0m\u{1B}[1m: could not compile `slopdesk` due to 1 error\u{1B}[0m",
+            ]),
             hiddenCount: 214, fromTail: true,
         )
     }
 
     private var short: BlockOutputPreview {
         BlockOutputPreview(
-            lines: ["On branch main", "nothing to commit, working tree clean"],
+            lines: styled([
+                "On branch \u{1B}[32mmain\u{1B}[0m",
+                "\u{1B}[7m nothing to commit \u{1B}[0m, working tree clean",
+            ]),
             hiddenCount: 0, fromTail: false,
         )
     }
