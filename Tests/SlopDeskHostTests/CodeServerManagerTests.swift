@@ -770,7 +770,7 @@ final class CodeServerManagerTests: XCTestCase {
             "quickInputList.focusBackground", "editorSuggestWidget.selectedBackground",
             "menu.selectionBackground", "tab.activeBackground",
         ] {
-            XCTAssertEqual(colors[key], "#22212C1F", "\(key) is not the selection tint")
+            XCTAssertEqual(colors[key], "#22212C17", "\(key) is not the selection tint")
         }
 
         // 3. NO SELECTION FOREGROUND, ANYWHERE — the regression guard for the reversal. A solid

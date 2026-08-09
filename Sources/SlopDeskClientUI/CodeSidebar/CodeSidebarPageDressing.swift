@@ -88,8 +88,13 @@ enum CodeSidebarPageDressing {
     """
 
     /// The Slate softening rules — geometry only (radius, insets), colours untouched. Values are
-    /// the Slate ladder verbatim: tab/control 6 (`radiusTab`/`radiusControl`), card 8
-    /// (`radiusCard`), small 4 (`radiusSmall`); the 4px tab inset rides the 4pt grid (`space1`).
+    /// the Slate ladder verbatim: the tab plate 10 (`islandRadiusCompact`), control 6
+    /// (`radiusControl`), card 8 (`radiusCard`), small 4 (`radiusSmall`); the 4px tab inset rides
+    /// the 4pt grid (`space1`).
+    /// ⚠️ The tab plate reads `islandRadiusCompact`, NOT `radiusTab` (user-directed 2026-08-09 —
+    /// 6 read as too tight for a plate this size). It is the same chip the app cuts for a selected
+    /// sidebar row, so it takes the same corner; list ROWS stay on 6, because 10 on a 22px row is
+    /// close enough to a capsule to lose the rectangle the tree reads by.
     ///
     ///   • TABS become floating rounded plates: inset 4px off the strip's top/bottom/left, the
     ///     per-tab 1px dividers dropped (the strip background now separates them). The active tab's
@@ -120,7 +125,7 @@ enum CodeSidebarPageDressing {
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
         --editor-group-tab-height: var(--slate-tab-plate);
         margin: 4px 0 4px 4px;
-        border-radius: 6px;
+        border-radius: 10px;
         border-right: none !important;
         border-left: none !important;
     }
@@ -132,7 +137,7 @@ enum CodeSidebarPageDressing {
         display: none !important;
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-fade-hide:after {
-        border-radius: 6px;
+        border-radius: 10px;
     }
     .monaco-workbench .monaco-list-row {
         border-radius: 6px;
