@@ -101,16 +101,13 @@ struct CodeSidebarColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             strip
-            // The strip's bottom edge: the Slate divider hairline — the SAME faint fg-tint the
-            // split divider carries (batch 12's one visual language for seams). Without it the
-            // ground band ends in an abrupt tone change against the workbench's own tab strip,
-            // two mismatched grays stacked with no rule between them.
-            //
-            // It stays for EVERY surface (user-directed 2026-08-04, after a round that made it
-            // conditional): the tab row is chrome that outranks whatever it switches between, and
-            // chrome without an edge floats. The stacked-hairline complaint it was meant to fix
-            // belonged to the SECOND rule — the device header's — which is the one that went.
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            // NO rule under the strip (user-directed 2026-08-09, reversing 2026-08-04). It was here
+            // because the ground band used to end in an abrupt tone change against the workbench's
+            // own tab strip — two mismatched grays stacked with nothing between them. That reason
+            // has since gone: the panel is one cream from the strip through the canvas, so the two
+            // sides of this seam are the same colour and there is nothing left to separate. What
+            // the rule did instead was land a second horizontal line a few pixels off the edge the
+            // embedded workbench draws for itself, and a doubled seam is what you saw.
             // A bare switch: the surfaces carry no animation of their own — whatever motion the
             // swap has rides the `selectSurface` transaction, exactly like the pre-removal
             // inspector's content switch under its `withAnimation` tab write.

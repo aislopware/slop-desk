@@ -52,17 +52,17 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         XCTAssertTrue(css.contains(".tabs-container > .tab"))
         XCTAssertTrue(css.contains("margin: 4px 0 0 4px"), "the tab lifted off the strip's bottom edge")
         XCTAssertTrue(css.contains("border-radius: 10px 10px 0 0"), "the tab got its bottom corners back")
-        // The open tab is outlined on three sides and open on the fourth — a notch, not a fill. No
-        // line runs along the FOOT of the strip: one did, and it doubled the seam the workbench
-        // already draws there. Both edges this sheet does draw read the workbench's own border
-        // var, so it still names no colour.
+        // The open tab is marked by BREAKING the strip's baseline, not by any fill of its own: the
+        // line runs under the closed tabs and the action icons, and turns up over the open tab's
+        // top corners. Every edge reads the workbench's own border var, so this sheet names no
+        // colour.
+        XCTAssertTrue(css.contains("linear-gradient(to top, var(--vscode-editorGroup-border) 1px"))
+        XCTAssertTrue(css.contains("inset 0 -1px 0 0 var(--vscode-editorGroup-border)"))
         XCTAssertTrue(css.contains("inset 0 1px 0 0 var(--vscode-editorGroup-border)"))
-        XCTAssertFalse(css.contains("linear-gradient(to top"), "the strip's baseline is back")
-        XCTAssertFalse(css.contains("inset 0 -1px"), "a closed tab is redrawing the baseline again")
-        // The panel's left edge must be an OVERLAY: a part's children paint over its own inset
-        // shadow, so outlining the parts that way renders nothing at all.
-        XCTAssertTrue(css.contains(".monaco-workbench::before"), "the panel lost its left edge")
-        XCTAssertTrue(css.contains("background: var(--vscode-editorGroup-border)"))
+        // Nothing rules the panel's outer edge, and nothing tries to outline the parts as islands:
+        // a part's children paint over its own inset shadow, so that outline rendered nothing at
+        // all while still reading as a rule someone would trust.
+        XCTAssertFalse(css.contains(".monaco-workbench::before"), "the vertical rail is back")
         XCTAssertFalse(css.contains("inset 0 0 0 1px"), "the dead island outline is back")
         // The plate is made by RE-SCOPING the workbench's own tab-height var on the tab (captured
         // into an intermediate on the title, since a self-referential calc is a cyclic

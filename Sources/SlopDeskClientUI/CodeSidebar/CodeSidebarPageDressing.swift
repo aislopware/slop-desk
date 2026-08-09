@@ -137,38 +137,37 @@ enum CodeSidebarPageDressing {
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:last-child {
         margin-right: 4px;
     }
-    /* The OPEN tab is outlined on three sides and open on the fourth, so it reads as a notch cut
-       out of the strip and into the canvas below. Colour comes from the workbench's own
+    /* The strip's baseline and the notch in it. The line runs along the FOOT of the tab row and of
+       the action icons beside it, painted as a background-image so the tabs — which are opaque and
+       flush with that foot — sit on top of it; a closed tab then redraws it across its own foot,
+       and the open one turns it up and over its top corners instead. The break under the open tab
+       is what says "this one opens into the canvas". Colour comes from the workbench's own
        `editorGroup.border` var (the host seed sets it): this sheet stays free of colour literals,
        which is what keeps it from drifting when the theme moves.
-       ⚠️ NO line runs along the foot of the strip (user-directed 2026-08-09). One did — the
-       baseline the notch was cut out of — and it landed a second rule right where the workbench
-       already draws the editor's own top edge, reading as a doubled seam. The open tab's own
-       outline is enough to say which slot is open; the strip does not also need a floor. */
+       ⚠️ The doubled seam reported here on 2026-08-09 was NOT this line. It was the client's own
+       rule under the panel tab row, a few pixels above it (`CodeSidebarColumn`); that one is the
+       one that went. */
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container,
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {
+        background-image: linear-gradient(to top, var(--vscode-editorGroup-border) 1px, transparent 1px);
+        background-repeat: no-repeat;
+        background-position: bottom;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
+        box-shadow: inset 0 -1px 0 0 var(--vscode-editorGroup-border);
+    }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab.active {
         box-shadow:
             inset 1px 0 0 0 var(--vscode-editorGroup-border),
             inset -1px 0 0 0 var(--vscode-editorGroup-border),
             inset 0 1px 0 0 var(--vscode-editorGroup-border);
     }
-    /* The panel's LEFT EDGE, the one seam the workbench leaves undrawn: every other part boundary
-       here already meets a client-drawn edge, but the code column's outer side runs straight into
-       the app's ground with nothing between them.
-       ⚠️ It has to be an OVERLAY. Giving the parts a rounded inset `box-shadow` instead — the
-       obvious way to outline them as islands — renders NOTHING: a part's children carry their own
-       opaque background and paint over the parent's inset shadow. Measured on the running panel,
-       every pixel along both the left edge and the editor/sidebar seam came back ground cream. */
-    .monaco-workbench::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 1px;
-        background: var(--vscode-editorGroup-border);
-        z-index: 1000;
-        pointer-events: none;
-    }
+    /* ⚠️ NO vertical rail down the panel's outer edge (user-directed 2026-08-09, one round after it
+       was added — it read as clutter next to the tab outline). If one is ever wanted again it has
+       to be an OVERLAY: giving the parts a rounded inset `box-shadow` — the obvious way to outline
+       them as islands — renders NOTHING, because a part's children carry their own opaque
+       background and paint over the parent's inset shadow. Measured on the running panel, every
+       pixel along both the left edge and the editor/sidebar seam came back ground cream. */
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
         display: none !important;
