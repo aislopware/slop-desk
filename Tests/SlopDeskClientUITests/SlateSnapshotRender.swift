@@ -184,26 +184,6 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
     }
 
-    // MARK: - Opt-in render of the panel SEAM (island moat → panel edge)
-
-    /// Renders the window's trailing seam at true scale — the island's glass, its moat of ground,
-    /// and the code panel's leading RULE standing where the panel begins (`panel-seam.png`, plus a
-    /// 6x tile). The check this exists for: on this seam the moat and the panel stand on the SAME
-    /// cream, so the rule is the only thing saying where one ends — it has to be READABLE at 1pt
-    /// without reading as a border. Opt-in via `SLOPDESK_LADDER_SNAPSHOT_DIR`, the same idiom.
-    @MainActor
-    func testRenderPanelSeam() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_LADDER_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_LADDER_SNAPSHOT_DIR=<dir> to render the panel seam")
-        }
-        let seam = PanelSeamMock()
-        try renderHosted(seam, size: CGSize(width: 240, height: 200), to: dir, named: "panel-seam.png")
-        try renderHosted(
-            seam.frame(width: 60, height: 50).scaleEffect(6, anchor: .topLeading),
-            size: CGSize(width: 360, height: 300), to: dir, named: "panel-seam-6x.png",
-        )
-    }
-
     // MARK: - Opt-in render of the command ladder in its gutter
 
     /// Renders the command LADDER exactly as a pane mounts it — a glass pane, the terminal surface
@@ -1008,35 +988,6 @@ private struct LadderPeekMock: View {
             ]),
             hiddenCount: 0, fromTail: false,
         )
-    }
-}
-
-/// The trailing seam: island glass, its moat of ground, then the panel's ground behind the rule the
-/// column draws down its leading edge. Rebuilt from the same tokens the column uses (the column
-/// itself hosts a webview, which a headless render must never mount).
-@MainActor
-private struct PanelSeamMock: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .frame(width: 90)
-                .slateIsland()
-            panel
-        }
-        .background(Slate.Surface.field)
-        .environment(\.colorScheme, .light)
-    }
-
-    private var panel: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.field)
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(Slate.Line.panelEdge)
-                    .frame(width: Slate.Metric.hairline)
-                    .padding(.top, Slate.Metric.bandInset)
-            }
     }
 }
 

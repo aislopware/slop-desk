@@ -377,20 +377,6 @@ enum Slate {
             slateDynamicLight: 0x000000, dark: 0xFFFFFF,
             lightAlpha: Opacity.edge, darkAlpha: Opacity.edge,
         )
-
-        /// THE PANEL'S EDGE — the rule down the code panel's leading side, where the ground beside
-        /// the island runs on into the ground the panel stands on (user-directed 2026-08-09: the
-        /// two are the same cream, so without a rule the window gives no sign of where the panel
-        /// begins).
-        ///
-        /// The panel's own INK — the glass `#22212C` the workbench already draws its structure in
-        /// (`editorGroup.border`, see `CodeServerManager.seededUserSettings`) — but one job up the
-        /// ladder from it. Those inner rules are ``Opacity/faint`` (12%), which measures 1.26:1 on
-        /// the cream; this is not structure inside a surface, it is where the surface BEGINS, and
-        /// that is the question ``Opacity/edge`` answers (1.79:1 measured on the same cream). NOT
-        /// ``divider``: the system separator lands at 1.25:1 here — the same reading that made
-        /// ``field`` its own token.
-        static let panelEdge = Color(slateHex: 0x22212C).opacity(Opacity.edge)
     }
 
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour

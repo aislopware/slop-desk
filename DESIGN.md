@@ -127,14 +127,7 @@ components:
 
 North star: **one ground, one island.** SlopDesk's window holds exactly two tones. The GROUND is
 Alucard's published cream `#FFFBEB`: the navigator, the code panel, the top band and the moat all
-stand on it, flush, un-rounded and seamless — they SINK. The ONE rule on that ground is the code
-panel's leading edge (user-directed 2026-08-09): the moat beside the island and the ground the panel
-stands on are the same cream, so without a hairline the window gave no sign of where the panel began.
-It is drawn in the panel's own ink (`Slate.Line.panelEdge` — the `#22212C` the workbench draws
-`editorGroup.border` in) one rung UP from those inner rules, because this line answers "where does
-the surface begin", not "what is its structure": 1.79:1 on the cream against their 1.26:1, both
-measured. It starts on the island's top line and takes no hit — that seam is the split divider's
-drag handle. Lifted off that ground is
+stand on it, flush, un-rounded, with no seam between them — they SINK. Lifted off that ground is
 exactly ONE surface: the terminal canvas, wearing the Dracula Pro glass, rounded at 26pt, floating in a
 moat that is the same on all four sides, so its top edge lands on the band's TOP LINE — the one line
 the window keeps straight, level with the traffic lights and the panel's tabs, so all three columns
@@ -263,7 +256,13 @@ seeded to the Monokai Pro / Monokai Pro Light pair with `window.autoDetectColorS
 `workbench.colorCustomizations` block that repaints every VS Code surface — editor, gutter, sidebar,
 activity bar, tab strip, panel, status bar, title bar — in the ground cream and zeroes their borders,
 so the panel is indistinguishable from the field it sits in (user-directed 2026-08-08; the generated
-Dracula/Alucard workbench extension is still actively swept from seeded hosts).
+Dracula/Alucard workbench extension is still actively swept from seeded hosts). The one mark inside
+that flat field is the tab strip's own baseline, which turns the corner at the open tab's foot and
+runs down the panel's leading edge to the status bar — the WORKBENCH's line, off its
+`editorGroup.border` var, not a chrome rule the window draws (user-directed 2026-08-09, after a
+native chrome rule at the same place was rejected for being exactly that). It is a boundary, not a
+seam: it says where the panel begins, since the panel's ground and the moat beside the island are
+the same cream.
 
 Nothing may straddle the chrome/glass boundary: a view is either ON the chrome (semantic tokens over
 the ground) or ON the glass (profile tokens, or semantic tokens under the forced glass scheme). The

@@ -100,8 +100,9 @@ enum CodeSidebarPageDressing {
     ///     plate): inset 4px off the strip's top and left but flush with its BOTTOM, and rounded on
     ///     the top two corners only, so the open tab opens into the canvas underneath it. Nothing
     ///     here says WHICH tab is open by weight: the open tab is outlined on three sides and open
-    ///     on the fourth, a notch cut into the canvas. The one other line this sheet draws is the
-    ///     panel's left edge. Neither sets a colour — both read `var(--vscode-editorGroup-border)`,
+    ///     on the fourth, a notch cut into the canvas. That baseline then TURNS THE CORNER and runs
+    ///     down the panel's leading edge, from the tab's foot to the status bar — one line, not two
+    ///     marks. Nothing here sets a colour: every rule reads `var(--vscode-editorGroup-border)`,
     ///     which the host seed fills. The per-tab 1px dividers are dropped.
     ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
@@ -162,12 +163,24 @@ enum CodeSidebarPageDressing {
             inset -1px 0 0 0 var(--vscode-editorGroup-border),
             inset 0 1px 0 0 var(--vscode-editorGroup-border);
     }
-    /* ⚠️ NO vertical rail down the panel's outer edge (user-directed 2026-08-09, one round after it
-       was added — it read as clutter next to the tab outline). If one is ever wanted again it has
-       to be an OVERLAY: giving the parts a rounded inset `box-shadow` — the obvious way to outline
-       them as islands — renders NOTHING, because a part's children carry their own opaque
-       background and paint over the parent's inset shadow. Measured on the running panel, every
-       pixel along both the left edge and the editor/sidebar seam came back ground cream. */
+    /* The strip's baseline TURNS THE CORNER and runs down the panel's leading edge (user-directed
+       2026-08-09). The moat beside the terminal island and the ground this panel stands on are the
+       same cream, so nothing said where the panel began; this says it, and says it as a
+       continuation of the line already under the tabs rather than as a second mark — same
+       `editorGroup.border` var, so it cannot drift from the baseline it grows out of.
+       It hangs on the EDITOR CONTAINER, which is exactly the region below the tab strip: measured
+       on the running workbench the container's box starts at the title's foot (y=65 under a 35px
+       strip at y=30) and ends at the status bar, so the rule spans that and nothing more — it does
+       NOT run up beside the tabs, where it would cut the strip in half.
+       ⚠️ An earlier pass put a FULL-HEIGHT rail on the parts and was rejected as clutter beside the
+       tab outline; the same pass also measured why the obvious form renders nothing — an inset
+       `box-shadow` on a PART is painted over by children carrying their own opaque background. The
+       editor container is not one of those cases (verified in a live workbench: a probe rule shows
+       through Monaco at every sampled row), so the rule stays a plain inset shadow rather than an
+       overlay pseudo-element that would have to out-stack the editor's own widgets. */
+    .monaco-workbench .part.editor > .content .editor-group-container > .editor-container {
+        box-shadow: inset 1px 0 0 0 var(--vscode-editorGroup-border);
+    }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
         display: none !important;
