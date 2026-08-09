@@ -1,6 +1,7 @@
 // SlateKit — small reusable chrome controls built on the polished `Slate` token layer (SlateDesign.swift):
 //   • `PlateIconButton` — the hover-plate icon button: a borderless SF-Symbol button that grows a faint
 //     rounded hover plate, 0.12s small-fade. Used by the titlebar + sidebar chrome.
+//   • `slateGlyphAck(_:)` — THE acknowledgement every chrome button gives a click. One definition.
 //   • `HoverSensor` — a hit-test-TRANSPARENT hover tracker for the top-strip reveal choreography.
 
 #if canImport(SwiftUI)
@@ -17,10 +18,10 @@ struct PlateIconButton: View {
     /// glyph in the primary ink at a heavier weight so the state survives on a theme whose hover tint
     /// is faint.
     var active = false
-    /// The state this button's verb LANDS on, when the glyph should acknowledge the click by morphing
-    /// rather than by anything moving. Every change of the value plays one short symbol bounce, so a
-    /// chord or a menu row driving the same flag reads exactly like a click on the plate. `nil` (the
-    /// default) leaves the glyph still — the plate's press fill is then the whole acknowledgement.
+    /// The state this button's verb LANDS ON, for a button that LATCHES something. Handing it over
+    /// moves the acknowledgement from the press to the landing, which is what lets a chord or a menu
+    /// row driving the same flag read exactly like a click on the plate. `nil` — a plain verb — still
+    /// acknowledges: it just fires on the press instead (``SlatePlateStyle``).
     var morphOn: Bool?
     var action: () -> Void = {}
 
@@ -43,14 +44,12 @@ struct PlateIconButton: View {
             Image(systemSymbol: symbol)
                 .font(.system(size: size, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? Slate.Text.primary : Slate.Text.icon)
-                // The press MORPH — see ``morphOn``. `.down` because a key that acknowledges a click
-                // goes IN first; a value that never changes (the `nil` default, mapped to a constant)
-                // never fires it.
-                .symbolEffect(.bounce.down, options: .speed(1.4), value: morphOn ?? false)
                 .frame(width: plate, height: plate)
                 .contentShape(.rect)
         }
-        .buttonStyle(SlatePlateStyle { background(pressed: $0) })
+        // The glyph's acknowledgement is the STYLE's, not this view's (user-directed 2026-08-09):
+        // one effect, defined once, so every plate in the app answers a click the same way.
+        .buttonStyle(SlatePlateStyle(landsOn: morphOn) { background(pressed: $0) })
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         // The LATCH, animated like the hover it sits above. Without this a toggle snapped between
@@ -74,23 +73,69 @@ struct PlateIconButton: View {
     }
 }
 
-/// The plate idiom's fill, drawn by the BUTTON STYLE so it can see the press.
+extension View {
+    /// THE ACKNOWLEDGEMENT — the one thing a glyph does to say a click arrived (user-directed
+    /// 2026-08-09). It was the sidebar toggle's alone; it is now the app's, defined here and nowhere
+    /// else, so a device verb, a reload plate and a panel tab all answer in the same voice.
+    ///
+    /// A short symbol bounce, DOWNWARD, because a key that takes a click goes in before it comes
+    /// back. Nothing translates and nothing changes size: the control is a fixed landmark and what
+    /// changed is the thing it acts on, not the button (the same rule that moved the sidebar toggle
+    /// to the window root). Every change of `trigger` plays it once — pass a counter for a plain
+    /// verb, or the flag a latching control lands on so a chord fires it too.
+    func slateGlyphAck(_ trigger: some Equatable) -> some View {
+        symbolEffect(.bounce.down, options: .speed(Slate.Anim.ackSpeed), value: trigger)
+    }
+}
+
+/// The plate idiom's fill AND its acknowledgement, drawn by the BUTTON STYLE so it can see the press.
 ///
 /// `.buttonStyle(.plain)` with the fill inside the label cannot: `isPressed` reaches a style and
 /// nothing else, and the alternatives — a `DragGesture(minimumDistance: 0)` or a long-press sensor —
-/// both take the events the row shells and scroll views underneath these buttons need.
+/// both take the events the row shells and scroll views underneath these buttons need. Putting the
+/// glyph bounce here as well is what makes it universal for free: every plate in the app already
+/// wears this style, so none of them has to remember to ask for the effect.
 struct SlatePlateStyle: ButtonStyle {
+    /// The state a LATCHING button's verb lands on — see ``PlateIconButton/morphOn``. `nil` (a plain
+    /// verb, which is most of them) acknowledges the PRESS instead.
+    var landsOn: Bool?
     /// The fill for the plate, asked once per press phase.
     let fill: (_ isPressed: Bool) -> Color
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                fill(configuration.isPressed), in: .rect(cornerRadius: Slate.Metric.radiusControl),
-            )
-            // Both directions through the same 120ms fade: a click shorter than that still shows,
-            // because the release fades from wherever the press had reached.
-            .animation(Slate.Anim.smallFade, value: configuration.isPressed)
+        // A `ButtonStyle` has no storage of its own, and the acknowledgement needs a counter to
+        // advance — so the body is a real view.
+        Plate(configuration: configuration, landsOn: landsOn, fill: fill)
+    }
+
+    private struct Plate: View {
+        let configuration: Configuration
+        let landsOn: Bool?
+        let fill: (Bool) -> Color
+
+        /// Advanced by whichever edge this button acknowledges — see ``slateGlyphAck(_:)``.
+        @State private var ack = 0
+
+        var body: some View {
+            configuration.label
+                .slateGlyphAck(ack)
+                .background(
+                    fill(configuration.isPressed),
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                )
+                // Both directions through the same 120ms fade: a click shorter than that still
+                // shows, because the release fades from wherever the press had reached.
+                .animation(Slate.Anim.smallFade, value: configuration.isPressed)
+                // A plain verb answers the press DOWN — its real effect is a round trip away, and a
+                // key that waits for the reply reads as one that missed the click.
+                .onChange(of: configuration.isPressed) { _, pressed in
+                    guard landsOn == nil, pressed else { return }
+                    ack &+= 1
+                }
+                // A LATCHING button answers the landing instead, so the plate and a chord driving
+                // the same flag are indistinguishable. `nil` maps to a constant and never fires.
+                .onChange(of: landsOn ?? false) { _, _ in ack &+= 1 }
+        }
     }
 }
 
@@ -147,33 +192,47 @@ struct PanelTabPlate: View {
     /// ragged list, where a strip of tabs side by side reads fine hugging. Off everywhere else, so
     /// the strip's width ladder keeps reporting honest ideal widths.
     var spans = false
+    /// How far the caller has turned the WHOLE plate, so the mark can turn back and stay upright.
+    ///
+    /// A word on its side is still read — the eye tilts and the letters keep their order. A GLYPH on
+    /// its side is a different glyph: a rotated `folder` reads as a shape rather than as a folder,
+    /// and Apple's own optical grid stops meaning anything (user-directed 2026-08-09). So the panel's
+    /// rail turns the plate and hands the angle over; the mark takes it back out.
+    var plateRotation: Angle = .zero
     /// The morph namespace shared by ONE strip of tabs — see ``SlateCompactIsland/morph``. `nil`
     /// keeps the plain fade for any caller mounting a lone plate.
     var morph: Namespace.ID?
     var action: () -> Void = {}
 
     @State private var hovering = false
+    /// Advanced when this tab becomes THE selected one — see ``slateGlyphAck(_:)``. On selection,
+    /// not on the press: a tab's verb lands on "this surface is showing", and the plate travelling
+    /// here is the other half of the same answer.
+    @State private var ack = 0
 
     init(
         mark: Mark, label: String, selected: Bool, showsLabel: Bool = true, spans: Bool = false,
-        morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
+        plateRotation: Angle = .zero, morph: Namespace.ID? = nil,
+        action: @escaping () -> Void = {},
     ) {
         self.mark = mark
         self.label = label
         self.selected = selected
         self.showsLabel = showsLabel
         self.spans = spans
+        self.plateRotation = plateRotation
         self.morph = morph
         self.action = action
     }
 
     init(
         symbol: SFSymbol, label: String, selected: Bool, showsLabel: Bool = true,
-        spans: Bool = false, morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
+        spans: Bool = false, plateRotation: Angle = .zero, morph: Namespace.ID? = nil,
+        action: @escaping () -> Void = {},
     ) {
         self.init(
             mark: .symbol(symbol), label: label, selected: selected, showsLabel: showsLabel,
-            spans: spans, morph: morph, action: action,
+            spans: spans, plateRotation: plateRotation, morph: morph, action: action,
         )
     }
 
@@ -191,6 +250,12 @@ struct PanelTabPlate: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
+        // The app's one acknowledgement, on the tab that WINS — the tab losing selection has nothing
+        // to acknowledge, and bouncing both would read as two events for one click.
+        .onChange(of: selected) { _, now in
+            guard now else { return }
+            ack &+= 1
+        }
     }
 
     @ViewBuilder
@@ -224,8 +289,21 @@ struct PanelTabPlate: View {
     /// at the other end of the strip already use, and not the label's type size. A glyph and a word
     /// are not the same kind of thing, and sizing both from `footnote` had the tabs drawing at 11
     /// while the reload button beside them drew at 13.
-    @ViewBuilder
+    ///
+    /// It is also the tab's ACKNOWLEDGEMENT surface (``slateGlyphAck(_:)``) — the mark is the part of
+    /// a tab that can move without the tab moving.
     private var glyph: some View {
+        markBody
+            // Turned back out of whatever the caller turned the plate into, about its own centre, so
+            // an upright mark sits in a plate lying on its side. `.rotationEffect` is a draw-time
+            // transform: the cell the mark occupies is unchanged, and the four rail tabs keep the
+            // same measure they have in the strip.
+            .rotationEffect(-plateRotation)
+            .slateGlyphAck(ack)
+    }
+
+    @ViewBuilder
+    private var markBody: some View {
         switch mark {
         case let .symbol(symbol):
             Image(systemSymbol: symbol)

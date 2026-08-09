@@ -1016,6 +1016,10 @@ enum Slate {
         static let fadeOut = Animation.timingCurve(0.42, 0, 1, 1, duration: 0.14)
         /// Scroll fade / link pill / hover plate — EaseOut 0.12s.
         static let smallFade = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.12)
+        /// How fast THE acknowledgement plays (`View.slateGlyphAck`) — a symbol bounce runs long by
+        /// default and a click has to feel answered, not performed. Lives here rather than at the one
+        /// call site because the effect is the app's, not any one button's.
+        static let ackSpeed: Double = 1.4
         /// Divider / plate hover — EaseInEaseOut 0.16s.
         static let dividerHover = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.16)
         /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect

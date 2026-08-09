@@ -353,6 +353,17 @@ info status. Everything else interactive is the system's.
   it, turned a quarter turn to run down the rail. Same tabs, same selection, same plate — only the
   axis changed, which is the move the tab strip already makes when the LEFT column collapses. A rail
   tab EXPANDS the panel onto its surface, because a railed panel has no surface to show.
+  The PLATE turns; the MARK DOES NOT (user-directed 2026-08-09). A word on its side is still a word,
+  but a glyph on its side is a different glyph, and being recognised before it is read is the whole
+  job of a mark — so the rail hands its angle to the tab and the mark takes it back out.
+  **The rail arrives and leaves; it does not appear.** Collapsing, it waits out most of the column's
+  exit and then slides in from the window's trailing edge, landing in ground the panel has already
+  vacated (measured: the island settles at ~270ms, the rail lands at ~470ms). Expanding, it clears
+  first — no delay, quick out — so the returning panel never has to shove it aside. The panel's own
+  CONTENT leaves ahead of its width for the same reason: a workbench re-laid-out at every
+  intermediate width is what made the collapse read as rough, so the content fades and the empty
+  ground rides the rest of the slide. One gesture, one clock — the same arrive-on-land contract the
+  horizontal tab strip keeps with the navigator, off the same `columnSlide` token.
 
 ## The terminal profile (`SlateTheme.app`)
 
@@ -393,6 +404,14 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
 - **Motion**: cubic-bezier only, no springs; one orchestrated moment (the connect handshake
   needle). Timing tokens in `Slate.Anim`; `pulse` is the ONE repeating shape and lives only in a
   preview that demonstrates blinking — the at-rest-motion purge stands.
+- **THE ACKNOWLEDGEMENT** — `View.slateGlyphAck(_:)`, one definition for the whole app
+  (user-directed 2026-08-09): a short DOWNWARD symbol bounce, and nothing else. It was the sidebar
+  toggle's private effect; every chrome button now gives it, because a click deserves the same
+  answer wherever it lands. A plain verb fires on the press (its real effect is a round trip away);
+  a LATCHING control fires on the flag it lands on, so a chord or a menu row is indistinguishable
+  from a click on the plate. Nothing translates and nothing resizes — the control is a landmark and
+  what changed is the thing it acts on. `SlatePlateStyle` plays it for every plate automatically,
+  so no call site has to remember to ask; tabs opt in on the tab that WINS the selection.
 - **Interaction states**: rest / hover / selected everywhere; a true PRESSED fill exists only on
   the plate idiom (`SlatePlateStyle`, whose press previews the latch it lands on) — rows and tabs
   act instantly, so they do not carry one. Do not add pressed fills to instant-action rows.

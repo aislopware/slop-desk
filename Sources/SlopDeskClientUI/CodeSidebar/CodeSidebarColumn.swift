@@ -123,6 +123,20 @@ struct CodeSidebarColumn: View {
             }
         }
         .background(Slate.Surface.field)
+        // THE COLUMN'S CONTENT LEAVES BEFORE ITS WIDTH DOES (user-reported 2026-08-09: the collapse
+        // read as rough). A panel closing is a width animation, and everything standing in it —
+        // an embedded workbench, a device stage, a strip of tabs — gets re-laid-out at every
+        // intermediate width on the way out. That reflow is the roughness; it is not the slide.
+        // So the content fades first and the empty ground rides the rest of the slide out. Coming
+        // back it is the mirror, arriving as the column lands, which is the same contract the
+        // titlebar strip and the rail keep — one gesture, one clock.
+        .opacity(chrome.codeSidebarCollapsed ? 0 : 1)
+        .animation(
+            chrome.codeSidebarCollapsed
+                ? Slate.Anim.fadeOut
+                : Slate.Anim.reveal.delay(Slate.Anim.columnSlideDuration * 0.55),
+            value: chrome.codeSidebarCollapsed,
+        )
         // A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's
         // settings watcher applies it without a reload). The ensure-round sync below covers the
         // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.

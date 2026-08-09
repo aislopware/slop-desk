@@ -57,17 +57,26 @@ struct PanelRail: View {
     /// tabs agree, one control tall — and then rotated a quarter turn; the outer frame is that same
     /// box with its sides swapped, which is what makes the layout believe the rotated result.
     /// Clockwise, so the names read top-to-bottom down the window's trailing edge.
+    ///
+    /// The plate turns; the MARK DOES NOT (user-directed 2026-08-09). A word on its side is still a
+    /// word — the eye tilts and the letters keep their order — but a glyph on its side is a different
+    /// glyph, and the whole job of a mark is to be recognised before it is read. `plateRotation` is
+    /// how the tab is told what to take back out; see ``PanelTabPlate/plateRotation``.
     private func tab(mark: PanelTabPlate.Mark, label: String, surface: PanelSurface) -> some View {
         PanelTabPlate(
             mark: mark, label: label, selected: chrome.panelSurface == surface, spans: true,
-            morph: selectionMorph,
+            plateRotation: Self.quarterTurn, morph: selectionMorph,
         ) {
             chrome.panelSurface = surface
             chrome.revealCodeSidebar()
         }
         .frame(width: Slate.Metric.panelRailTabLength, height: Slate.Metric.heightControl)
-        .rotationEffect(.degrees(90))
+        .rotationEffect(Self.quarterTurn)
         .frame(width: Slate.Metric.heightControl, height: Slate.Metric.panelRailTabLength)
     }
+
+    /// The rail's one angle — declared once so the plate's turn and the mark's turn back can never
+    /// drift apart.
+    private static let quarterTurn = Angle.degrees(90)
 }
 #endif
