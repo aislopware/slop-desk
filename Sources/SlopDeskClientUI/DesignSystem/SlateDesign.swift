@@ -735,8 +735,16 @@ enum Slate {
         /// The sidebar project-group header row (gutter chevron + name). 24pt + the list's 2pt row
         /// spacing on both sides = the 28pt inter-group band; the air IS the separator.
         static let heightSectionHeader: CGFloat = 24
-        /// Chrome strips: the titlebar / traffic-light band.
-        static let heightStrip: CGFloat = 40
+        /// Chrome strips: the titlebar / traffic-light band. THE BAND IS FITTED TO THE SYSTEM'S OWN
+        /// CONTROLS (user-directed 2026-08-09), not the other way round: AppKit parks the three 16pt
+        /// discs 8pt down from a `.hiddenTitleBar` window's top edge, so 8 + 16 + 8 = 32 is the
+        /// height that CENTRES them with no frame-nudging and no toolbar-height declaration. It is
+        /// also the line every column's content starts on — the island's top moat, the navigator's
+        /// search field, the panel's surfaces — so the strip reads as one row across the window.
+        /// The band spent a day at 40 (an empty `.unifiedCompact` toolbar declared that height so
+        /// AppKit would centre the discs in it); it left 8pt of dead ground under every strip and
+        /// pushed the island down with it.
+        static let heightStrip: CGFloat = 32
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
         static let heightInput: CGFloat = 48
         /// A drawer that shares a column with the thing it is about (the simulator console under the
@@ -764,14 +772,13 @@ enum Slate {
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
         static let titlebarHeight: CGFloat = heightStrip
         /// Where chrome may start on the traffic-light row: clear of the three system window
-        /// controls. MEASURED on the running app once `SlopDeskClientApp.growTitlebarToBandHeight`
-        /// makes the titlebar this band's height — three 14pt discs from a 12pt leading inset on a
-        /// 23pt pitch, so the cluster's trailing edge lands at 71 — plus a control's worth of air.
-        /// Both sidebar-toggle mounts (the navigator's own strip and the reopen twin in the titlebar)
-        /// sit here, which is what keeps the button at ONE window x whether the sidebar shows or not.
-        /// ⚠️ This is AppKit's number, not ours: the app declares the titlebar HEIGHT and AppKit
-        /// centres the discs itself. Do not reintroduce a manual inset constant — positioning the
-        /// buttons by frame is what made them flicker on every window re-title.
+        /// controls. MEASURED on the running app — three 16pt discs from an 8pt leading inset on a
+        /// 23pt pitch, so the cluster's trailing edge lands at 70 — plus air.
+        /// ``WindowSidebarToggle`` is the one thing mounted here, and the titlebar's own strip
+        /// starts a plate further right so the two never contend for the slot.
+        /// ⚠️ This is AppKit's placement, not ours. Do not reintroduce a manual inset constant —
+        /// positioning the buttons by frame is what made them flicker on every window re-title —
+        /// and do not declare a taller titlebar to move them either: see ``heightStrip``.
         static let windowControlsLead: CGFloat = 80
         static let sidebarWidth: CGFloat = 220
         /// The MINIMIZED sidebar — the rail (user-directed 2026-08-07, rail round): collapsing the

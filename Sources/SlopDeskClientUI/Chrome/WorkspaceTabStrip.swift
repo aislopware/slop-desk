@@ -13,7 +13,7 @@
 // glass. Nothing here invents a second vocabulary for tabs; the axis is all that changed.
 //
 // What the horizontal form gives up is the second register: no git line, no cwd subtitle, no
-// process label. A chip is a title, its status mark and its bed. The band is 40pt tall and the
+// process label. A chip is a title, its status mark and its bed. The band is 32pt tall and the
 // chips share it with the window controls — there is room for identity, not for readouts, and the
 // readouts are one ⌘⇧L away.
 
@@ -32,6 +32,10 @@ struct WorkspaceTabStrip: View {
     /// The chip's own height — one rung under the sidebar row (`heightTabRow`), because the band
     /// also carries the traffic lights and a full-height chip crowded them.
     private static let chipHeight = Slate.Metric.heightControl
+
+    /// The project bed's vertical collar — half a rung, so bed + collar (28) clears the 32pt band
+    /// with a breath of ground on both sides. See the `frame` note below for why it may not fill it.
+    private static let bedCollar = Slate.Metric.space1 / 2
 
     /// The selection plate's morph namespace, shared by every chip in the strip so the plate TRAVELS
     /// between tabs. The strip's own namespace, not the sidebar's: only one of the two is ever
@@ -62,17 +66,19 @@ struct WorkspaceTabStrip: View {
             )
         }
         .scrollIndicators(.hidden)
-        // Exactly the bed's own height — 24 chip + 2×4 inset = 32 — which the titlebar then centres
-        // in the 40pt band, leaving 4pt of ground above and below (user-directed 2026-08-09). The
-        // beds used to spend a full `space2` and fill the band edge to edge, reading as a painted
-        // header rather than as the sidebar's bed rotated.
-        .frame(height: Self.chipHeight + 2 * Slate.Metric.space1)
+        // Exactly the bed's own height — 24 chip + 2×2 collar = 28 — which the titlebar then centres
+        // in the 32pt band, leaving 2pt of ground above and below (user-directed 2026-08-09). The
+        // bed must NEVER fill the band edge to edge: at a full `space2` collar it read as a painted
+        // header rather than as the sidebar's bed rotated. The collar is half a rung now because the
+        // band itself came down to 32 to fit the traffic lights; the chip keeps `heightControl`, so
+        // a tab still measures exactly what every other plate in the strip does.
+        .frame(height: Self.chipHeight + 2 * Self.bedCollar)
     }
 
     /// One project's run of tabs on its own bed. A keyless section still gets a bed (the neutral
     /// one) so the strip's rhythm does not break where a video pane sits between two projects.
     private func island(_ section: RailRowGroup, tint: Color) -> some View {
-        SlateProjectIsland(tint: tint, verticalInset: Slate.Metric.space1) {
+        SlateProjectIsland(tint: tint, verticalInset: Self.bedCollar) {
             HStack(spacing: Slate.Metric.space1) {
                 ForEach(section.rows) { row in
                     TabStripChip(

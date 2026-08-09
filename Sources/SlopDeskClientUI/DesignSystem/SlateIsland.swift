@@ -29,7 +29,7 @@ extension View {
     /// THE TOP IS THE BAND (user-directed 2026-08-09). The sides and the bottom keep the ordinary
     /// ``Slate/Metric/islandInset`` moat, but the top side is the full ``Slate/Metric/bandHeight``,
     /// in EVERY state — because that is the one line the window has to keep straight. The navigator
-    /// opens its 40pt traffic-light strip there, the code panel opens its surface-tab strip there,
+    /// opens its traffic-light strip there, the code panel opens its surface-tab strip there,
     /// and every column's content starts underneath: with a 12pt top moat the middle column alone
     /// began 28pt higher, so the band read as broken by the island's corner rather than as one
     /// unbroken strip across the window.
@@ -147,7 +147,7 @@ struct SlateProjectIsland<Content: View>: View {
     /// How far the bed extends past its content vertically. The sidebar spends a full `space2` — its
     /// beds stack down a column and the gap between two of them is what separates the projects. The
     /// titlebar strip spends `space1` instead (user-directed 2026-08-09): there the bed has to leave
-    /// clearance ABOVE and BELOW itself inside a fixed 40pt band, and a full rung made it fill the
+    /// clearance ABOVE and BELOW itself inside the fixed band, and a full rung made it fill the
     /// band edge to edge and read as a painted header rather than a bed.
     var verticalInset: CGFloat = Slate.Metric.space2
     @ViewBuilder let content: () -> Content

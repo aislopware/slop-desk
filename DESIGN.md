@@ -68,7 +68,7 @@ components:
   island:
     backgroundColor: "{colors.glass-dracula}"
     rounded: "{rounded.island} — a WINDOW-scale corner for a window-scale surface: 26 is what macOS 26 Tahoe puts on a full-chrome window (measured on this OS). The island sits ~230px clear of the frame's own corners, so nothing constrains it to stay under the window's 16 (user-directed 2026-08-08)"
-    inset: "moat on leading / trailing / bottom; the TOP is the whole 40px band, in every state (user-directed 2026-08-09). The band is one unbroken row across all three columns — traffic lights, sidebar toggle, the collapsed-state tab strip, the panel's surface tabs — and every column's content starts on the line under it. A 12px top moat let this one column begin 28px higher and the strip read as broken by the island's corner"
+    inset: "moat on leading / trailing / bottom; the TOP is the whole 32px band, in every state (user-directed 2026-08-09). The band is one unbroken row across all three columns — traffic lights, sidebar toggle, the collapsed-state tab strip, the panel's surface tabs — and every column's content starts on the line under it. A 12px top moat let this one column begin 28px higher and the strip read as broken by the island's corner"
     border: "1px Slate.Line.divider, inset-stroked inside the clip"
     note: "THE ONE ISLAND (user-directed 2026-08-08) — the terminal canvas, the window's only lifted surface. `View.slateIsland()` is its single call site; a second one is the many-islands clutter coming back. Panes tile it edge-to-edge, parted by the PaneDivider hairline, never by a channel"
   sidebar:
@@ -80,7 +80,7 @@ components:
     rounded: "{rounded.control}"
     height: "28px"
   titlebar:
-    backgroundColor: "transparent — a hover-reveal overlay riding the content column's top strip (40px)"
+    backgroundColor: "transparent — a hover-reveal overlay riding the content column's top strip (32px)"
     note: "EMPTY at rest and no longer a band across the window (user-directed 2026-08-08): the centred pane title and its menu are deleted, and the island now rises past this line, so the traffic lights stand on the NAVIGATOR's ground with the island beside them. Only the two hover-revealed reopen plates and — while the sidebar is hidden — the connection cluster appear on the traffic-light row"
   list-row:
     backgroundColor: "transparent"
@@ -129,7 +129,7 @@ North star: **one ground, one island.** SlopDesk's window holds exactly two tone
 Alucard's published cream `#FFFBEB`: the navigator, the code panel, the top band and the moat all
 stand on it, flush, un-rounded, with no seam between them — they SINK. Lifted off that ground is
 exactly ONE surface: the terminal canvas, wearing the Dracula Pro glass, rounded at 26pt, floating in a
-moat on its sides and its bottom and starting, at the top, where the 40pt band ends — the one line
+moat on its sides and its bottom and starting, at the top, where the 32pt band ends — the one line
 the window keeps straight, so all three columns begin together (user-directed 2026-08-09). Inside the island, panes tile edge-to-edge and are parted by a
 hairline, never by a channel — one lift, one vocabulary. SELECTION is the island's only echo: the
 chosen tab is a COMPACT island, the same material at row scale, so the window says "this one" in the
@@ -203,8 +203,14 @@ cream lifted off the ground, and nothing but the cast tells them apart at the ca
 
 ### Geometry
 
-Window 16, moat 8 on the sides and the bottom (the top is the 40pt band), island **26**, compact
+Window 16, moat 12 on the sides and the bottom (the top is the 32pt band), island **26**, compact
 island (selected tab) **10**.
+
+The band's 32 is not a taste number: AppKit parks a `.hiddenTitleBar` window's three 16pt traffic
+discs 8pt down from the top edge, so 8 + 16 + 8 is the height that CENTRES them with nothing declared
+and no frame nudged. It spent a day at 40 — an empty `.unifiedCompact` toolbar declared that height
+so AppKit would centre the discs in it — and the extra 8 read as dead ground under every strip and
+pushed the island down with it (user-directed 2026-08-09).
 
 macOS 26 Tahoe gives a window the corner its titlebar asks for. Measured on this OS, one `NSWindow`
 per configuration, reading the alpha profile of the corner: **no toolbar 16** (what this app gets —
@@ -261,8 +267,8 @@ boundary is exactly one edge in the whole window — the island's.
   (user-directed 2026-08-08), for pane seams inside the island and section rules on the ground.
 - **Lift** — the profile's `chromeLift` `#2E2E3C` is the hover/raised rung for chrome objects that
   need a step up from the ground.
-- **Sidebar** = flat on the ground, with a 40pt traffic-light reserve at its top holding the
-  collapse toggle and New Tab plate. Collapsing HIDES the column (chrome revert, user-directed
+- **Sidebar** = flat on the ground, with a 32pt traffic-light reserve at its top — bare ground now,
+  since the collapse toggle moved to window level. Collapsing HIDES the column (chrome revert, user-directed
   2026-08-08 — the 80pt rail is retired with the islands layout it belonged to); the reopen
   plate lives in the titlebar, and the connection cluster falls back from the sidebar footer to
   the titlebar's trailing end while the column is hidden.
@@ -300,7 +306,7 @@ info status. Everything else interactive is the system's.
 ## Glass — the island
 
 - The content column paints GROUND and lifts ONE island off it: `View.slateIsland()` — the glass,
-  an 8pt continuous corner, an 8pt moat on leading/trailing/bottom, the 40pt band above, and a 1px
+  a 26pt continuous corner, a 12pt moat on leading/trailing/bottom, the 32pt band above, and a 1px
   inset `Line.divider` stroke so the boundary survives the light profile where ground and glass are
   the same cream. Panes are flush INSIDE the island; splits are divided by the profile's
   `terminalEdge` line — a subtle line ON the glass, never a channel, never per-pane cards. There is
@@ -319,7 +325,7 @@ info status. Everything else interactive is the system's.
 - Focus = the small filled accent corner triangle (top-left, split tabs only). NO dimming — of
   panes or columns, in any strength (removed 2026-08-07); focus is the corner mark alone.
 - **The band carries no title, and the island never rises into it.** The centred pane title and its
-  menu are deleted (user-directed 2026-08-08); the top 40pt is one unbroken row of ground across the
+  menu are deleted (user-directed 2026-08-08); the top 32pt is one unbroken row of ground across the
   whole window (user-directed 2026-08-09), so the traffic lights, the sidebar toggle, the
   collapsed-state tab strip and the panel's surface tabs all stand on one line and every column's
   content — the search field, the island's top edge, the panel's surfaces — begins under it. The

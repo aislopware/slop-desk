@@ -744,10 +744,6 @@ public struct SlopDeskClientApp: App {
                     )
                     // AUTOMATION ONLY: bring the window to front + make it key ONCE per window open (see helper).
                     Self.automationBringToFrontOnce(window)
-                    // Centre the traffic lights in the 40pt titlebar band. AppKit's default titlebar
-                    // is tuned for a standard title row, which this chrome does not have — the
-                    // lights sat top-heavy above the strip's own vertical centre.
-                    Self.growTitlebarToBandHeight(on: window)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
                 // (Fires AFTER ``SlopDeskAppTerminationDelegate`` has drained the in-flight pane
@@ -1184,6 +1180,17 @@ public struct SlopDeskClientApp: App {
         window.makeKeyAndOrderFront(nil)
     }
 
+    // NOTHING TOUCHES THE TRAFFIC LIGHTS (user-directed 2026-08-09). Two attempts are buried here and
+    // both are mistakes worth not repeating:
+    //   1. Nudging the disc frames directly FLICKERED — AppKit rebuilds the titlebar whenever
+    //      `NSWindow.title` changes (this window's title tracks the focused pane's cwd folder), which
+    //      resets the cluster to the corner and lands the correction a frame later as a visible jump.
+    //   2. Declaring a taller titlebar (an empty `.unifiedCompact` `NSToolbar`, purely a height
+    //      declaration) so AppKit would centre the discs in a 40pt band. It centred them, at the cost
+    //      of 8pt of dead ground under every strip in the window and an island pushed down to match.
+    // The band is fitted to the discs instead: `.hiddenTitleBar` parks them 8pt down, so
+    // ``Slate/Metric/heightStrip`` is 32 and the centring is the system's own arithmetic.
+
     /// Apply the configured initial window size at most once per window open (guarded by an
     /// associated object, mirroring the close-gate retain idiom), so a later manual resize always stands:
     ///   * ``WindowSizeMode/remember`` → restore the app-persisted frame descriptor + install the
@@ -1202,34 +1209,7 @@ public struct SlopDeskClientApp: App {
     ///      8×16, and DEFER the once-per-open commit until real metrics exist — so the window recomputes to the
     ///      exact cols×rows once libghostty reports its true cell advance (a later introspect fire), rather than
     ///      permanently committing the approximation.
-    /// Grow the system titlebar to the chrome's own band height so AppKit CENTRES the three window
-    /// controls in it (user-directed 2026-08-09: at the default inset the 14pt discs sit high in a
-    /// band twice a titlebar's height and read top-heavy against the toggle beside them). MEASURED
-    /// on the running app: `.unifiedCompact` yields a 40pt `AXToolbar` — the band's own height — and
-    /// lands the discs at 13 from the top, 12 from the leading edge.
     ///
-    /// ⚠️ THIS DOES NOT MOVE THE BUTTONS, AND THAT IS THE WHOLE POINT. The first cut nudged their
-    /// frames directly and it FLICKERED: AppKit rebuilds the titlebar whenever `NSWindow.title`
-    /// changes, which resets the cluster to the corner, and the correction then landed a frame later
-    /// as a visible jump. The window title tracks the focused pane's cwd folder name, so switching
-    /// panes inside one project usually kept the same string and looked clean while crossing to
-    /// another project re-titled the window and jumped — the symptom read as a pane-switch bug and
-    /// was a title-change bug. Owning the HEIGHT instead of the POSITION makes the centring AppKit's
-    /// own layout, so every rebuild re-derives it and there is nothing left to correct. Verified: a
-    /// cross-project switch re-titles the window and the discs stay at 13.
-    ///
-    /// The toolbar is EMPTY and has no delegate — it is a height declaration, not a toolbar. With no
-    /// items and customization off, AppKit adds no "Show Toolbar" / "Customize Toolbar…" to the View
-    /// menu (checked: it still reads Show Tab Bar / Show All Tabs / Enter Full Screen), and the
-    /// window's own `titlebarAppearsTransparent` keeps it from painting anything.
-    @MainActor
-    private static func growTitlebarToBandHeight(on window: NSWindow) {
-        // The introspect hook re-fires on every scene re-render; this must stay idempotent.
-        guard window.toolbar == nil else { return }
-        window.toolbar = NSToolbar(identifier: "SlopDeskBandHeight")
-        window.toolbarStyle = .unifiedCompact
-    }
-
     /// All numeric inputs are clamped inside ``WindowSizeMath`` (never 0×0 / off-screen-gigantic).
     @MainActor
     private static func applyInitialWindowSize(
