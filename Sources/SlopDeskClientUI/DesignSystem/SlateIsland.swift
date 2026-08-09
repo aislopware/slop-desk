@@ -5,9 +5,8 @@
 // is made, so law 1 lives in one place instead of being re-derived per column:
 //   • the island paints ``Slate/Surface/island`` — the profile's own glass, never a chrome tone;
 //   • it clips to ``Slate/Metric/islandRadius``, a window-scale corner for a window-scale surface;
-//   • it floats in a UNIFORM ``Slate/Metric/islandInset`` moat of GROUND on all four sides — it butts
-//     up to the top exactly as it does to the bottom (user-directed 2026-08-08). The one exception is
-//     a collapsed navigator, where the top side widens to clear the traffic lights;
+//   • it floats in an ``Slate/Metric/islandInset`` moat of GROUND on the sides and the bottom, and
+//     its TOP starts where the band ends — the whole ``Slate/Metric/bandHeight``, unconditionally;
 //   • it carries a hairline edge, because in the light profile the ground and the glass are the same
 //     cream (law 4) and the corner alone cannot draw the boundary.
 //
@@ -27,24 +26,24 @@ import SwiftUI
 extension View {
     /// Lift the terminal canvas off the ground as THE island.
     ///
-    /// The moat is uniform on all four sides — the island runs right up to the top, level with the
-    /// window's own top edge (user-directed 2026-08-08). `clearingWindowControls` is the ONE case
-    /// that cannot: with the navigator collapsed this column starts at the window's left edge, and a
-    /// moat the size of the ordinary one would slide the island under the traffic lights. There the
-    /// top side widens back to the full ``Slate/Metric/bandHeight`` so the lights keep standing on
-    /// bare ground.
+    /// THE TOP IS THE BAND (user-directed 2026-08-09). The sides and the bottom keep the ordinary
+    /// ``Slate/Metric/islandInset`` moat, but the top side is the full ``Slate/Metric/bandHeight``,
+    /// in EVERY state — because that is the one line the window has to keep straight. The navigator
+    /// opens its 40pt traffic-light strip there, the code panel opens its surface-tab strip there,
+    /// and every column's content starts underneath: with a 12pt top moat the middle column alone
+    /// began 28pt higher, so the band read as broken by the island's corner rather than as one
+    /// unbroken strip across the window.
     ///
-    /// That widening is a 32pt step, and it used to be INSTANT (user-directed 2026-08-09). Collapsing
-    /// the navigator animates the column's width but the island's top moat jumped in one frame, so
-    /// the one surface the window is built around lost a band of height while everything around it
-    /// was still gliding. The moat now OPENS on the same curve and the same duration as the column
-    /// that caused it — no delay, because the two edges belong to a single move: the island widens
-    /// leftward and shortens downward at once.
+    /// This retires `clearingWindowControls`, which used to widen the top only while the navigator
+    /// was collapsed and this column held the window's left edge. Keeping the lights on bare ground
+    /// was never the whole reason for the widening — it was the visible half of a rule that applies
+    /// to the strip end to end, and applying it in one state made a 32pt step that had to be
+    /// animated in step with the column slide. There is no step left to animate.
     @MainActor
-    func slateIsland(clearingWindowControls: Bool = false) -> some View {
+    func slateIsland() -> some View {
         let radius = Slate.Metric.islandRadius
         let inset = Slate.Metric.islandInset
-        let top = clearingWindowControls ? Slate.Metric.bandHeight : inset
+        let top = Slate.Metric.bandHeight
         return background(Slate.Surface.island)
             .clipShape(.rect(cornerRadius: radius, style: .continuous))
             .overlay {
@@ -55,9 +54,6 @@ extension View {
                     .allowsHitTesting(false)
             }
             .padding(.top, top)
-            // Keyed on the MEASUREMENT, not on the flag: only a moat that actually changes size may
-            // animate, so no other chrome change can drag the island's geometry into a transaction.
-            .animation(Slate.Anim.columnSlide, value: top)
             .padding([.leading, .trailing, .bottom], inset)
             .background(Slate.Surface.field)
     }

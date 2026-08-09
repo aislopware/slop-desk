@@ -17,6 +17,11 @@ struct PlateIconButton: View {
     /// glyph in the primary ink at a heavier weight so the state survives on a theme whose hover tint
     /// is faint.
     var active = false
+    /// The state this button's verb LANDS on, when the glyph should acknowledge the click by morphing
+    /// rather than by anything moving. Every change of the value plays one short symbol bounce, so a
+    /// chord or a menu row driving the same flag reads exactly like a click on the plate. `nil` (the
+    /// default) leaves the glyph still — the plate's press fill is then the whole acknowledgement.
+    var morphOn: Bool?
     var action: () -> Void = {}
 
     @State private var hovering = false
@@ -38,6 +43,10 @@ struct PlateIconButton: View {
             Image(systemSymbol: symbol)
                 .font(.system(size: size, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? Slate.Text.primary : Slate.Text.icon)
+                // The press MORPH — see ``morphOn``. `.down` because a key that acknowledges a click
+                // goes IN first; a value that never changes (the `nil` default, mapped to a constant)
+                // never fires it.
+                .symbolEffect(.bounce.down, options: .speed(1.4), value: morphOn ?? false)
                 .frame(width: plate, height: plate)
                 .contentShape(.rect)
         }

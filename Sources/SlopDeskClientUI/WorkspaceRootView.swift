@@ -134,6 +134,20 @@ public struct WorkspaceRootView: View {
             store: store, connection: connection, chrome: chrome, overlay: overlay,
             preferences: preferencesStore, paneDrag: paneDrag,
         )
+        // THE SIDEBAR TOGGLE, mounted at WINDOW level rather than in either column (user-directed
+        // 2026-08-09). Both columns travel when the panel collapses — the split animates the item
+        // width — so a button hosted inside one of them rides that slide and crawls under the traffic
+        // lights on its way. Here it cannot move at all: it is pinned to the window's own top-left
+        // corner, and the click's acknowledgement is the plate + glyph morph (see
+        // ``WindowSidebarToggle``). Mounted BELOW the overlay layer so a modal card covers it like
+        // everything else.
+        //
+        // ⚠️ INSIDE the `.ignoresSafeArea()` below, not after it. The window is `.hiddenTitleBar` but
+        // SwiftUI still hands its content a top safe-area inset the height of the titlebar, and the
+        // split only escapes it by ignoring it. An overlay attached OUTSIDE that modifier is laid out
+        // in the inset content instead, which parks this button one whole band low — on top of the
+        // navigator's search field (measured 2026-08-09).
+        .overlay(alignment: .topLeading) { WindowSidebarToggle(chrome: chrome) }
         .ignoresSafeArea()
         // THE GROUND behind the split (law 1) — one opaque tone under all three columns, which
         // backstops any transient gap (a mid-animation collapse) so no bare window colour ever

@@ -1,10 +1,11 @@
 // SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
 // window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
-//   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed, ALWAYS VISIBLE
-//     (user-directed 2026-08-09) at ``Slate/Metric/windowControlsLead`` — the same window x as the
-//     hide twin inside the navigator's own strip, so the toggle never appears to move.
-//   • then  — the ``WorkspaceTabStrip``, also collapsed-only: the tab list the hidden sidebar took
-//     with it, laid horizontally on the project beds it already had.
+//   • left  — the ``WorkspaceTabStrip``, collapsed-only: the tab list the hidden sidebar took with
+//     it, laid horizontally on the project beds it already had. It starts one plate + one gap to the
+//     right of ``Slate/Metric/windowControlsLead``, leaving the slot the window-level sidebar toggle
+//     stands in. That toggle is NOT mounted here (user-directed 2026-08-09): it used to be a reveal
+//     twin cross-faded against a hide twin inside the navigator, and the pair rode the collapse
+//     slide. One button now hangs off the window root — see ``WindowSidebarToggle``.
 //   • right — the RIGHT-panel REOPEN (`sidebar.right`), only while the panel is collapsed — the
 //     expanded-state hide toggle lives in the panel's OWN strip trailing corner (user-directed
 //     2026-08-03; the same split the left sidebar has: reopen in the titlebar, hide inside the
@@ -62,29 +63,25 @@ struct SlateTitlebar: View {
         // the band's own height and lets IT centre the lights (user-directed 2026-08-09), so the
         // band has ONE row and plain centring finds it.
         ZStack {
-            // Left: the sidebar REOPEN and, beside it, the tabs the hidden sidebar took with it.
-            // Both are collapsed-only; the button is ALWAYS visible in that state (it is the only
-            // way back without knowing ⌘⇧L) and stands at the same window x as its hide twin inside
-            // the navigator strip, so the toggle reads as one button that stays put.
+            // Left: the tabs the hidden sidebar took with it — collapsed-only. The sidebar toggle
+            // itself is NOT here (``WindowSidebarToggle`` owns it at window level); the strip only
+            // leaves its slot free.
             HStack(spacing: Slate.Metric.space2) {
-                // THE TOGGLE DOES NOT TRAVEL (user-directed 2026-08-09). It sits at a FIXED window x
-                // beside the traffic lights — the same x its hide twin holds inside the navigator
-                // strip — and the lights themselves never move, so sliding it in read as the button
-                // crawling out from under them. It only fades; the press feedback it already carries
-                // (``SlatePlateStyle``) is the whole of its own motion.
-                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                    .help("Show the tabs panel")
                 if !rows.isEmpty {
                     WorkspaceTabStrip(store: store, rows: rows, onSelect: onSelectPane)
-                        // Only the TABS arrive: they wait one control to the leading side and slide
-                        // into place as the column finishes leaving, so they read as the list coming
-                        // across with the column rather than as a layer switching on.
+                        // The TABS arrive: they wait one control to the leading side and slide into
+                        // place as the column finishes leaving, so they read as the list coming
+                        // across with the column rather than as a layer switching on. The toggle
+                        // beside them stays perfectly still through all of it — that is the point of
+                        // its move to the window root.
                         .offset(x: sidebarVisible ? -Slate.Metric.heightControl : 0)
                 }
             }
             .opacity(sidebarVisible ? 0 : 1)
             .allowsHitTesting(!sidebarVisible)
-            .padding(.leading, Slate.Metric.windowControlsLead)
+            // The toggle's own slot (plate + gap) plus the lights' lead — the strip begins exactly
+            // where it did when the reveal twin still stood in that space.
+            .padding(.leading, Slate.Metric.windowControlsLead + Slate.Metric.plate + Slate.Metric.space2)
             // Reserve the trailing plate's slot so a long run of tabs scrolls instead of sliding
             // under the right-panel reopen button.
             .padding(.trailing, Slate.Metric.plate + 2 * Slate.Metric.space3)
@@ -121,7 +118,14 @@ struct SlateTitlebar: View {
                     .help("Show the right panel")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.trailing, Slate.Metric.space3)
+            // THE HIDE TWIN'S OWN x. The panel's strip pays `space2` at both ends
+            // (``CodeSidebarColumn.strip``), so a reopen at the same inset appears exactly where the
+            // hide button that closed the panel stood — the same "one button that stays put" the
+            // navigator's toggle now has. It also stands on GROUND at last: the island's top starts
+            // at the band's bottom in every state (``slateIsland()``, user-directed 2026-08-09), so
+            // this plate no longer straddles the island's 26pt corner half-sunk in the glass, which
+            // is what made it unreadable (user-reported 2026-08-09).
+            .padding(.trailing, Slate.Metric.space2)
         }
         .frame(height: Slate.Metric.titlebarHeight)
         #if os(macOS) // HoverSensor is AppKit; this titlebar only MOUNTS on macOS but compiles for iOS

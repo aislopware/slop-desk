@@ -32,13 +32,6 @@ struct NavigatorColumn: View {
     /// `NavigationSplitView` but still passes it explicitly for parity.
     var preferences: PreferencesStore?
 
-    /// The shared chrome state — the macOS sidebar hosts its OWN collapse toggle at the top-trailing corner
-    /// of the traffic-light strip (the button lives inside the panel it hides; the content titlebar keeps only
-    /// the collapsed-state REOPEN button). Threaded in by the split-view host like `preferences` (the sidebar's
-    /// `NSHostingController` inherits no environment). `nil` (previews / iOS, where `NavigationSplitView`
-    /// provides its own toggle) omits the button.
-    var chrome: WorkspaceChromeState?
-
     /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
     /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
     /// while a drag is in flight. Threaded in like `preferences` (the sidebar's `NSHostingController`
@@ -172,26 +165,14 @@ struct NavigatorColumn: View {
             keys: sections.map { $0.header == nil ? nil : $0.projectKey },
         )
         return VStack(alignment: .leading, spacing: 0) {
-            // Traffic-light strip: ONLY the sidebar-collapse toggle, parked immediately RIGHT of the
-            // system lights (``Slate/Metric/windowControlsLead``) and ALWAYS VISIBLE (user-directed
-            // 2026-08-09). It CENTRES in the band, which is also where the traffic lights now sit
-            // (``SlopDeskClientApp.positionWindowControls``) — the band carries one row.
-            //
-            // It used to hang off the sidebar's TRAILING edge and reveal on hover, which cost it
-            // twice: the trailing edge RIDES the collapse slide, so the button had to be timed
-            // around the animation, and a control that hides at rest is a control you have to know
-            // is there. Anchored to the leading edge it does not move when the sidebar does — and it
-            // now sits at the SAME window x as the titlebar's reopen twin, so the toggle reads as
-            // one button that stays put while the sidebar comes and goes.
-            ZStack(alignment: .leading) {
-                Color.clear
-                if let chrome {
-                    PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                        .padding(.leading, Slate.Metric.windowControlsLead)
-                        .help("Hide the tabs panel")
-                }
-            }
-            .frame(height: Slate.Metric.titlebarHeight)
+            // Traffic-light strip — BARE. The column reserves the band the lights stand in and
+            // nothing else: the sidebar toggle that used to sit here is mounted at WINDOW level now
+            // (``WindowSidebarToggle``, user-directed 2026-08-09). It had to leave, because THIS
+            // column travels: the split animates its width on a collapse, so a button parked in it
+            // slid leftward under the traffic lights every time it was clicked. A control that never
+            // moves cannot live inside a container that does.
+            Color.clear
+                .frame(height: Slate.Metric.titlebarHeight)
             // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
             // "TABS" label AND its trailing groups menu, both user-retired): a quiet inset field
             // on the hover tint, filtering the rows below through the SAME pure
