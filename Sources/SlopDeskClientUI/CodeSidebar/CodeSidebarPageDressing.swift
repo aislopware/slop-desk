@@ -103,7 +103,8 @@ enum CodeSidebarPageDressing {
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
     ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
     ///     at the plate's edges) go entirely — a Slate plate carries selection by its background
-    ///     fill, never an underline.
+    ///     fill, never an underline. The label's fade-out overlay goes too (it is square-cornered
+    ///     and opaque, so it stood proud of the plate's corner); the label ellipsizes instead.
     ///   • Lists/trees (explorer rows, palette rows): the selection/hover fill rounds to 6.
     ///   • Scrollbar sliders round to 5 (half their 10px width — a capsule, not a bar).
     ///   • Inputs step from the stock 4 up to the control rung 6; menus/hovers/find ride the card
@@ -136,8 +137,25 @@ enum CodeSidebarPageDressing {
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
         display: none !important;
     }
-    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-fade-hide:after {
-        border-radius: 10px;
+    /* The label's fade-out overlay goes entirely, and the label truncates with a real ellipsis
+       instead. The overlay is `right: 0; top: 1px; bottom: 1px` with SQUARE corners, and the
+       workbench fills it at runtime with `linear-gradient(to left, flatten(tab background),
+       transparent)` — an OPAQUE approximation. Against a translucent plate that colour never
+       matches, and having no radius of its own it kept standing straight where the plate's corner
+       curved away, leaving a 1px square ear at the top-right and bottom-right. Stock `sizing-fit`
+       never carried the class; pinning tabs to a fixed width is what turned it on. This is the
+       same pair of rules the workbench's own modern-UI mode applies. */
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container
+        > .tab.sizing-fixed > .tab-label > .monaco-icon-label-container::after,
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container
+        > .tab.sizing-shrink > .tab-label > .monaco-icon-label-container::after {
+        display: none !important;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container
+        > .tab.sizing-fixed > .tab-label > .monaco-icon-label-container {
+        flex: 1 !important;
+        min-width: 0;
+        text-overflow: ellipsis !important;
     }
     .monaco-workbench .monaco-list-row {
         border-radius: 6px;
