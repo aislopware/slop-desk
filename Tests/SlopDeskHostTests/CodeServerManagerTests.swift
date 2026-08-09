@@ -768,10 +768,19 @@ final class CodeServerManagerTests: XCTestCase {
         for key in [
             "list.activeSelectionBackground", "list.focusBackground",
             "quickInputList.focusBackground", "editorSuggestWidget.selectedBackground",
-            "menu.selectionBackground", "tab.activeBackground",
+            "menu.selectionBackground",
         ] {
             XCTAssertEqual(colors[key], "#22212C17", "\(key) is not the selection tint")
         }
+
+        // 2b. THE TAB STRIP IS A RANK OF CHIPS — every slot tinted, the open one a step above.
+        // The inactive tab must NOT be the ground: fixed-width slots that cannot be seen pay the
+        // whole cost of fixed width and collect none of its benefit. The open tab deliberately
+        // sits ABOVE the list-selection tint, because it has to stand out from neighbours that
+        // are already tinted rather than from bare ground.
+        XCTAssertEqual(colors["tab.inactiveBackground"], "#22212C09", "the tab slots went invisible")
+        XCTAssertEqual(colors["tab.activeBackground"], "#22212C1C")
+        XCTAssertEqual(colors["tab.hoverBackground"], "#22212C12")
 
         // 3. NO SELECTION FOREGROUND, ANYWHERE — the regression guard for the reversal. A solid
         // plate needs light ink to stay legible, so an inverted chip and a foreground override

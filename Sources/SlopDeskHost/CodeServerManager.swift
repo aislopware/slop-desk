@@ -486,8 +486,19 @@ final class CodeServerManager: @unchecked Sendable {
     /// and max pinned to the SAME 140, which is what makes it truly fixed rather than merely
     /// bounded — a strip whose every plate is the same size stays still while you switch files,
     /// where the stock `"fit"` re-measures each plate against its filename and slides the whole row
-    /// on every open. The rounded tab plate the client's CSS draws is the thing being sized, so the
-    /// row now reads as a rank of identical chips.
+    /// on every open.
+    /// …AND EVERY TAB WEARS ITS CHIP (v30, user-directed 2026-08-09, chosen from rendered
+    /// candidates): the inactive tab is `09` (3.5%), hover `12` (7%), the open one `1C` (11%).
+    /// Until v30 the fixed geometry was paired with an inactive tab painted in the GROUND colour,
+    /// which made the slots invisible — so the strip paid the whole cost of fixed width (a long
+    /// empty tail after every short filename) and collected none of its benefit (an even rhythm),
+    /// and the one tab that did carry a plate read as a pill dropped into a line of bare words.
+    /// A fixed slot has to be VISIBLE to be worth fixing. With every slot tinted the row reads as
+    /// a rank of identical chips and the file icons line up on a straight vertical rail.
+    /// ⚠️ The open tab sits at 11% while a selected LIST row sits at 9% — deliberately NOT one
+    /// number. A list row is picked out against bare ground; a tab has to be picked out against
+    /// its neighbouring chips, which are already tinted, so it needs the extra step to carry the
+    /// same weight.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -515,10 +526,10 @@ final class CodeServerManager: @unchecked Sendable {
             "editorGroupHeader.tabsBorder": "#00000000",
             "editorGroupHeader.border": "#00000000",
             "editorGroup.border": "#00000000",
-            "tab.inactiveBackground": "#FFFBEB",
+            "tab.inactiveBackground": "#22212C09",
             "tab.border": "#00000000",
-            "tab.activeBackground": "#22212C17",
-            "tab.hoverBackground": "#22212C0A",
+            "tab.activeBackground": "#22212C1C",
+            "tab.hoverBackground": "#22212C12",
             "list.activeSelectionBackground": "#22212C17",
             "list.inactiveSelectionBackground": "#22212C0F",
             "list.focusBackground": "#22212C17",
