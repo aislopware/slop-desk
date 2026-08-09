@@ -66,11 +66,8 @@ extension Slate {
 }
 
 extension Slate.Typeface {
-    /// The families the peek card will wear, in order of preference, once the pane's OWN configured
-    /// family (which may be empty, meaning "the default") has been tried. The Nerd Font build comes
-    /// FIRST: a shell prompt, a test runner and a git status all emit private-use-area glyphs, and a
-    /// face without them draws a row of boxes — which is the one way a faithful preview can look
-    /// broken while being byte-correct.
+    /// The families the peek card will wear when the pane's OWN configured family is missing or
+    /// unset — a Nerd Font build first, then the design system's mono, then the symbols-only face.
     static let terminalFaceFallbacks = [
         "JetBrainsMono Nerd Font",
         "JetBrainsMonoNL Nerd Font",
@@ -78,9 +75,28 @@ extension Slate.Typeface {
         "Symbols Nerd Font",
     ]
 
+    /// The SYMBOL cascade — families carrying the Nerd Font private-use area, appended behind
+    /// whatever the primary face turns out to be.
+    ///
+    /// This is the fix for a shipped bug (user-reported 2026-08-09): the terminal was configured
+    /// with plain `JetBrains Mono`, the card honoured it, and every prompt/`eza` icon drew as a
+    /// missing-glyph box. libghostty does not have that problem because it carries a symbols
+    /// fallback of its own — the pane and the card were BOTH right about the family and only the
+    /// card was missing the cascade behind it. macOS's automatic fallback does not cover the PUA:
+    /// no system face claims those code points, so without an explicit cascade the box is the
+    /// correct answer to the wrong question.
+    static let symbolFaceCascade = [
+        "Symbols Nerd Font Mono",
+        "Symbols Nerd Font",
+        "JetBrainsMono Nerd Font Mono",
+        "JetBrainsMono Nerd Font",
+        "JetBrainsMonoNL Nerd Font Mono",
+        "JetBrainsMonoNL Nerd Font",
+    ]
+
     /// Every font family installed on this machine — resolved ONCE (families do not appear
     /// mid-session) so the peek card can pick a face per line without hitting the font manager.
-    private static let installedFamilies: Set<String> = {
+    static let installedFamilies: Set<String> = {
         #if canImport(AppKit)
         Set(NSFontManager.shared.availableFontFamilies)
         #else
@@ -88,24 +104,98 @@ extension Slate.Typeface {
         #endif
     }()
 
+    /// One resolved face, keyed by everything that can change it — the card builds a font per RUN,
+    /// and descriptor-with-cascade resolution is far too costly to repeat per frame.
+    private struct TerminalFaceKey: Hashable {
+        let size: CGFloat
+        let family: String
+        let fallbacks: String
+        let bold: Bool
+        let italic: Bool
+    }
+
+    @MainActor private static var terminalFaceCache: [TerminalFaceKey: Font] = [:]
+
     /// The face the TERMINAL is wearing, at `size`: the pane's configured `family` when it is
-    /// installed, else the first installed fallback, else the system monospace (which is always
-    /// there, and is what ``instrument(_:weight:)`` degrades to for the same reason).
+    /// installed, else the first installed entry of ``terminalFaceFallbacks``, else the system
+    /// monospace (which is always there, and is what ``instrument(_:weight:)`` degrades to for the
+    /// same reason) — with the pane's own comma-separated `fallbacks` and then
+    /// ``symbolFaceCascade`` hung BEHIND it as a Core Text cascade list, so a code point the
+    /// primary face does not carry is drawn by a face that does instead of by a box.
     ///
     /// `Font.custom` with a missing family falls back to the PROPORTIONAL system face silently — a
     /// preview of terminal output in a proportional face is not a preview of terminal output — so
     /// the family is checked against the installed set rather than being handed over hopefully.
+    @MainActor
     static func terminalFace(
-        _ size: CGFloat, family: String?, bold: Bool = false, italic: Bool = false,
+        _ size: CGFloat, family: String?, fallbacks: String = "",
+        bold: Bool = false, italic: Bool = false,
     ) -> Font {
-        var candidates = terminalFaceFallbacks
-        if let family, !family.isEmpty { candidates.insert(family, at: 0) }
-        let resolved = candidates.first { installedFamilies.contains($0) }
-        var font: Font = resolved.map { Font.custom($0, size: size) }
-            ?? Font.system(size: size, design: .monospaced)
-        if bold { font = font.weight(.bold) }
-        if italic { font = font.italic() }
-        return font
+        let key = TerminalFaceKey(
+            size: size, family: family ?? "", fallbacks: fallbacks, bold: bold, italic: italic,
+        )
+        if let cached = terminalFaceCache[key] { return cached }
+        let face = resolveTerminalFace(key)
+        terminalFaceCache[key] = face
+        return face
+    }
+
+    /// The primary family and its cascade, in order and already filtered to what is installed.
+    /// Split out — with the installed set INJECTABLE — so the resolution order is unit-pinnable on
+    /// a machine that does not have the fonts (this one does not: a test that asserted against the
+    /// real font server would pass or fail by which laptop ran it).
+    static func terminalFaceChain(
+        family: String?, fallbacks: String, installed: Set<String> = installedFamilies,
+    ) -> (primary: String?, cascade: [String]) {
+        var wanted: [String] = []
+        if let family, !family.isEmpty { wanted.append(family) }
+        wanted += terminalFaceFallbacks
+        let primary = wanted.first { installed.contains($0) }
+        // The pane's own fallback list first (the user named those), then the symbol faces.
+        let declared = fallbacks
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        var seen = primary.map { Set([$0]) } ?? []
+        let cascade = (declared + symbolFaceCascade).filter {
+            installed.contains($0) && seen.insert($0).inserted
+        }
+        return (primary, cascade)
+    }
+
+    @MainActor
+    private static func resolveTerminalFace(_ key: TerminalFaceKey) -> Font {
+        let system = Font.system(size: key.size, design: .monospaced)
+        #if canImport(AppKit)
+        let chain = terminalFaceChain(family: key.family, fallbacks: key.fallbacks)
+        guard let primary = chain.primary else { return styled(system, key) }
+        var attributes: [NSFontDescriptor.AttributeName: Any] = [.family: primary]
+        if !chain.cascade.isEmpty {
+            attributes[.init(rawValue: kCTFontCascadeListAttribute as String)] = chain.cascade.map {
+                NSFontDescriptor(fontAttributes: [.family: $0])
+            }
+        }
+        var descriptor = NSFontDescriptor(fontAttributes: attributes)
+        var traits: NSFontDescriptor.SymbolicTraits = []
+        if key.bold { traits.insert(.bold) }
+        if key.italic { traits.insert(.italic) }
+        // The traits go on the DESCRIPTOR, not on the SwiftUI font: `.weight()` / `.italic()` over
+        // a descriptor-built face would re-resolve it and drop the cascade attribute with it.
+        if !traits.isEmpty { descriptor = descriptor.withSymbolicTraits(traits) }
+        guard let font = NSFont(descriptor: descriptor, size: key.size) else { return styled(system, key) }
+        return Font(font)
+        #else
+        return styled(system, key)
+        #endif
+    }
+
+    /// The bold/italic pass for the SYSTEM fallback only — a descriptor-built face carries its
+    /// traits already.
+    private static func styled(_ font: Font, _ key: TerminalFaceKey) -> Font {
+        var out = font
+        if key.bold { out = out.weight(.bold) }
+        if key.italic { out = out.italic() }
+        return out
     }
 }
 #endif

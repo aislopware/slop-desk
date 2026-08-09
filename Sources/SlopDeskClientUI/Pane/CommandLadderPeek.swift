@@ -123,14 +123,23 @@ struct CommandLadderPeekCard: View {
     }
 
     /// The terminal's own family, or `nil` for "no preference" — resolved to an installed face by
-    /// ``Slate/Typeface/terminalFace(_:family:bold:italic:)``.
+    /// ``Slate/Typeface/terminalFace(_:family:fallbacks:bold:italic:)``.
     private var family: String? { preferences?.terminal.fontFamily }
+
+    /// The pane's OWN comma-separated fallback families (the ones it hands libghostty as repeated
+    /// `font-family` lines). They lead the card's cascade for the same reason they lead the
+    /// terminal's: the user named them.
+    private var fallbacks: String { preferences?.terminal.fontFamilyFallback ?? "" }
 
     /// The command line and its outcome on one row — the command truncates, the outcome never does.
     private var header: some View {
         HStack(spacing: Slate.Metric.space2) {
             Text(block.commandText.isEmpty ? "(command)" : block.commandText)
-                .font(Slate.Typeface.terminalFace(Slate.Typeface.footnote, family: family))
+                .font(
+                    Slate.Typeface.terminalFace(
+                        Slate.Typeface.footnote, family: family, fallbacks: fallbacks,
+                    ),
+                )
                 .foregroundStyle(Slate.Terminal.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -174,7 +183,7 @@ struct CommandLadderPeekCard: View {
         for run in runs {
             var piece = AttributedString(run.text)
             piece.font = Slate.Typeface.terminalFace(
-                Slate.Typeface.footnote, family: family,
+                Slate.Typeface.footnote, family: family, fallbacks: fallbacks,
                 bold: run.style.bold, italic: run.style.italic,
             )
             // INVERSE swaps the pair, and the DEFAULTS it swaps in are the card's own — which is why
