@@ -879,7 +879,7 @@ private struct LadderPaneMock: View {
                 .padding(.vertical, Slate.Metric.space2)
                 .padding(.horizontal, Slate.Metric.paneGutter)
                 .overlay(alignment: .trailing) {
-                    CommandLadderOverlay(model: model, onJump: { _ in })
+                    CommandLadderOverlay(model: model, onJump: { _ in }, onJumpToLivePrompt: {})
                 }
         }
         .background(Slate.Surface.terminal)

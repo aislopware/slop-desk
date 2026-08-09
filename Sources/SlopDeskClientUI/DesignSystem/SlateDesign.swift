@@ -771,6 +771,15 @@ enum Slate {
         /// the pointer has caught is unmistakable at a glance down a rail of dashes — the growth
         /// stays symmetric about the centre line on BOTH axes.
         static let ladderTickWeightActive: CGFloat = 3
+        /// The LIVE-PROMPT mark at the ladder's FOOT — the rung that goes back to where the cursor
+        /// is blinking (user-reported 2026-08-09: the rail indexed every command but nothing on it
+        /// pointed at the prompt being typed at). Its LENGTH, and deliberately ``ladderTickActive``
+        /// rather than a number of its own: the rail keeps ONE mark vocabulary — a dash on a centre
+        /// line — and this one is simply run out to the full length a mark may take there, which is
+        /// what makes it read as the ladder's END rather than as a second kind of thing standing on
+        /// it. It does NOT lengthen under the pointer (there is nowhere left to go); it thickens,
+        /// exactly as a caught tick does.
+        static let ladderHome: CGFloat = ladderTickActive
         /// How far the ladder holds off the pane's top and bottom. Sized to clear the ISLAND'S OWN
         /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 4pt up
         /// from the bottom (it cut ~7 when the rail was 8 in — the further in, the shallower the

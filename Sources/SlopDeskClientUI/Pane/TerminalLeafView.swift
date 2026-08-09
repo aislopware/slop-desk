@@ -288,6 +288,10 @@ struct TerminalLeafView: View {
                     store.focusPaneTree(paneID)
                     store.jumpToBlock(index: index, pane: paneID)
                 },
+                onJumpToLivePrompt: {
+                    store.focusPaneTree(paneID)
+                    store.scrollPaneToLivePrompt(pane: paneID)
+                },
             )
         }
     }

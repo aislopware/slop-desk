@@ -5,6 +5,9 @@
 // Plus the QUANTIZATION the rail's stability rests on (2026-08-09): the pitch may only take a value
 // off `pitchLadder`, so a pane that is running commands does not re-lay its whole ladder out by a
 // fraction of a point per command.
+//
+// Plus the FOOT rung (2026-08-09): the live-prompt mark and the blank band above it are reserved
+// out of the height BEFORE the ticks are fitted, and they are the last thing the ladder gives up.
 
 import XCTest
 @testable import SlopDeskClientUI
@@ -14,27 +17,35 @@ final class CommandLadderLayoutTests: XCTestCase {
         let fit = CommandLadderLayout.fit(count: 5, available: 400)
         XCTAssertEqual(fit.shown, 5)
         XCTAssertEqual(fit.pitch, CommandLadderLayout.preferredPitch)
+        XCTAssertTrue(fit.home)
+        XCTAssertTrue(fit.gapBand)
     }
 
     func testPitchCompressesBeforeAnyTickDrops() {
-        // 50 ticks in 300pt: the preferred pitch (700pt) does not fit, the floor (300pt) does —
-        // every tick stays, at the 6pt floor.
-        let fit = CommandLadderLayout.fit(count: 50, available: 300)
-        XCTAssertEqual(fit.shown, 50)
+        // 48 ticks + the foot's 2 rungs in 300pt: the preferred pitch (700pt) does not fit, the
+        // floor (300pt) does — every tick stays, at the 6pt floor.
+        let fit = CommandLadderLayout.fit(count: 48, available: 300)
+        XCTAssertEqual(fit.shown, 48)
         XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
+        XCTAssertEqual(fit.rungs, 50)
     }
 
     func testPastTheFloorTheLadderDropsOldestTicks() {
-        // 64 ticks in 100pt: at the 6pt floor only 16 fit — the ladder shows the newest 16.
+        // 64 ticks in 100pt: at the 6pt floor only 16 rungs fit — 14 ticks plus the foot's 2.
         let fit = CommandLadderLayout.fit(count: 64, available: 100)
-        XCTAssertEqual(fit.shown, 16)
+        XCTAssertEqual(fit.shown, 14)
+        XCTAssertEqual(fit.rungs, 16)
         XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 
     func testDegenerateHeightShowsNothing() {
-        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: 0).shown, 0)
-        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: -50).shown, 0)
-        XCTAssertEqual(CommandLadderLayout.fit(count: 0, available: 400).shown, 0)
+        // Not even the foot mark — a rail with no room is drawn not at all, never half-drawn.
+        for available in [0.0, -50.0] as [CGFloat] {
+            let fit = CommandLadderLayout.fit(count: 10, available: available)
+            XCTAssertEqual(fit.shown, 0)
+            XCTAssertEqual(fit.rungs, 0)
+            XCTAssertFalse(fit.home)
+        }
     }
 
     func testPitchIsAlwaysARungOfTheLadder() {
@@ -43,42 +54,67 @@ final class CommandLadderLayoutTests: XCTestCase {
         for available in stride(from: 40.0, through: 900.0, by: 17.0) {
             for count in 1...64 {
                 let fit = CommandLadderLayout.fit(count: count, available: available)
-                guard fit.shown > 0 else { continue }
+                guard fit.rungs > 0 else { continue }
                 XCTAssertTrue(
                     CommandLadderLayout.pitchLadder.contains(fit.pitch),
                     "pitch \(fit.pitch) is off the ladder (count \(count), available \(available))",
                 )
-                XCTAssertLessThanOrEqual(CGFloat(fit.shown) * fit.pitch, available + 0.0001)
+                XCTAssertLessThanOrEqual(CGFloat(fit.rungs) * fit.pitch, available + 0.0001)
             }
         }
     }
 
     func testOneMoreCommandDoesNotRepitchTheWholeRail() {
-        // 300pt holds 50 ticks at the 6pt rung and 60 at 5 — inside a rung the pitch is IDENTICAL
-        // command after command, so the ticks already drawn do not move.
-        let pitches = (40...50).map { CommandLadderLayout.fit(count: $0, available: 300).pitch }
+        // 300pt holds 48 ticks (+2 foot rungs) at the 6pt rung — inside a rung the pitch is
+        // IDENTICAL command after command, so the ticks already drawn do not move.
+        let pitches = (38...48).map { CommandLadderLayout.fit(count: $0, available: 300).pitch }
         XCTAssertEqual(Set(pitches), [6])
     }
 
     func testEveryTickStaysWhileAnyRungStillHoldsThem() {
-        // 42 ticks do not fit at 8pt in 260pt, but they do at the 6pt floor — the ladder steps down
-        // the rung rather than dropping the oldest command.
-        let fit = CommandLadderLayout.fit(count: 42, available: 260)
-        XCTAssertEqual(fit.shown, 42)
+        // 40 ticks + the foot's 2 do not fit at 8pt in 260pt, but they do at the 6pt floor — the
+        // ladder steps down the rung rather than dropping the oldest command.
+        let fit = CommandLadderLayout.fit(count: 40, available: 260)
+        XCTAssertEqual(fit.shown, 40)
         XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
     }
 
     /// A pane mid-layout can be proposed a NON-FINITE height; the ladder draws nothing rather than
     /// resolving a tick count out of it (`Int(available / minPitch)` on an infinity traps).
     func testNonFiniteHeightShowsNothing() {
-        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: .nan).shown, 0)
-        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: .infinity).shown, 0)
+        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: .nan).rungs, 0)
+        XCTAssertEqual(CommandLadderLayout.fit(count: 10, available: .infinity).rungs, 0)
     }
 
-    func testExactFloorCapacityBoundary() {
-        // 12pt fits exactly two floor-pitch ticks.
+    // MARK: The foot rung (the live-prompt mark)
+
+    func testTheFootMarkIsReservedBeforeAnyTickIsFitted() {
+        // A height that holds exactly 20 rungs carries 18 commands, not 20 — the foot mark and its
+        // blank band are taken out of the height FIRST, at every rung of the pitch ladder. Each
+        // case is also the exact-capacity boundary for its own rung: 18 commands fill the height to
+        // the point, so the widest pitch that still holds all 20 rungs is the one under test.
+        for pitch in CommandLadderLayout.pitchLadder {
+            let fit = CommandLadderLayout.fit(count: 18, available: pitch * 20)
+            XCTAssertEqual(fit.shown, 18, "at pitch \(pitch)")
+            XCTAssertEqual(fit.rungs, 20, "at pitch \(pitch)")
+            XCTAssertEqual(fit.pitch, pitch, accuracy: 0.0001, "at pitch \(pitch)")
+        }
+    }
+
+    func testTheFootMarkIsTheLastThingDropped() {
+        // 12pt is two floor rungs — and the ladder spends them on the way back to the cursor rather
+        // than on the two oldest commands in a scrollback the pane is far too short to index.
         let fit = CommandLadderLayout.fit(count: 3, available: 12)
-        XCTAssertEqual(fit.shown, 2)
+        XCTAssertEqual(fit.shown, 0)
+        XCTAssertTrue(fit.home)
         XCTAssertEqual(fit.pitch, 6, accuracy: 0.0001)
+    }
+
+    func testTheBlankBandIsAbsentWhenThereAreNoTicksToSetItApartFrom() {
+        // Nothing above the foot mark ⇒ no break to draw, and the rung count says so (a lone mark
+        // is ONE rung, not three).
+        let fit = CommandLadderLayout.fit(count: 3, available: 12)
+        XCTAssertFalse(fit.gapBand)
+        XCTAssertEqual(fit.rungs, 1)
     }
 }

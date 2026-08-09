@@ -19,6 +19,15 @@
 // A DECORATION overlay at the ``TerminalLeafView`` seam the file reserved for block chrome (never
 // a content branch — the libghostty-freeze guardrail).
 //
+// IT ENDS IN THE LIVE PROMPT (user-reported 2026-08-09: the rail indexed every command but had no
+// rung for the prompt you are typing at). A block only exists once its command has RUN — the
+// segmenter surfaces one at its `C` mark and explicitly discards a prompt still awaiting input
+// (``CommandBlockSegmenter/peekOpenBlock()``), because a prompt is not a command — so while a pane
+// sits idle the ladder's last tick is the PREVIOUS command and nothing on the rail points at the
+// cursor. The foot rung (``LadderHomeMark``) is that pointer, one blank band below the ticks. It
+// scrolls to the bottom rather than jumping to an ordinal: the live prompt has no block, and the
+// bottom is where it lives.
+//
 // HONEST CEILING — ticks are EVENLY PITCHED, not scroll-proportional: a block carries its prompt
 // ORDINAL (a 1-based prompt-cycle count), never a scrollback row, and the row math lives inside
 // libghostty. A proportional minimap would therefore be a drawing of a guess; the even ladder is
@@ -32,6 +41,33 @@ import SwiftUI
 
 /// The evenly-pitched ladder geometry — pure + static so the fit rule is unit-pinned headlessly.
 enum CommandLadderLayout {
+    /// What the rail resolved to for a given block count and height: how many command ticks it
+    /// draws, at what pitch, and whether the foot's live-prompt mark and the blank band above it
+    /// are there.
+    struct Fit: Equatable {
+        /// Command ticks drawn — the NEWEST this many blocks.
+        var shown: Int
+        /// The centre-to-centre spacing, always a rung of ``pitchLadder``.
+        var pitch: CGFloat
+        /// Whether the LIVE-PROMPT mark stands at the ladder's foot.
+        var home: Bool
+        /// Whether the blank band that sets the foot mark apart from the ticks is there — it is
+        /// not, when there are no ticks for it to separate the mark from.
+        var gapBand: Bool
+
+        /// The rungs the whole instrument occupies, ticks + blank band + foot mark. The ladder's
+        /// drawn height is this times ``pitch``, and the peek card's anchor is measured from it.
+        var rungs: Int { shown + (gapBand ? 1 : 0) + (home ? 1 : 0) }
+    }
+
+    /// What the LIVE-PROMPT mark costs the ladder: its own rung plus ONE BLANK BAND above it.
+    ///
+    /// The blank band is what sets the foot mark apart, and it is a BAND rather than a fixed gap
+    /// because the ticks' own visual spacing is `pitch - weight` — a constant gap tuned to read as
+    /// a break at the preferred pitch (12pt of clear rail between dashes) would read as no break at
+    /// all at the floor (4pt). One empty rung is a break at every rung of the ladder.
+    static let homeRungs = 2
+
     /// The PITCH LADDER — the only centre-to-centre spacings the rail is allowed to run at, widest
     /// first. A CLOSED scale, and that is the stability fix (user-reported 2026-08-09: the rail read
     /// as unsettled): the pitch used to be `available / count`, so in any pane too short for the
@@ -50,16 +86,32 @@ enum CommandLadderLayout {
     /// ladder DROPS oldest ticks instead of compressing further.
     static var minPitch: CGFloat { pitchLadder[pitchLadder.count - 1] }
 
-    /// How many NEWEST ticks fit in `available` points, and at what pitch. The pitch steps down the
-    /// ladder from ``preferredPitch`` to ``minPitch`` before any tick is dropped; a degenerate height
-    /// (zero / negative / not a number) shows nothing.
-    static func fit(count: Int, available: CGFloat) -> (shown: Int, pitch: CGFloat) {
+    /// How the rail resolves `count` blocks into `available` points, with the foot's live-prompt
+    /// mark ALWAYS reserved for. The pitch steps down the ladder from ``preferredPitch`` to
+    /// ``minPitch`` before any tick is dropped; a degenerate height (zero / negative / not a number)
+    /// draws nothing at all, foot mark included.
+    ///
+    /// The foot mark is the LAST thing the ladder gives up: past the floor pitch it drops OLDEST
+    /// commands to make room, because a rail with room for one rung should spend it on the way back
+    /// to the cursor rather than on the oldest command in the scrollback.
+    static func fit(count: Int, available: CGFloat) -> Fit {
+        let rungs = rungFit(count: count + homeRungs, available: available)
+        guard rungs.shown > 0 else {
+            return Fit(shown: 0, pitch: rungs.pitch, home: false, gapBand: false)
+        }
+        let shown = max(0, rungs.shown - homeRungs)
+        return Fit(shown: shown, pitch: rungs.pitch, home: true, gapBand: shown > 0)
+    }
+
+    /// How many of `count` evenly-pitched RUNGS fit in `available` points, and at what pitch — the
+    /// bare spacing rule, blind to what any rung carries.
+    private static func rungFit(count: Int, available: CGFloat) -> (shown: Int, pitch: CGFloat) {
         guard count > 0, available.isFinite, available >= minPitch else { return (0, preferredPitch) }
         // The widest rung the WHOLE set fits at — nothing is dropped while any rung still holds it.
         for pitch in pitchLadder where CGFloat(count) * pitch <= available {
             return (count, pitch)
         }
-        // Past the floor: keep the floor pitch and show the newest ticks that fit in it.
+        // Past the floor: keep the floor pitch and show the newest rungs that fit in it.
         let shown = min(count, Int(available / minPitch))
         guard shown > 0 else { return (0, preferredPitch) }
         return (shown, minPitch)
@@ -71,6 +123,9 @@ struct CommandLadderOverlay: View {
     let model: TerminalViewModel
     /// The per-tick jump, wired to ``WorkspaceStore/jumpToBlock(index:pane:)`` by the leaf.
     let onJump: (UInt32) -> Void
+    /// The FOOT rung's jump — back to the live prompt, wired to
+    /// ``WorkspaceStore/scrollPaneToLivePrompt(pane:)`` by the leaf.
+    let onJumpToLivePrompt: () -> Void
 
     /// Whether the pointer is over the rail strip — the ladder brightens from its resting
     /// presence (progressive disclosure: at rest it reads as texture, under the pointer as
@@ -103,18 +158,39 @@ struct CommandLadderOverlay: View {
                 let fit = CommandLadderLayout.fit(
                     count: blocks.count, available: proxy.size.height - inset * 2,
                 )
-                if fit.shown > 0 {
+                if fit.rungs > 0 {
                     // The NEWEST `shown` blocks, oldest-first — the same slice the eye reads
                     // top→down in the scrollback itself.
                     let shown = Array(blocks.suffix(fit.shown))
                     ZStack(alignment: .bottom) {
-                        track(height: CGFloat(fit.shown) * fit.pitch)
+                        track(height: CGFloat(fit.rungs) * fit.pitch)
                         VStack(spacing: 0) {
                             ForEach(shown, id: \.index) { block in
                                 LadderTick(
                                     block: block,
                                     onJump: onJump,
                                     onHover: { over in hoveredIndex = over ? block.index : nil },
+                                )
+                                .frame(height: fit.pitch)
+                            }
+                            if fit.gapBand {
+                                // The break. An EMPTY rung, not a fixed gap — see
+                                // ``CommandLadderLayout/homeRungs``.
+                                Color.clear.frame(height: fit.pitch).allowsHitTesting(false)
+                            }
+                            if fit.home {
+                                LadderHomeMark(
+                                    onJump: onJumpToLivePrompt,
+                                    // Entering the foot rung closes any open card WITHOUT disarming
+                                    // the mode: the prompt is not a command and has no excerpt, and
+                                    // leaving a command's card up while the pointer sits on the way
+                                    // home would label the wrong rung.
+                                    onHover: { over in
+                                        if over {
+                                            hoveredIndex = nil
+                                            peekedIndex = nil
+                                        }
+                                    },
                                 )
                                 .frame(height: fit.pitch)
                             }
@@ -167,14 +243,17 @@ struct CommandLadderOverlay: View {
     /// the peeked block has scrolled out of the shown slice.
     @ViewBuilder
     private func peekCard(
-        shown: [CommandBlock], fit: (shown: Int, pitch: CGFloat), available: CGFloat,
+        shown: [CommandBlock], fit: CommandLadderLayout.Fit, available: CGFloat,
     ) -> some View {
         if let peekedIndex, let row = shown.firstIndex(where: { $0.index == peekedIndex }) {
             let entry = peeks[peekedIndex] ?? .unavailable
             let inset = Slate.Metric.ladderInset
-            // The ticks are bottom-aligned inside the inset, so the ladder's top is measured back
-            // from the pane's bottom — never from its top, which moves with the pane's height.
-            let ladderTop = available - inset - CGFloat(fit.shown) * fit.pitch
+            // The rungs are bottom-aligned inside the inset, so the ladder's top is measured back
+            // from the pane's bottom — never from its top, which moves with the pane's height. It
+            // is measured over ALL the rungs (`rungs`, not `shown`): the foot mark and its blank
+            // band stand below the last tick, so a card anchored on the tick count alone would hang
+            // two bands too low.
+            let ladderTop = available - inset - CGFloat(fit.rungs) * fit.pitch
             let center = ladderTop + (CGFloat(row) + 0.5) * fit.pitch
             let height = CommandLadderPeekLayout.cardHeight(
                 lineCount: entry.lineCount, hasFooter: entry.hasFooter,
@@ -235,6 +314,46 @@ struct CommandLadderOverlay: View {
             .frame(width: Slate.Metric.hairline, height: height)
             .opacity(railHover ? 1 : 0)
             .allowsHitTesting(false)
+    }
+}
+
+/// The ladder's FOOT rung — the way back to the LIVE PROMPT, the row the cursor is blinking on.
+///
+/// The same stroke as every tick above it, run out to ``Slate/Metric/ladderHome`` and drawn in the
+/// terminal's own FOREGROUND rather than an outcome ink: green, red and the accent each say
+/// something about how a command went, and this rung is not a command. Always live — pressing it
+/// while the viewport is already at the bottom is a harmless no-op, and that costs nothing next to
+/// the observable viewport state a "dim when already home" rule would need (round 14 weighed exactly
+/// that cost and dropped the moving viewport marker over it).
+///
+/// It carries NO peek card: there is no output to excerpt at a prompt that has not run anything.
+private struct LadderHomeMark: View {
+    let onJump: () -> Void
+    /// Reported to the rail so it can close an open peek — the pointer has left the commands.
+    let onHover: (Bool) -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onJump) {
+            Capsule()
+                .fill(Slate.Terminal.ink)
+                .frame(
+                    width: Slate.Metric.ladderHome,
+                    height: hovering ? Slate.Metric.ladderTickWeightActive : Slate.Metric.ladderTickWeight,
+                )
+                // Same band + centred mark as a tick, so the foot rung is aimed at exactly like the
+                // rest of the rail and its growth stays inside the gutter.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover {
+            hovering = $0
+            onHover($0)
+        }
+        .animation(Slate.Anim.smallFade, value: hovering)
+        .accessibilityLabel("Jump to the current prompt")
     }
 }
 
