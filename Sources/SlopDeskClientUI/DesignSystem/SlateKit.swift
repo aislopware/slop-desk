@@ -106,10 +106,16 @@ struct SlatePlateStyle: ButtonStyle {
 /// the good one: filled when selected, flat when not. At full width it no longer changes SIZE
 /// between states, which is what those animation rounds were fighting over.
 ///
-/// There are NO `.animation` modifiers on the selection path. The ONE animation there is the
-/// caller's `withAnimation(Slate.Anim.standard)` transaction around the selection write, which
-/// carries the fill and the surface swap in a single beat; do not re-add per-view animations. Hover
-/// is a separate channel — it answers the pointer, not the selection — and fades on its own.
+/// There are still NO `.animation` modifiers on the selection path, and the two REJECTED rounds stay
+/// rejected: round 1's opacity fades read as cheap, round 2's width morph as stuttery. What the plate
+/// now takes instead is the sidebar's ``SlateCompactIsland/morph`` — supply a namespace and the ONE
+/// selected plate TRAVELS from the old tab to the new one (user-directed 2026-08-09, after the
+/// sidebar and the horizontal strip got the same treatment and this strip was the odd one left
+/// jumping). That is neither of the rejected shapes: nothing fades, and nothing changes WIDTH — the
+/// plate keeps the size the ladder's current rung gives it and only moves. The travel still rides the
+/// caller's own `withAnimation` transaction, exactly as before; the namespace only says which plates
+/// are the same plate. Hover is a separate channel — it answers the pointer, not the selection — and
+/// fades on its own.
 struct PanelTabPlate: View {
     /// What a tab draws before its label.
     ///
@@ -127,28 +133,32 @@ struct PanelTabPlate: View {
     let selected: Bool
     /// False collapses the tab to a square cell holding only its mark — the narrow-panel rung.
     var showsLabel = true
+    /// The morph namespace shared by ONE strip of tabs — see ``SlateCompactIsland/morph``. `nil`
+    /// keeps the plain fade for any caller mounting a lone plate.
+    var morph: Namespace.ID?
     var action: () -> Void = {}
 
     @State private var hovering = false
 
     init(
         mark: Mark, label: String, selected: Bool, showsLabel: Bool = true,
-        action: @escaping () -> Void = {},
+        morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
     ) {
         self.mark = mark
         self.label = label
         self.selected = selected
         self.showsLabel = showsLabel
+        self.morph = morph
         self.action = action
     }
 
     init(
         symbol: SFSymbol, label: String, selected: Bool, showsLabel: Bool = true,
-        action: @escaping () -> Void = {},
+        morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
     ) {
         self.init(
             mark: .symbol(symbol), label: label, selected: selected, showsLabel: showsLabel,
-            action: action,
+            morph: morph, action: action,
         )
     }
 
@@ -157,7 +167,7 @@ struct PanelTabPlate: View {
     /// one material rather than in an accent wash of their own.
     var body: some View {
         Button(action: action) {
-            SlateCompactIsland(selected: selected, hovering: hovering) {
+            SlateCompactIsland(selected: selected, hovering: hovering, morph: morph) {
                 plate
                     .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.icon)
             }

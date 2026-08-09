@@ -33,6 +33,13 @@ extension View {
     /// moat the size of the ordinary one would slide the island under the traffic lights. There the
     /// top side widens back to the full ``Slate/Metric/bandHeight`` so the lights keep standing on
     /// bare ground.
+    ///
+    /// That widening is a 32pt step, and it used to be INSTANT (user-directed 2026-08-09). Collapsing
+    /// the navigator animates the column's width but the island's top moat jumped in one frame, so
+    /// the one surface the window is built around lost a band of height while everything around it
+    /// was still gliding. The moat now OPENS on the same curve and the same duration as the column
+    /// that caused it — no delay, because the two edges belong to a single move: the island widens
+    /// leftward and shortens downward at once.
     @MainActor
     func slateIsland(clearingWindowControls: Bool = false) -> some View {
         let radius = Slate.Metric.islandRadius
@@ -48,6 +55,9 @@ extension View {
                     .allowsHitTesting(false)
             }
             .padding(.top, top)
+            // Keyed on the MEASUREMENT, not on the flag: only a moat that actually changes size may
+            // animate, so no other chrome change can drag the island's geometry into a transaction.
+            .animation(Slate.Anim.columnSlide, value: top)
             .padding([.leading, .trailing, .bottom], inset)
             .background(Slate.Surface.field)
     }

@@ -67,18 +67,22 @@ struct SlateTitlebar: View {
             // way back without knowing ⌘⇧L) and stands at the same window x as its hide twin inside
             // the navigator strip, so the toggle reads as one button that stays put.
             HStack(spacing: Slate.Metric.space2) {
+                // THE TOGGLE DOES NOT TRAVEL (user-directed 2026-08-09). It sits at a FIXED window x
+                // beside the traffic lights — the same x its hide twin holds inside the navigator
+                // strip — and the lights themselves never move, so sliding it in read as the button
+                // crawling out from under them. It only fades; the press feedback it already carries
+                // (``SlatePlateStyle``) is the whole of its own motion.
                 PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
                     .help("Show the tabs panel")
                 if !rows.isEmpty {
                     WorkspaceTabStrip(store: store, rows: rows, onSelect: onSelectPane)
+                        // Only the TABS arrive: they wait one control to the leading side and slide
+                        // into place as the column finishes leaving, so they read as the list coming
+                        // across with the column rather than as a layer switching on.
+                        .offset(x: sidebarVisible ? -Slate.Metric.heightControl : 0)
                 }
             }
             .opacity(sidebarVisible ? 0 : 1)
-            // The cluster ARRIVES rather than appears: while the sidebar is up it waits one control
-            // to the leading side and slides into place as the column finishes leaving. A pure
-            // opacity fade read as a layer switching on; a short travel in the same direction the
-            // column just went reads as the tabs coming with it (user-directed 2026-08-09).
-            .offset(x: sidebarVisible ? -Slate.Metric.heightControl : 0)
             .allowsHitTesting(!sidebarVisible)
             .padding(.leading, Slate.Metric.windowControlsLead)
             // Reserve the trailing plate's slot so a long run of tabs scrolls instead of sliding

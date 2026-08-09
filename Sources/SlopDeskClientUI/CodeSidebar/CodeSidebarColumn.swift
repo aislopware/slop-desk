@@ -54,6 +54,11 @@ struct CodeSidebarColumn: View {
     }
 
     @State private var surfaceTab: SurfaceTab = .code
+    /// The selection plate's morph namespaces — ONE PER RUNG of the strip's width ladder, because
+    /// `ViewThatFits` builds every candidate to measure it. See `tabs(labelling:)`.
+    @Namespace private var morphAllNamed
+    @Namespace private var morphSelectedNamed
+    @Namespace private var morphUnnamed
     @State private var simulatorModel = SimulatorSidebarModel()
     /// The Android surface's own model. A FOURTH tab rather than a second half of Simulators: the two
     /// share not one byte of protocol — `baguette`'s websocket against `scrcpy` over `adb`, AVC
@@ -147,13 +152,15 @@ struct CodeSidebarColumn: View {
     /// and ``PanelTabPlate``. The reload plate rides only the Code surface (Desktop has nothing to
     /// reload); the far trailing corner is the panel's HIDE toggle (user-directed 2026-08-03 —
     /// moved here from the terminal's titlebar, which now carries only the collapsed-state reopen).
-    /// A tab click animates through ONE `withAnimation(standard)` transaction around the state
-    /// write — the pre-removal inspector's choreography (`InspectorColumn.tabButton`, resurrected
-    /// user-directed 2026-08-03). The transaction carries the plate fill, the reload plate's
-    /// arrival, and the surface swap together; there are NO per-view `.animation` modifiers on
-    /// this path (two redesigns that added them were both rejected).
+    /// A tab click animates through ONE transaction around the state write — the pre-removal
+    /// inspector's choreography (`InspectorColumn.tabButton`, resurrected user-directed 2026-08-03).
+    /// The transaction carries the plate's TRAVEL, the reload plate's arrival, and the surface swap
+    /// together; there are still NO per-view `.animation` modifiers on this path (two redesigns that
+    /// added them were both rejected). It spends `selectionMorph` rather than `standard` because the
+    /// plate now crosses the strip instead of changing in place — the same swap the sidebar rows and
+    /// the horizontal tab strip made.
     private func selectSurface(_ tab: SurfaceTab) {
-        withAnimation(Slate.Anim.standard) { surfaceTab = tab }
+        withAnimation(Slate.Anim.selectionMorph) { surfaceTab = tab }
     }
 
     private var strip: some View {
@@ -229,32 +236,43 @@ struct CodeSidebarColumn: View {
             case .none: false
             }
         }
+        // ⚠️ ONE NAMESPACE PER RUNG, not one for the strip. `ViewThatFits` BUILDS all three
+        // candidates to measure them and renders one, so a single namespace would put three copies
+        // of the same geometry id on screen at once and SwiftUI would pick whichever it liked. Each
+        // rung is its own morph group; only one is ever rendered, so the plate still has exactly one
+        // travelling instance.
+        let morph =
+            switch labelling {
+            case .all: morphAllNamed
+            case .selectedOnly: morphSelectedNamed
+            case .none: morphUnnamed
+            }
         return HStack(spacing: Slate.Metric.space1) {
             PanelTabPlate(
                 // The folder register (user-directed 2026-08-03), not a lone document — the tab
                 // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
                 // family (SF6 renamed it wholesale; the new constants outrun the package floor).
                 symbol: .folder, label: "Files", selected: surfaceTab == .code,
-                showsLabel: names(.code),
+                showsLabel: names(.code), morph: morph,
             ) { selectSurface(.code) }
                 .help("Files — the project's embedded editor")
             // Simulators sits beside Files because it is the other REAL surface — a live host
             // resource, not the announced-but-empty Desktop.
             PanelTabPlate(
                 symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
-                showsLabel: names(.simulators),
+                showsLabel: names(.simulators), morph: morph,
             ) { selectSurface(.simulators) }
                 .help("Simulators — the host's iOS Simulator devices")
             // "Emulators" names the tab (user-directed 2026-08-05) and the help text carries the
             // rest: the surface also lists attached hardware, which no emulator is.
             PanelTabPlate(
                 mark: .android, label: "Emulators", selected: surfaceTab == .android,
-                showsLabel: names(.android),
+                showsLabel: names(.android), morph: morph,
             ) { selectSurface(.android) }
                 .help("Emulators — the host's Android emulators and attached devices")
             PanelTabPlate(
                 symbol: .display, label: "Desktop", selected: surfaceTab == .desktop,
-                showsLabel: names(.desktop),
+                showsLabel: names(.desktop), morph: morph,
             ) { selectSurface(.desktop) }
                 .help("Desktop — the host's window surface")
         }
