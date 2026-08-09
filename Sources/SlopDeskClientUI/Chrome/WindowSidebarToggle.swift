@@ -33,9 +33,10 @@ struct WindowSidebarToggle: View {
         ) { chrome.toggleSidebar() }
             .help(chrome.sidebarCollapsed ? "Show the tabs panel" : "Hide the tabs panel")
             .padding(.leading, Slate.Metric.windowControlsLead)
-            // Centre in the band, which is where AppKit now centres the traffic lights too
-            // (`SlopDeskClientApp.growTitlebarToBandHeight`) — one row across the whole strip.
-            .frame(height: Slate.Metric.titlebarHeight)
+            // Hung from the band's TOP LINE, where the traffic lights beside it and the island's top
+            // edge beyond them also start (`SlopDeskClientApp.lowerTrafficLightsToTheTopLine`).
+            .padding(.top, Slate.Metric.bandInset)
+            .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
     }
 }
 #endif

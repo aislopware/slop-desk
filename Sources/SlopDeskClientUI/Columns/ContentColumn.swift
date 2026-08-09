@@ -41,11 +41,11 @@ struct ContentColumn: View {
             .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // ONE ISLAND: this column paints GROUND end-to-end and the pane canvas is lifted off it
-            // as the window's single island (see ``content``). The titlebar band is that island's
-            // top moat — the same ground the navigator and the code panel stand on, so the strip
-            // runs unbroken across all three columns. The old rule ("the band must wear the pane
-            // tone or it reads as a mispainted header") belonged to a world where the panes were
-            // flush under it; with a moat and a corner between them the band is plainly a housing.
+            // as the window's single island (see ``content``). The band beside the island is that
+            // same ground — the tone the navigator and the code panel stand on — so the top of the
+            // window reads as one field with one card in it. The old rule ("the band must wear the
+            // pane tone or it reads as a mispainted header") belonged to a world where the panes
+            // were flush under it; with a moat and a corner between them the band is plainly ground.
             .background(Slate.Surface.field)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
@@ -80,15 +80,16 @@ struct ContentColumn: View {
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 
-    /// On macOS the pane canvas is THE ISLAND — glass, a window-scale corner, a 12pt moat of ground
-    /// on the sides and the bottom, and a TOP that starts where the band ends, always
-    /// (``slateIsland()``, user-directed 2026-08-09). The island no longer rises into the strip in
-    /// any state: the band is one unbroken row across all three columns, so every column's content —
-    /// the search field, this island's top edge, the panel's surfaces — begins on the same line. iOS
-    /// has no titlebar and no island: the pane area fills its column directly.
+    /// On macOS the pane canvas is THE ISLAND — glass, a window-scale corner, and a 12pt moat of
+    /// ground on all four sides, so its top edge lands on the band's TOP LINE, level with the
+    /// traffic lights and the panel's surface tabs (``slateIsland(clearingBand:)``, user-directed
+    /// 2026-08-09). The navigator carries the lights, so nothing in this column needs the clearance —
+    /// until the navigator is collapsed and the band's own tab strip moves over this column, which is
+    /// what `clearingBand` answers. iOS has no titlebar and no island: the pane area fills its
+    /// column directly.
     private var content: some View {
         #if os(macOS)
-        paneArea.slateIsland()
+        paneArea.slateIsland(clearingBand: chrome.sidebarCollapsed)
         #else
         paneArea
         #endif

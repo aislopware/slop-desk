@@ -56,13 +56,24 @@ struct SlateTitlebar: View {
     /// Pointer-in-top-strip — the reveal gate for both reopen buttons (`HoverSensor` below).
     @State private var topHover = false
 
+    /// The chrome's ambient polarity, kept for the one control that may leave the ground: the
+    /// panel's reopen plate stands ON the island whenever the navigator is showing.
+    @Environment(\.colorScheme) private var chromeScheme
+
+    /// How far the panel's reopen plate keeps off the window's trailing edge — far enough that its
+    /// whole 24pt square lands on the island's STRAIGHT top edge instead of on the corner curve. See
+    /// the note at the plate itself.
+    private static var reopenTrailing: CGFloat {
+        Slate.Metric.islandInset + Slate.Metric.islandRadius + Slate.Metric.space1
+    }
+
     var body: some View {
-        // Everything in the band is CENTRED on it. That used to be wrong — AppKit's default corner
-        // inset put the traffic lights high in the 40pt band, so the controls had to be top-anchored
-        // to meet them. `SlopDeskClientApp.growTitlebarToBandHeight` now gives AppKit a titlebar of
-        // the band's own height and lets IT centre the lights (user-directed 2026-08-09), so the
-        // band has ONE row and plain centring finds it.
-        ZStack {
+        // Everything in the band hangs from its TOP LINE (``Slate/Metric/bandInset``), never centred
+        // in the band (user-directed 2026-08-09): the line is the island's top edge, and a control
+        // centred in the band sits above it. The traffic lights meet the same line from the other
+        // side — `SlopDeskClientApp.lowerTrafficLightsToTheTopLine` declares the titlebar height that
+        // makes AppKit park them there.
+        ZStack(alignment: .top) {
             // Left: the tabs the hidden sidebar took with it — collapsed-only. The sidebar toggle
             // itself is NOT here (``WindowSidebarToggle`` owns it at window level); the strip only
             // leaves its slot free.
@@ -84,7 +95,7 @@ struct SlateTitlebar: View {
             .padding(.leading, Slate.Metric.windowControlsLead + Slate.Metric.plate + Slate.Metric.space2)
             // Reserve the trailing plate's slot so a long run of tabs scrolls instead of sliding
             // under the right-panel reopen button.
-            .padding(.trailing, Slate.Metric.plate + 2 * Slate.Metric.space3)
+            .padding(.trailing, Self.reopenTrailing + Slate.Metric.plate + Slate.Metric.space2)
             // Never RIDE the collapse slide (the column edge travels x 80→300): the strip lands as
             // the column finishes, so the delay tracks `columnSlideDuration` rather than a literal.
             // Leaving is the mirror and must CLEAR first — no delay, and quick, so the arriving
@@ -95,6 +106,7 @@ struct SlateTitlebar: View {
                     : Slate.Anim.columnSlide.delay(Slate.Anim.columnSlideDuration * 0.55),
                 value: sidebarVisible,
             )
+            .padding(.top, Slate.Metric.bandInset)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             // Right: the RIGHT-panel REOPEN — only while the panel is COLLAPSED and the top strip
@@ -115,19 +127,26 @@ struct SlateTitlebar: View {
                         value: codeSidebarVisible,
                     )
                     .animation(Slate.Anim.smallFade, value: topHover)
+                    // ON THE GLASS, so it reads in the glass's polarity. While the navigator is
+                    // showing, the island's top edge is the band's own line and this plate — the one
+                    // band control the island can reach — stands on it rather than on ground. With
+                    // the navigator hidden the island drops below the whole band and the plate is
+                    // back on cream, so the polarity follows the surface instead of the state.
+                    .environment(\.colorScheme, chrome.sidebarCollapsed ? chromeScheme : Slate.glassColorScheme)
                     .help("Show the right panel")
             }
+            .padding(.top, Slate.Metric.bandInset)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            // THE HIDE TWIN'S OWN x. The panel's strip pays `space2` at both ends
-            // (``CodeSidebarColumn.strip``), so a reopen at the same inset appears exactly where the
-            // hide button that closed the panel stood — the same "one button that stays put" the
-            // navigator's toggle now has. It also stands on GROUND at last: the island's top starts
-            // at the band's bottom in every state (``slateIsland()``, user-directed 2026-08-09), so
-            // this plate no longer straddles the island's 26pt corner half-sunk in the glass, which
-            // is what made it unreadable (user-reported 2026-08-09).
-            .padding(.trailing, Slate.Metric.space2)
+            // CLEAR OF THE CORNER, not flush with the window's edge. The plate used to pay the same
+            // `space2` the panel's own hide button pays (``CodeSidebarColumn.strip``) so that reopen
+            // and hide stood at one x — but on the band's line that inset puts the plate's top-right
+            // exactly where the island's 26pt corner curves away, half on glass and half on cream,
+            // which is what made it unreadable (user-reported 2026-08-09). Past `islandInset +
+            // islandRadius` the island's top edge is straight, so the plate sits wholly on it; the
+            // extra `space1` keeps it off the tangent point.
+            .padding(.trailing, Self.reopenTrailing)
         }
-        .frame(height: Slate.Metric.titlebarHeight)
+        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
         #if os(macOS) // HoverSensor is AppKit; this titlebar only MOUNTS on macOS but compiles for iOS
             .background(HoverSensor { topHover = $0 })
         #endif

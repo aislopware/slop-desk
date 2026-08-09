@@ -744,6 +744,9 @@ public struct SlopDeskClientApp: App {
                     )
                     // AUTOMATION ONLY: bring the window to front + make it key ONCE per window open (see helper).
                     Self.automationBringToFrontOnce(window)
+                    // Bring the traffic lights DOWN onto the band's top line, where the island's top
+                    // edge and every other control in the band start (see helper).
+                    Self.lowerTrafficLightsToTheTopLine(on: window)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
                 // (Fires AFTER ``SlopDeskAppTerminationDelegate`` has drained the in-flight pane
@@ -1180,16 +1183,34 @@ public struct SlopDeskClientApp: App {
         window.makeKeyAndOrderFront(nil)
     }
 
-    // NOTHING TOUCHES THE TRAFFIC LIGHTS (user-directed 2026-08-09). Two attempts are buried here and
-    // both are mistakes worth not repeating:
-    //   1. Nudging the disc frames directly FLICKERED — AppKit rebuilds the titlebar whenever
-    //      `NSWindow.title` changes (this window's title tracks the focused pane's cwd folder), which
-    //      resets the cluster to the corner and lands the correction a frame later as a visible jump.
-    //   2. Declaring a taller titlebar (an empty `.unifiedCompact` `NSToolbar`, purely a height
-    //      declaration) so AppKit would centre the discs in a 40pt band. It centred them, at the cost
-    //      of 8pt of dead ground under every strip in the window and an island pushed down to match.
-    // The band is fitted to the discs instead: `.hiddenTitleBar` parks them 8pt down, so
-    // ``Slate/Metric/heightStrip`` is 32 and the centring is the system's own arithmetic.
+    /// Declare a taller system titlebar so AppKit itself parks the three window controls on the
+    /// band's TOP LINE (``Slate/Metric/bandInset``) instead of at its own default 8pt corner inset,
+    /// which left them a full grid step above the island's top edge and everything else in the band
+    /// (user-directed 2026-08-09). MEASURED on the running app: `.unifiedCompact` yields a 40pt
+    /// `AXToolbar` and lands the discs 13 from the top, 12 from the leading edge — one point under
+    /// the line, which on a 16pt disc is nothing, and the ONLY tool the system offers is this
+    /// height (the inset is not settable).
+    ///
+    /// ⚠️ THIS DOES NOT MOVE THE BUTTONS, AND THAT IS THE WHOLE POINT. The first cut nudged their
+    /// frames directly and it FLICKERED: AppKit rebuilds the titlebar whenever `NSWindow.title`
+    /// changes, which resets the cluster to the corner, and the correction then landed a frame later
+    /// as a visible jump. The window title tracks the focused pane's cwd folder name, so switching
+    /// panes inside one project usually kept the same string and looked clean while crossing to
+    /// another project re-titled the window and jumped — the symptom read as a pane-switch bug and
+    /// was a title-change bug. Owning the HEIGHT instead of the POSITION makes the placement
+    /// AppKit's own layout, so every rebuild re-derives it and there is nothing left to correct.
+    ///
+    /// The toolbar is EMPTY and has no delegate — it is a height declaration, not a toolbar. With no
+    /// items and customization off, AppKit adds no "Show Toolbar" / "Customize Toolbar…" to the View
+    /// menu (checked: it still reads Show Tab Bar / Show All Tabs / Enter Full Screen), and the
+    /// window's own `titlebarAppearsTransparent` keeps it from painting anything.
+    @MainActor
+    private static func lowerTrafficLightsToTheTopLine(on window: NSWindow) {
+        // The introspect hook re-fires on every scene re-render; this must stay idempotent.
+        guard window.toolbar == nil else { return }
+        window.toolbar = NSToolbar(identifier: "SlopDeskBandHeight")
+        window.toolbarStyle = .unifiedCompact
+    }
 
     /// Apply the configured initial window size at most once per window open (guarded by an
     /// associated object, mirroring the close-gate retain idiom), so a later manual resize always stands:

@@ -13,9 +13,9 @@
 // glass. Nothing here invents a second vocabulary for tabs; the axis is all that changed.
 //
 // What the horizontal form gives up is the second register: no git line, no cwd subtitle, no
-// process label. A chip is a title, its status mark and its bed. The band is 32pt tall and the
-// chips share it with the window controls — there is room for identity, not for readouts, and the
-// readouts are one ⌘⇧L away.
+// process label. A chip is a title, its status mark and its bed. The chips share one band row with
+// the window controls — there is room for identity, not for readouts, and the readouts are one
+// ⌘⇧L away.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -33,8 +33,10 @@ struct WorkspaceTabStrip: View {
     /// also carries the traffic lights and a full-height chip crowded them.
     private static let chipHeight = Slate.Metric.heightControl
 
-    /// The project bed's vertical collar — half a rung, so bed + collar (28) clears the 32pt band
-    /// with a breath of ground on both sides. See the `frame` note below for why it may not fill it.
+    /// The project bed's vertical collar — half a rung. The BED is what the band's top line has to
+    /// catch (it is the tinted edge the eye reads, not the chip inside it), so the strip hangs the
+    /// bed from the line and the chip rides two points lower; a fatter collar would push the chip
+    /// off the row the panel's own tabs keep.
     private static let bedCollar = Slate.Metric.space1 / 2
 
     /// The selection plate's morph namespace, shared by every chip in the strip so the plate TRAVELS
@@ -66,12 +68,11 @@ struct WorkspaceTabStrip: View {
             )
         }
         .scrollIndicators(.hidden)
-        // Exactly the bed's own height — 24 chip + 2×2 collar = 28 — which the titlebar then centres
-        // in the 32pt band, leaving 2pt of ground above and below (user-directed 2026-08-09). The
-        // bed must NEVER fill the band edge to edge: at a full `space2` collar it read as a painted
-        // header rather than as the sidebar's bed rotated. The collar is half a rung now because the
-        // band itself came down to 32 to fit the traffic lights; the chip keeps `heightControl`, so
-        // a tab still measures exactly what every other plate in the strip does.
+        // Exactly the bed's own height — 24 chip + 2×2 collar = 28 — which the titlebar hangs from
+        // the band's top line, leaving a grid step of ground under it (user-directed 2026-08-09).
+        // The bed must NEVER fill the band edge to edge: at a full `space2` collar it read as a
+        // painted header rather than as the sidebar's bed rotated, and with the navigator hidden it
+        // would meet the island's top edge with nothing between them.
         .frame(height: Self.chipHeight + 2 * Self.bedCollar)
     }
 

@@ -204,7 +204,10 @@ struct CodeSidebarColumn: View {
             .help("Hide the right panel")
         }
         .padding(.horizontal, Slate.Metric.space2)
-        .frame(height: Slate.Metric.titlebarHeight)
+        // Hung from the band's TOP LINE, like everything else in the band — the tabs' top edge is
+        // the island's top edge one column over (user-directed 2026-08-09).
+        .padding(.top, Slate.Metric.bandInset)
+        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
     }
 
     /// One rung of the strip's width ladder — how many tabs get to say their name.
