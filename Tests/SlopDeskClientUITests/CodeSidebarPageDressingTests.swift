@@ -42,21 +42,25 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         XCTAssertTrue(sheet.contains(".tabs-container > .tab"))
     }
 
-    func testSofteningRecutsTabsAsRoundedPlatesAndTouchesNoColours() {
-        // The Slate softening is GEOMETRY only — tabs become floating rounded plates on the
-        // control radius (6), lists/sliders/inputs round, and no rule ever sets a colour (the
-        // theme owns every colour; a colour here would drift the moment the theme changes).
+    func testSofteningRecutsTabsAsBrowserTabsAndTouchesNoColours() {
+        // The Slate softening is GEOMETRY only — lists/sliders/inputs round, and no rule ever sets
+        // a colour (the theme owns every colour; a colour here would drift the moment the theme
+        // changes). The tab is cut like a BROWSER tab: inset off the strip's top and left, FLUSH
+        // with its bottom, rounded on the top two corners only, so the host seed can paint it in
+        // the ground cream and have it read as the editor climbing into the strip.
         let css = CodeSidebarPageDressing.slateSofteningCSS
         XCTAssertTrue(css.contains(".tabs-container > .tab"))
-        // The shrunk plate is made by RE-SCOPING the workbench's own tab-height var on the tab
-        // (captured into an intermediate on the title, since a self-referential calc is a cyclic
+        XCTAssertTrue(css.contains("margin: 4px 0 0 4px"), "the tab lifted off the strip's bottom edge")
+        XCTAssertTrue(css.contains("border-radius: 10px 10px 0 0"), "the tab got its bottom corners back")
+        // The plate is made by RE-SCOPING the workbench's own tab-height var on the tab (captured
+        // into an intermediate on the title, since a self-referential calc is a cyclic
         // custom-property reference) — every stock rule keyed on the var derives the plate height
-        // by itself. There must be NO per-rule `- 8px` recuts left: each one was a stock metric
+        // by itself. There must be NO per-rule `- 4px` recuts left: each one was a stock metric
         // chased by hand (the label's line-height, the two tab-icon forms' heights), and any
         // still-present copy means the derivation isn't trusted end to end.
-        XCTAssertTrue(css.contains("--slate-tab-plate: calc(var(--editor-group-tab-height) - 8px)"))
+        XCTAssertTrue(css.contains("--slate-tab-plate: calc(var(--editor-group-tab-height) - 4px)"))
         XCTAssertTrue(css.contains("--editor-group-tab-height: var(--slate-tab-plate)"))
-        XCTAssertEqual(css.components(separatedBy: "- 8px)").count, 3, "one capture + one comment mention")
+        XCTAssertEqual(css.components(separatedBy: "- 4px)").count, 3, "one capture + one comment mention")
         XCTAssertFalse(css.contains(".tab .tab-label"))
         // A Slate plate carries selection by background fill — the underline containers go.
         XCTAssertTrue(css.contains(".tab-border-bottom-container"))

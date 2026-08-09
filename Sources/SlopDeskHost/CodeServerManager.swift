@@ -487,18 +487,27 @@ final class CodeServerManager: @unchecked Sendable {
     /// bounded — a strip whose every plate is the same size stays still while you switch files,
     /// where the stock `"fit"` re-measures each plate against its filename and slides the whole row
     /// on every open.
-    /// …AND EVERY TAB WEARS ITS CHIP (v30, user-directed 2026-08-09, chosen from rendered
-    /// candidates): the inactive tab is `09` (3.5%), hover `12` (7%), the open one `1C` (11%).
-    /// Until v30 the fixed geometry was paired with an inactive tab painted in the GROUND colour,
-    /// which made the slots invisible — so the strip paid the whole cost of fixed width (a long
-    /// empty tail after every short filename) and collected none of its benefit (an even rhythm),
-    /// and the one tab that did carry a plate read as a pill dropped into a line of bare words.
-    /// A fixed slot has to be VISIBLE to be worth fixing. With every slot tinted the row reads as
-    /// a rank of identical chips and the file icons line up on a straight vertical rail.
-    /// ⚠️ The open tab sits at 11% while a selected LIST row sits at 9% — deliberately NOT one
-    /// number. A list row is picked out against bare ground; a tab has to be picked out against
-    /// its neighbouring chips, which are already tinted, so it needs the extra step to carry the
-    /// same weight.
+    /// …AND THE STRIP GETS A FLOOR, SO THE OPEN TAB CAN BE THE EDITOR ITSELF (v31, user-directed
+    /// 2026-08-09, chosen from rendered candidates): the tab bed drops to `17` (9%), a closed tab
+    /// is fully transparent onto that bed, hover half-lifts it back toward the ground
+    /// (`#FFFBEB80` — cream at 50% over the bed, landing at 4.5%), and the OPEN tab is painted in
+    /// the ground cream itself, opaque. Paired with the client's top-only tab radius (see
+    /// `CodeSidebarPageDressing`), the open tab reads as the editor surface climbing into the
+    /// strip, continuous with the canvas below it — the browser-tab logic.
+    /// ⚠️ This REVERSES v30 (chips of rising ink on a flat field) and the depth error underneath
+    /// it: every workbench surface was the one ground cream, so the strip's bed and the editor sat
+    /// at 1.00:1 — the strip had no floor, and the tint ladder ran the wrong way, leaving the OPEN
+    /// tab the darkest thing on screen while the canvas it belongs to stayed the lightest. Three
+    /// independent references agree on the correction (surveyed 2026-08-09): JetBrains' Islands
+    /// theme spec (`EditorTabs.background` matches the editor; islands clear the window ground by
+    /// at least 1.20:1; island corner 10), the Zed light default (editor `#fafafa`, tab bed
+    /// `#ebebec`, active tab back to `#fafafa`), and the Islands Dark VS Code theme (editor
+    /// `#181a1d`, bed `#161619`, active tab `#181a1d`, radius on the TOP corners only). In all
+    /// three the open tab is not marked by extra ink — it is marked by being CONNECTED.
+    /// The 9% bed clears the canvas by 1.193:1, which is that spec's floor; 6% measured 1.120:1
+    /// and read as no floor at all in the rendered candidates.
+    /// A closed tab keeps no chip of its own: the bed is the slot, and the fixed 140 pitch is what
+    /// supplies the rhythm the chips were standing in for.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -522,14 +531,17 @@ final class CodeServerManager: @unchecked Sendable {
             "sideBarSectionHeader.border": "#00000000",
             "activityBar.background": "#FFFBEB",
             "activityBar.border": "#00000000",
-            "editorGroupHeader.tabsBackground": "#FFFBEB",
+            "editorGroupHeader.tabsBackground": "#22212C17",
             "editorGroupHeader.tabsBorder": "#00000000",
             "editorGroupHeader.border": "#00000000",
             "editorGroup.border": "#00000000",
-            "tab.inactiveBackground": "#22212C09",
+            "tab.inactiveBackground": "#00000000",
             "tab.border": "#00000000",
-            "tab.activeBackground": "#22212C1C",
-            "tab.hoverBackground": "#22212C12",
+            "tab.activeBackground": "#FFFBEB",
+            "tab.hoverBackground": "#FFFBEB80",
+            "tab.unfocusedActiveBackground": "#FFFBEB",
+            "tab.unfocusedInactiveBackground": "#00000000",
+            "tab.unfocusedHoverBackground": "#FFFBEB80",
             "list.activeSelectionBackground": "#22212C17",
             "list.inactiveSelectionBackground": "#22212C0F",
             "list.focusBackground": "#22212C17",

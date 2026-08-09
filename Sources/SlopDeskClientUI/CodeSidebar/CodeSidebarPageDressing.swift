@@ -96,9 +96,14 @@ enum CodeSidebarPageDressing {
     /// sidebar row, so it takes the same corner; list ROWS stay on 6, because 10 on a 22px row is
     /// close enough to a capsule to lose the rectangle the tree reads by.
     ///
-    ///   • TABS become floating rounded plates: inset 4px off the strip's top/bottom/left, the
-    ///     per-tab 1px dividers dropped (the strip background now separates them). The active tab's
-    ///     background fill reads as a plate — exactly the app's `PanelTabPlate` at rest/selected.
+    ///   • TABS are cut like BROWSER TABS (user-directed 2026-08-09, replacing the free-floating
+    ///     plate): inset 4px off the strip's top and left but flush with its BOTTOM, and rounded on
+    ///     the top two corners only. The host seed paints the open tab in the ground cream and the
+    ///     strip bed a step below it (see `CodeServerManager`), so a tab cut this way reads as the
+    ///     editor surface climbing into the strip, continuous with the canvas under it, while the
+    ///     closed tabs stay sunk in the bed. This is the shape JetBrains' Islands theme, Zed and
+    ///     the Islands Dark VS Code theme all converge on. The per-tab 1px dividers are dropped
+    ///     (the bed now separates the slots).
     ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
     ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
@@ -118,15 +123,15 @@ enum CodeSidebarPageDressing {
        icons, each pinned to the FULL var by the stock sheet; a per-rule shrink here once left
        the SVG form centering on the 35px box, 4px below the label's line) — derives the shrunk
        value by itself. The strip and everything outside `.tab` still see the full var. The
-       derived value must be CAPTURED on an ancestor first: `--x: calc(var(--x) - 8px)` on the
+       derived value must be CAPTURED on an ancestor first: `--x: calc(var(--x) - 4px)` on the
        tab itself is a cyclic custom-property reference, which invalidates the property. */
     .monaco-workbench .part.editor > .content .editor-group-container > .title {
-        --slate-tab-plate: calc(var(--editor-group-tab-height) - 8px);
+        --slate-tab-plate: calc(var(--editor-group-tab-height) - 4px);
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
         --editor-group-tab-height: var(--slate-tab-plate);
-        margin: 4px 0 4px 4px;
-        border-radius: 10px;
+        margin: 4px 0 0 4px;
+        border-radius: 10px 10px 0 0;
         border-right: none !important;
         border-left: none !important;
     }
