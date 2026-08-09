@@ -446,6 +446,21 @@ final class CodeServerManager: @unchecked Sendable {
     /// `#FFFBEB` and zeroes their borders (`#00000000`), so panel and ground read as one continuous
     /// field with no seam. The syntax theme is untouched: only chrome keys are overridden, so the
     /// Monokai pair still colours the code itself.
+    /// On that flat field SELECTION is the app's own COMPACT ISLAND (v25, user-directed 2026-08-09):
+    /// the chosen tree row, editor tab, palette row, completion row and menu item are stamped out of
+    /// the island's dark glass `#22212C` and carry its light ink `#F8F8F2` — the same chip
+    /// `SlateCompactIsland` cuts for a selected sidebar row, in the same two tones, so the panel
+    /// answers "which one" in the vocabulary the rest of the window already speaks instead of the
+    /// theme's own wash. Hover stays a whisper of that same tone rather than a second dialect, and
+    /// every selection OUTLINE is zeroed: the fill is the state, a ring around it restates it.
+    /// ⚠️ `#22212C` / `#F8F8F2` are `SlateTheme.app`'s glass face and ink, the same duplication the
+    /// ground cream already carries across this module boundary — if the profile moves, all three
+    /// move together.
+    /// NOTHING CASTS A SHADOW (v25, user-directed 2026-08-09): every `*.shadow` key the Monokai
+    /// pair ships — widget, scrollbar, the three sticky-scroll casts, the list filter, the welcome
+    /// tile, inline chat, the diff editor's unchanged region — goes fully transparent. Those casts
+    /// exist to lift a widget off an editor of a DIFFERENT tone; here every surface is the one
+    /// cream, so each one drew a grey smear across a field that is meant to read as continuous.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -475,9 +490,41 @@ final class CodeServerManager: @unchecked Sendable {
             "editorGroupHeader.tabsBorder": "#00000000",
             "editorGroupHeader.border": "#00000000",
             "editorGroup.border": "#00000000",
-            "tab.activeBackground": "#FFFBEB",
             "tab.inactiveBackground": "#FFFBEB",
             "tab.border": "#00000000",
+            "tab.activeBackground": "#22212C",
+            "tab.activeForeground": "#F8F8F2",
+            "tab.hoverBackground": "#22212C14",
+            "list.activeSelectionBackground": "#22212C",
+            "list.activeSelectionForeground": "#F8F8F2",
+            "list.activeSelectionIconForeground": "#F8F8F2",
+            "list.inactiveSelectionBackground": "#22212C",
+            "list.inactiveSelectionForeground": "#F8F8F2",
+            "list.inactiveSelectionIconForeground": "#F8F8F2",
+            "list.focusBackground": "#22212C",
+            "list.focusForeground": "#F8F8F2",
+            "list.inactiveFocusBackground": "#22212C",
+            "list.hoverBackground": "#22212C14",
+            "list.focusOutline": "#00000000",
+            "list.inactiveFocusOutline": "#00000000",
+            "quickInputList.focusBackground": "#22212C",
+            "quickInputList.focusForeground": "#F8F8F2",
+            "quickInputList.focusIconForeground": "#F8F8F2",
+            "editorSuggestWidget.selectedBackground": "#22212C",
+            "editorSuggestWidget.selectedForeground": "#F8F8F2",
+            "editorSuggestWidget.selectedIconForeground": "#F8F8F2",
+            "menu.selectionBackground": "#22212C",
+            "menu.selectionForeground": "#F8F8F2",
+            "menu.selectionBorder": "#00000000",
+            "widget.shadow": "#00000000",
+            "scrollbar.shadow": "#00000000",
+            "editorStickyScroll.shadow": "#00000000",
+            "sideBarStickyScroll.shadow": "#00000000",
+            "panelStickyScroll.shadow": "#00000000",
+            "listFilterWidget.shadow": "#00000000",
+            "welcomePage.tileShadow": "#00000000",
+            "inlineChat.shadow": "#00000000",
+            "diffEditor.unchangedRegionShadow": "#00000000",
             "panel.background": "#FFFBEB",
             "panel.border": "#00000000",
             "terminal.background": "#FFFBEB",
@@ -1237,6 +1284,167 @@ final class CodeServerManager: @unchecked Sendable {
             "window.autoDetectColorScheme": true,
             "workbench.preferredDarkColorTheme": "Monokai Pro",
             "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v24 — the flat-cream seed, before selection was cut from the island. Every workbench
+        // surface already stood on the ground cream, but the chosen row, tab and palette entry
+        // still wore the theme's own selection wash, and the pair's drop shadows still smeared
+        // the widgets that float over it (user-directed 2026-08-09).
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.colorCustomizations": {
+                "editor.background": "#FFFBEB",
+                "editorGroup.emptyBackground": "#FFFBEB",
+                "editorGroupHeader.noTabsBackground": "#FFFBEB",
+                "welcomePage.background": "#FFFBEB",
+                "editorGutter.background": "#FFFBEB",
+                "editorStickyScroll.background": "#FFFBEB",
+                "editorWidget.background": "#FFFBEB",
+                "breadcrumb.background": "#FFFBEB",
+                "sideBar.background": "#FFFBEB",
+                "sideBar.border": "#00000000",
+                "sideBarSectionHeader.background": "#FFFBEB",
+                "sideBarSectionHeader.border": "#00000000",
+                "activityBar.background": "#FFFBEB",
+                "activityBar.border": "#00000000",
+                "editorGroupHeader.tabsBackground": "#FFFBEB",
+                "editorGroupHeader.tabsBorder": "#00000000",
+                "editorGroupHeader.border": "#00000000",
+                "editorGroup.border": "#00000000",
+                "tab.activeBackground": "#FFFBEB",
+                "tab.inactiveBackground": "#FFFBEB",
+                "tab.border": "#00000000",
+                "panel.background": "#FFFBEB",
+                "panel.border": "#00000000",
+                "terminal.background": "#FFFBEB",
+                "statusBar.background": "#FFFBEB",
+                "statusBar.noFolderBackground": "#FFFBEB",
+                "statusBar.border": "#00000000",
+                "titleBar.activeBackground": "#FFFBEB",
+                "titleBar.inactiveBackground": "#FFFBEB",
+                "titleBar.border": "#00000000",
+                "quickInput.background": "#FFFBEB",
+                "menu.background": "#FFFBEB"
+            },
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v24 AS THE WORKBENCH LEFT IT — v24 with `chat.disableAIFeatures` REMOVED. Observed on
+        // the live host: the running workbench rewrites this file on its own settings writes and
+        // drops that key back out, the same class of machine mutation the v6-era entry above
+        // records for `workbench.colorTheme`. Without this form a host that has ever had the
+        // panel open reads as user-owned and can never be upgraded again, which is exactly how a
+        // seed silently stops shipping.
+        """
+        {
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.colorCustomizations": {
+                "editor.background": "#FFFBEB",
+                "editorGroup.emptyBackground": "#FFFBEB",
+                "editorGroupHeader.noTabsBackground": "#FFFBEB",
+                "welcomePage.background": "#FFFBEB",
+                "editorGutter.background": "#FFFBEB",
+                "editorStickyScroll.background": "#FFFBEB",
+                "editorWidget.background": "#FFFBEB",
+                "breadcrumb.background": "#FFFBEB",
+                "sideBar.background": "#FFFBEB",
+                "sideBar.border": "#00000000",
+                "sideBarSectionHeader.background": "#FFFBEB",
+                "sideBarSectionHeader.border": "#00000000",
+                "activityBar.background": "#FFFBEB",
+                "activityBar.border": "#00000000",
+                "editorGroupHeader.tabsBackground": "#FFFBEB",
+                "editorGroupHeader.tabsBorder": "#00000000",
+                "editorGroupHeader.border": "#00000000",
+                "editorGroup.border": "#00000000",
+                "tab.activeBackground": "#FFFBEB",
+                "tab.inactiveBackground": "#FFFBEB",
+                "tab.border": "#00000000",
+                "panel.background": "#FFFBEB",
+                "panel.border": "#00000000",
+                "terminal.background": "#FFFBEB",
+                "statusBar.background": "#FFFBEB",
+                "statusBar.noFolderBackground": "#FFFBEB",
+                "statusBar.border": "#00000000",
+                "titleBar.activeBackground": "#FFFBEB",
+                "titleBar.inactiveBackground": "#FFFBEB",
+                "titleBar.border": "#00000000",
+                "quickInput.background": "#FFFBEB",
+                "menu.background": "#FFFBEB"
+            },
             "workbench.iconTheme": "material-icon-theme",
             "workbench.startupEditor": "none",
             "workbench.editorAssociations": {

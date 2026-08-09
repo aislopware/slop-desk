@@ -99,13 +99,14 @@ struct SlateCompactIsland<Content: View>: View {
             .background(alignment: .center) { plate }
     }
 
-    /// The chip's ground. Selected draws the island plate — fill, hairline and the light profile's
-    /// whisper of a shadow as ONE view, which is what lets the morph carry all three across; hover
-    /// draws the resting tint; at rest nothing.
+    /// The chip's ground. Selected draws the island plate — fill and hairline as ONE view, which is
+    /// what lets the morph carry both across; hover draws the resting tint; at rest nothing.
     ///
-    /// ⚠️ The shadow belongs to the PLATE, not to the chip: cast on the whole
-    /// `content().background(…)` stack it also shadowed the label, which reads as a smudge under
-    /// text at small sizes and cannot travel with a matched-geometry move.
+    /// NO DROP SHADOW (user-directed 2026-08-09). The chip used to cast a 4% whisper, written when
+    /// the plate was cream on a cream ground and needed help separating. The single profile put the
+    /// island's DARK glass under the chip while the ground stayed cream, so the two are now ~13:1
+    /// apart and the fill alone says everything the shadow was for — leaving it made a travelling
+    /// plate drag a soft edge behind it, which is the one thing a flat vocabulary cannot afford.
     @ViewBuilder
     private var plate: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -113,10 +114,6 @@ struct SlateCompactIsland<Content: View>: View {
             let pill = shape
                 .fill(Slate.Surface.island)
                 .overlay(shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline))
-                // The light profile's chip is cream on cream — the hairline draws it, and this
-                // whisper keeps it from reading flat. Dark profiles cast nothing (`cardShadow`
-                // resolves clear there): an inverted chip needs no help separating.
-                .shadow(color: Slate.State.cardShadow, radius: 2, y: 1)
                 .allowsHitTesting(false)
             if let morph {
                 pill.matchedGeometryEffect(id: Self.morphID, in: morph)

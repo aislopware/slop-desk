@@ -739,6 +739,43 @@ final class CodeServerManagerTests: XCTestCase {
         )
     }
 
+    func testSeededChromeIsFlatAndSelectionWearsTheIslandChip() throws {
+        // The two rules the colour block exists to hold, pinned because a seed bump is a wall of
+        // JSON and either is easy to drop silently.
+        let seed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(CodeServerManager.seededUserSettings.utf8))
+                as? [String: Any],
+        )
+        let colors = try XCTUnwrap(seed["workbench.colorCustomizations"] as? [String: String])
+
+        // 1. NOTHING CASTS. Every shadow key the theme pair ships is fully transparent here — on a
+        // field where every surface is the one cream, a cast is a smear rather than a lift.
+        let shadows = colors.filter { $0.key.lowercased().contains("shadow") }
+        XCTAssertFalse(shadows.isEmpty)
+        for (key, value) in shadows {
+            XCTAssertEqual(value, "#00000000", "\(key) still casts")
+        }
+
+        // 2. SELECTION IS THE COMPACT ISLAND — the island's glass face carrying its light ink,
+        // in every list the panel puts a chosen row in.
+        for key in [
+            "list.activeSelectionBackground", "list.inactiveSelectionBackground",
+            "list.focusBackground", "quickInputList.focusBackground",
+            "editorSuggestWidget.selectedBackground", "menu.selectionBackground",
+            "tab.activeBackground",
+        ] {
+            XCTAssertEqual(colors[key], "#22212C", "\(key) is not the island chip")
+        }
+        for key in [
+            "list.activeSelectionForeground", "list.inactiveSelectionForeground",
+            "list.focusForeground", "quickInputList.focusForeground",
+            "editorSuggestWidget.selectedForeground", "menu.selectionForeground",
+            "tab.activeForeground",
+        ] {
+            XCTAssertEqual(colors[key], "#F8F8F2", "\(key) is not the island's ink")
+        }
+    }
+
     func testSeedUpgradesEveryPristineFormerSeed() throws {
         // A file byte-identical to ANY seed this manager once shipped was never user-edited (the
         // workbench rewrites the file on any settings change) — each upgrades to the current seed.

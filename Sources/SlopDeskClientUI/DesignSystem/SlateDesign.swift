@@ -405,9 +405,10 @@ enum Slate {
         /// ground's own cream lifted off the ground, so nothing but the cast tells the two apart at the
         /// card's edges. Compared side by side at true size, `shadow` read as a halo and this reads as lift.
         static let overlayShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.30, darkAlpha: 0.55)
-        /// The ACTIVE tab card's cast shadow — light appearances only; on dark, at-rest depth is the
-        /// fill ladder, and a dark-on-dark shadow reads as a smudged edge, not lift.
-        static let cardShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.04, darkAlpha: 0)
+        // NO `cardShadow` rung (user-directed 2026-08-09). The 4% whisper the selected tab chip
+        // used to cast existed for a cream plate on a cream ground; the single profile made that
+        // chip the island's dark glass, and a fill that far from the ground needs no cast to be
+        // seen. Only things that genuinely FLOAT still carry one — see ``Slate/Elevation``.
     }
 
     /// Extra DISTINGUISHABLE hues for chrome that needs more inks than the status set — the SYSTEM
@@ -826,10 +827,13 @@ enum Slate {
     /// The SHADOW ladder (round 13) — one named rung per depth a floating object can sit at, so a
     /// chip in one file can never cast a slightly different shadow than the same chip in another.
     /// Each rung bundles radius + y; the colour stays the caller's (``State/shadow`` for true
-    /// floats, ``State/cardShadow`` for the active card's whisper) via ``SwiftUICore/View/slateShadow(_:color:)``.
+    /// floats, ``State/overlayShadow`` for a summoned card) via ``SwiftUICore/View/slateShadow(_:color:)``.
+    ///
+    /// Every rung here belongs to something that genuinely LEAVES its surface. The old `card` rung
+    /// — a 2/1 whisper for a plate resting IN a surface — is gone with the selection chip's shadow
+    /// (user-directed 2026-08-09): at-rest depth is the fill ladder's job, and a cast under a
+    /// stationary plate is the flourish a flat vocabulary reads as dated.
     enum Elevation {
-        /// The active card's whisper — the overlay card sitting IN a surface, barely off it.
-        case card
         /// A pill/chip floating over the glass: status pills, mode badges, instrument chips.
         case chip
         /// A pane ghost mid-drag — clearly lifted, still near.
@@ -841,7 +845,6 @@ enum Slate {
 
         var radius: CGFloat {
             switch self {
-            case .card: 2
             case .chip: 4
             case .ghost: 8
             case .panel: 12
@@ -851,7 +854,6 @@ enum Slate {
 
         var y: CGFloat {
             switch self {
-            case .card: 1
             case .chip: 1
             case .ghost: 2
             case .panel: 4
@@ -911,8 +913,8 @@ enum Slate {
 
 extension View {
     /// Cast the shadow of a named ``Slate/Elevation`` rung. The colour defaults to the floating
-    /// object's soft black (``Slate/State/shadow``); the active card passes its own whisper
-    /// (``Slate/State/cardShadow``). Radius/y never appear at a call site — the rung is the API.
+    /// object's soft black (``Slate/State/shadow``); a summoned card passes the heavier
+    /// ``Slate/State/overlayShadow``. Radius/y never appear at a call site — the rung is the API.
     @MainActor
     func slateShadow(_ elevation: Slate.Elevation, color: Color? = nil) -> some View {
         shadow(color: color ?? Slate.State.shadow, radius: elevation.radius, y: elevation.y)
