@@ -123,6 +123,7 @@ struct CodeSidebarColumn: View {
             }
         }
         .background(Slate.Surface.field)
+        .overlay(alignment: .leading) { leadingRule }
         // THE COLUMN'S CONTENT LEAVES BEFORE ITS WIDTH DOES (user-reported 2026-08-09: the collapse
         // read as rough). A panel closing is a width animation, and everything standing in it —
         // an embedded workbench, a device stage, a strip of tabs — gets re-laid-out at every
@@ -146,6 +147,27 @@ struct CodeSidebarColumn: View {
             Self.lastPushedFontSpec = spec
             Task { await client.syncCodeFont(spec) }
         }
+    }
+
+    /// THE PANEL'S EDGE — a hairline down the column's leading side (user-directed 2026-08-09).
+    ///
+    /// The window's ground is one cream and every column sinks into it, so on this seam the moat
+    /// beside the island and the ground the panel stands on are the SAME colour and the panel had
+    /// no boundary at all — only the workbench's contents, starting somewhere. The rule is that
+    /// boundary, and it is drawn in the panel's own structure line (``Slate/Line/panelEdge``, the
+    /// ink and dose the workbench draws `editorGroup.border` in), so the edge and the rules inside
+    /// it read as one system.
+    ///
+    /// It starts at ``Slate/Metric/bandInset`` — the island's top line, which is also the line every
+    /// plate in the band hangs from — rather than at the window's top, so it joins the one line the
+    /// window keeps straight instead of cutting the band beside the surface tabs. It takes no hit:
+    /// this is exactly where the split divider's drag handle lives.
+    private var leadingRule: some View {
+        Rectangle()
+            .fill(Slate.Line.panelEdge)
+            .frame(width: Slate.Metric.hairline)
+            .padding(.top, Slate.Metric.bandInset)
+            .allowsHitTesting(false)
     }
 
     /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,

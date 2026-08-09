@@ -127,7 +127,14 @@ components:
 
 North star: **one ground, one island.** SlopDesk's window holds exactly two tones. The GROUND is
 Alucard's published cream `#FFFBEB`: the navigator, the code panel, the top band and the moat all
-stand on it, flush, un-rounded, with no seam between them — they SINK. Lifted off that ground is
+stand on it, flush, un-rounded and seamless — they SINK. The ONE rule on that ground is the code
+panel's leading edge (user-directed 2026-08-09): the moat beside the island and the ground the panel
+stands on are the same cream, so without a hairline the window gave no sign of where the panel began.
+It is drawn in the panel's own ink (`Slate.Line.panelEdge` — the `#22212C` the workbench draws
+`editorGroup.border` in) one rung UP from those inner rules, because this line answers "where does
+the surface begin", not "what is its structure": 1.79:1 on the cream against their 1.26:1, both
+measured. It starts on the island's top line and takes no hit — that seam is the split divider's
+drag handle. Lifted off that ground is
 exactly ONE surface: the terminal canvas, wearing the Dracula Pro glass, rounded at 26pt, floating in a
 moat that is the same on all four sides, so its top edge lands on the band's TOP LINE — the one line
 the window keeps straight, level with the traffic lights and the panel's tabs, so all three columns
