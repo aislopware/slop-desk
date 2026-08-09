@@ -449,27 +449,48 @@ final class CodeServerManager: @unchecked Sendable {
     /// proper — Alucard already paints it `#FFFBEB` — and it stays because the surfaces around the
     /// canvas (Alucard's own `#F3EFDF` sidebar, activity bar and status bar) are what would
     /// otherwise step the panel into a second tone.
-    /// On that flat field SELECTION is the app's own COMPACT ISLAND (v25, user-directed 2026-08-09):
-    /// the chosen tree row, editor tab, palette row, completion row and menu item are stamped out of
-    /// the island's dark glass `#22212C` and carry its light ink `#F8F8F2` — the same chip
-    /// `SlateCompactIsland` cuts for a selected sidebar row, in the same two tones, so the panel
-    /// answers "which one" in the vocabulary the rest of the window already speaks instead of the
-    /// theme's own wash. Hover stays a whisper of that same tone rather than a second dialect, and
-    /// every selection OUTLINE is zeroed: the fill is the state, a ring around it restates it.
-    /// ⚠️ `#22212C` / `#F8F8F2` are `SlateTheme.app`'s glass face and ink, the same duplication the
-    /// ground cream already carries across this module boundary — if the profile moves, all three
-    /// move together.
+    /// On that flat field SELECTION IS AN OVERLAY, NOT AN INVERSION (v28, user-directed 2026-08-09,
+    /// reversing v25): the chosen tree row, editor tab, palette row, completion row and menu item
+    /// are a TINT of the island ink `#22212C` over the ground — `1F` (12%) when focused, `14` (8%)
+    /// when the list has lost focus, `0D` (5%) on hover. NOTHING sets a selection FOREGROUND.
+    /// ⚠️ Do not restore the inverted chip. v25 stamped selection out of the island's solid dark
+    /// glass with light ink, borrowing the client sidebar's `SlateCompactIsland` — which works
+    /// there and fails here, because the workbench tree is not a list of plain labels: every row
+    /// carries a saturated multi-colour `material-icon-theme` glyph, and those are authored for a
+    /// light bed. Dropping a dark plate under them left a column of badges that answered to no
+    /// palette in the window. A tint keeps every icon on the bed it was drawn for and still answers
+    /// "which one", which is all the fill was ever for. Selection OUTLINES stay zeroed: the fill is
+    /// the state, a ring around it restates it.
+    /// ⚠️ `#22212C` is `SlateTheme.app`'s glass face, the same duplication the ground cream already
+    /// carries across this module boundary — if the profile moves, both move together.
     /// NOTHING CASTS A SHADOW (v25, user-directed 2026-08-09): every `*.shadow` key the Monokai
     /// pair ships — widget, scrollbar, the three sticky-scroll casts, the list filter, the welcome
     /// tile, inline chat, the diff editor's unchanged region — goes fully transparent. Those casts
     /// exist to lift a widget off an editor of a DIFFERENT tone; here every surface is the one
     /// cream, so each one drew a grey smear across a field that is meant to read as continuous.
+    /// ⚠️ Those colour keys DO NOT REACH THE PART SHADOWS, which is why the seam strips survived
+    /// v25 (reported and pixel-measured 2026-08-09). The workbench casts its structural shadows —
+    /// the editor part's inset left and right edges, the title bar, the activity bar, the side bar
+    /// — from `rgba(0, 0, 0, …)` LITERALS baked into the stylesheet, reachable by no theme token
+    /// at all; the sole switch is `workbench.shadows`, which toggles a `no-shadows` class whose
+    /// later-in-source rules zero every one of them. Measured on the running panel, the editor's
+    /// left edge carried a 20-device-pixel ramp bottoming at `rgb(244, 241, 228)` — the predicted
+    /// landing of 5% black over the ground cream. `false` is what removes it; the key is
+    /// hot-observed (`affectsConfiguration` → `updateShadows()`), so it takes effect without a
+    /// workbench reload.
+    /// TABS ARE ONE FIXED WIDTH (v28, user-directed 2026-08-09): `tabSizing: "fixed"` with the min
+    /// and max pinned to the SAME 140, which is what makes it truly fixed rather than merely
+    /// bounded — a strip whose every plate is the same size stays still while you switch files,
+    /// where the stock `"fit"` re-measures each plate against its filename and slides the whole row
+    /// on every open. The rounded tab plate the client's CSS draws is the thing being sized, so the
+    /// row now reads as a rank of identical chips.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
     static let seededUserSettings = """
     {
         "chat.disableAIFeatures": true,
+        "workbench.shadows": false,
         "workbench.colorTheme": "Alucard",
         "workbench.colorCustomizations": {
             "editor.background": "#FFFBEB",
@@ -492,29 +513,18 @@ final class CodeServerManager: @unchecked Sendable {
             "editorGroup.border": "#00000000",
             "tab.inactiveBackground": "#FFFBEB",
             "tab.border": "#00000000",
-            "tab.activeBackground": "#22212C",
-            "tab.activeForeground": "#F8F8F2",
-            "tab.hoverBackground": "#22212C14",
-            "list.activeSelectionBackground": "#22212C",
-            "list.activeSelectionForeground": "#F8F8F2",
-            "list.activeSelectionIconForeground": "#F8F8F2",
-            "list.inactiveSelectionBackground": "#22212C",
-            "list.inactiveSelectionForeground": "#F8F8F2",
-            "list.inactiveSelectionIconForeground": "#F8F8F2",
-            "list.focusBackground": "#22212C",
-            "list.focusForeground": "#F8F8F2",
-            "list.inactiveFocusBackground": "#22212C",
-            "list.hoverBackground": "#22212C14",
+            "tab.activeBackground": "#22212C1F",
+            "tab.hoverBackground": "#22212C0D",
+            "list.activeSelectionBackground": "#22212C1F",
+            "list.inactiveSelectionBackground": "#22212C14",
+            "list.focusBackground": "#22212C1F",
+            "list.inactiveFocusBackground": "#22212C14",
+            "list.hoverBackground": "#22212C0D",
             "list.focusOutline": "#00000000",
             "list.inactiveFocusOutline": "#00000000",
-            "quickInputList.focusBackground": "#22212C",
-            "quickInputList.focusForeground": "#F8F8F2",
-            "quickInputList.focusIconForeground": "#F8F8F2",
-            "editorSuggestWidget.selectedBackground": "#22212C",
-            "editorSuggestWidget.selectedForeground": "#F8F8F2",
-            "editorSuggestWidget.selectedIconForeground": "#F8F8F2",
-            "menu.selectionBackground": "#22212C",
-            "menu.selectionForeground": "#F8F8F2",
+            "quickInputList.focusBackground": "#22212C1F",
+            "editorSuggestWidget.selectedBackground": "#22212C1F",
+            "menu.selectionBackground": "#22212C1F",
             "menu.selectionBorder": "#00000000",
             "widget.shadow": "#00000000",
             "scrollbar.shadow": "#00000000",
@@ -548,6 +558,9 @@ final class CodeServerManager: @unchecked Sendable {
         "window.menuBarVisibility": "hidden",
         "workbench.editor.empty.hint": "hidden",
         "workbench.editor.decorations.badges": false,
+        "workbench.editor.tabSizing": "fixed",
+        "workbench.editor.tabSizingFixedMinWidth": 140,
+        "workbench.editor.tabSizingFixedMaxWidth": 140,
         "window.commandCenter": false,
         "workbench.layoutControl.enabled": false,
         "workbench.navigationControl.enabled": false,
@@ -1592,6 +1605,226 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v26 — the Alucard adoption, before the workbench's STRUCTURAL shadows were switched
+        // off. Identical to the current seed but for `workbench.shadows`; retired the same day
+        // it shipped, because the seam strips it leaves on the editor part's left and right
+        // edges are drawn from stylesheet literals that no colour key in the block above can
+        // reach.
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Alucard",
+            "workbench.colorCustomizations": {
+                "editor.background": "#FFFBEB",
+                "editorGroup.emptyBackground": "#FFFBEB",
+                "editorGroupHeader.noTabsBackground": "#FFFBEB",
+                "welcomePage.background": "#FFFBEB",
+                "editorGutter.background": "#FFFBEB",
+                "editorStickyScroll.background": "#FFFBEB",
+                "editorWidget.background": "#FFFBEB",
+                "breadcrumb.background": "#FFFBEB",
+                "sideBar.background": "#FFFBEB",
+                "sideBar.border": "#00000000",
+                "sideBarSectionHeader.background": "#FFFBEB",
+                "sideBarSectionHeader.border": "#00000000",
+                "activityBar.background": "#FFFBEB",
+                "activityBar.border": "#00000000",
+                "editorGroupHeader.tabsBackground": "#FFFBEB",
+                "editorGroupHeader.tabsBorder": "#00000000",
+                "editorGroupHeader.border": "#00000000",
+                "editorGroup.border": "#00000000",
+                "tab.inactiveBackground": "#FFFBEB",
+                "tab.border": "#00000000",
+                "tab.activeBackground": "#22212C",
+                "tab.activeForeground": "#F8F8F2",
+                "tab.hoverBackground": "#22212C14",
+                "list.activeSelectionBackground": "#22212C",
+                "list.activeSelectionForeground": "#F8F8F2",
+                "list.activeSelectionIconForeground": "#F8F8F2",
+                "list.inactiveSelectionBackground": "#22212C",
+                "list.inactiveSelectionForeground": "#F8F8F2",
+                "list.inactiveSelectionIconForeground": "#F8F8F2",
+                "list.focusBackground": "#22212C",
+                "list.focusForeground": "#F8F8F2",
+                "list.inactiveFocusBackground": "#22212C",
+                "list.hoverBackground": "#22212C14",
+                "list.focusOutline": "#00000000",
+                "list.inactiveFocusOutline": "#00000000",
+                "quickInputList.focusBackground": "#22212C",
+                "quickInputList.focusForeground": "#F8F8F2",
+                "quickInputList.focusIconForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedBackground": "#22212C",
+                "editorSuggestWidget.selectedForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedIconForeground": "#F8F8F2",
+                "menu.selectionBackground": "#22212C",
+                "menu.selectionForeground": "#F8F8F2",
+                "menu.selectionBorder": "#00000000",
+                "widget.shadow": "#00000000",
+                "scrollbar.shadow": "#00000000",
+                "editorStickyScroll.shadow": "#00000000",
+                "sideBarStickyScroll.shadow": "#00000000",
+                "panelStickyScroll.shadow": "#00000000",
+                "listFilterWidget.shadow": "#00000000",
+                "welcomePage.tileShadow": "#00000000",
+                "inlineChat.shadow": "#00000000",
+                "diffEditor.unchangedRegionShadow": "#00000000",
+                "panel.background": "#FFFBEB",
+                "panel.border": "#00000000",
+                "terminal.background": "#FFFBEB",
+                "statusBar.background": "#FFFBEB",
+                "statusBar.noFolderBackground": "#FFFBEB",
+                "statusBar.border": "#00000000",
+                "titleBar.activeBackground": "#FFFBEB",
+                "titleBar.inactiveBackground": "#FFFBEB",
+                "titleBar.border": "#00000000",
+                "quickInput.background": "#FFFBEB",
+                "menu.background": "#FFFBEB"
+            },
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
+        // v27 — Alucard with the structural shadows off, before selection stopped inverting
+        // and before tabs were pinned to one width. Shipped to the live host on 2026-08-09 and
+        // retired the same day; the file it left behind carries the workbench's own
+        // `preferredLightColorTheme` write on top, which the machine-blind comparator absorbs.
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.shadows": false,
+            "workbench.colorTheme": "Alucard",
+            "workbench.colorCustomizations": {
+                "editor.background": "#FFFBEB",
+                "editorGroup.emptyBackground": "#FFFBEB",
+                "editorGroupHeader.noTabsBackground": "#FFFBEB",
+                "welcomePage.background": "#FFFBEB",
+                "editorGutter.background": "#FFFBEB",
+                "editorStickyScroll.background": "#FFFBEB",
+                "editorWidget.background": "#FFFBEB",
+                "breadcrumb.background": "#FFFBEB",
+                "sideBar.background": "#FFFBEB",
+                "sideBar.border": "#00000000",
+                "sideBarSectionHeader.background": "#FFFBEB",
+                "sideBarSectionHeader.border": "#00000000",
+                "activityBar.background": "#FFFBEB",
+                "activityBar.border": "#00000000",
+                "editorGroupHeader.tabsBackground": "#FFFBEB",
+                "editorGroupHeader.tabsBorder": "#00000000",
+                "editorGroupHeader.border": "#00000000",
+                "editorGroup.border": "#00000000",
+                "tab.inactiveBackground": "#FFFBEB",
+                "tab.border": "#00000000",
+                "tab.activeBackground": "#22212C",
+                "tab.activeForeground": "#F8F8F2",
+                "tab.hoverBackground": "#22212C14",
+                "list.activeSelectionBackground": "#22212C",
+                "list.activeSelectionForeground": "#F8F8F2",
+                "list.activeSelectionIconForeground": "#F8F8F2",
+                "list.inactiveSelectionBackground": "#22212C",
+                "list.inactiveSelectionForeground": "#F8F8F2",
+                "list.inactiveSelectionIconForeground": "#F8F8F2",
+                "list.focusBackground": "#22212C",
+                "list.focusForeground": "#F8F8F2",
+                "list.inactiveFocusBackground": "#22212C",
+                "list.hoverBackground": "#22212C14",
+                "list.focusOutline": "#00000000",
+                "list.inactiveFocusOutline": "#00000000",
+                "quickInputList.focusBackground": "#22212C",
+                "quickInputList.focusForeground": "#F8F8F2",
+                "quickInputList.focusIconForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedBackground": "#22212C",
+                "editorSuggestWidget.selectedForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedIconForeground": "#F8F8F2",
+                "menu.selectionBackground": "#22212C",
+                "menu.selectionForeground": "#F8F8F2",
+                "menu.selectionBorder": "#00000000",
+                "widget.shadow": "#00000000",
+                "scrollbar.shadow": "#00000000",
+                "editorStickyScroll.shadow": "#00000000",
+                "sideBarStickyScroll.shadow": "#00000000",
+                "panelStickyScroll.shadow": "#00000000",
+                "listFilterWidget.shadow": "#00000000",
+                "welcomePage.tileShadow": "#00000000",
+                "inlineChat.shadow": "#00000000",
+                "diffEditor.unchangedRegionShadow": "#00000000",
+                "panel.background": "#FFFBEB",
+                "panel.border": "#00000000",
+                "terminal.background": "#FFFBEB",
+                "statusBar.background": "#FFFBEB",
+                "statusBar.noFolderBackground": "#FFFBEB",
+                "statusBar.border": "#00000000",
+                "titleBar.activeBackground": "#FFFBEB",
+                "titleBar.inactiveBackground": "#FFFBEB",
+                "titleBar.border": "#00000000",
+                "quickInput.background": "#FFFBEB",
+                "menu.background": "#FFFBEB"
+            },
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -1618,26 +1851,54 @@ final class CodeServerManager: @unchecked Sendable {
     }
 
     /// Whether `existing` is a former seed this manager may upgrade. Byte-identical to one is the
-    /// fast path; otherwise the comparison goes FORMAT-BLIND and FONT-BLIND: canonical JSON with
-    /// the client-synced font keys (verb 20 — ``syncedFontKeys``) dropped from both sides. A file
-    /// whose only divergence from a former seed is the synced font trio is still OURS (the sync
-    /// wrote it, and re-lands right after the upgrade's next ensure round); any other divergence is
-    /// the user's and stays untouchable. Unparseable (JSONC comments etc.) ⇒ the user's.
+    /// fast path; otherwise the comparison goes FORMAT-BLIND, FONT-BLIND and MACHINE-BLIND:
+    /// canonical JSON with the client-synced font keys (verb 20 — ``syncedFontKeys``) and the
+    /// workbench's own theme bookkeeping (``machineWrittenThemeKeys``) dropped from both sides. A
+    /// file whose only divergence from a former seed is one of those is still OURS — nobody chose
+    /// it; any other divergence is the user's and stays untouchable. Unparseable (JSONC comments
+    /// etc.) ⇒ the user's.
     static func isPristineFormerSeed(_ existing: Data) -> Bool {
         if let string = String(data: existing, encoding: .utf8), obsoleteSeeds.contains(string) {
             return true
         }
-        guard let canonical = canonicalDroppingFontKeys(existing) else { return false }
-        return obsoleteSeeds.contains { canonicalDroppingFontKeys(Data($0.utf8)) == canonical }
+        guard let canonical = canonicalForPristineCheck(existing) else { return false }
+        return obsoleteSeeds.contains { canonicalForPristineCheck(Data($0.utf8)) == canonical }
     }
 
-    /// Sorted-keys canonical JSON bytes with the ``syncedFontKeys`` removed — the font-blind
-    /// comparator behind ``isPristineFormerSeed(_:)``. `nil` when `data` is not a JSON object.
-    private static func canonicalDroppingFontKeys(_ data: Data) -> Data? {
+    /// Keys the WORKBENCH re-materialises on its own after a theme change, whether or not the seed
+    /// asked for them. Observed 2026-08-09 on the live host: minutes after a seed that deliberately
+    /// OMITS the auto-detect trio, `workbench.preferredLightColorTheme` was back in the file as
+    /// `"Dark 2026"` — a theme this repo has never shipped. That is machine noise, not an
+    /// operator's decision, and left unhandled it strands the host exactly the way the missing
+    /// `chat.disableAIFeatures` form did: one uninvited key and the file reads as user-owned
+    /// forever. ⚠️ Blindness applies ONLY while the CURRENT seed stays silent about the key — a
+    /// seed that DOES set one compares it normally, so the "never touch operator settings"
+    /// guarantee keeps its teeth wherever it can still mean something.
+    static let machineWrittenThemeKeys: Set<String> = [
+        "window.autoDetectColorScheme",
+        "workbench.preferredDarkColorTheme",
+        "workbench.preferredLightColorTheme",
+    ]
+
+    /// The keys this manager's CURRENT seed writes — the guard on ``machineWrittenThemeKeys``.
+    private static let seededKeys: Set<String> = {
+        guard let object = (try? JSONSerialization.jsonObject(
+            with: Data(seededUserSettings.utf8),
+        )) as? [String: Any] else { return [] }
+        return Set(object.keys)
+    }()
+
+    /// Sorted-keys canonical JSON bytes with the keys no divergence can be blamed on the user
+    /// removed — the comparator behind ``isPristineFormerSeed(_:)``. `nil` when `data` is not a
+    /// JSON object.
+    private static func canonicalForPristineCheck(_ data: Data) -> Data? {
         guard var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return nil
         }
         for key in syncedFontKeys { object.removeValue(forKey: key) }
+        for key in machineWrittenThemeKeys where !seededKeys.contains(key) {
+            object.removeValue(forKey: key)
+        }
         return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 

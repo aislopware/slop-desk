@@ -756,24 +756,76 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(value, "#00000000", "\(key) still casts")
         }
 
-        // 2. SELECTION IS THE COMPACT ISLAND — the island's glass face carrying its light ink,
-        // in every list the panel puts a chosen row in.
+        // 1b. …INCLUDING THE STRUCTURAL ONES, which the block above cannot reach. The editor part's
+        // inset left and right seams, the title bar, the activity bar and the side bar cast from
+        // `rgba()` literals in the workbench stylesheet, keyed to no colour token; `workbench.shadows`
+        // is the only switch that zeroes them. Dropping it puts the seam strips back while every
+        // assertion above still passes, so it is pinned separately rather than folded in.
+        XCTAssertEqual(seed["workbench.shadows"] as? Bool, false, "the part shadows are back")
+
+        // 2. SELECTION IS A TINT, NEVER AN INVERSION. Every chosen row is the island ink laid over
+        // the ground at 12%, in every list the panel puts a selection in.
         for key in [
-            "list.activeSelectionBackground", "list.inactiveSelectionBackground",
-            "list.focusBackground", "quickInputList.focusBackground",
-            "editorSuggestWidget.selectedBackground", "menu.selectionBackground",
-            "tab.activeBackground",
+            "list.activeSelectionBackground", "list.focusBackground",
+            "quickInputList.focusBackground", "editorSuggestWidget.selectedBackground",
+            "menu.selectionBackground", "tab.activeBackground",
         ] {
-            XCTAssertEqual(colors[key], "#22212C", "\(key) is not the island chip")
+            XCTAssertEqual(colors[key], "#22212C1F", "\(key) is not the selection tint")
         }
-        for key in [
-            "list.activeSelectionForeground", "list.inactiveSelectionForeground",
-            "list.focusForeground", "quickInputList.focusForeground",
-            "editorSuggestWidget.selectedForeground", "menu.selectionForeground",
-            "tab.activeForeground",
-        ] {
-            XCTAssertEqual(colors[key], "#F8F8F2", "\(key) is not the island's ink")
+
+        // 3. NO SELECTION FOREGROUND, ANYWHERE — the regression guard for the reversal. A solid
+        // plate needs light ink to stay legible, so an inverted chip and a foreground override
+        // arrive together; the tint needs neither. Every row here carries a saturated multi-colour
+        // file icon authored for a light bed, and those cannot be recoloured to follow a dark one.
+        let selectionForegrounds = colors.keys.filter {
+            ($0.contains("election") || $0.contains("focus") || $0.contains("Focus"))
+                && ($0.hasSuffix("Foreground") || $0.hasSuffix("IconForeground"))
         }
+        XCTAssertEqual(selectionForegrounds.sorted(), [], "selection is inverting again")
+    }
+
+    func testSeededTabsAreOneFixedWidth() throws {
+        // Pinned as a trio: `fixed` alone only BOUNDS the plate, and a min below the max lets the
+        // strip resize per filename again — the exact behaviour the setting was chosen to stop.
+        let seed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(CodeServerManager.seededUserSettings.utf8))
+                as? [String: Any],
+        )
+        XCTAssertEqual(seed["workbench.editor.tabSizing"] as? String, "fixed")
+        let min = try XCTUnwrap(seed["workbench.editor.tabSizingFixedMinWidth"] as? Int)
+        let max = try XCTUnwrap(seed["workbench.editor.tabSizingFixedMaxWidth"] as? Int)
+        XCTAssertEqual(min, max, "a min below the max is bounded, not fixed")
+        XCTAssertGreaterThanOrEqual(min, 38, "below the workbench's own floor")
+    }
+
+    func testWorkbenchWrittenThemeKeysDoNotStrandAHost() throws {
+        // The workbench re-materialises its theme bookkeeping after a theme change even when the
+        // seed omits those keys. Such a file was never user-edited and must still upgrade.
+        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
+        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.last)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(former.utf8)) as? [String: Any],
+        )
+        for key in CodeServerManager.machineWrittenThemeKeys {
+            XCTAssertNil(seedValue(key), "\(key) is seeded now — the blindness must be reconsidered")
+            object[key] = "Dark 2026"
+        }
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            .write(to: fileURL)
+
+        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
+        XCTAssertEqual(
+            try String(contentsOf: fileURL, encoding: .utf8),
+            CodeServerManager.seededUserSettings,
+        )
+    }
+
+    /// The current seed's value for `key`, or `nil` when the seed does not set it.
+    private func seedValue(_ key: String) -> Any? {
+        guard let object = (try? JSONSerialization.jsonObject(
+            with: Data(CodeServerManager.seededUserSettings.utf8),
+        )) as? [String: Any] else { return nil }
+        return object[key]
     }
 
     func testSeedUpgradesEveryPristineFormerSeed() throws {
