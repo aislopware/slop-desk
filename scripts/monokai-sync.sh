@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Upstream sync for the seeded workbench theme extension (CodeServerManager's
-# `slopdesk.slopdesk-monokai`).
+# `slopdesk.slopdesk-themes`, whose Monokai rows this script owns).
 #
 # scripts/monokai.pin records the Monokai Pro vsix version the vendored theme resources were
 # generated from. The seeded extension carries the THEME DATA ONLY — none of the upstream
@@ -10,9 +10,11 @@
 # This script regenerates the resources from upstream:
 #
 #   1. download the pinned vsix from the VS Code Marketplace (or the newest one with --latest)
-#   2. verify the vsix's theme contributions still match the eight variants the Swift manifest
-#      table expects (CodeServerManager.themeExtensionThemes) — an upstream add/rename/removal
-#      fails loudly here and needs a matching Swift edit
+#   2. verify the vsix's theme contributions still match the eight variants EXPECTED below — an
+#      upstream add/rename/removal fails loudly here and needs a matching Swift edit
+#      (CodeServerManager.themeExtensionThemes). That Swift table is a SUPERSET: it also carries
+#      the app's own themes (CodeServerManager.ownThemeResources), which have no upstream and
+#      must never appear here
 #   3. transform each theme: drop empty-string colour values (the workbench rejects them
 #      per-key), retint the seven structural seam borders to the app's Slate divider token
 #      (dark = foreground @ 0.10 = #fcfcfa1a, light = black @ 0.08 = #00000014) — the ONLY
@@ -68,9 +70,10 @@ import sys
 extension_dir = pathlib.Path(sys.argv[1])
 resources_dir = pathlib.Path(sys.argv[2])
 
-# Mirror of CodeServerManager.themeExtensionThemes — label, dark?, resource slug. An upstream
-# change to the theme SET must be folded into the Swift table by hand; this table (and the
-# comparison below) makes that drift a loud failure instead of a silently dropped variant.
+# Mirror of the VENDORED rows of CodeServerManager.themeExtensionThemes — label, dark?, resource
+# slug. The app's own rows are deliberately absent: they come from no vsix. An upstream change to
+# the theme SET must be folded into the Swift table by hand; this table (and the comparison below)
+# makes that drift a loud failure instead of a silently dropped variant.
 EXPECTED = [
     ("Monokai Pro", True, "monokai-pro"),
     ("Monokai Pro (Filter Octagon)", True, "monokai-pro-filter-octagon"),

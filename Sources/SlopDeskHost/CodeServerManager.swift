@@ -374,14 +374,14 @@ final class CodeServerManager: @unchecked Sendable {
         ]
     }
 
-    /// The user settings seeded on a pristine host — the workbench must come up in the app's
-    /// theme (`Monokai Pro` / `Monokai Pro Light` from the seeded extension below, which ships
-    /// ALL EIGHT stock Monokai Pro variants with only the seam borders retinted; the seeded pair
-    /// is the two filters the client chrome itself runs on;
-    /// `window.autoDetectColorScheme` flips between them with each CLIENT's own appearance — the
-    /// webview's `prefers-color-scheme` follows the window's Slate-pinned `NSAppearance`, so a
-    /// light client gets a light editor while a dark client on the same host stays dark, from the
-    /// one shared settings file) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
+    /// The user settings seeded on a pristine host — the workbench must come up in the app's own
+    /// palette (`Alucard`, v26, user-directed 2026-08-09: the light half of the Dracula family the
+    /// terminal glass already wears, and the theme the window's ground cream `#FFFBEB` was taken
+    /// from in the first place, so the editor canvas and the ground agree by ORIGIN instead of by
+    /// an override forcing them to. It is one row of the seeded extension below, which also carries
+    /// all eight stock Monokai Pro variants for the ⌘K ⌘T picker. NO `autoDetectColorScheme`
+    /// trio any more — the app has ONE appearance, always light, so the dark arm of that switch
+    /// could never fire) and LEAN: menu bar hidden, the ACTIVITY-BAR icons
     /// folded into the sidebar TOP (`activityBar.location: "top"`, user-directed v12 — fully
     /// "hidden" left Search / Source Control / Extensions reachable by chord only). The "top"
     /// location FORCE-SHOWS the web title bar (re-confirmed on 4.131, the v6-era observation): it
@@ -444,8 +444,11 @@ final class CodeServerManager: @unchecked Sendable {
     /// gutter, sticky scroll, widgets, breadcrumb, sidebar, activity bar, tab strip, panel,
     /// integrated terminal, status bar, title bar, quick input, menus — on the client's ground cream
     /// `#FFFBEB` and zeroes their borders (`#00000000`), so panel and ground read as one continuous
-    /// field with no seam. The syntax theme is untouched: only chrome keys are overridden, so the
-    /// Monokai pair still colours the code itself.
+    /// field with no seam. The syntax theme is untouched: only chrome keys are overridden, so
+    /// Alucard still colours the code itself. Most of that block is now a NO-OP for the editor
+    /// proper — Alucard already paints it `#FFFBEB` — and it stays because the surfaces around the
+    /// canvas (Alucard's own `#F3EFDF` sidebar, activity bar and status bar) are what would
+    /// otherwise step the panel into a second tone.
     /// On that flat field SELECTION is the app's own COMPACT ISLAND (v25, user-directed 2026-08-09):
     /// the chosen tree row, editor tab, palette row, completion row and menu item are stamped out of
     /// the island's dark glass `#22212C` and carry its light ink `#F8F8F2` — the same chip
@@ -467,10 +470,7 @@ final class CodeServerManager: @unchecked Sendable {
     static let seededUserSettings = """
     {
         "chat.disableAIFeatures": true,
-        "workbench.colorTheme": "Monokai Pro",
-        "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Monokai Pro",
-        "workbench.preferredLightColorTheme": "Monokai Pro Light",
+        "workbench.colorTheme": "Alucard",
         "workbench.colorCustomizations": {
             "editor.background": "#FFFBEB",
             "editorGroup.emptyBackground": "#FFFBEB",
@@ -1480,6 +1480,118 @@ final class CodeServerManager: @unchecked Sendable {
             "files.autoSave": "onFocusChange"
         }
         """,
+        // v25 — the flat-shadow, island-selection seed while the workbench still wore Monokai.
+        // v26 hands the editor to Alucard, whose published `editor.background` IS the app's
+        // ground, and drops the appearance-flip trio the two-polarity Monokai pair needed
+        // (user-directed 2026-08-09).
+        """
+        {
+            "chat.disableAIFeatures": true,
+            "workbench.colorTheme": "Monokai Pro",
+            "window.autoDetectColorScheme": true,
+            "workbench.preferredDarkColorTheme": "Monokai Pro",
+            "workbench.preferredLightColorTheme": "Monokai Pro Light",
+            "workbench.colorCustomizations": {
+                "editor.background": "#FFFBEB",
+                "editorGroup.emptyBackground": "#FFFBEB",
+                "editorGroupHeader.noTabsBackground": "#FFFBEB",
+                "welcomePage.background": "#FFFBEB",
+                "editorGutter.background": "#FFFBEB",
+                "editorStickyScroll.background": "#FFFBEB",
+                "editorWidget.background": "#FFFBEB",
+                "breadcrumb.background": "#FFFBEB",
+                "sideBar.background": "#FFFBEB",
+                "sideBar.border": "#00000000",
+                "sideBarSectionHeader.background": "#FFFBEB",
+                "sideBarSectionHeader.border": "#00000000",
+                "activityBar.background": "#FFFBEB",
+                "activityBar.border": "#00000000",
+                "editorGroupHeader.tabsBackground": "#FFFBEB",
+                "editorGroupHeader.tabsBorder": "#00000000",
+                "editorGroupHeader.border": "#00000000",
+                "editorGroup.border": "#00000000",
+                "tab.inactiveBackground": "#FFFBEB",
+                "tab.border": "#00000000",
+                "tab.activeBackground": "#22212C",
+                "tab.activeForeground": "#F8F8F2",
+                "tab.hoverBackground": "#22212C14",
+                "list.activeSelectionBackground": "#22212C",
+                "list.activeSelectionForeground": "#F8F8F2",
+                "list.activeSelectionIconForeground": "#F8F8F2",
+                "list.inactiveSelectionBackground": "#22212C",
+                "list.inactiveSelectionForeground": "#F8F8F2",
+                "list.inactiveSelectionIconForeground": "#F8F8F2",
+                "list.focusBackground": "#22212C",
+                "list.focusForeground": "#F8F8F2",
+                "list.inactiveFocusBackground": "#22212C",
+                "list.hoverBackground": "#22212C14",
+                "list.focusOutline": "#00000000",
+                "list.inactiveFocusOutline": "#00000000",
+                "quickInputList.focusBackground": "#22212C",
+                "quickInputList.focusForeground": "#F8F8F2",
+                "quickInputList.focusIconForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedBackground": "#22212C",
+                "editorSuggestWidget.selectedForeground": "#F8F8F2",
+                "editorSuggestWidget.selectedIconForeground": "#F8F8F2",
+                "menu.selectionBackground": "#22212C",
+                "menu.selectionForeground": "#F8F8F2",
+                "menu.selectionBorder": "#00000000",
+                "widget.shadow": "#00000000",
+                "scrollbar.shadow": "#00000000",
+                "editorStickyScroll.shadow": "#00000000",
+                "sideBarStickyScroll.shadow": "#00000000",
+                "panelStickyScroll.shadow": "#00000000",
+                "listFilterWidget.shadow": "#00000000",
+                "welcomePage.tileShadow": "#00000000",
+                "inlineChat.shadow": "#00000000",
+                "diffEditor.unchangedRegionShadow": "#00000000",
+                "panel.background": "#FFFBEB",
+                "panel.border": "#00000000",
+                "terminal.background": "#FFFBEB",
+                "statusBar.background": "#FFFBEB",
+                "statusBar.noFolderBackground": "#FFFBEB",
+                "statusBar.border": "#00000000",
+                "titleBar.activeBackground": "#FFFBEB",
+                "titleBar.inactiveBackground": "#FFFBEB",
+                "titleBar.border": "#00000000",
+                "quickInput.background": "#FFFBEB",
+                "menu.background": "#FFFBEB"
+            },
+            "workbench.iconTheme": "material-icon-theme",
+            "workbench.startupEditor": "none",
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor"
+            },
+            "workbench.activityBar.location": "top",
+            "workbench.sideBar.location": "right",
+            "workbench.secondarySideBar.defaultVisibility": "hidden",
+            "window.menuBarVisibility": "hidden",
+            "workbench.editor.empty.hint": "hidden",
+            "workbench.editor.decorations.badges": false,
+            "window.commandCenter": false,
+            "workbench.layoutControl.enabled": false,
+            "workbench.navigationControl.enabled": false,
+            "workbench.tips.enabled": false,
+            "extensions.ignoreRecommendations": true,
+            "editor.minimap.enabled": false,
+            "breadcrumbs.enabled": false,
+            "editor.fontFamily": "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+            "editor.fontSize": 13,
+            "editor.lineHeight": 1.32,
+            "editor.overviewRulerBorder": false,
+            "editor.hideCursorInOverviewRuler": true,
+            "editor.lineNumbersMinChars": 3,
+            "editor.glyphMargin": false,
+            "editor.folding": false,
+            "editor.guides.indentation": true,
+            "editor.guides.bracketPairs": "active",
+            "editor.stickyScroll.enabled": true,
+            "editor.renderWhitespace": "trailing",
+            "workbench.tree.renderIndentGuides": "always",
+            "workbench.tree.indent": 16,
+            "files.autoSave": "onFocusChange"
+        }
+        """,
     ]
 
     /// Writes ``seededUserSettings`` to `fileURL` when no file exists there — or when the existing
@@ -1640,7 +1752,10 @@ final class CodeServerManager: @unchecked Sendable {
     /// The seeded theme extension's identity — mirrored in ``themeExtensionManifest`` (pinned by
     /// the manifest-agreement test) and composed into the folder name + registry entry below.
     static let themeExtensionPublisher = "slopdesk"
-    static let themeExtensionName = "slopdesk-monokai"
+    /// NOT `slopdesk-monokai` any more: the folder now carries the app's OWN theme beside the
+    /// vendored family, and a folder named for one of its passengers ages into a lie. The old name
+    /// is swept — see ``retiredExtensions``.
+    static let themeExtensionName = "slopdesk-themes"
     static let themeExtensionVersion = "1.0.0"
 
     /// The seeded theme extension's folder name — `publisher.name-version`. A version bump here
@@ -1649,14 +1764,25 @@ final class CodeServerManager: @unchecked Sendable {
     static let themeExtensionDirectoryName =
         "\(themeExtensionPublisher).\(themeExtensionName)-\(themeExtensionVersion)"
 
-    /// EVERY theme variant the vendored vsix contributes — label (what the settings and the ⌘K ⌘T
-    /// picker select by), dark/light, and the resource slug the sync script writes. This table is
-    /// the single source of truth: the manifest below is generated from it, the seeder writes one
-    /// file per row, and `scripts/monokai-sync.sh` fails loudly when the upstream vsix's theme set
-    /// stops matching it (its own mirror table). All EIGHT variants ship (user-directed
-    /// 2026-08-03) — the workbench's theme picker offers the full family, not just the pair the
-    /// app chrome seeds from.
+    /// EVERY theme this extension contributes — label (what the settings and the ⌘K ⌘T picker
+    /// select by), dark/light, and the resource slug. This table is the single source of truth: the
+    /// manifest below is generated from it and the seeder writes one file per row.
+    ///
+    /// ALUCARD LEADS, because it is the one the seed selects (user-directed 2026-08-09): the app's
+    /// ground cream IS Alucard's published `editor.background`, so the editor canvas and the
+    /// window's ground are the same colour by ORIGIN rather than by an override forcing them to
+    /// agree. It is the app's own row — the eight below it are the vendored vsix's, and only THEY
+    /// are mirrored by `scripts/monokai-sync.sh` (which fails loudly when the upstream set stops
+    /// matching its own copy of the Monokai rows). All eight still ship (user-directed 2026-08-03):
+    /// the picker offers the full family, the seed just no longer starts there.
+    ///
+    /// ``ownThemeResources`` marks which rows are ours, because the two kinds differ in shape as
+    /// well as origin: a vendored theme names the workbench's whole key set (~600 colours), while
+    /// ours names only what it means to change.
+    static let ownThemeResources: Set<String> = ["alucard"]
+
     static let themeExtensionThemes: [(label: String, dark: Bool, resource: String)] = [
+        ("Alucard", false, "alucard"),
         ("Monokai Pro", true, "monokai-pro"),
         ("Monokai Pro (Filter Octagon)", true, "monokai-pro-filter-octagon"),
         ("Monokai Pro (Filter Ristretto)", true, "monokai-pro-filter-ristretto"),
@@ -1667,8 +1793,16 @@ final class CodeServerManager: @unchecked Sendable {
         ("Monokai Classic", true, "monokai-classic"),
     ]
 
-    /// The theme extension's manifest — generated from ``themeExtensionThemes``. The themes are
-    /// STOCK Monokai Pro (all eight variants of vsix 2.0.13, monokai.pro — the pinned version
+    /// The theme extension's manifest — generated from ``themeExtensionThemes``.
+    ///
+    /// ALUCARD is the app's own row and the one the seed selects: the light half of the Dracula
+    /// family, whose published `editor.background` is the very `#FFFBEB` the window's ground is
+    /// made of. The two code surfaces beside each other — terminal glass and editor canvas — stop
+    /// speaking different palettes, and the panel's background needs no override to match the app:
+    /// it already IS the app's colour (user-directed 2026-08-09). The file is the theme verbatim,
+    /// recovered from `1c8c294a^` where the pre-islands chrome revert had removed it.
+    ///
+    /// The other eight are STOCK Monokai Pro (all eight variants of vsix 2.0.13, monokai.pro — the pinned version
     /// lives in `scripts/monokai.pin`; `scripts/monokai-sync.sh` regenerates the resources from a
     /// newer upstream). Only the theme DATA is vendored — none of the upstream extension's
     /// activation code (that code carries the license prompt; a data-only seed never nags, which
@@ -1683,12 +1817,13 @@ final class CodeServerManager: @unchecked Sendable {
     ///   • the vsix's five EMPTY-string colour values (`diffEditor.move.border` etc., rejected
     ///     per-key by the workbench) are dropped.
     /// Only the color themes ship — the vsix's icon themes are deliberately left behind (the
-    /// panel keeps the workbench's stock file icons). The workbench picks between the seeded
-    /// dark/light pair via `window.autoDetectColorScheme` — the webview's `prefers-color-scheme`
-    /// follows the window's pinned `NSAppearance`, which the client pins to the active Slate
-    /// theme — so the editor flips light/dark WITH the app, per client, no shared-settings
-    /// conflict. Monokai Pro by Monokai (monokai.pro) — personal-use seed into the user's own
-    /// code-server, never redistributed.
+    /// panel keeps the workbench's stock file icons). Nothing here is redistributed: both families
+    /// are seeded into the operator's own code-server profile for personal use.
+    /// NO appearance FLIP any more (v26): the seed names Alucard outright and drops the
+    /// `window.autoDetectColorScheme` trio the Monokai pair needed. The app has ONE appearance —
+    /// law 4 makes the ground light, so the window's pinned `NSAppearance` is always light and the
+    /// dark half of that switch could never fire. A pin is what the app actually is; a switch with
+    /// one reachable arm is a mechanism pretending to have a choice.
     static let themeExtensionManifest: String = {
         let themes = themeExtensionThemes.map { theme in
             """
@@ -1701,9 +1836,9 @@ final class CodeServerManager: @unchecked Sendable {
         }.joined(separator: ",\n")
         return """
         {
-            "name": "slopdesk-monokai",
-            "displayName": "Monokai Pro (SlopDesk)",
-            "description": "Stock Monokai Pro by Monokai (monokai.pro); workbench seam borders carry the app's divider tint.",
+            "name": "slopdesk-themes",
+            "displayName": "SlopDesk Themes",
+            "description": "Alucard (the app's ground palette) and stock Monokai Pro; seam borders carry the app's divider tint.",
             "publisher": "slopdesk",
             "version": "1.0.0",
             "engines": { "vscode": "^1.0.0" },
@@ -1914,36 +2049,51 @@ final class CodeServerManager: @unchecked Sendable {
 
     // MARK: - Retired built-in theme extension (removal)
 
-    /// The retired `slopdesk-foundry` extension — the app's own generated workbench themes (four
-    /// Foundry seeds at 1.0.0, the Dracula / Alucard pair at 2.0.0). The chrome revert
-    /// (user-directed 2026-08-08) returns the workbench to the vendored Monokai Pro pair, so the
-    /// ensure chain now REMOVES the folder and its registry entry instead of seeding it: a host
-    /// that never saw the extension is a no-op, and an upgraded host loses the leftover themes
-    /// the settings seed no longer selects.
-    static let foundryExtensionID = "\(themeExtensionPublisher).slopdesk-foundry"
-
-    /// Every folder name the retired extension ever shipped under — swept like
-    /// ``legacyBridgeExtensionDirectoryNames``.
-    static let foundryExtensionDirectoryNames = [
-        "\(themeExtensionPublisher).slopdesk-foundry-1.0.0",
-        "\(themeExtensionPublisher).slopdesk-foundry-2.0.0",
+    /// Every theme extension this manager has RETIRED, by registry id and by every folder name it
+    /// ever shipped under. The ensure chain deletes each one before seeding the live extension, so
+    /// a host that never saw them is a no-op and an upgraded host loses the leftovers the settings
+    /// seed no longer selects.
+    ///
+    ///   • `slopdesk-foundry` — the app's own generated workbench themes (four Foundry seeds at
+    ///     1.0.0, the Dracula / Alucard pair at 2.0.0), retired by the chrome revert
+    ///     (user-directed 2026-08-08).
+    ///   • `slopdesk-monokai` — the vendored family under its OLD folder name, before the theme
+    ///     extension was renamed to carry the app's own Alucard alongside it (2026-08-09). Its
+    ///     themes did not go anywhere; only the folder they live in did, and leaving the old one
+    ///     behind would register the same eight labels twice in the picker.
+    static let retiredExtensions: [(id: String, directoryNames: [String])] = [
+        (
+            "\(themeExtensionPublisher).slopdesk-foundry",
+            [
+                "\(themeExtensionPublisher).slopdesk-foundry-1.0.0",
+                "\(themeExtensionPublisher).slopdesk-foundry-2.0.0",
+            ],
+        ),
+        (
+            "\(themeExtensionPublisher).slopdesk-monokai",
+            ["\(themeExtensionPublisher).slopdesk-monokai-1.0.0"],
+        ),
     ]
 
-    /// Deletes the retired extension's folders and prunes its registry entry. Returns whether
+    /// Deletes every retired extension's folders and prunes its registry entry. Returns whether
     /// anything changed; failures are silent no-ops (the seeder convention).
     @discardableResult
-    static func removeFoundryThemeExtension(
+    static func removeRetiredThemeExtensions(
         from extensionsDir: URL, fileManager: FileManager = .default,
     ) -> Bool {
-        var removed = false
-        for name in foundryExtensionDirectoryNames {
-            let url = extensionsDir.appendingPathComponent(name)
-            if fileManager.fileExists(atPath: url.path), (try? fileManager.removeItem(at: url)) != nil {
-                removed = true
+        var changed = false
+        for retired in retiredExtensions {
+            for name in retired.directoryNames {
+                let url = extensionsDir.appendingPathComponent(name)
+                if fileManager.fileExists(atPath: url.path),
+                   (try? fileManager.removeItem(at: url)) != nil
+                {
+                    changed = true
+                }
             }
+            if unregisterExtension(id: retired.id, in: extensionsDir) { changed = true }
         }
-        let unregistered = unregisterExtension(id: foundryExtensionID, in: extensionsDir)
-        return removed || unregistered
+        return changed
     }
 
     /// Removes `id`'s entry from the profile registry (`extensions.json`) — the inverse of
@@ -2128,11 +2278,11 @@ final class CodeServerManager: @unchecked Sendable {
     /// plus the theme extension — ``seedThemeExtension(into:themeData:fileManager:)`` (the
     /// vendored Monokai Pro family the seeded settings select). The retired `slopdesk-foundry`
     /// generated-theme extension is swept here too
-    /// (``removeFoundryThemeExtension(from:fileManager:)``).
+    /// (``removeRetiredThemeExtensions(from:fileManager:)``).
     static let defaultSettingsSeeder: SettingsSeeder = {
         seedUserSettings(at: userSettingsURL())
         let extensions = dataDirURL().appendingPathComponent("extensions")
-        removeFoundryThemeExtension(from: extensions)
+        removeRetiredThemeExtensions(from: extensions)
         seedThemeExtension(into: extensions)
         seedBridgeExtension(into: extensions)
     }

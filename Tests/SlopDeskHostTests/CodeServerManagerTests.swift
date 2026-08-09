@@ -592,7 +592,7 @@ final class CodeServerManagerTests: XCTestCase {
         )
         XCTAssertEqual(CodeServerManager.missingBundledExtensions(inRegistry: satisfied), [])
         let foreign = try JSONSerialization.data(
-            withJSONObject: [["identifier": ["id": "slopdesk.slopdesk-monokai"]]],
+            withJSONObject: [["identifier": ["id": "slopdesk.slopdesk-themes"]]],
         )
         XCTAssertEqual(
             CodeServerManager.missingBundledExtensions(inRegistry: foreign),
@@ -873,7 +873,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
         XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
         // Every non-font key rides through untouched.
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Alucard")
         XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
         // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
         // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
@@ -933,7 +933,7 @@ final class CodeServerManagerTests: XCTestCase {
             with: Data(CodeServerManager.seededUserSettings.utf8),
         )
         let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Monokai Pro")
+        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Alucard")
         XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
         // The lean pass: title-bar strips gone, editor chrome minimal.
         XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
@@ -1020,10 +1020,21 @@ final class CodeServerManagerTests: XCTestCase {
         )
         let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
         let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
-        // ALL EIGHT stock variants ship (user-directed 2026-08-03) — the generated manifest must
-        // mirror the source-of-truth table row for row.
+        // The app's own Alucard plus ALL EIGHT stock Monokai variants (user-directed 2026-08-03,
+        // 2026-08-09) — the generated manifest must mirror the source-of-truth table row for row.
         XCTAssertEqual(themes.count, CodeServerManager.themeExtensionThemes.count)
-        XCTAssertEqual(themes.count, 8)
+        XCTAssertEqual(themes.count, 9)
+        // The seed selects the FIRST row by name, so the two must never drift apart.
+        let seeded = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(CodeServerManager.seededUserSettings.utf8),
+            ) as? [String: Any],
+        )
+        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes.first?["label"] as? String)
+        // ...and with one appearance there is nothing left to flip between.
+        XCTAssertNil(seeded["window.autoDetectColorScheme"])
+        XCTAssertNil(seeded["workbench.preferredDarkColorTheme"])
+        XCTAssertNil(seeded["workbench.preferredLightColorTheme"])
         for (entry, expected) in zip(themes, CodeServerManager.themeExtensionThemes) {
             XCTAssertEqual(entry["label"] as? String, expected.label)
             XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
@@ -1037,25 +1048,32 @@ final class CodeServerManagerTests: XCTestCase {
 
     // MARK: Retired Foundry theme extension removal
 
-    func testRemoveFoundryThemeExtensionSweepsFoldersAndRegistryEntry() throws {
+    func testRemoveRetiredThemeExtensionsSweepsEveryFolderAndRegistryEntry() throws {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-foundry-removal-\(UUID().uuidString)")
+            .appendingPathComponent("slopdesk-retired-removal-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        for name in CodeServerManager.foundryExtensionDirectoryNames {
+        let allNames = CodeServerManager.retiredExtensions.flatMap(\.directoryNames)
+        XCTAssertFalse(allNames.isEmpty)
+        // The renamed vendored family must be in here: leaving its old folder behind would list
+        // the same eight theme labels twice in the picker.
+        XCTAssertTrue(allNames.contains("slopdesk.slopdesk-monokai-1.0.0"))
+        // ...and the live folder must NEVER be swept as retired.
+        XCTAssertFalse(allNames.contains(CodeServerManager.themeExtensionDirectoryName))
+        for name in allNames {
             try FileManager.default.createDirectory(
                 at: dir.appendingPathComponent("\(name)/themes"), withIntermediateDirectories: true,
             )
         }
-        // A registry carrying OUR retired entry beside a foreign one.
+        // A registry carrying OUR retired entries beside a foreign one.
         let registry = dir.appendingPathComponent("extensions.json")
-        let entries: [[String: Any]] = [
-            ["identifier": ["id": CodeServerManager.foundryExtensionID], "version": "2.0.0"],
-            ["identifier": ["id": "someone.else"], "version": "1.2.3"],
-        ]
+        var entries: [[String: Any]] = CodeServerManager.retiredExtensions.map {
+            ["identifier": ["id": $0.id], "version": "2.0.0"]
+        }
+        entries.append(["identifier": ["id": "someone.else"], "version": "1.2.3"])
         try JSONSerialization.data(withJSONObject: entries).write(to: registry)
 
-        XCTAssertTrue(CodeServerManager.removeFoundryThemeExtension(from: dir))
-        for name in CodeServerManager.foundryExtensionDirectoryNames {
+        XCTAssertTrue(CodeServerManager.removeRetiredThemeExtensions(from: dir))
+        for name in allNames {
             XCTAssertFalse(
                 FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path),
             )
@@ -1068,7 +1086,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual((kept[0]["identifier"] as? [String: Any])?["id"] as? String, "someone.else")
 
         // Idempotent: a second sweep finds nothing to do.
-        XCTAssertFalse(CodeServerManager.removeFoundryThemeExtension(from: dir))
+        XCTAssertFalse(CodeServerManager.removeRetiredThemeExtensions(from: dir))
     }
 
     func testUnregisterExtensionLeavesMissingOrForeignRegistriesAlone() throws {
@@ -1109,7 +1127,10 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(parsed["name"] as? String, theme.label)
             XCTAssertEqual(parsed["type"] as? String, theme.dark ? "dark" : "light")
             let colors = try XCTUnwrap(parsed["colors"] as? [String: Any])
-            XCTAssertGreaterThan(colors.count, 500, theme.label)
+            // The vendored vsix carries the workbench's full key set; the app's own theme is
+            // hand-authored and only names what it means to change.
+            let floor = CodeServerManager.ownThemeResources.contains(theme.resource) ? 100 : 500
+            XCTAssertGreaterThan(colors.count, floor, theme.label)
             for key in Self.seamBorderKeys {
                 XCTAssertEqual(
                     colors[key] as? String, theme.dark ? "#fcfcfa1a" : "#00000014",
@@ -1119,7 +1140,7 @@ final class CodeServerManagerTests: XCTestCase {
             try assertEveryColorValueIsValidHex(colors)
             XCTAssertFalse(
                 try XCTUnwrap(parsed["tokenColors"] as? [Any]).isEmpty,
-                "syntax rules ride along — the Monokai identity (\(theme.label))",
+                "syntax rules ride along — the palette identity (\(theme.label))",
             )
         }
     }
@@ -1266,7 +1287,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(entries.count, 1)
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(
-            (entry["identifier"] as? [String: Any])?["id"] as? String, "slopdesk.slopdesk-monokai",
+            (entry["identifier"] as? [String: Any])?["id"] as? String, "slopdesk.slopdesk-themes",
         )
         XCTAssertEqual(entry["version"] as? String, CodeServerManager.themeExtensionVersion)
         XCTAssertEqual(
@@ -1292,7 +1313,7 @@ final class CodeServerManagerTests: XCTestCase {
                 "relativeLocation": "someone.else-9",
             ],
             [
-                "identifier": ["id": "slopdesk.slopdesk-monokai"],
+                "identifier": ["id": "slopdesk.slopdesk-themes"],
                 "version": "0.0.1",
                 "location": ["path": "/stale", "scheme": "file"],
                 "relativeLocation": "stale",
