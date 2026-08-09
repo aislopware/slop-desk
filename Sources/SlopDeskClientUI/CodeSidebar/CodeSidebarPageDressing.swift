@@ -100,10 +100,9 @@ enum CodeSidebarPageDressing {
     ///     plate): inset 4px off the strip's top and left but flush with its BOTTOM, and rounded on
     ///     the top two corners only, so the open tab opens into the canvas underneath it. Nothing
     ///     here says WHICH tab is open by weight: the open tab is outlined on three sides and open
-    ///     on the fourth, a notch cut into the canvas. That baseline then TURNS THE CORNER and runs
-    ///     down the panel's leading edge, from the tab's foot to the status bar — one line, not two
-    ///     marks. Nothing here sets a colour: every rule reads `var(--vscode-editorGroup-border)`,
-    ///     which the host seed fills. The per-tab 1px dividers are dropped.
+    ///     on the fourth, a notch cut into the canvas. It is the ONLY line this sheet draws, and it
+    ///     sets no colour — it reads `var(--vscode-editorGroup-border)`, which the host seed fills.
+    ///     The per-tab 1px dividers are dropped.
     ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
     ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
@@ -163,24 +162,23 @@ enum CodeSidebarPageDressing {
             inset -1px 0 0 0 var(--vscode-editorGroup-border),
             inset 0 1px 0 0 var(--vscode-editorGroup-border);
     }
-    /* The strip's baseline TURNS THE CORNER and runs down the panel's leading edge (user-directed
-       2026-08-09). The moat beside the terminal island and the ground this panel stands on are the
-       same cream, so nothing said where the panel began; this says it, and says it as a
-       continuation of the line already under the tabs rather than as a second mark — same
-       `editorGroup.border` var, so it cannot drift from the baseline it grows out of.
-       It hangs on the EDITOR CONTAINER, which is exactly the region below the tab strip: measured
-       on the running workbench the container's box starts at the title's foot (y=65 under a 35px
-       strip at y=30) and ends at the status bar, so the rule spans that and nothing more — it does
-       NOT run up beside the tabs, where it would cut the strip in half.
-       ⚠️ An earlier pass put a FULL-HEIGHT rail on the parts and was rejected as clutter beside the
-       tab outline; the same pass also measured why the obvious form renders nothing — an inset
-       `box-shadow` on a PART is painted over by children carrying their own opaque background. The
-       editor container is not one of those cases (verified in a live workbench: a probe rule shows
-       through Monaco at every sampled row), so the rule stays a plain inset shadow rather than an
-       overlay pseudo-element that would have to out-stack the editor's own widgets. */
-    .monaco-workbench .part.editor > .content .editor-group-container > .editor-container {
-        box-shadow: inset 1px 0 0 0 var(--vscode-editorGroup-border);
-    }
+    /* ⚠️⚠️ THE PANEL'S LEADING EDGE CARRIES NO VERTICAL LINE — settled, in any hand, after three
+       rounds on 2026-08-09 (all three user-rejected):
+         1. a FULL-HEIGHT rail on the parts, from this sheet — clutter beside the tab outline;
+         2. a native chrome rule drawn by the client column (`Slate.Line.panelEdge`) — the wrong
+            hand: a second mark in chrome ink beside the workbench's own baseline;
+         3. the workbench's own line, `inset 1px 0 0 0 var(--vscode-editorGroup-border)` on the
+            EDITOR CONTAINER — geometrically exactly what was asked for (measured live: the
+            container's box starts at the title's foot, y=65 under a 35px strip at y=30, and ends
+            at the status bar, so it ran from the open tab's foot down and never up beside the
+            tabs) and still not wanted. The panel stands on the ground with nothing marking where
+            it begins, which is the same way every other column stands on it.
+       Do not propose a fourth. Two measurements are worth keeping if this is ever reopened: an
+       inset `box-shadow` on a PART renders NOTHING (children carry their own opaque background and
+       paint over the parent's shadow — every sampled pixel down the left edge and the
+       editor/sidebar seam came back ground cream), whereas the same shadow on `.editor-container`
+       DOES show through Monaco at every sampled row. So the container is the mount that works, and
+       an overlay pseudo-element is only needed on the parts. */
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
         display: none !important;

@@ -256,13 +256,12 @@ seeded to the Monokai Pro / Monokai Pro Light pair with `window.autoDetectColorS
 `workbench.colorCustomizations` block that repaints every VS Code surface — editor, gutter, sidebar,
 activity bar, tab strip, panel, status bar, title bar — in the ground cream and zeroes their borders,
 so the panel is indistinguishable from the field it sits in (user-directed 2026-08-08; the generated
-Dracula/Alucard workbench extension is still actively swept from seeded hosts). The one mark inside
-that flat field is the tab strip's own baseline, which turns the corner at the open tab's foot and
-runs down the panel's leading edge to the status bar — the WORKBENCH's line, off its
-`editorGroup.border` var, not a chrome rule the window draws (user-directed 2026-08-09, after a
-native chrome rule at the same place was rejected for being exactly that). It is a boundary, not a
-seam: it says where the panel begins, since the panel's ground and the moat beside the island are
-the same cream.
+Dracula/Alucard workbench extension is still actively swept from seeded hosts). The panel's leading
+edge carries NO rule of any kind — the moat beside the island and the ground the panel stands on
+are the same cream, and that seam is left unmarked, the same way every other column meets the
+ground. Three rounds tried to mark it on 2026-08-09 (a full-height CSS rail, a native chrome
+hairline, and the workbench's own baseline turned down from the open tab's foot); all three were
+rejected. The one line the panel draws is the tab strip's baseline, and it stays horizontal.
 
 Nothing may straddle the chrome/glass boundary: a view is either ON the chrome (semantic tokens over
 the ground) or ON the glass (profile tokens, or semantic tokens under the forced glass scheme). The
