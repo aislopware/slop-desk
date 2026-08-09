@@ -773,22 +773,21 @@ final class CodeServerManagerTests: XCTestCase {
             XCTAssertEqual(colors[key], "#22212C17", "\(key) is not the selection tint")
         }
 
-        // 2b. THE OPEN TAB IS THE EDITOR SURFACE, NOT A DARKER CHIP. The strip bed sinks below the
-        // canvas and the open tab is painted in the ground cream itself, so — cut with a top-only
-        // radius by the client — it reads as the canvas climbing into the strip. A closed tab owns
-        // no fill at all; the bed is its slot. Getting this backwards is the v30 error: with every
-        // surface on one cream the strip had no floor, and the open tab ended up the darkest thing
-        // on screen while the editor it belongs to stayed the lightest.
-        XCTAssertEqual(colors["editorGroupHeader.tabsBackground"], "#22212C17", "the strip lost its floor")
+        // 2b. NO TAB IS MARKED BY WEIGHT, AND NO SURFACE CARRIES A SECOND TONE. Every part stays
+        // the ground cream; the whole structure — the strip's baseline, the notch the open tab cuts
+        // in it, the island edge around the editor and the sidebar — is drawn by the ONE light line
+        // in `editorGroup.border`, which the client's sheet reads through its var. A bed here was
+        // the v31 error: a tone that has to span a whole part cannot mark something that occupies
+        // part of it, so it ran on past the last tab as a grey rectangle.
+        XCTAssertEqual(colors["editorGroup.border"], "#22212C1F", "the one structural line went out")
+        XCTAssertEqual(colors["editorGroupHeader.tabsBackground"], "#FFFBEB", "the strip grew a bed again")
         XCTAssertEqual(colors["tab.activeBackground"], "#FFFBEB", "the open tab is not the ground cream")
         XCTAssertEqual(colors["tab.unfocusedActiveBackground"], "#FFFBEB")
         for key in ["tab.inactiveBackground", "tab.unfocusedInactiveBackground"] {
             XCTAssertEqual(colors[key], "#00000000", "\(key) put a chip back on a closed tab")
         }
-        // Hover half-lifts the tab off the bed toward the ground rather than sinking it further,
-        // which is why it is cream at 50% and not another dose of ink.
         for key in ["tab.hoverBackground", "tab.unfocusedHoverBackground"] {
-            XCTAssertEqual(colors[key], "#FFFBEB80", "\(key) is not a lift toward the ground")
+            XCTAssertEqual(colors[key], "#22212C0A", "\(key) is not the plain hover tint")
         }
 
         // 3. NO SELECTION FOREGROUND, ANYWHERE — the regression guard for the reversal. A solid

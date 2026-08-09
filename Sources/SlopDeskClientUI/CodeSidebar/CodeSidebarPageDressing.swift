@@ -98,12 +98,11 @@ enum CodeSidebarPageDressing {
     ///
     ///   • TABS are cut like BROWSER TABS (user-directed 2026-08-09, replacing the free-floating
     ///     plate): inset 4px off the strip's top and left but flush with its BOTTOM, and rounded on
-    ///     the top two corners only. The host seed paints the open tab in the ground cream and the
-    ///     strip bed a step below it (see `CodeServerManager`), so a tab cut this way reads as the
-    ///     editor surface climbing into the strip, continuous with the canvas under it, while the
-    ///     closed tabs stay sunk in the bed. This is the shape JetBrains' Islands theme, Zed and
-    ///     the Islands Dark VS Code theme all converge on. The per-tab 1px dividers are dropped
-    ///     (the bed now separates the slots).
+    ///     the top two corners only, so the open tab opens into the canvas underneath it. Nothing
+    ///     here says WHICH tab is open by weight — the strip's baseline does it by breaking, and
+    ///     the editor and sidebar wear the same line as their island edge. This sheet still sets
+    ///     no colour: every line reads `var(--vscode-editorGroup-border)`, which the host seed
+    ///     fills. The per-tab 1px dividers are dropped (the baseline separates the slots).
     ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
     ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
@@ -137,6 +136,37 @@ enum CodeSidebarPageDressing {
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:last-child {
         margin-right: 4px;
+    }
+    /* The strip's baseline and the notch in it. The line runs along the FOOT of the tab row and of
+       the action icons beside it, painted as a background-image so the tabs — which are opaque and
+       flush with that foot — sit on top of it; a closed tab then redraws it across its own foot,
+       and the open one turns it up and over its top corners instead. The break under the open tab
+       is what says "this one opens into the canvas". Colour comes from the workbench's own
+       `editorGroup.border` var (the host seed sets it): this sheet stays free of colour literals,
+       which is what keeps it from drifting when the theme moves. */
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container,
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {
+        background-image: linear-gradient(to top, var(--vscode-editorGroup-border) 1px, transparent 1px);
+        background-repeat: no-repeat;
+        background-position: bottom;
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
+        box-shadow: inset 0 -1px 0 0 var(--vscode-editorGroup-border);
+    }
+    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab.active {
+        box-shadow:
+            inset 1px 0 0 0 var(--vscode-editorGroup-border),
+            inset -1px 0 0 0 var(--vscode-editorGroup-border),
+            inset 0 1px 0 0 var(--vscode-editorGroup-border);
+    }
+    /* The editor and the sidebar as ISLANDS, drawn by that same one line. No inset, no second
+       tone, no clipping: on a single-colour field an island is its edge, and the workbench sizes
+       these parts in px and hands the numbers to Monaco, so shrinking them in CSS blanks the
+       editor (measured 2026-08-09). */
+    .monaco-workbench .part.editor > .content,
+    .monaco-workbench .part.sidebar {
+        border-radius: 10px;
+        box-shadow: inset 0 0 0 1px var(--vscode-editorGroup-border);
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {

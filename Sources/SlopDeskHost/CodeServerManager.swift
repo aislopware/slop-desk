@@ -487,27 +487,31 @@ final class CodeServerManager: @unchecked Sendable {
     /// bounded — a strip whose every plate is the same size stays still while you switch files,
     /// where the stock `"fit"` re-measures each plate against its filename and slides the whole row
     /// on every open.
-    /// …AND THE STRIP GETS A FLOOR, SO THE OPEN TAB CAN BE THE EDITOR ITSELF (v31, user-directed
-    /// 2026-08-09, chosen from rendered candidates): the tab bed drops to `17` (9%), a closed tab
-    /// is fully transparent onto that bed, hover half-lifts it back toward the ground
-    /// (`#FFFBEB80` — cream at 50% over the bed, landing at 4.5%), and the OPEN tab is painted in
-    /// the ground cream itself, opaque. Paired with the client's top-only tab radius (see
-    /// `CodeSidebarPageDressing`), the open tab reads as the editor surface climbing into the
-    /// strip, continuous with the canvas below it — the browser-tab logic.
-    /// ⚠️ This REVERSES v30 (chips of rising ink on a flat field) and the depth error underneath
-    /// it: every workbench surface was the one ground cream, so the strip's bed and the editor sat
-    /// at 1.00:1 — the strip had no floor, and the tint ladder ran the wrong way, leaving the OPEN
-    /// tab the darkest thing on screen while the canvas it belongs to stayed the lightest. Three
-    /// independent references agree on the correction (surveyed 2026-08-09): JetBrains' Islands
-    /// theme spec (`EditorTabs.background` matches the editor; islands clear the window ground by
-    /// at least 1.20:1; island corner 10), the Zed light default (editor `#fafafa`, tab bed
-    /// `#ebebec`, active tab back to `#fafafa`), and the Islands Dark VS Code theme (editor
-    /// `#181a1d`, bed `#161619`, active tab `#181a1d`, radius on the TOP corners only). In all
-    /// three the open tab is not marked by extra ink — it is marked by being CONNECTED.
-    /// The 9% bed clears the canvas by 1.193:1, which is that spec's floor; 6% measured 1.120:1
-    /// and read as no floor at all in the rendered candidates.
-    /// A closed tab keeps no chip of its own: the bed is the slot, and the fixed 140 pitch is what
-    /// supplies the rhythm the chips were standing in for.
+    /// …AND THE OPEN TAB IS A NOTCH IN ONE HAIRLINE, NOT A SECOND TONE (v32, user-directed
+    /// 2026-08-09): the open tab is not marked by weight at all. Every surface stays the one
+    /// ground cream and the whole structure is drawn with a single light line — `editorGroup.border`
+    /// at `1F` (12%). The client's CSS runs that line along the bottom of the tab strip, lets a
+    /// closed tab redraw it across its own foot, and turns it up and over the OPEN tab's top
+    /// corners instead — so the line breaks exactly under the tab you are reading, and that tab
+    /// opens into the canvas below. The same line outlines the editor and the sidebar as islands.
+    /// It is the technique of the Islands Dark VS Code theme (surveyed 2026-08-09) with its second
+    /// tone removed, which is what a one-colour field leaves you: an island you can only draw by
+    /// its EDGE. Tab hover comes back to a plain 4% ink tint, the same dose a list row takes.
+    /// ⚠️ v31 gave the strip a real 9% bed so the cream tab could read as the canvas climbing into
+    /// it — correct in isolation, rejected in place (reported 2026-08-09): the bed does not stop at
+    /// the last tab. It runs on under the editor-action icons and dead-ends at the sidebar, so the
+    /// strip read as a grey rectangle pasted across the top of an otherwise cream panel. A tone
+    /// that has to span a whole part cannot be used to mark something that occupies part of it.
+    /// ⚠️ And v30 before that had the depth inverted outright — chips of rising ink left the OPEN
+    /// tab the darkest thing on screen while the canvas it belongs to stayed the lightest. The
+    /// correction that survives from that survey is the one all three references share (JetBrains'
+    /// Islands spec, the Zed light default, Islands Dark): the open tab is marked by being
+    /// CONNECTED to the canvas, never by carrying more ink than it.
+    /// ⚠️ Do not chase the island look by INSETTING the parts. Giving `.part.editor > .content` a
+    /// margin and a `calc(100% - 8px)` size — how Islands Dark makes its gaps — blanked the editor
+    /// outright when rendered here: the workbench sizes that element in px and tells Monaco those
+    /// numbers, so shrinking it in CSS desynchronises the two. With one colour there is nothing to
+    /// gap ANYWAY; the edge is the whole island.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -531,17 +535,17 @@ final class CodeServerManager: @unchecked Sendable {
             "sideBarSectionHeader.border": "#00000000",
             "activityBar.background": "#FFFBEB",
             "activityBar.border": "#00000000",
-            "editorGroupHeader.tabsBackground": "#22212C17",
+            "editorGroupHeader.tabsBackground": "#FFFBEB",
             "editorGroupHeader.tabsBorder": "#00000000",
             "editorGroupHeader.border": "#00000000",
-            "editorGroup.border": "#00000000",
+            "editorGroup.border": "#22212C1F",
             "tab.inactiveBackground": "#00000000",
             "tab.border": "#00000000",
             "tab.activeBackground": "#FFFBEB",
-            "tab.hoverBackground": "#FFFBEB80",
+            "tab.hoverBackground": "#22212C0A",
             "tab.unfocusedActiveBackground": "#FFFBEB",
             "tab.unfocusedInactiveBackground": "#00000000",
-            "tab.unfocusedHoverBackground": "#FFFBEB80",
+            "tab.unfocusedHoverBackground": "#22212C0A",
             "list.activeSelectionBackground": "#22212C17",
             "list.inactiveSelectionBackground": "#22212C0F",
             "list.focusBackground": "#22212C17",
