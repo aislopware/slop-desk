@@ -99,10 +99,10 @@ enum CodeSidebarPageDressing {
     ///   • TABS are cut like BROWSER TABS (user-directed 2026-08-09, replacing the free-floating
     ///     plate): inset 4px off the strip's top and left but flush with its BOTTOM, and rounded on
     ///     the top two corners only, so the open tab opens into the canvas underneath it. Nothing
-    ///     here says WHICH tab is open by weight — the strip's baseline does it by breaking, and
-    ///     the editor and sidebar wear the same line as their island edge. This sheet still sets
-    ///     no colour: every line reads `var(--vscode-editorGroup-border)`, which the host seed
-    ///     fills. The per-tab 1px dividers are dropped (the baseline separates the slots).
+    ///     here says WHICH tab is open by weight: the open tab is outlined on three sides and open
+    ///     on the fourth, a notch cut into the canvas. The one other line this sheet draws is the
+    ///     panel's left edge. Neither sets a colour — both read `var(--vscode-editorGroup-border)`,
+    ///     which the host seed fills. The per-tab 1px dividers are dropped.
     ///     The shrunk height comes from re-scoping `--editor-group-tab-height` on the tab (see the
     ///     first CSS comment), so the stock label/icon metrics keyed on that var track it for
     ///     free; the active-tab underline containers (`.tab-border-top/bottom-container`, absolute
@@ -137,36 +137,37 @@ enum CodeSidebarPageDressing {
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:last-child {
         margin-right: 4px;
     }
-    /* The strip's baseline and the notch in it. The line runs along the FOOT of the tab row and of
-       the action icons beside it, painted as a background-image so the tabs — which are opaque and
-       flush with that foot — sit on top of it; a closed tab then redraws it across its own foot,
-       and the open one turns it up and over its top corners instead. The break under the open tab
-       is what says "this one opens into the canvas". Colour comes from the workbench's own
+    /* The OPEN tab is outlined on three sides and open on the fourth, so it reads as a notch cut
+       out of the strip and into the canvas below. Colour comes from the workbench's own
        `editorGroup.border` var (the host seed sets it): this sheet stays free of colour literals,
-       which is what keeps it from drifting when the theme moves. */
-    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container,
-    .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {
-        background-image: linear-gradient(to top, var(--vscode-editorGroup-border) 1px, transparent 1px);
-        background-repeat: no-repeat;
-        background-position: bottom;
-    }
-    .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
-        box-shadow: inset 0 -1px 0 0 var(--vscode-editorGroup-border);
-    }
+       which is what keeps it from drifting when the theme moves.
+       ⚠️ NO line runs along the foot of the strip (user-directed 2026-08-09). One did — the
+       baseline the notch was cut out of — and it landed a second rule right where the workbench
+       already draws the editor's own top edge, reading as a doubled seam. The open tab's own
+       outline is enough to say which slot is open; the strip does not also need a floor. */
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab.active {
         box-shadow:
             inset 1px 0 0 0 var(--vscode-editorGroup-border),
             inset -1px 0 0 0 var(--vscode-editorGroup-border),
             inset 0 1px 0 0 var(--vscode-editorGroup-border);
     }
-    /* The editor and the sidebar as ISLANDS, drawn by that same one line. No inset, no second
-       tone, no clipping: on a single-colour field an island is its edge, and the workbench sizes
-       these parts in px and hands the numbers to Monaco, so shrinking them in CSS blanks the
-       editor (measured 2026-08-09). */
-    .monaco-workbench .part.editor > .content,
-    .monaco-workbench .part.sidebar {
-        border-radius: 10px;
-        box-shadow: inset 0 0 0 1px var(--vscode-editorGroup-border);
+    /* The panel's LEFT EDGE, the one seam the workbench leaves undrawn: every other part boundary
+       here already meets a client-drawn edge, but the code column's outer side runs straight into
+       the app's ground with nothing between them.
+       ⚠️ It has to be an OVERLAY. Giving the parts a rounded inset `box-shadow` instead — the
+       obvious way to outline them as islands — renders NOTHING: a part's children carry their own
+       opaque background and paint over the parent's inset shadow. Measured on the running panel,
+       every pixel along both the left edge and the editor/sidebar seam came back ground cream. */
+    .monaco-workbench::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--vscode-editorGroup-border);
+        z-index: 1000;
+        pointer-events: none;
     }
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container {
