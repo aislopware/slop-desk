@@ -6,8 +6,9 @@
 //   • the island paints ``Slate/Surface/island`` — the profile's own glass, never a chrome tone;
 //   • it clips to ``Slate/Metric/islandRadius``, a window-scale corner for a window-scale surface;
 //   • it floats in an ``Slate/Metric/islandInset`` moat of GROUND, the same on all four sides, so
-//     its top edge lands on the band's own top line — except while the navigator is hidden and the
-//     band runs over this column, when the top opens to ``Slate/Metric/bandHeight``;
+//     its top edge rises INTO the band, just under the controls' own tops — except while the
+//     navigator is hidden and the band runs over this column, when the top opens to
+//     ``Slate/Metric/bandHeight``;
 //   • it carries a hairline edge, because in the light profile the ground and the glass are the same
 //     cream (law 4) and the corner alone cannot draw the boundary.
 //
@@ -27,20 +28,19 @@ import SwiftUI
 extension View {
     /// Lift the terminal canvas off the ground as THE island.
     ///
-    /// THE MOAT IS UNIFORM, AND THE TOP OF IT IS THE BAND'S TOP LINE (user-directed 2026-08-09): the
-    /// island rises to ``Slate/Metric/bandInset``, the same line the traffic lights, the sidebar
-    /// toggle and the panel's surface tabs start on, so the three columns open together instead of
-    /// the middle one beginning a row lower. Hanging the island BELOW the whole band was tried in
-    /// both band heights and rejected — level with the band's controls is the ask, not clear of them.
+    /// THE MOAT IS UNIFORM (user-directed 2026-08-09): the island rises to ``Slate/Metric/bandInset``
+    /// on the top side exactly as it insets on the other three, so it reaches INTO the band rather
+    /// than starting a row under it — the three columns open together instead of the middle one
+    /// beginning low. Hanging the island BELOW the whole band was tried in two band heights and
+    /// rejected both times. The band's own controls are centred inside that row
+    /// (``Slate/Metric/bandControlInset``), which is what keeps a plate level with a traffic light.
     ///
     /// `clearingBand` is the one state that cannot have it: with the navigator collapsed this column
     /// holds the window's left edge, and the band above it fills with the lights, the toggle and the
     /// horizontal tab strip — cream chips and tinted project beds that cannot stand on the glass.
     /// There the top side opens to the full ``Slate/Metric/bandHeight`` so the band keeps its ground.
-    /// (The panel's collapsed-state reopen plate does NOT get the same treatment: it is one hover-
-    /// revealed control, it wears the island's own polarity, and it stands inside the island's flat
-    /// top edge — see ``SlateTitlebar``. Opening the moat for it would leave the island sitting low
-    /// in the plain terminal-only layout, which is the common case.)
+    /// The collapsed PANEL needs no such exception: it leaves a ``PanelRail`` of ground beside the
+    /// island instead of parking a plate on the glass.
     ///
     /// That widening is a step of most of the band, and it must never be INSTANT: collapsing the
     /// navigator animates the column's width, so the moat opens on the same curve and duration —
@@ -155,15 +155,20 @@ struct SlateProjectIsland<Content: View>: View {
     let tint: Color
     /// How far the bed extends past its content vertically. The sidebar spends a full `space2` — its
     /// beds stack down a column and the gap between two of them is what separates the projects. The
-    /// titlebar strip spends a fraction of that (user-directed 2026-08-09): there the bed hangs from
-    /// the band's top line and has to leave ground BELOW itself inside a fixed band, and a full rung
-    /// made it fill the band edge to edge and read as a painted header rather than a bed.
+    /// titlebar strip spends NOTHING (user-directed 2026-08-09): a tab there has to measure exactly
+    /// what the panel's tabs across the window measure, and any collar at all made the strip's tabs
+    /// the one taller row in the band.
     var verticalInset: CGFloat = Slate.Metric.space2
+    /// How far it extends past its content horizontally. Same story, one axis over: the sidebar's
+    /// beds want the inset so a selected chip floats inside them, while the titlebar strip's beds
+    /// end where their tabs do — a collar there left a stub of tint hanging off each run
+    /// (user-reported 2026-08-09).
+    var horizontalInset: CGFloat = Slate.Metric.projectIslandInset
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         content()
-            .padding(.horizontal, Slate.Metric.projectIslandInset)
+            .padding(.horizontal, horizontalInset)
             .padding(.vertical, verticalInset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(

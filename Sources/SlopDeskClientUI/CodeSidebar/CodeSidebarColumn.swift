@@ -43,17 +43,10 @@ struct CodeSidebarColumn: View {
 
     @State private var model = CodeSidebarModel()
 
-    /// The panel surface the strip's tab row selects. Per-window view state (the hosting
-    /// controller keeps the SwiftUI hierarchy across collapse/expand, so the choice survives a
-    /// hide — but not a relaunch; the panel always comes back on Code, the primary surface).
-    enum SurfaceTab {
-        case code
-        case simulators
-        case android
-        case desktop
-    }
-
-    @State private var surfaceTab: SurfaceTab = .code
+    /// The panel surface the strip's tab row selects — read from the shared chrome model
+    /// (``PanelSurface``), not from local state: the collapsed panel's RAIL renders the same four
+    /// tabs and must select the same thing.
+    private var surfaceTab: PanelSurface { chrome.panelSurface }
     /// The selection plate's morph namespaces — ONE PER RUNG of the strip's width ladder, because
     /// `ViewThatFits` builds every candidate to measure it. See `tabs(labelling:)`.
     @Namespace private var morphAllNamed
@@ -156,8 +149,8 @@ struct CodeSidebarColumn: View {
     /// added them were both rejected). It spends `selectionMorph` rather than `standard` because the
     /// plate now crosses the strip instead of changing in place — the same swap the sidebar rows and
     /// the horizontal tab strip made.
-    private func selectSurface(_ tab: SurfaceTab) {
-        withAnimation(Slate.Anim.selectionMorph) { surfaceTab = tab }
+    private func selectSurface(_ tab: PanelSurface) {
+        withAnimation(Slate.Anim.selectionMorph) { chrome.panelSurface = tab }
     }
 
     private var strip: some View {
@@ -204,9 +197,9 @@ struct CodeSidebarColumn: View {
             .help("Hide the right panel")
         }
         .padding(.horizontal, Slate.Metric.space2)
-        // Hung from the band's TOP LINE, like everything else in the band — the tabs' top edge is
-        // the island's top edge one column over (user-directed 2026-08-09).
-        .padding(.top, Slate.Metric.bandInset)
+        // Hung from the band's control line, like every other control in the band — the tabs share
+        // one row of centres with the traffic lights three columns over (user-directed 2026-08-09).
+        .padding(.top, Slate.Metric.bandControlInset)
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
     }
 
@@ -229,7 +222,7 @@ struct CodeSidebarColumn: View {
     /// than decorative. Desktop's glyph is `display`, the app's existing GUI-surface vocabulary
     /// (`macwindow` read as a blob at strip size — user-rejected).
     private func tabs(labelling: TabLabelling) -> some View {
-        func names(_ tab: SurfaceTab) -> Bool {
+        func names(_ tab: PanelSurface) -> Bool {
             switch labelling {
             case .all: true
             case .selectedOnly: surfaceTab == tab

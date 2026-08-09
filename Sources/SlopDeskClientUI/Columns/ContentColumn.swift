@@ -89,7 +89,17 @@ struct ContentColumn: View {
     /// column directly.
     private var content: some View {
         #if os(macOS)
-        paneArea.slateIsland(clearingBand: chrome.sidebarCollapsed)
+        paneArea
+            .slateIsland(clearingBand: chrome.sidebarCollapsed)
+            // The collapsed panel leaves a RAIL on the window's trailing edge rather than vanishing
+            // (``PanelRail``, user-directed 2026-08-09), so this column gives back its width. The
+            // island's own moat is measured inside what is left, which keeps the rail standing on
+            // ground with the usual channel between it and the glass.
+            .padding(.trailing, chrome.codeSidebarCollapsed ? Slate.Metric.panelRailWidth : 0)
+            .animation(Slate.Anim.columnSlide, value: chrome.codeSidebarCollapsed)
+            .overlay(alignment: .topTrailing) {
+                if chrome.codeSidebarCollapsed { PanelRail(chrome: chrome) }
+            }
         #else
         paneArea
         #endif

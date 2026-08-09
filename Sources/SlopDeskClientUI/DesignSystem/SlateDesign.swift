@@ -670,14 +670,16 @@ enum Slate {
         /// titlebar stand on, beside the island. The height ladder's chrome-strip rung
         /// (``heightStrip`` / ``titlebarHeight``); the band is not a new measurement.
         static let bandHeight: CGFloat = heightStrip
-        /// THE TOP LINE (user-directed 2026-08-09) — where the island's top edge and the top edge of
-        /// every control in the band meet. It is ``islandInset`` and nothing else: the island keeps
-        /// one moat on all four sides, and the band's controls are inset from the window's top by
-        /// exactly that moat, so the line the island's corner starts on is the line the traffic
-        /// lights, the sidebar toggle, the collapsed-state tab beds and the panel's surface tabs all
-        /// start on. Band controls are TOP-ALIGNED to it, never centred in the band: centring put
-        /// them above the island's edge, which is the misalignment this replaces.
+        /// THE ISLAND'S TOP LINE — ``islandInset`` and nothing else, because the island keeps one
+        /// moat on all four sides (user-directed 2026-08-09).
         static let bandInset: CGFloat = islandInset
+        /// Where a CONTROL in the band hangs from. Not the island's line: a control is 24 and a
+        /// traffic light is 16, so hanging both from one line leaves the discs riding 4pt high
+        /// against every plate beside them (user-reported 2026-08-09). This inset is the one that
+        /// puts a plate's CENTRE on the lights' centre — measured at 20 on the running app, with the
+        /// titlebar height declared (`SlopDeskClientApp.lowerTrafficLightsToTheTopLine`) — so the
+        /// band reads as one row of centres and the island's edge runs just under the lights' own.
+        static let bandControlInset: CGFloat = space2
 
         // Radii (from design-tokens.css)
         static let radiusCard: CGFloat = 8
@@ -743,17 +745,17 @@ enum Slate {
         /// The sidebar project-group header row (gutter chevron + name). 24pt + the list's 2pt row
         /// spacing on both sides = the 28pt inter-group band; the air IS the separator.
         static let heightSectionHeader: CGFloat = 24
-        /// Chrome strips: the titlebar / traffic-light band. NOT a free number — it is the top line
-        /// (``bandInset``), one control (``heightControl``) and a grid step of air under it, which is
-        /// what leaves the collapsed-state tab bed (a control plus its 2pt collar, 28) a breath of
-        /// ground below itself. Every column's SECOND row starts here: the navigator's search field,
-        /// the panel's surfaces, and — only while the navigator is hidden, when the band runs over
-        /// the content column — the island's top edge (``slateIsland(clearingBand:)``).
+        /// Chrome strips: the titlebar / traffic-light band. NOT a free number — one control
+        /// (``heightControl``) with ``bandControlInset`` above and a matching grid step below, so the
+        /// row sits centred on the traffic lights' own centre. Every column's SECOND row starts
+        /// here: the navigator's search field, the panel's surfaces, and — only while the navigator
+        /// is hidden, when the band runs over the content column — the island's top edge
+        /// (``slateIsland(clearingBand:)``).
         ///
-        /// The island's FIRST row does not: it starts at ``bandInset``, level with the band's
-        /// controls (user-directed 2026-08-09). A band the island merely hung below — tried at both
-        /// 40 and 32 — read as the middle column starting one row lower than the two beside it.
-        static let heightStrip: CGFloat = bandInset + heightControl + space2
+        /// The island's FIRST row does not: it starts at ``bandInset``, inside the band
+        /// (user-directed 2026-08-09). A band the island merely hung below — tried at both 40 and 32
+        /// — read as the middle column starting one row lower than the two beside it.
+        static let heightStrip: CGFloat = bandControlInset + heightControl + space2
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
         static let heightInput: CGFloat = 48
         /// A drawer that shares a column with the thing it is about (the simulator console under the
@@ -797,6 +799,16 @@ enum Slate {
         static let railWidth: CGFloat = 80
         /// One rail project chip — the roomy-row rung, a square the folder mark centres in.
         static let railChip: CGFloat = heightRowTall
+        /// The RIGHT PANEL'S RAIL — what the panel leaves behind instead of vanishing (user-directed
+        /// 2026-08-09). One control plate with the grid's inset either side, which puts the rail's
+        /// toggle at exactly the x the panel's own hide toggle stands at, so the one control the
+        /// user aims at never moves between the two states. Everything below it — the surface tabs,
+        /// turned on their side — is that same plate width.
+        static let panelRailWidth: CGFloat = plate + 2 * space2
+        /// A rail tab's LONG side, the one that runs down the rail. Every tab takes the same length
+        /// (the widest name plus its mark and the plate's own padding), because a rail of tabs each
+        /// as long as its own word reads as a ragged list rather than as a strip of tabs.
+        static let panelRailTabLength: CGFloat = 104
         /// The collapsed right panel's EDGE HANDLE (the drawer pull on the window's trailing edge):
         /// its long side. Two control rungs, so the pull reads as a handle, not a button.
         static let edgeHandleLength: CGFloat = heightControl * 2

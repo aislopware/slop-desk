@@ -33,9 +33,10 @@ struct WindowSidebarToggle: View {
         ) { chrome.toggleSidebar() }
             .help(chrome.sidebarCollapsed ? "Show the tabs panel" : "Hide the tabs panel")
             .padding(.leading, Slate.Metric.windowControlsLead)
-            // Hung from the band's TOP LINE, where the traffic lights beside it and the island's top
-            // edge beyond them also start (`SlopDeskClientApp.lowerTrafficLightsToTheTopLine`).
-            .padding(.top, Slate.Metric.bandInset)
+            // Hung so its CENTRE lands on the traffic lights' centre — the plate is 24 and a disc
+            // is 16, so one shared top edge would leave the discs riding high beside it
+            // (`SlopDeskClientApp.lowerTrafficLightsToTheTopLine` puts them on that centre).
+            .padding(.top, Slate.Metric.bandControlInset)
             .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
     }
 }

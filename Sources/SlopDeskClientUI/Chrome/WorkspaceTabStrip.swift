@@ -33,12 +33,6 @@ struct WorkspaceTabStrip: View {
     /// also carries the traffic lights and a full-height chip crowded them.
     private static let chipHeight = Slate.Metric.heightControl
 
-    /// The project bed's vertical collar — half a rung. The BED is what the band's top line has to
-    /// catch (it is the tinted edge the eye reads, not the chip inside it), so the strip hangs the
-    /// bed from the line and the chip rides two points lower; a fatter collar would push the chip
-    /// off the row the panel's own tabs keep.
-    private static let bedCollar = Slate.Metric.space1 / 2
-
     /// The selection plate's morph namespace, shared by every chip in the strip so the plate TRAVELS
     /// between tabs. The strip's own namespace, not the sidebar's: only one of the two is ever
     /// mounted, and a plate cannot travel to a row that does not exist.
@@ -68,18 +62,17 @@ struct WorkspaceTabStrip: View {
             )
         }
         .scrollIndicators(.hidden)
-        // Exactly the bed's own height — 24 chip + 2×2 collar = 28 — which the titlebar hangs from
-        // the band's top line, leaving a grid step of ground under it (user-directed 2026-08-09).
-        // The bed must NEVER fill the band edge to edge: at a full `space2` collar it read as a
-        // painted header rather than as the sidebar's bed rotated, and with the navigator hidden it
-        // would meet the island's top edge with nothing between them.
-        .frame(height: Self.chipHeight + 2 * Self.bedCollar)
+        // Exactly one control tall — the bed IS its run of tabs, with no collar in either axis
+        // (user-directed 2026-08-09). A collar made this the tallest row in the band, where every
+        // other tab across the window is a plain control rung, and left a stub of tint hanging off
+        // each end of a run. What separates two projects here is the gap between their beds.
+        .frame(height: Self.chipHeight)
     }
 
     /// One project's run of tabs on its own bed. A keyless section still gets a bed (the neutral
     /// one) so the strip's rhythm does not break where a video pane sits between two projects.
     private func island(_ section: RailRowGroup, tint: Color) -> some View {
-        SlateProjectIsland(tint: tint, verticalInset: Self.bedCollar) {
+        SlateProjectIsland(tint: tint, verticalInset: 0, horizontalInset: 0) {
             HStack(spacing: Slate.Metric.space1) {
                 ForEach(section.rows) { row in
                     TabStripChip(

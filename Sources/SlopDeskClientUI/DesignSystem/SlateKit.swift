@@ -142,6 +142,11 @@ struct PanelTabPlate: View {
     let selected: Bool
     /// False collapses the tab to a square cell holding only its mark — the narrow-panel rung.
     var showsLabel = true
+    /// True lets the plate take whatever length its caller frames it to, instead of hugging its
+    /// label. The panel's RAIL wants this — a column of tabs each as long as its own word reads as a
+    /// ragged list, where a strip of tabs side by side reads fine hugging. Off everywhere else, so
+    /// the strip's width ladder keeps reporting honest ideal widths.
+    var spans = false
     /// The morph namespace shared by ONE strip of tabs — see ``SlateCompactIsland/morph``. `nil`
     /// keeps the plain fade for any caller mounting a lone plate.
     var morph: Namespace.ID?
@@ -150,24 +155,25 @@ struct PanelTabPlate: View {
     @State private var hovering = false
 
     init(
-        mark: Mark, label: String, selected: Bool, showsLabel: Bool = true,
+        mark: Mark, label: String, selected: Bool, showsLabel: Bool = true, spans: Bool = false,
         morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
     ) {
         self.mark = mark
         self.label = label
         self.selected = selected
         self.showsLabel = showsLabel
+        self.spans = spans
         self.morph = morph
         self.action = action
     }
 
     init(
         symbol: SFSymbol, label: String, selected: Bool, showsLabel: Bool = true,
-        morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
+        spans: Bool = false, morph: Namespace.ID? = nil, action: @escaping () -> Void = {},
     ) {
         self.init(
             mark: .symbol(symbol), label: label, selected: selected, showsLabel: showsLabel,
-            morph: morph, action: action,
+            spans: spans, morph: morph, action: action,
         )
     }
 
@@ -204,6 +210,7 @@ struct PanelTabPlate: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             .padding(.horizontal, Slate.Metric.space2)
+            .frame(maxWidth: spans ? .infinity : nil, alignment: .leading)
             .frame(height: Slate.Metric.plate)
         } else {
             // A SQUARE cell, not a plate hugging its mark: the marks are 10 to 17 points across, so

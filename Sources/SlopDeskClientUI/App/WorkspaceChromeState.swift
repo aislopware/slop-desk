@@ -22,6 +22,12 @@ final class WorkspaceChromeState {
     /// code panel is a workstyle choice that survives relaunch); ``toggleCodeSidebar()`` writes it back.
     /// The macOS `WorkspaceSplitRepresentable.updateNSViewController` animates the matching split item.
     var codeSidebarCollapsed = Defaults[.codeSidebarCollapsed]
+    /// Which surface the RIGHT panel is showing. It lives here rather than in the panel's own view
+    /// state because the panel is no longer the only thing that renders its tabs: collapsing leaves
+    /// a RAIL carrying the same four tabs turned on their side (``PanelRail``), and two surfaces
+    /// showing one selection cannot each own it. Per-window, not persisted — the panel always comes
+    /// back on Files, its primary surface.
+    var panelSurface: PanelSurface = .code
     /// Whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
     /// macOS `NSWindow` glue maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
@@ -96,5 +102,16 @@ final class WorkspaceChromeState {
         openedCodeProjects.insert(root)
         Defaults[.openedCodeProjects] = openedCodeProjects
     }
+}
+
+/// One of the RIGHT panel's four surfaces — the thing its tab row (and, while collapsed, its rail)
+/// selects. Two REAL host resources (the project's workbench, the host's simulator and device sets)
+/// and one announced-but-empty one; they share no protocol, which is why they are four surfaces
+/// rather than one with modes.
+enum PanelSurface {
+    case code
+    case simulators
+    case android
+    case desktop
 }
 #endif
