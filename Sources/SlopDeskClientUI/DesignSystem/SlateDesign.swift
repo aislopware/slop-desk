@@ -437,47 +437,161 @@ enum Slate {
     /// the whole project, header and rows together, so the colour names the GROUP rather than
     /// decorating a symbol inside it.
     ///
-    /// The register is the half of the wheel the STATUS vocabulary does not speak, plus brown. Red,
-    /// amber and green are deliberately absent: a project whose bed was amber would be saying, in
-    /// the app's own dialect, that something in it needs attention. Every hue is deepened until it
-    /// clears 3.0:1 on the cream ground, so the register survives being spent anywhere else later —
-    /// though at ``Slate/Opacity/bed`` it never is.
+    /// The register is the half of the wheel the STATUS vocabulary does not speak. Red, amber and
+    /// green are deliberately absent: a project whose bed was amber would be saying, in the app's
+    /// own dialect, that something in it needs attention. Measured as the direction each bed is
+    /// displaced from the cream in `a*b*`, the register occupies the arc 195°–340° — teal, blue,
+    /// indigo, magenta, rose — and nothing else.
     ///
-    /// ⚠️ The map is FNV-1a over the key's UTF-8, never `hashValue`: Swift's is per-process seeded,
+    /// ⚠️ The map is FNV-1a over the seed's UTF-8, never `hashValue`: Swift's is per-process seeded,
     /// so a `hashValue` register would deal every project a new colour on every launch — the one
     /// thing an identity mark may not do.
+    ///
+    /// ## Why these five hexes look garish and are not
+    ///
+    /// The register's entries are BED SOURCES, not inks: they exist only to be composited at
+    /// ``Slate/Opacity/bed`` and are never drawn at strength anywhere. That matters because the
+    /// cream ground is itself strongly chromatic (L\* 98.5, C\* 8.3 at h 99.5°), so at 10 % a bed
+    /// keeps 90 % of the cream and the reachable colours form a tiny cube anchored at the cream's
+    /// own corner — each channel can only be pulled DOWN, and by at most 25/255. Inside that cube a
+    /// "nice" mid-tone source barely moves the bed at all, which is why the previous register's
+    /// nominal five hues collapsed on screen: its worst pair (brown against the neutral bucket)
+    /// measured ΔE2000 **2.28**, below the threshold at which two large flat fields read as
+    /// different colours at all, and blue-vs-teal only reached 5.01. Solving instead for maximum
+    /// minimum separation over that cube — same alpha, same lightness band, same hue arc — lifts the
+    /// worst pair to **7.00** and flattens the whole set into the 7.00–7.25 band, so there is no
+    /// longer one weak link. Saturated sources are simply where that optimum lives.
+    ///
+    /// Never spend an entry of this register as an ink, a stroke or a mark. Use ``Slate/Chroma``.
     enum ProjectTint {
-        /// Five cool hues plus brown. See the type note for why the warm half is missing.
+        /// The five identity BED SOURCES — teal, blue, indigo, magenta, rose. Read the type note
+        /// before touching a hex: these are solved values, not picked ones, and each is meaningful
+        /// only after compositing at ``Slate/Opacity/bed`` over the cream ground.
+        ///
+        /// Solved under four simultaneous constraints: every bed lands in L\* 92.80–94.40 (a
+        /// NARROWER spread than the register it replaces, so no project's bed reads as heavier than
+        /// another's), every bed's displacement from the cream stays inside the 195°–340° arc (the
+        /// status vocabulary keeps red / amber / green), every source stays a real colour (no
+        /// channel above 248), and the minimum pairwise ΔE2000 across all six beds — the five here
+        /// plus ``neutralSource`` — is maximised.
         @MainActor
         static let register: [Color] = [
-            Color(slateHex: 0x0088FF), Color(slateHex: 0x6155F5), Color(slateHex: 0xCB30E0),
-            Color(slateHex: 0x00A2AD), Color(slateHex: 0xAC7F5E),
+            Color(slateHex: 0x00A68F), Color(slateHex: 0x0075F7), Color(slateHex: 0x514AF8),
+            Color(slateHex: 0xF414F7), Color(slateHex: 0xF854A4),
         ]
 
-        /// The hue a project key is dealt — stable across launches, machines and window rebuilds.
-        @MainActor
-        static func hue(for key: String) -> Color {
-            register[index(of: key, count: register.count)]
+        /// The keyless "Other" bucket's bed source. It is ``Slate/Text/secondary``'s light pin
+        /// rather than a sixth identity, because the bucket has no identity to spend — but it IS
+        /// part of the separation solve above (it measures ΔE2000 7.21 from its nearest neighbour),
+        /// since on screen it is just another bed the eye has to tell from the ones around it.
+        static let neutralSource = 0x585751
+
+        /// The SEED a project key is dealt from: the key's last path component, case-folded and
+        /// NFC-normalised.
+        ///
+        /// The key itself is an absolute path (a git worktree toplevel, else the pane's cwd), and
+        /// hashing it whole made the colour a property of WHERE a project sits rather than of the
+        /// project — the same checkout on the other machine, or moved one directory up, was dealt a
+        /// different identity. The basename is the part that travels.
+        ///
+        /// Case folding is not cosmetic: on a case-insensitive volume `~/Work/App` and `~/work/app`
+        /// name the same directory, and the host pushes whichever spelling the shell happened to
+        /// use. NFC likewise — an accented basename reaches us decomposed from one filesystem and
+        /// composed from another, and unnormalised those are different bytes and so different
+        /// colours for one project.
+        static func seed(for key: String) -> String {
+            var path = Substring(key)
+            while path.hasSuffix("/") { path = path.dropLast() }
+            let base = path.split(separator: "/").last.map(String.init) ?? String(path)
+            return base.lowercased().precomposedStringWithCanonicalMapping
         }
 
-        /// The BED a project group stands on: its hue at ``Slate/Opacity/bed``. A `nil` key (the
-        /// keyless "Other" bucket) gets a neutral bed of the same weight — the bucket is still a
-        /// group and still wants an island, it just has no identity to spend.
-        @MainActor
-        static func wash(for key: String?) -> Color {
-            guard let key else { return Slate.Text.secondary.opacity(Opacity.bed) }
-            return hue(for: key).opacity(Opacity.bed)
-        }
-
-        /// FNV-1a-64 over UTF-8, reduced mod the register size. Wrapping multiply is the algorithm.
-        static func index(of key: String, count: Int) -> Int {
-            var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-            for byte in key.utf8 {
-                hash ^= UInt64(byte)
-                hash = hash &* 0x100_0000_01B3
+        /// FNV-1a-64 over UTF-8. Wrapping multiply is the algorithm, not an overflow.
+        static func hash(_ text: String) -> UInt64 {
+            var value: UInt64 = 0xCBF2_9CE4_8422_2325
+            for byte in text.utf8 {
+                value ^= UInt64(byte)
+                value = value &* 0x100_0000_01B3
             }
-            return Int(hash % UInt64(count))
+            return value
         }
+
+        /// FNV-1a-64 over a key's ``seed(for:)``, reduced mod the register size.
+        static func index(of key: String, count: Int) -> Int {
+            Int(hash(seed(for: key)) % UInt64(count))
+        }
+
+        /// The identity indices for ONE ordered run of islands — the answer to "which bed does each
+        /// group in this column stand on", resolved for the run as a whole rather than per group.
+        ///
+        /// A pure hash cannot satisfy both things a project bed has to do. Dealt independently, two
+        /// projects that happen to hash alike land side by side wearing one colour, and the bed
+        /// stops saying where one group ends — with five entries that is a 1-in-5 coin flip on every
+        /// adjacent pair, so in a column of six projects it is likelier to happen than not. So the
+        /// hash proposes and the RUN disposes: a group whose preferred index matches the island
+        /// directly above it re-probes once, at a stride also taken from its own hash. The register
+        /// count is prime and the stride lands in 1…4, so the probe can never return where it
+        /// started and one probe always suffices — there is only ever one index to avoid.
+        ///
+        /// What this trades away, honestly: a project's colour is no longer a function of its name
+        /// ALONE but of its name and what sits above it, so inserting a project can re-deal the one
+        /// below it (and, rarely, cascade one further). That is not a defect of the repair, it is
+        /// the tension in the requirement — "always the same colour" and "never the same colour as
+        /// your neighbour" cannot both hold unconditionally — and it is spent in the direction that
+        /// keeps the column readable. The common case is untouched: with no collision, every group
+        /// keeps exactly the colour its own basename hashes to.
+        struct Deal {
+            /// Per-island register index in the run's order; `nil` is the keyless bucket.
+            let indices: [Int?]
+
+            /// Deal `keys` in render order. A `nil` key takes the neutral bed and constrains
+            /// nothing after it — the neutral is ΔE2000 ≥ 7.21 from every register entry, so a
+            /// keyed group below the "Other" bucket can never be mistaken for it.
+            init(keys: [String?]) {
+                let count = Slate.ProjectTint.registerCount
+                var dealt: [Int?] = []
+                dealt.reserveCapacity(keys.count)
+                var previous: Int?
+                for key in keys {
+                    guard let key else {
+                        dealt.append(nil)
+                        previous = nil
+                        continue
+                    }
+                    let hash = Slate.ProjectTint.hash(Slate.ProjectTint.seed(for: key))
+                    var index = Int(hash % UInt64(count))
+                    if index == previous {
+                        // A second, INDEPENDENT digit of the same hash picks the stride, so the
+                        // re-deal stays a pure function of (this key, the index above it) and two
+                        // colliding projects do not both walk to the same replacement.
+                        let stride = 1 + Int((hash / UInt64(count)) % UInt64(count - 1))
+                        index = (index + stride) % count
+                    }
+                    dealt.append(index)
+                    previous = index
+                }
+                indices = dealt
+            }
+
+            /// The BED for the island at `position` — its dealt hue at ``Slate/Opacity/bed``, or the
+            /// neutral bed for the keyless bucket. Out of range yields the neutral bed rather than
+            /// trapping: a bed is decoration, and a view that has out-run its deal must still draw.
+            @MainActor
+            subscript(position: Int) -> Color {
+                guard indices.indices.contains(position), let index = indices[position] else {
+                    return Slate.ProjectTint.neutralBed
+                }
+                return Slate.ProjectTint.register[index].opacity(Opacity.bed)
+            }
+        }
+
+        /// The keyless bucket's bed — ``neutralSource`` at ``Slate/Opacity/bed``.
+        @MainActor
+        static var neutralBed: Color { Color(slateHex: UInt32(neutralSource)).opacity(Opacity.bed) }
+
+        /// The register size, readable without `@MainActor` (``Deal`` runs the arithmetic off the
+        /// colour values). Pinned by `SlateProjectTintTests` to match ``register``'s own count.
+        static let registerCount = 5
     }
 
     @MainActor

@@ -140,8 +140,14 @@ struct SlateCompactIsland<Content: View>: View {
 /// tinted glyph, dot, spine, header rule — was rejected in all four shapes: a colour that names a
 /// group belongs to the group's ground, not to a symbol sitting inside it.
 struct SlateProjectIsland<Content: View>: View {
-    /// The project's normalized key — `nil` is the keyless bucket, which gets a neutral bed.
-    let projectKey: String?
+    /// The bed this island stands on, taken from the column's ``Slate/ProjectTint/Deal``.
+    ///
+    /// The island is TOLD its colour rather than deriving one from a key, because the colour is not
+    /// a property of this group alone: a group whose hash collides with the island above it is
+    /// re-dealt, and only something holding the whole ordered run can know that. Handing the island
+    /// a key would put a second, un-repaired path to the same bed one call site away — see the note
+    /// on ``Slate/ProjectTint/Deal``.
+    let tint: Color
     /// How far the bed extends past its content vertically. The sidebar spends a full `space2` — its
     /// beds stack down a column and the gap between two of them is what separates the projects. The
     /// titlebar strip spends `space1` instead (user-directed 2026-08-09): there the bed has to leave
@@ -156,7 +162,7 @@ struct SlateProjectIsland<Content: View>: View {
             .padding(.vertical, verticalInset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Slate.ProjectTint.wash(for: projectKey),
+                tint,
                 in: .rect(cornerRadius: Slate.Metric.islandRadiusCompact, style: .continuous),
             )
     }

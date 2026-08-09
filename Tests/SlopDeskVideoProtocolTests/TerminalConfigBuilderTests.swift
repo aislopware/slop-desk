@@ -183,8 +183,24 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "selection-foreground = cell-foreground",
             "cursor-style = block",
             "scrollback-limit = 2560000",
+            "link-url = false",
         ].joined(separator: "\n")
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
+    }
+
+    /// `link-url = false` rides EVERY build, with and without the controls block. libghostty's built-in
+    /// regex link matcher draws its own underline on the same spans `LinkHighlightOverlay` paints, and
+    /// two rules under one path is what the user saw; SlopDesk owns detection, highlight and ⌘click, so
+    /// the built-in matcher is switched off rather than fought. Not a preference — no pref gates it.
+    func testLinkUrlIsAlwaysDisabled() {
+        for controls in [nil, TerminalControlsConfig()] {
+            let lines = TerminalConfigBuilder.string(for: TerminalPreferences(), controls: controls)
+                .split(separator: "\n").map(String.init)
+            XCTAssertEqual(
+                lines.filter { $0.hasPrefix("link-url") }, ["link-url = false"],
+                "exactly one link-url line, always false (controls: \(controls == nil ? "nil" : "set"))",
+            )
+        }
     }
 
     /// Passing the palette/selection args as nil is byte-for-byte the no-args build (so existing callers and

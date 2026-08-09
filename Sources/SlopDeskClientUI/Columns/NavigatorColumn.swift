@@ -164,6 +164,13 @@ struct NavigatorColumn: View {
     private var macSidebar: some View {
         let allRows = renderedRows
         let sections = buildSections(allRows, query: query)
+        // The beds are dealt for the WHOLE column at once — a group whose basename hashes onto the
+        // island above it is re-dealt, which no per-section lookup could know (see
+        // ``Slate/ProjectTint/Deal``). A HEADERLESS section deals as keyless: it draws no bed, so it
+        // must neither consume an identity nor constrain the group under it.
+        let deal = Slate.ProjectTint.Deal(
+            keys: sections.map { $0.header == nil ? nil : $0.projectKey },
+        )
         return VStack(alignment: .leading, spacing: 0) {
             // Traffic-light strip: ONLY the sidebar-collapse toggle, parked immediately RIGHT of the
             // system lights (``Slate/Metric/windowControlsLead``) and ALWAYS VISIBLE (user-directed
@@ -231,8 +238,8 @@ struct NavigatorColumn: View {
                     } else if sections.isEmpty {
                         emptyLabel("No matching tabs")
                     } else {
-                        ForEach(sections) { section in
-                            projectIsland(section)
+                        ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                            projectIsland(section, tint: deal[index])
                         }
                     }
                 }
@@ -278,7 +285,7 @@ struct NavigatorColumn: View {
     /// identity hue (``SlateProjectIsland``). A section with no header is the ungrouped flat list —
     /// it gets no bed, because there is no project for a colour to name.
     @ViewBuilder
-    private func projectIsland(_ section: RowSection) -> some View {
+    private func projectIsland(_ section: RowSection, tint: Color) -> some View {
         let collapseKey = Self.collapseKey(section.projectKey)
         let collapsed = collapsedSections.contains(collapseKey)
         let rows = VStack(alignment: .leading, spacing: 2) {
@@ -307,7 +314,7 @@ struct NavigatorColumn: View {
         if section.header == nil {
             rows
         } else {
-            SlateProjectIsland(projectKey: section.projectKey) { rows }
+            SlateProjectIsland(tint: tint) { rows }
         }
     }
 

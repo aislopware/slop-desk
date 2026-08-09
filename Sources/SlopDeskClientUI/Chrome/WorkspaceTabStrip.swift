@@ -42,10 +42,14 @@ struct WorkspaceTabStrip: View {
         let sections = RailRowsBuilder.sectionedByProject(
             rows, tabOrder: store.flatOrderedTabIDs(), query: "",
         )
+        // The beds are dealt for the RUN, not per section: two projects whose basenames hash alike
+        // must not stand shoulder to shoulder in one colour, and only the ordered list knows that.
+        // The strip's order is the sidebar's order rotated, so both surfaces deal identically.
+        let deal = Slate.ProjectTint.Deal(keys: sections.map(\.projectKey))
         ScrollView(.horizontal) {
             HStack(spacing: Slate.Metric.space2) {
-                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                    island(section)
+                ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                    island(section, tint: deal[index])
                 }
             }
             .padding(.horizontal, Slate.Metric.space1)
@@ -67,8 +71,8 @@ struct WorkspaceTabStrip: View {
 
     /// One project's run of tabs on its own bed. A keyless section still gets a bed (the neutral
     /// one) so the strip's rhythm does not break where a video pane sits between two projects.
-    private func island(_ section: RailRowGroup) -> some View {
-        SlateProjectIsland(projectKey: section.projectKey, verticalInset: Slate.Metric.space1) {
+    private func island(_ section: RailRowGroup, tint: Color) -> some View {
+        SlateProjectIsland(tint: tint, verticalInset: Slate.Metric.space1) {
             HStack(spacing: Slate.Metric.space1) {
                 ForEach(section.rows) { row in
                     TabStripChip(

@@ -22,6 +22,9 @@ import Foundation
 ///   • `cursor-style-blink` — `true` / `false`, or OMITTED (tri-state `.default` defers to DEC mode 12).
 ///   • `scrollback-limit`   — buffer size in BYTES (we map lines × a per-line estimate —
 ///                            see ``scrollbackLimitBytes``).
+///   • `link-url`           — always `false`: SlopDesk owns regex link detection, highlighting and
+///                            ⌘click, so libghostty's built-in matcher would only double-draw the
+///                            underline. OSC 8 hyperlinks are unaffected.
 ///   • `keybind`            — one `keybind = <chord>=<action>` line per user rebind (additive).
 public enum TerminalConfigBuilder {
     /// Per-line byte estimate to convert user-facing "scrollback lines" → Ghostty's BYTE `scrollback-limit`.
@@ -113,6 +116,20 @@ public enum TerminalConfigBuilder {
         case .off: lines.append("cursor-style-blink = false")
         }
         lines.append("scrollback-limit = \(scrollbackLimitBytes(lines: prefs.scrollbackLines))")
+        // ⌘-HOVER DOUBLE UNDERLINE. libghostty ships a default link matcher for URLs and bare paths
+        // (`Config.default` appends it, `link-url` gates it) and its renderer draws that match's own
+        // underline on the GPU quad. SlopDesk detects the same spans itself — `LinkHighlightOverlay`
+        // paints the accent underline, and the view's `mouseDown`/`mouseUp` SWALLOW the ⌘click to run
+        // `performLinkAction` — so libghostty's matcher was contributing nothing but a second rule,
+        // drawn at the glyph baseline in the cell foreground while ours sits a point lower in the
+        // accent. Two lines under one path, user-reported 2026-08-09.
+        //
+        // This turns OFF only the built-in REGEX matcher. OSC 8 hyperlinks are a separate set the
+        // renderer builds from the terminal's own hyperlink state (never from `config.link.links`),
+        // so their hover underline — and `GHOSTTY_ACTION_OPEN_URL`, which stays libghostty's — are
+        // untouched. Emitted unconditionally: it is a structural fact about who owns link rendering
+        // in this app, not a preference.
+        lines.append("link-url = false")
 
         // Additive keybind lines (one per user rebind), validate-then-skip an empty one.
         for kb in keybinds where !kb.trimmingCharacters(in: .whitespaces).isEmpty {
