@@ -1580,8 +1580,8 @@ final class GhosttyLayerBackedView: NSView {
             // ⌘ went down with a (possibly) stationary pointer: resolve the hover from the CURRENT location so
             // the full-path preview appears immediately, without waiting for the next pointer move.
             if let point = currentSurfacePoint() { updateLinkHover(at: point) }
-        } else if model.hoveredLinkFullPath != nil {
-            model.hoveredLinkFullPath = nil
+        } else {
+            clearLinkHover()
         }
     }
 
@@ -1601,13 +1601,46 @@ final class GhosttyLayerBackedView: NSView {
     private func updateLinkHover(at point: (x: Double, y: Double)) {
         guard let model else { return }
         guard model.linkHighlightActive else {
-            if model.hoveredLinkFullPath != nil { model.hoveredLinkFullPath = nil }
+            clearLinkHover()
             return
         }
         // detectedLink(at:) applies the detection-toggle / alt-screen / metrics gates; any gate failing
         // yields nil, which clears the preview exactly like the old explicit guard did.
-        let path = detectedLink(at: point).map { $0.resolvedAbsolute ?? $0.raw }
+        let link = detectedLink(at: point)
+        let path = link.map { $0.resolvedAbsolute ?? $0.raw }
         if model.hoveredLinkFullPath != path { model.hoveredLinkFullPath = path }
+        setLinkHoverCursor(link != nil)
+    }
+
+    /// Drop BOTH ⌘-hover affordances — the resolved path seam and the pointing-hand cursor. The two are
+    /// cleared together everywhere, so they cannot drift into "hand cursor over nothing".
+    private func clearLinkHover() {
+        if model?.hoveredLinkFullPath != nil { model?.hoveredLinkFullPath = nil }
+        setLinkHoverCursor(false)
+    }
+
+    /// `true` while the pointer sits on a ⌘-hoverable link, which is what makes the pane show the
+    /// POINTING HAND. Kept beside ``pointerCursor`` rather than folded into it: that one is a remote
+    /// program's OSC-22 request and has to survive a hover unchanged, so the hand is a transient
+    /// OVERRIDE the pane falls back off, not a new base shape.
+    private var linkHoverActive = false
+
+    /// Show / hide the pointing hand for a ⌘-hovered link.
+    ///
+    /// This used to be libghostty's job — its built-in regex link matcher asked for the pointer shape as
+    /// part of highlighting the match. `link-url = false` retired that matcher (it was drawing a SECOND
+    /// underline under the one ``LinkHighlightOverlay`` paints), and the cursor change left with it —
+    /// user-reported 2026-08-09. It belongs here now for the same reason the underline and the ⌘click
+    /// already do: SlopDesk owns link detection end to end, so it owns the whole affordance.
+    ///
+    /// Both halves are needed. The cursor RECT is what AppKit consults as the pointer keeps moving inside
+    /// the pane; the immediate `.set()` is what updates a pointer that is STATIONARY, which is the common
+    /// case here — ⌘ is usually pressed while already resting on the path.
+    private func setLinkHoverCursor(_ active: Bool) {
+        guard linkHoverActive != active else { return }
+        linkHoverActive = active
+        window?.invalidateCursorRects(for: self)
+        (active ? NSCursor.pointingHand : pointerCursor).set()
     }
 
     /// The pointer's CURRENT position in the surface's top-left-origin POINT space, or `nil` when it is outside
@@ -1973,8 +2006,9 @@ final class GhosttyLayerBackedView: NSView {
         let mods = Self.ghosttyMods(event.modifierFlags)
         surface?.sendMousePos(x: -1, y: -1, mods: mods)   // negative = cursor left the viewport
         // E10 WI-5 (ES-E10-4): the pointer left the surface — drop any ⌘-hover full-path preview so the status
-        // bar falls back to the resting cwd (the underline overlay stays until ⌘ is actually released).
-        if model?.hoveredLinkFullPath != nil { model?.hoveredLinkFullPath = nil }
+        // bar falls back to the resting cwd, and with it the pointing hand (the underline overlay stays until
+        // ⌘ is actually released, because it marks every link in the viewport, not the hovered one).
+        clearLinkHover()
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -2096,8 +2130,10 @@ final class GhosttyLayerBackedView: NSView {
     /// AppKit invalidates and re-asks for a view's cursor regions on resize / key-window changes / our own
     /// ``NSWindow/invalidateCursorRects(for:)``. We claim the whole bounds for the libghostty-requested shape
     /// so a remote program's OSC-22 pointer change actually shows under the pointer as it moves over the pane.
+    /// A ⌘-hovered link OUTRANKS the OSC-22 shape for the duration of the hover — link detection is gated
+    /// off the alt screen, so the program that asked for a shape is not the one being pointed at.
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: pointerCursor)
+        addCursorRect(bounds, cursor: linkHoverActive ? .pointingHand : pointerCursor)
     }
 
     /// Apply an OSC-22 pointer shape libghostty resolved for this surface. `raw` is the C
@@ -2115,7 +2151,9 @@ final class GhosttyLayerBackedView: NSView {
         // and `.set()` it now so a STATIONARY pointer updates immediately (an OSC-22 change is usually a
         // response to the pointer already sitting over the targeted cell, where no mouse-moved event follows).
         window?.invalidateCursorRects(for: self)
-        cursor.set()
+        // Do NOT stomp a live ⌘-hover: the hand is the transient override (see ``setLinkHoverCursor(_:)``),
+        // so a shape arriving mid-hover updates the BASE and shows when the hover ends.
+        if !linkHoverActive { cursor.set() }
     }
 
     // MARK: Mouse-hide-while-typing (E8 H9 / ES-E8-6)
@@ -2594,7 +2632,7 @@ final class GhosttyLayerBackedView: NSView {
     private func clearLinkHighlight() {
         guard let model else { return }
         if model.linkHighlightActive { model.linkHighlightActive = false }
-        if model.hoveredLinkFullPath != nil { model.hoveredLinkFullPath = nil }
+        clearLinkHover()
     }
 
     /// Maps AppKit modifier flags → libghostty mods (header 100).

@@ -18,7 +18,10 @@
 // still compiles for iOS (no `#if os` here — `Canvas` is iOS 15+; the gate is runtime state, not platform).
 //
 // Never intercepts hits (`allowsHitTesting(false)`): clicks fall through to the renderer, which owns ⌘click /
-// ⌘⇧click / right-click on a detected link. SYSTEM/theme colours only (`Slate.State.accent`).
+// ⌘⇧click / right-click on a detected link, and now the POINTING-HAND cursor too
+// (`GhosttyTerminalView.setLinkHoverCursor(_:)` — libghostty used to supply that as part of its own link
+// highlight, which `link-url = false` retired along with its duplicate underline). THEME colours only, from
+// the on-glass vocabulary (`Slate.Terminal.ink` — the cell foreground).
 
 #if canImport(SwiftUI)
 import SlopDeskTerminal
@@ -57,14 +60,20 @@ struct LinkHighlightOverlay: View {
             let _ = model.bytesReceived
             // swiftlint:disable:next redundant_discardable_let
             let _ = model.viewportRevision
-            let accent = Slate.State.accent
+            // The CELL FOREGROUND, not the brand accent (user-directed 2026-08-09). Two reasons it is the
+            // better ink and not just the preferred one: an underline is a property OF the text it sits
+            // under, so it should be the colour that text is already drawn in; and this overlay lives inside
+            // the terminal island, where the on-glass vocabulary (``Slate/Terminal``) governs and the
+            // semantic `State`/`Text` tiers do not — those are appearance-tuned for the chrome and can
+            // invert against a profile that keeps its own palette under either OS appearance.
+            let ink = Slate.Terminal.ink
             let links = TerminalLinkDetector.detect(
                 rows: snapshot.viewportTextRows(),
                 cwd: cwd,
                 schemes: SettingsKey.linkSchemePolicy,
             )
             Canvas { context, _ in
-                let shading = GraphicsContext.Shading.color(accent)
+                let shading = GraphicsContext.Shading.color(ink)
                 for link in links {
                     // CLAMP to the visible grid: skip a span that starts off-screen-right and trim one that
                     // overruns the grid edge, so a soft-wrap-shifted span is never drawn in the void to the
