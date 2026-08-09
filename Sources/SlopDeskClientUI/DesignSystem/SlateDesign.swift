@@ -642,12 +642,17 @@ enum Slate {
         /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
         /// misaligned panel.
         ///
-        /// One rung UP the spacing grid from the 8 it opened at (user-directed 2026-08-08): 8 is the
-        /// grid's inset step, the same distance content keeps from an edge INSIDE a surface, so an
-        /// island wearing it read as padding rather than as clearance. 12 is the first rung that says
-        /// the island is a separate object without turning the moat into a margin. It is the OUTER
-        /// margin only — nothing inside the island moves, so the panes keep their own spacing.
-        static let islandInset: CGFloat = 12
+        /// BACK DOWN to the grid's inset step (user-directed 2026-08-09: the moat read too wide on
+        /// the left and right). It was raised to 12 on 2026-08-08 on the reasoning that 8 reads as
+        /// padding rather than clearance — true against a bare edge, and wrong against the two
+        /// columns the island actually stands between: the navigator's list and the panel's strip
+        /// each hold their own content off their edges by 8, so a 12pt moat put 20pt of ground
+        /// between a tab card and the glass while the bottom edge — which meets the window frame with
+        /// nothing in between — got 12. Eight is what makes the four gaps read alike.
+        ///
+        /// It is the OUTER margin only — nothing inside the island moves, so the panes keep their own
+        /// spacing.
+        static let islandInset: CGFloat = 8
         /// The island's corner — a WINDOW-SCALE corner, because the island is a window-scale surface
         /// (~880 × 775pt). 26 is what macOS 26 Tahoe puts on a full-chrome window, measured on this
         /// OS; the island wearing it reads as a window floating inside the window, which is the
@@ -672,6 +677,12 @@ enum Slate {
         static let bandHeight: CGFloat = heightStrip
         /// THE ISLAND'S TOP LINE — ``islandInset`` and nothing else, because the island keeps one
         /// moat on all four sides (user-directed 2026-08-09).
+        ///
+        /// Now that the moat is 8 this is also ``bandControlInset``, and that coincidence is the
+        /// whole point of the second alignment pass (user-directed 2026-08-09): the island's top edge
+        /// and the top edge of every plate standing in the band are ONE line. At 12 it was a line
+        /// that agreed with nothing — 4pt under the plates' tops, 20 above their bottoms — which is
+        /// what read as "hơi lệch" across the top of the window.
         static let bandInset: CGFloat = islandInset
         /// Where a CONTROL in the band hangs from. Not the island's line: a control is 24 and a
         /// traffic light is 16, so hanging both from one line leaves the discs riding 4pt high

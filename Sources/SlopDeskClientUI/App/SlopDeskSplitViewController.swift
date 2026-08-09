@@ -105,9 +105,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         // No `chrome:` — the sidebar's collapse toggle moved to the window root
-        // (``WindowSidebarToggle``), so this column no longer owns a chrome control.
+        // (``WindowSidebarToggle``), so this column no longer owns a chrome control. It DOES own the
+        // connection island at its foot again (user-directed 2026-08-09), hence `connection` +
+        // `onConnect`.
         let navigator = NSHostingController(rootView: NavigatorColumn(
-            store: store, preferences: preferences, paneDrag: paneDrag,
+            store: store, connection: connection, onConnect: onConnect,
+            preferences: preferences, paneDrag: paneDrag,
         ).overlayCoordinator(overlay))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth

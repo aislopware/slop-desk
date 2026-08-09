@@ -6,8 +6,8 @@
 //   • the island paints ``Slate/Surface/island`` — the profile's own glass, never a chrome tone;
 //   • it clips to ``Slate/Metric/islandRadius``, a window-scale corner for a window-scale surface;
 //   • it floats in an ``Slate/Metric/islandInset`` moat of GROUND, the same on all four sides, so
-//     its top edge rises INTO the band, just under the controls' own tops — except while the
-//     navigator is hidden and the band runs over this column, when the top opens to
+//     its top edge rises INTO the band and lands ON the line the band's plates hang from — except
+//     while the navigator is hidden and the band runs over this column, when the top opens to
 //     ``Slate/Metric/bandHeight``;
 //   • it carries a hairline edge, because in the light profile the ground and the glass are the same
 //     cream (law 4) and the corner alone cannot draw the boundary.
@@ -32,8 +32,14 @@ extension View {
     /// on the top side exactly as it insets on the other three, so it reaches INTO the band rather
     /// than starting a row under it — the three columns open together instead of the middle one
     /// beginning low. Hanging the island BELOW the whole band was tried in two band heights and
-    /// rejected both times. The band's own controls are centred inside that row
-    /// (``Slate/Metric/bandControlInset``), which is what keeps a plate level with a traffic light.
+    /// rejected both times.
+    ///
+    /// AND THAT MOAT IS NOW THE BAND'S OWN CONTROL LINE. With the moat at 8 the island's top edge
+    /// coincides with ``Slate/Metric/bandControlInset`` — the y every plate in the band hangs from —
+    /// so the glass's top edge, the sidebar toggle, the panel's surface tabs and the collapsed-state
+    /// tab chips all start on ONE line, and the traffic lights (16pt discs, centred on that row's own
+    /// centre) sit inside it. At 12 the island's edge shared its line with nothing, which is what the
+    /// user read as the top of the window being slightly out of true.
     ///
     /// `clearingBand` is the one state that cannot have it: with the navigator collapsed this column
     /// holds the window's left edge, and the band above it fills with the lights, the toggle and the

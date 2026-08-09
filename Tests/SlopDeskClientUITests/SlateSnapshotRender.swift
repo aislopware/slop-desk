@@ -295,7 +295,7 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
-    /// Renders the REAL ``ConnectionRailFooter`` (link line: hostname leading, metric trailing —
+    /// Renders the REAL ``ConnectionStatusIsland`` (link line: hostname leading, metric trailing —
     /// plus the host-pulse line when the machine has reported) in every ink state — healthy,
     /// degraded, bad, dialing, dimmed offline, memory pressure, plus a long hostname proving the host
     /// is the row's truncator — at the true sidebar width, so the ink steps and BOTH rail alignments
@@ -344,7 +344,7 @@ final class SlateSnapshotRender: XCTestCase {
     private func footerRow(
         host: String, led: ConnectionCluster.LedState, detail: (String, Bool), pulse: HostPulse?,
     ) -> some View {
-        ConnectionRailFooter(displayHost: host, led: led, detail: detail, pulse: pulse)
+        ConnectionStatusIsland(displayHost: host, led: led, detail: detail, pulse: pulse)
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.top, Slate.Metric.space3)
             .padding(.bottom, Slate.Metric.space2)

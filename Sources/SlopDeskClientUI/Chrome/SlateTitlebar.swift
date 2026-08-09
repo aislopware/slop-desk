@@ -6,10 +6,13 @@
 //     stands in. That toggle is NOT mounted here (user-directed 2026-08-09): it used to be a reveal
 //     twin cross-faded against a hide twin inside the navigator, and the pair rode the collapse
 //     slide. One button now hangs off the window root — see ``WindowSidebarToggle``.
-//   • right — NOTHING. The panel's reopen used to live here, hover-revealed; the collapsed panel now
-//     leaves a RAIL carrying its own toggle instead (``PanelRail``, user-directed 2026-08-09), which
-//     is a control that is always there and always in the same place — and, unlike a plate parked at
-//     the window's trailing edge, one that never has to stand on the island's corner.
+//   • right — the CONNECTION ISLAND, collapsed-only, anchored to the strip's trailing corner
+//     (user-directed 2026-08-09). It is the SAME island that stands at the navigator's foot while
+//     the tabs are vertical: the status follows the tab list's axis, so with the list laid across
+//     the band the island lays down beside it, one line on the same bed. The panel's reopen does NOT
+//     live here — the collapsed panel leaves a RAIL carrying its own toggle instead (``PanelRail``,
+//     user-directed 2026-08-09), which is a control that is always there and always in the same
+//     place, and never has to stand on the island's corner.
 // The CENTRE IS EMPTY (user-directed 2026-08-08): the pane title and its `⋯` menu are gone. With the
 // terminal lifted as an island, the band above it is the island's top moat — a strip of bare ground —
 // and a label floating in it read as chrome the layout no longer has room for. Nothing was lost: split
@@ -17,11 +20,9 @@
 // palette's DIRECTORY section. The window title itself is unaffected (`.navigationTitle` still feeds
 // Mission Control, the window menu and screenshots).
 //
-// NO CONNECTION STATUS (user-directed 2026-08-09). The cluster used to appear here whenever the
-// sidebar was collapsed, mirroring the sidebar footer's resting copy; both are gone from the macOS
-// chrome. The link still speaks where it MATTERS — the empty pane area names not-connected /
-// link-down as its cause and carries the Connect action — and Connect-to-Host stays reachable from
-// the palette. `ConnectionCluster` itself lives on: iOS mounts it in the navigation toolbar.
+// The CENTRE stays empty even now that the trailing corner is occupied: the strip's two ends belong
+// to the two things the collapse displaced (the tabs, and the status that stood under them), and the
+// middle is still the island's top moat.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -42,6 +43,10 @@ struct SlateTitlebar: View {
     var rows: [RailRow] = []
     /// Focus a pane from the strip. No-op default keeps the titlebar standalone-mountable.
     var onSelectPane: (PaneID) -> Void = { _ in }
+    /// The app-global connection — the trailing island's model. `nil` (previews / tests) omits it.
+    var connection: AppConnection?
+    /// Opens the Connect-to-Host editor from that island.
+    var onConnect: () -> Void = {}
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
     private var codeSidebarVisible: Bool { !chrome.codeSidebarCollapsed }
@@ -65,6 +70,18 @@ struct SlateTitlebar: View {
                         // beside them stays perfectly still through all of it — that is the point of
                         // its move to the window root.
                         .offset(x: sidebarVisible ? -Slate.Metric.heightControl : 0)
+                }
+                if let connection {
+                    // The strip above is a horizontal ScrollView and takes whatever width is left,
+                    // so this island needs no spacer to be pushed to the trailing edge — and a long
+                    // tab run scrolls under it rather than shoving it off the band.
+                    ConnectionStatusMount(
+                        store: store, connection: connection, onConnect: onConnect, layout: .inline,
+                    )
+                    // The mirror of the tabs' arrival: it waits one control OUT on the trailing side
+                    // and lands as the column finishes leaving, so the two halves of the band fill
+                    // in from their own edges instead of both sliding the same way.
+                    .offset(x: sidebarVisible ? Slate.Metric.heightControl : 0)
                 }
             }
             .opacity(sidebarVisible ? 0 : 1)

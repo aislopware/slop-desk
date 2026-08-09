@@ -24,6 +24,15 @@ import SwiftUI
 struct NavigatorColumn: View {
     let store: WorkspaceStore
 
+    /// The app-global connection — the FOOTER island's model (user-directed 2026-08-09: the status
+    /// came back, and with a vertical tab list its home is under that list). `nil` (previews / iOS,
+    /// which mounts the cluster in its own toolbar) simply omits the footer.
+    var connection: AppConnection?
+
+    /// Opens the Connect-to-Host editor from the footer island. No-op default keeps the column
+    /// standalone-mountable.
+    var onConnect: () -> Void = {}
+
     /// The live ``PreferencesStore`` — threaded in so the tab context menu can surface the host-LOCAL
     /// **Prevent Sleep While Processing** flag (`docs/ui-shell/screenshots/open-code-agent-history.png`
     /// shows it on the tab menu). The macOS sidebar is hosted in a SEPARATE `NSHostingController` that does not
@@ -250,13 +259,25 @@ struct NavigatorColumn: View {
                 NewTabDropSlot(coordinator: paneDrag)
             }
 
-            // NO CONNECTION FOOTER (user-directed 2026-08-09). The link line + host pulse used to
-            // stand under the tab list and the same cluster mirrored into the titlebar whenever this
-            // panel was hidden. Both are gone from the macOS chrome: a status block that reads
-            // "connected" ~100% of the time was spending the sidebar's most permanent slot on a
-            // constant. The link still speaks where it is actionable — the empty pane area names
-            // not-connected / link-down as its CAUSE and carries the Connect action — and
-            // Connect-to-Host stays in the palette. iOS keeps `ConnectionCluster` in its toolbar.
+            // THE CONNECTION ISLAND, anchored to this column's foot (user-directed 2026-08-09).
+            // It is the LAST BED in a column of beds — same tint family, same corner, same gutter as
+            // the project islands above it — which is what earns it the sidebar's most permanent
+            // slot: it is not a status widget bolted under a list, it is the list's final member,
+            // and the one whose subject is the machine the rest of them run on. When the tabs turn
+            // horizontal the island goes with them (``SlateTitlebar``); there is exactly one of it
+            // on screen at any time.
+            if let connection {
+                ConnectionStatusMount(
+                    store: store, connection: connection, onConnect: onConnect, layout: .stacked,
+                )
+                // The list's own gutter — the island lines up with the project beds above it.
+                .padding(.horizontal, 8)
+                // The air the island needs is ABOVE it, not inside it: `space3` separates it from
+                // the last project bed by more than the `space2` that separates two projects, so it
+                // reads as the column's foot rather than as one more group.
+                .padding(.top, Slate.Metric.space3)
+                .padding(.bottom, Slate.Metric.space2)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Slate.Surface.field)
