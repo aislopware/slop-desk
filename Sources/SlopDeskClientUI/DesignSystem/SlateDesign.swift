@@ -757,6 +757,13 @@ enum Slate {
         /// first pass was a `plate`-wide column INSIDE the surface and did both (user-reported
         /// 2026-08-09).
         static let ladderRail: CGFloat = paneGutter
+        /// How far the island's transient chip stack (``IslandChipStack`` — copy receipt, notice,
+        /// connection indicator) stands off the island's FOOT. Two rungs of the scale, not one,
+        /// because a chip is a floating cue over live text: at the window's old 16pt inset it sat on
+        /// the island's bottom edge and covered the prompt line the user was typing on
+        /// (user-reported 2026-08-09). At 24 there is a clear channel of glass under it, so the
+        /// prompt stays readable while the chip is up.
+        static let islandChipInset: CGFloat = space4 + space2
         /// One tick's length at rest — half the rail, centred, so the mark reads as a rung on an edge
         /// rather than as something poking out of the text.
         static let ladderTick: CGFloat = 6

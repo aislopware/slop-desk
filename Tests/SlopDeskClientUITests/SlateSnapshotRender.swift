@@ -234,6 +234,30 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
+    // MARK: - Opt-in render of the island chip stack
+
+    /// Renders the chip family at the FOOT OF THE ISLAND, over the glass they actually stand on —
+    /// the check this round exists for. The chips previously drew in the light-pinned semantic tiers
+    /// (`Slate.Text` / `Slate.Surface`) while mounted on the window root, which never enters the glass
+    /// colour scope: dark ink on a fill that barely registered over `#22212C`. Legibility is a PIXEL
+    /// question, so it gets a PNG — sample the chip's ink against the plate and the plate against the
+    /// glass. The mock mirrors ``ContentColumn``'s mount exactly (bottom-aligned overlay over the
+    /// glass-scoped canvas, `Metric/islandChipInset` of clearance) so the standoff is measurable too.
+    ///
+    /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_CHIP_SNAPSHOT_DIR=<dir>`.
+    @MainActor
+    func testRenderIslandChips() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_CHIP_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_CHIP_SNAPSHOT_DIR=<dir> to render the island chip stack")
+        }
+        let mock = IslandChipMock()
+        try renderHosted(mock, size: CGSize(width: 520, height: 300), to: dir, named: "island-chips.png")
+        try renderHosted(
+            mock.frame(width: 520, height: 300).scaleEffect(3, anchor: .bottom),
+            size: CGSize(width: 520, height: 300), to: dir, named: "island-chips-3x.png",
+        )
+    }
+
     /// One mark at the column's true size, or magnified.
     ///
     /// ⚠️ A system symbol is REDRAWN at the larger point size rather than scaled: `Image(systemName:)`
@@ -900,6 +924,66 @@ private struct LadderPaneMock: View {
             }
             Spacer(minLength: 0)
         }
+    }
+}
+
+/// A pane MOCK for the island-chip render: the glass canvas under a bottom-aligned chip stack, exactly
+/// as ``ContentColumn``'s `paneArea` composes it — the same overlay alignment, the same
+/// `Metric/islandChipInset` clearance, the same glass colour scope. The chips are the REAL views (no
+/// store / coordinator is needed to draw one), so what the PNG shows is what the app draws: the
+/// question the render answers is whether their ink survives the glass, and where the stack sits
+/// relative to the island's foot. Stand-in "cells" run to the canvas's bottom edge so a chip parked on
+/// the live prompt line would be unmistakable.
+@MainActor
+private struct IslandChipMock: View {
+    var body: some View {
+        cells
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.vertical, Slate.Metric.space2)
+            .padding(.horizontal, Slate.Metric.paneGutter)
+            .background(Slate.Surface.terminal)
+            .overlay(alignment: .bottom) {
+                VStack(spacing: Slate.Metric.space2) {
+                    CopyReceiptChip(receipt: CopyReceipt(text: sampleCopy, epoch: 1), onExpire: {})
+                    NoticeChip(
+                        notice: ChipNotice(
+                            label: "TAB CLOSED", detail: "⇧⌘T REOPENS", epoch: 1, dwell: .seconds(3),
+                        ),
+                        onExpire: {},
+                    )
+                    ConnectionAlertChip(
+                        alert: WorkspaceConnectionAlert(count: 1, worst: .reconnecting, worstPane: PaneID()),
+                        onTap: {},
+                    )
+                    ConnectionAlertChip(
+                        alert: WorkspaceConnectionAlert(count: 2, worst: .unreachable, worstPane: PaneID()),
+                        onTap: {},
+                    )
+                }
+                .padding(.bottom, Slate.Metric.islandChipInset)
+            }
+            .environment(\.colorScheme, Slate.glassColorScheme)
+    }
+
+    /// Enough text for a plural receipt (`COPIED · N CHARS`), assembled rather than counted by hand.
+    private var sampleCopy: String {
+        String(repeating: "swift build\n", count: 100)
+    }
+
+    /// Stand-in cells — full-bleed rows of the terminal's own ink, so the canvas's bottom edge (and any
+    /// chip sitting on it) is unmistakable in the render.
+    private var cells: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(0..<14, id: \.self) { row in
+                Rectangle()
+                    .fill(Slate.Terminal.ink2)
+                    .frame(height: Slate.Metric.hairline * 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, row.isMultiple(of: 3) ? Slate.Metric.space4 : 0)
+                    .opacity(Slate.Opacity.muted)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 

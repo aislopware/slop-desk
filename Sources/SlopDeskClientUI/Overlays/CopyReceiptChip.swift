@@ -1,8 +1,8 @@
 // CopyReceiptChip — the transient `COPIED · 1,204 CHARS` confirmation chip, the ONE view behind both
 // copy-confirmation mounts: bottom-trailing INSIDE the pane for pane-scoped copies (⌘C selection,
-// copy-mode yank, navigator / hint copies — feedback lives at its trigger), and bottom-center at the
-// window level for pane-less copies (palette "Copy Path", rail "Copy Window Title" — their trigger
-// sheet/menu is gone by the time the write lands, the Raycast-HUD case).
+// copy-mode yank, navigator / hint copies — feedback lives at its trigger), and bottom-centre at the
+// foot of the ISLAND (``IslandChipStack``) for pane-less copies (palette "Copy Path", rail "Copy
+// Window Title" — their trigger sheet/menu is gone by the time the write lands, the Raycast-HUD case).
 //
 // Deliberately NOT a toast: a toast card on a high-frequency terminal action reads as spam and can
 // occlude the prompt line (the ghostty `app-notifications = no-clipboard-copy` lesson). This is a
@@ -31,11 +31,11 @@ struct CopyReceiptChip: View {
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
             Text("COPIED")
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(Slate.Terminal.ink2)
             Text("·")
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(Slate.Terminal.ink2.opacity(Slate.Opacity.muted))
             Text(receipt.detail)
-                .foregroundStyle(Slate.Text.primary)
+                .foregroundStyle(Slate.Terminal.ink)
         }
         // The shared instrument-chip treatment (`InstrumentChipShell`) — one shell for this chip and
         // every `NoticeChip`, so the two can never drift apart visually.

@@ -39,10 +39,6 @@ struct OverlayHostView: View {
     /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
     var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
-    /// Whether the tabs panel (sidebar) is currently collapsed — the root passes the live
-    /// `chrome.sidebarCollapsed`. The durable connection indicator shows ONLY while collapsed (an open sidebar
-    /// is the user's normal per-pane surface); default `false` (iOS/previews/tests) keeps it hidden.
-    var sidebarCollapsed: Bool = false
 
     var body: some View {
         // ⚠️ TWO LAYERS, deliberately not one chain. The ambient layer (toasts, chips, the ⌃⇥ readout)
@@ -56,38 +52,16 @@ struct OverlayHostView: View {
             ToastStackView(coordinator: coordinator, onJump: jumpToNotifiedPane)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(!coordinator.toasts.isEmpty)
-                // The bottom-center transient chips, stacked so they can't overlap: the window-level
-                // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
-                // self-expiring via the chip's dwell task) above the durable connection indicator — a compact
-                // amber/red chip shown ONLY while the tabs panel is collapsed AND some pane is unhealthy. With
-                // the sidebar hidden a dropped/reconnecting pane otherwise has no per-pane surface; clicking
-                // the chip focuses the worst affected pane. Hidden when all panes are healthy (`nil` alert).
-                .overlay(alignment: .bottom) {
-                    VStack(spacing: Slate.Metric.space2) {
-                        if let receipt = coordinator.copyReceipt {
-                            CopyReceiptChip(receipt: receipt, onExpire: { coordinator.clearCopyReceipt() })
-                                .allowsHitTesting(false)
-                                .transition(.opacity)
-                        }
-                        if let notice = coordinator.notice {
-                            NoticeChip(notice: notice, onExpire: { coordinator.clearNotice() })
-                                .allowsHitTesting(false)
-                                .transition(.opacity)
-                        }
-                        if sidebarCollapsed, let alert = connectionAlert {
-                            ConnectionAlertChip(alert: alert) { store.jumpToPaneTree(alert.worstPane) }
-                                .transition(.opacity)
-                        }
-                    }
-                    .padding(Slate.Metric.space4)
-                }
+                // The transient chip stack (copy receipt · notice · connection indicator) is NOT here: it
+                // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
+                // Centred on the window it drifted off the canvas it described, and its window-measured
+                // inset parked it on the island's bottom edge over the prompt line (user-directed
+                // 2026-08-09).
+                //
                 // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
                 // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
                 // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
                 .overlay(alignment: .center) { PaneSwitcherOverlay(store: store) }
-                .animation(Slate.Anim.smallFade, value: connectionAlert)
-                .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
-                .animation(Slate.Anim.smallFade, value: coordinator.notice)
                 .animation(Slate.Anim.smallFade, value: activeSheet)
 
             // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
@@ -148,12 +122,6 @@ struct OverlayHostView: View {
         // asset) already makes stock controls, focus rings and selection read graphite — here and in
         // the workspace beneath alike (see ``SlateOverlayInk``).
     }
-
-    /// The live connection-health fold, read once per body evaluation so the indicator
-    /// overlay and its fade animation agree on the same value. Reading `store.connectionAlert()` registers
-    /// observation on each pane's `ConnectionViewModel.status`, so the chip appears / updates / disappears as
-    /// panes drop and recover.
-    private var connectionAlert: WorkspaceConnectionAlert? { store.connectionAlert() }
 
     /// Lands on the pane a notification came from. This is what makes a toast a DOOR rather than a dead
     /// end: every push site is gated on the source pane NOT being focused, so the card always names
@@ -336,50 +304,6 @@ struct OverlayHostView: View {
             case "action.secureKeyboardEntry": store.isActivePaneSecureInputActive()
             default: false
             }
-        }
-    }
-}
-
-// MARK: - ConnectionAlertChip (the durable collapsed-sidebar connection indicator)
-
-/// The compact connection-health chip: an amber/red status dot + a count label
-/// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
-/// is unhealthy. A `Button` (unlike the non-interactive receipt chips) so a click focuses the worst-affected
-/// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
-private struct ConnectionAlertChip: View {
-    let alert: WorkspaceConnectionAlert
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: Slate.Metric.space1) {
-                Circle()
-                    .fill(Self.tint(for: alert.worst))
-                    .frame(width: 7, height: 7)
-                Text(alert.label)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.Text.secondary)
-            }
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-            .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
-            )
-        }
-        .buttonStyle(.plain)
-        .help("\(alert.label) — click to focus the affected pane")
-        .accessibilityLabel("\(alert.label). Click to focus the affected pane.")
-    }
-
-    /// Amber while a drop is recovering (`.reconnecting`), red once it is down (`.failed` / `.unreachable`) —
-    /// the same status roles the toolbar connection pill (`StatusPresentation`) uses.
-    private static func tint(for severity: WorkspaceConnectionAlert.Severity) -> Color {
-        switch severity {
-        case .reconnecting: Slate.Status.warn
-        case .failed,
-             .unreachable: Slate.Status.err
         }
     }
 }

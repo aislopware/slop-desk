@@ -164,6 +164,19 @@ struct ContentColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // THE ISLAND'S CHIP STACK — the copy receipt, the transient notice and the collapsed-sidebar
+        // connection indicator, centred on the ISLAND and standing off its foot. Mounted here rather
+        // than on the window root so the stack is centred on the canvas it is talking about (the
+        // window's own centre includes the navigator and the code panel) and so its inset is measured
+        // from the glass's bottom edge instead of the window's (user-directed 2026-08-09).
+        .overlay(alignment: .bottom) {
+            if let overlayCoordinator {
+                IslandChipStack(
+                    store: store, coordinator: overlayCoordinator,
+                    sidebarCollapsed: chrome.sidebarCollapsed,
+                )
+            }
+        }
     }
 
     /// Resolves the empty pane area's CAUSE from the live connection: connected ⇒ the only thing

@@ -46,7 +46,7 @@ public struct ChipNotice: Equatable, Sendable {
 // MARK: - NoticeChip (the generic window-level chip view)
 
 /// The generic twin of `CopyReceiptChip`: label secondary · detail primary, shared shell, fade-only,
-/// dwell keyed on the notice epoch. Hit-transparent at the mount site (`OverlayHostView`).
+/// dwell keyed on the notice epoch. Hit-transparent at the mount site (`IslandChipStack`).
 struct NoticeChip: View {
     let notice: ChipNotice
     /// Called when the dwell elapses — the owner clears its notice, unmounting through the mount fade.
@@ -55,12 +55,12 @@ struct NoticeChip: View {
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
             Text(notice.label)
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(Slate.Terminal.ink2)
             if !notice.detail.isEmpty {
                 Text("·")
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(Slate.Terminal.ink2.opacity(Slate.Opacity.muted))
                 Text(notice.detail)
-                    .foregroundStyle(Slate.Text.primary)
+                    .foregroundStyle(Slate.Terminal.ink)
             }
         }
         .modifier(InstrumentChipShell(accessibility: notice.accessibilityText))
@@ -79,6 +79,14 @@ struct NoticeChip: View {
 /// The shared chip shell: instrument small/medium + tracking over a raised surface with a hairline and
 /// the small lift shadow that keeps a chip legible over busy terminal output (the ReadOnlyPill
 /// treatment). One modifier so the copy receipt and every notice read as the same instrument.
+///
+/// ⚠️ ON-GLASS VOCABULARY (``Slate/Terminal``), not the semantic chrome tiers. Every mount of this
+/// shell stands INSIDE the terminal island — the per-pane copy receipt, and (since the notices moved
+/// off the window root) the transient stack over the island's foot. The semantic set is pinned on the
+/// LIGHT side only (see ``Slate/Text``), so on the glass it drew `#585751` ink on a `.quaternarySystemFill`
+/// plate over `#22212C`: a chip that was there but unreadable (user-reported 2026-08-09). The glass keeps
+/// its profile palette under either OS appearance, so its own ink/edge is the only set that cannot invert
+/// against it — the same reason ``CommandLadderPeek`` is drawn this way.
 struct InstrumentChipShell: ViewModifier {
     let accessibility: String
 
@@ -90,12 +98,12 @@ struct InstrumentChipShell: ViewModifier {
             .fixedSize()
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .background(Slate.Terminal.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                    .strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline),
             )
-            .slateShadow(.chip)
+            .slateShadow(.chip, color: Slate.State.overlayShadow)
             .accessibilityLabel(accessibility)
     }
 }

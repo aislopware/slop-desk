@@ -162,7 +162,6 @@ public struct WorkspaceRootView: View {
                 connection: connection,
                 coordinator: overlay,
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
-                sidebarCollapsed: chrome.sidebarCollapsed,
             )
         }
         // Wire ⌘⇧L (Toggle Tabs Panel) to the live chrome once it exists. The dispatcher is built at app
@@ -196,6 +195,10 @@ public struct WorkspaceRootView: View {
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
         }
+        // The columns read the reducer from the environment (the island's chip stack does, and macOS's
+        // split host injects it per hosting controller for the same reason) — iOS shares one tree, so
+        // one injection at the root covers both columns.
+        .overlayCoordinator(overlay)
         .toolbar { iosToolbar }
         // The floating-overlay layer mounts on iOS too (palette / connect / remote-window picker / toasts —
         // a ZStack overlay on both platforms). The ✓ gutter tracks the live chrome + the active pane's
@@ -206,7 +209,6 @@ public struct WorkspaceRootView: View {
                 connection: connection,
                 coordinator: overlay,
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
-                sidebarCollapsed: chrome.sidebarCollapsed,
             )
         }
         // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles

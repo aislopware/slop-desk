@@ -7312,3 +7312,59 @@ that draw themselves from the OS accent no matter what, so it should look like S
 rather than half like it. The user confirmed that verdict when it was put to them (2026-08-08):
 both alternatives — repaint the ground and keep the native controls, or carry the island vocabulary
 all the way into its rows — were offered and declined. Do not propose it again.
+
+## The state transfer carries the shell's prompt marks, and the chip family comes home to the island (2026-08-09)
+
+Two user-reported defects, one session. They are unrelated in mechanism and share only the fact that
+both were introduced by a change that was correct about what it *painted*.
+
+**1. After a client reconnect, clicking the command ladder no longer jumped.** The ticks came back,
+so the metadata path was fine — `CommandBlockTracker.snapshotForResync` re-emits every held block
+(ordinals included) on reattach, exactly as designed. What did not come back was the thing the jump
+actually walks. `BlockJump.toPromptOrdinal` is a RELATIVE re-anchor over libghostty's prompt-row
+iterator: `jump_to_prompt:-32000` to pin the oldest retained prompt, then `ordinal − 1` downward
+hops. A prompt ROW exists only where the shell emitted OSC 133 `A` — and `TerminalSnapshotRenderer`,
+which replaced byte-history replay with a state transfer (2026-07-25), emitted content only. Its
+model skipped every OSC body wholesale, so the marks were not merely unrendered, they were never
+recorded. A cold reattach therefore delivered a complete-looking scrollback containing ZERO prompt
+rows: the anchor found nothing, every hop found nothing, and the click ran a bare `scroll_to_bottom`
+and looked broken. The navigator's per-row jump and Jump-to-Failed were dead the same way — the same
+primitive, the same silence.
+
+`TerminalScreenModel` now keeps a per-row prompt flag beside its soft-wrap flag (shifted by every
+scroll/insert/delete, cleared with the rows an erase blanks, rebuilt by RIS and `ED 3`), fed by a
+5-byte matcher over the OSC body that recognises `133;A` and `133;A;<params>` and nothing else — not
+`133;B/C/D`, not another OSC, not a DCS that spells the same thing. The renderer re-emits
+`ESC ] 133 ; A BEL` ahead of each marked logical line. Because the model PARSES what the renderer
+EMITS, the canonicalization proof extends unchanged: the flags are compared in `assertRoundTrip`, so
+the existing curated corpus and the 300-seed fuzz now pin mark placement too, and
+`render(feed(render(A))) == render(A)` still holds byte-exact.
+
+Two boundaries are deliberate. The host's snapshot scrollback budget (10 000 lines) equals the
+client's own scrollback cap, so the prompt window after a transfer is the window the client would
+have held live — the ordinal base does not shift and jumps land exactly, with no new long-session
+degradation beyond the ring-eviction case the jump already documents. And `renderTranscript` (PATH B,
+the journal restore) emits NO marks: those bytes front a brand-new shell whose segmenter restarts its
+ordinals at 1, so an inherited mark would make ordinal #1 a dead session's prompt and mis-land every
+jump in the new life. Marks are re-emitted where the ordinal space is CONTINUOUS with them, and
+nowhere else.
+
+**2. The transient chips were unreadable, and standing in the wrong place.** `NoticeChip` /
+`CopyReceiptChip` / the connection indicator drew in the semantic chrome tiers — `Slate.Text.*` over
+`Slate.Surface.raised`. Those tiers are PINNED ON THE LIGHT SIDE (the ink ladder re-solved against
+the cream ground), and the stack was mounted on the window root, which never flips to the glass
+scope the pane tree sets. So over `#22212C` the chip drew `#585751` ink on a `.quaternarySystemFill`
+plate: present, and invisible. The token doc had already written the rule down — everything inside
+the island reads `Slate.Terminal.*` — the chips were simply a third subtree nobody had counted.
+
+They now draw in the glass's own vocabulary, the same set `CommandLadderPeek` uses, and they have
+moved off the window root onto the pane canvas (`IslandChipStack`, mounted by `ContentColumn`). That
+answers the placement half: bottom-centre of the WINDOW includes the navigator and the code panel, so
+the stack drifted off the canvas it was describing, and its 16pt window-measured inset parked it on
+the island's bottom edge, over the live prompt line — the exact failure this family's own header
+comment forbids ("can occlude the prompt line"). Centred on the island and standing off its foot by
+`Metric.islandChipInset` (24), there is a clear channel of glass under it. User-directed 2026-08-09;
+window-centred and pane-corner mounts were both offered and declined.
+
+⚠️ The hit-transparency stays PER CHIP. A flag on the stack would deafen the connection chip's
+`Button` — the same ancestor-suppression lesson `OverlayHostView`'s two-layer note records.
