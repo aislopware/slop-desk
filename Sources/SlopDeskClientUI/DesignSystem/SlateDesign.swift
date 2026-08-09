@@ -765,6 +765,17 @@ enum Slate {
         /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 7pt up
         /// from the bottom, so a shorter inset would let the last tick slide under the rounded corner.
         static let ladderInset: CGFloat = space4
+        /// The hover PEEK card's width — the excerpt of a block's output the ladder shows while the
+        /// pointer dwells on a tick. Wide enough for a build log's ordinary line, narrow enough that
+        /// it covers a strip of the pane rather than the pane.
+        static let ladderPeekWidth: CGFloat = 320
+        /// One excerpt line's row height in the peek card — the ``Typeface/footnote`` mono face's
+        /// line box, declared rather than inferred so the card's height is COMPUTABLE and its
+        /// placement beside a tick can be solved (and unit-pinned) before it is drawn.
+        static let ladderPeekLine: CGFloat = 14
+        /// The gap between the rail and the peek card's trailing edge — the card hangs off the rail,
+        /// it does not touch it.
+        static let ladderPeekGap: CGFloat = space2
 
         /// The footer ARC GAUGE (``PulseGauge``): a ring the size of a footnote glyph box, so it
         /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.

@@ -228,6 +228,10 @@ final class SlateSnapshotRender: XCTestCase {
             pane.frame(width: 280, height: 220).scaleEffect(4, anchor: .bottomTrailing),
             size: CGSize(width: 280, height: 220), to: dir, named: "command-ladder-4x.png",
         )
+        try renderHosted(
+            LadderPeekMock(), size: CGSize(width: 700, height: 470), to: dir,
+            named: "command-ladder-peek.png",
+        )
     }
 
     /// One mark at the column's true size, or magnified.
@@ -895,6 +899,84 @@ private struct LadderPaneMock: View {
             }
             Spacer(minLength: 0)
         }
+    }
+}
+
+/// The PEEK card in every state it can be read in, on the glass it is drawn over — the true-size
+/// check for the hover preview (the real card is opened by a dwell, which no static render performs).
+private struct LadderPeekMock: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: Slate.Metric.space4) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                card(block(0, "make test-touched", exit: 0), .ready(clean))
+                card(block(1, "cargo check", exit: 101), .ready(failure))
+            }
+            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                card(block(2, "git status", exit: 0), .ready(short))
+                card(block(3, "true", exit: 0), .ready(BlockOutputPreview(
+                    lines: [], hiddenCount: 0, fromTail: false,
+                )))
+                card(block(4, "swift build --very-long-command-line-that-must-truncate", exit: 0), .loading)
+                card(block(5, "make test", exit: nil), .unavailable)
+            }
+        }
+        .padding(Slate.Metric.space4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Slate.Surface.terminal)
+        .environment(\.colorScheme, Slate.glassColorScheme)
+    }
+
+    private func card(_ block: CommandBlock, _ entry: CommandLadderPeekEntry) -> some View {
+        CommandLadderPeekCard(block: block, entry: entry)
+    }
+
+    private func block(_ index: UInt32, _ text: String, exit code: Int32?) -> CommandBlock {
+        CommandBlock(
+            index: index, commandText: text, exitCode: code,
+            durationMS: code == nil ? nil : 12400, complete: code != nil, outputLen: 4096,
+            promptOrdinal: index + 1,
+        )
+    }
+
+    /// A clean run read from the TOP, with more below.
+    private var clean: BlockOutputPreview {
+        BlockOutputPreview(
+            lines: [
+                "Building for debugging...",
+                "[1/1103] Compiling SlopDeskClientUI CommandLadderOverlay.swift",
+                "[2/1103] Compiling SlopDeskWorkspaceCore BlockOutputPreview.swift",
+                "Test Suite 'All tests' started at 2026-08-09 18:04:11.882",
+                "Test Case '-[CommandLadderLayoutTests testFewTicksKeep]' passed",
+                "Test Suite 'All tests' passed at 2026-08-09 18:04:24.301",
+                "Executed 1103 tests, with 0 failures (0 unexpected) in 12.401s",
+                "",
+            ],
+            hiddenCount: 214, fromTail: false,
+        )
+    }
+
+    /// A failure read from the BOTTOM — the whole reason the excerpt follows the outcome.
+    private var failure: BlockOutputPreview {
+        BlockOutputPreview(
+            lines: [
+                "   Compiling slopdesk v0.1.0 (/Volumes/Lacie/Workspace/oss/slop-desk)",
+                "error[E0433]: failed to resolve: use of undeclared crate or module",
+                "  --> src/main.rs:42:9",
+                "   |",
+                "42 |         foo::bar();",
+                "   |         ^^^ use of undeclared crate or module `foo`",
+                "",
+                "error: could not compile `slopdesk` (bin \"slopdesk\") due to 1 error",
+            ],
+            hiddenCount: 214, fromTail: true,
+        )
+    }
+
+    private var short: BlockOutputPreview {
+        BlockOutputPreview(
+            lines: ["On branch main", "nothing to commit, working tree clean"],
+            hiddenCount: 0, fromTail: false,
+        )
     }
 }
 

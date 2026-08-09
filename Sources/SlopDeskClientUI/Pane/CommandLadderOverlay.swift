@@ -73,6 +73,24 @@ struct CommandLadderOverlay: View {
     /// an instrument).
     @State private var railHover = false
 
+    /// The tick the pointer is currently ON, if any. Drives the DWELL: `.task(id:)` keyed on it
+    /// restarts (and cancels) the wait every time the pointer moves to another tick.
+    @State private var hoveredIndex: UInt32?
+
+    /// The block whose peek card is open, or `nil` when none is. Kept separate from
+    /// ``hoveredIndex`` so the card SURVIVES the pointer sliding into the gap between two ticks —
+    /// it closes when the rail is left, not when a tick is.
+    @State private var peekedIndex: UInt32?
+
+    /// Whether the peek is ARMED — the mode the dwell buys. While armed, moving to another tick
+    /// opens its card at once; reading back through a session is then one gesture rather than a
+    /// second per command.
+    @State private var peekArmed = false
+
+    /// The per-block excerpts, keyed by block index — one wire fetch per block, ever. Pruned to the
+    /// live block set on each load so it can never outgrow the ring the blocks themselves live in.
+    @State private var peeks: [UInt32: CommandLadderPeekEntry] = [:]
+
     var body: some View {
         let blocks = model.blocks.blocks
         if !blocks.isEmpty {
@@ -82,14 +100,19 @@ struct CommandLadderOverlay: View {
                     count: blocks.count, available: proxy.size.height - inset * 2,
                 )
                 if fit.shown > 0 {
+                    // The NEWEST `shown` blocks, oldest-first — the same slice the eye reads
+                    // top→down in the scrollback itself.
+                    let shown = Array(blocks.suffix(fit.shown))
                     ZStack(alignment: .bottom) {
                         track(height: CGFloat(fit.shown) * fit.pitch)
                         VStack(spacing: 0) {
-                            // The NEWEST `shown` blocks, oldest-first — the same slice the eye reads
-                            // top→down in the scrollback itself.
-                            ForEach(blocks.suffix(fit.shown), id: \.index) { block in
-                                LadderTick(block: block, onJump: onJump)
-                                    .frame(height: fit.pitch)
+                            ForEach(shown, id: \.index) { block in
+                                LadderTick(
+                                    block: block,
+                                    onJump: onJump,
+                                    onHover: { over in hoveredIndex = over ? block.index : nil },
+                                )
+                                .frame(height: fit.pitch)
                             }
                         }
                     }
@@ -98,12 +121,101 @@ struct CommandLadderOverlay: View {
                     .opacity(railHover ? 1 : Slate.Opacity.muted)
                     .onHover { railHover = $0 }
                     .animation(Slate.Anim.smallFade, value: railHover)
+                    // AFTER the opacity, so the card reads at full strength while the rail behind it
+                    // is still only as bright as the pointer has earned.
+                    .overlay(alignment: .topLeading) {
+                        peekCard(shown: shown, fit: fit, available: proxy.size.height)
+                    }
+                    // The DWELL. `.task(id:)` cancels on every change of the hovered tick, so a
+                    // pointer sweeping across the rail on its way somewhere else arms nothing; once
+                    // armed, the wait is skipped and the card follows the pointer immediately.
+                    .task(id: hoveredIndex) {
+                        guard let hoveredIndex else { return }
+                        if !peekArmed {
+                            try? await Task.sleep(for: CommandLadderPeekLayout.dwell)
+                            guard !Task.isCancelled else { return }
+                            peekArmed = true
+                        }
+                        peekedIndex = hoveredIndex
+                        if let block = shown.first(where: { $0.index == hoveredIndex }) {
+                            load(block, live: blocks)
+                        }
+                    }
+                    // Leaving the rail ends the mode — after a grace, so crossing the gap at the
+                    // rail's edge or a jittery exit does not close a card being read.
+                    .task(id: railHover) {
+                        guard !railHover else { return }
+                        try? await Task.sleep(for: CommandLadderPeekLayout.grace)
+                        guard !Task.isCancelled else { return }
+                        peekArmed = false
+                        peekedIndex = nil
+                    }
                 }
             }
             // The rail's OWN strip — the pane's inner gutter, and the ONLY thing this view occupies.
             // Fixed here rather than inside the geometry so the hit column is the same width whether
             // or not the ladder has anything to draw.
             .frame(width: Slate.Metric.ladderRail)
+        }
+    }
+
+    /// The open peek card, hung off the rail beside its tick — nothing when the peek is closed or
+    /// the peeked block has scrolled out of the shown slice.
+    @ViewBuilder
+    private func peekCard(
+        shown: [CommandBlock], fit: (shown: Int, pitch: CGFloat), available: CGFloat,
+    ) -> some View {
+        if let peekedIndex, let row = shown.firstIndex(where: { $0.index == peekedIndex }) {
+            let entry = peeks[peekedIndex] ?? .unavailable
+            let inset = Slate.Metric.ladderInset
+            // The ticks are bottom-aligned inside the inset, so the ladder's top is measured back
+            // from the pane's bottom — never from its top, which moves with the pane's height.
+            let ladderTop = available - inset - CGFloat(fit.shown) * fit.pitch
+            let center = ladderTop + (CGFloat(row) + 0.5) * fit.pitch
+            let height = CommandLadderPeekLayout.cardHeight(
+                lineCount: entry.lineCount, hasFooter: entry.hasFooter,
+            )
+            CommandLadderPeekCard(block: shown[row], entry: entry)
+                .offset(
+                    x: -(Slate.Metric.ladderPeekWidth + Slate.Metric.ladderPeekGap),
+                    y: CommandLadderPeekLayout.cardTop(
+                        tickCenterY: center, cardHeight: height, available: available,
+                    ),
+                )
+                .transition(.opacity)
+                .animation(Slate.Anim.reveal, value: peekedIndex)
+        }
+    }
+
+    /// Fetches `block`'s output excerpt ONCE and caches it (wire type 15 → 29 through
+    /// ``TerminalViewModel/copyBlockOutput(index:onResult:)``, which already coalesces a duplicate
+    /// request and times out a lost reply). A RUNNING block is never fetched and never cached — the
+    /// host retains a block's output only once it completes, so the request would come back empty
+    /// and then be remembered as "unavailable" for a command that is about to have output.
+    private func load(_ block: CommandBlock, live: [CommandBlock]) {
+        guard block.status != .running, peeks[block.index] == nil else { return }
+        // Prune to the blocks that still exist — the ring evicts, and a cache that does not follow
+        // it would hold excerpts for commands the session no longer knows about.
+        let indices = Set(live.map(\.index))
+        peeks = peeks.filter { indices.contains($0.key) }
+        guard block.outputLen > 0 else {
+            // The command genuinely printed nothing — a different statement from "cannot show it".
+            peeks[block.index] = .ready(
+                BlockOutputPreview(lines: [], hiddenCount: 0, fromTail: block.isFailed),
+            )
+            return
+        }
+        peeks[block.index] = .loading
+        let failed = block.isFailed
+        let index = block.index
+        model.copyBlockOutput(index: index) { text in
+            guard let text else {
+                peeks[index] = .unavailable
+                return
+            }
+            peeks[index] = .ready(
+                BlockOutputPreviewBuilder.make(plainText: text, failed: failed),
+            )
         }
     }
 
@@ -125,6 +237,9 @@ struct CommandLadderOverlay: View {
 private struct LadderTick: View {
     let block: CommandBlock
     let onJump: (UInt32) -> Void
+    /// Reported to the rail so it can run the peek's DWELL — the tick itself knows nothing about the
+    /// card, it only says when the pointer is on it.
+    let onHover: (Bool) -> Void
 
     @State private var hovering = false
 
@@ -150,10 +265,15 @@ private struct LadderTick: View {
         }
         .buttonStyle(.plain)
         .disabled(!jumpable)
-        .onHover { hovering = $0 }
+        .onHover {
+            hovering = $0
+            onHover($0)
+        }
         .animation(Slate.Anim.smallFade, value: hovering)
-        .help(helpText)
+        // NO `.help` — the peek card is this tick's tooltip now, and AppKit's own would open a
+        // second, poorer one over it after its own delay.
         .accessibilityLabel(axLabel)
+        .accessibilityValue(axValue)
     }
 
     /// The outcome ink — the GLASS's status vocabulary (``Slate/Terminal``), never the system status
@@ -166,14 +286,10 @@ private struct LadderTick: View {
         }
     }
 
-    private var helpText: String {
-        let command = block.commandText.isEmpty ? "(command)" : block.commandText
-        let duration = block.durationLabel.map { " · \($0)" } ?? ""
-        switch block.status {
-        case .running: return "\(command) — running"
-        case .succeeded: return command + duration
-        case let .failed(code): return "\(command) — exit \(code)\(duration)"
-        }
+    /// The duration, spoken to VoiceOver — what the dropped `.help` tooltip used to carry beyond the
+    /// label, kept on the accessibility surface rather than lost with it.
+    private var axValue: String {
+        block.durationLabel ?? ""
     }
 
     private var axLabel: String {

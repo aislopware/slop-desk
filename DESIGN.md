@@ -117,7 +117,7 @@ components:
     height: "24px"
   command-ladder:
     textColor: "the GLASS's status inks — running = Terminal.accent, clean = Terminal.ok, failed = Terminal.err (the profile's OWN ANSI green/red); NEVER Status.ok/.err, which is the SYSTEM palette and read as a foreign signal green beside the Dracula Pro cells (user-reported 2026-08-09)"
-    note: "the terminal pane's trailing-edge tick rail (round 14): one 4x2 tick per OSC-133 command block (6x2 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {space.2} padding, mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (10/8/6/5/4): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 4pt floor and drops oldest. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
+    note: "PEEK: a 1s dwell on a tick ARMS a preview MODE (not a tooltip) — the card carries the command, its outcome and an excerpt of its output, and while armed moving down the rail swaps it instantly; leaving the rail disarms after a 400ms grace. The excerpt follows the OUTCOME: clean = first lines, failed = LAST lines (the first lines of a failing build are the banner every build prints), and the card names which end it took. Drawn in the GLASS vocabulary + mono face (it is terminal output inside the island) and NEVER hit-testable. One wire fetch per block, cached, never for a running one (the host retains output only on completion). The tick's AppKit `.help` is GONE — it would open a second, poorer tooltip over this. || the terminal pane's trailing-edge tick rail (round 14): one 4x2 tick per OSC-133 command block (6x2 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {space.2} padding, mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (10/8/6/5/4): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 4pt floor and drops oldest. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -334,6 +334,15 @@ info status. Everything else interactive is the system's.
   a point per command. Ticks are EVENLY pitched, never scroll-proportional — blocks carry prompt
   ordinals, not rows, and this house draws what it knows (absent-never-wrong). An ordinal-less tick
   (mid-stream join) dims and goes inert.
+- **The ladder's PEEK** (user-directed 2026-08-09) is a MODE, not a tooltip: a one-second dwell on a
+  tick arms it, and from then on moving down the rail swaps the card at once — reading back through a
+  session is one gesture rather than a second per command. It disarms 400ms after the rail is left.
+  The card is drawn on the glass in the mono face, because it is terminal output shown inside the
+  terminal island; a paper card here would be a bright plate carrying dark-on-light terminal text.
+  It never takes a hit. Its excerpt follows the OUTCOME — a clean command is read from its first
+  lines, a failed one from its LAST, since the opening lines of a failing build are the same banner
+  every build prints — and the card says which end it took, because a preview whose provenance is
+  invisible is a preview that can mislead.
 - The column subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
   profile's own polarity — so every semantic colour used inside resolves against the glass.
   Satellite pane windows are glass edge-to-edge and adopt the same forced scheme.
