@@ -775,10 +775,11 @@ enum Slate {
         /// is blinking (user-reported 2026-08-09: the rail indexed every command but nothing on it
         /// pointed at the prompt being typed at). Its LENGTH, and deliberately ``ladderTickActive``
         /// rather than a number of its own: the rail keeps ONE mark vocabulary — a dash on a centre
-        /// line — and this one is simply run out to the full length a mark may take there, which is
-        /// what makes it read as the ladder's END rather than as a second kind of thing standing on
-        /// it. It does NOT lengthen under the pointer (there is nowhere left to go); it thickens,
-        /// exactly as a caught tick does.
+        /// line — and this one is simply run out to the full length a mark may take there. LENGTH
+        /// is the whole of how it is told apart, since it stands at the ladder's ordinary pitch
+        /// (user-directed 2026-08-09: a blank band set it too far apart, and read as a mark adrift
+        /// from the rail rather than as its end). It does NOT lengthen under the pointer (there is
+        /// nowhere left to go); it thickens, exactly as a caught tick does.
         static let ladderHome: CGFloat = ladderTickActive
         /// How far the ladder holds off the pane's top and bottom. Sized to clear the ISLAND'S OWN
         /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 4pt up

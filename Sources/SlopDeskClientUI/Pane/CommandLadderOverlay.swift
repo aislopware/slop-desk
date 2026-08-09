@@ -24,9 +24,9 @@
 // segmenter surfaces one at its `C` mark and explicitly discards a prompt still awaiting input
 // (``CommandBlockSegmenter/peekOpenBlock()``), because a prompt is not a command — so while a pane
 // sits idle the ladder's last tick is the PREVIOUS command and nothing on the rail points at the
-// cursor. The foot rung (``LadderHomeMark``) is that pointer, one blank band below the ticks. It
-// scrolls to the bottom rather than jumping to an ordinal: the live prompt has no block, and the
-// bottom is where it lives.
+// cursor. The foot rung (``LadderHomeMark``) is that pointer, one ordinary pitch below the last
+// tick. It scrolls to the bottom rather than jumping to an ordinal: the live prompt has no block,
+// and the bottom is where it lives.
 //
 // HONEST CEILING — ticks are EVENLY PITCHED, not scroll-proportional: a block carries its prompt
 // ORDINAL (a 1-based prompt-cycle count), never a scrollback row, and the row math lives inside
@@ -51,22 +51,19 @@ enum CommandLadderLayout {
         var pitch: CGFloat
         /// Whether the LIVE-PROMPT mark stands at the ladder's foot.
         var home: Bool
-        /// Whether the blank band that sets the foot mark apart from the ticks is there — it is
-        /// not, when there are no ticks for it to separate the mark from.
-        var gapBand: Bool
 
-        /// The rungs the whole instrument occupies, ticks + blank band + foot mark. The ladder's
-        /// drawn height is this times ``pitch``, and the peek card's anchor is measured from it.
-        var rungs: Int { shown + (gapBand ? 1 : 0) + (home ? 1 : 0) }
+        /// The rungs the whole instrument occupies, ticks plus the foot mark. The ladder's drawn
+        /// height is this times ``pitch``, and the peek card's anchor is measured from it.
+        var rungs: Int { shown + (home ? 1 : 0) }
     }
 
-    /// What the LIVE-PROMPT mark costs the ladder: its own rung plus ONE BLANK BAND above it.
+    /// What the LIVE-PROMPT mark costs the ladder: ONE rung, at the ladder's own pitch.
     ///
-    /// The blank band is what sets the foot mark apart, and it is a BAND rather than a fixed gap
-    /// because the ticks' own visual spacing is `pitch - weight` — a constant gap tuned to read as
-    /// a break at the preferred pitch (12pt of clear rail between dashes) would read as no break at
-    /// all at the floor (4pt). One empty rung is a break at every rung of the ladder.
-    static let homeRungs = 2
+    /// It is spaced exactly like every tick above it (user-directed 2026-08-09) — the first pass
+    /// set it apart with a blank band and that read as a mark adrift from the rail rather than as
+    /// its end. The rail keeps one beat as well as one stroke; the foot rung is told apart by its
+    /// LENGTH, which is what it was given a longer one for.
+    static let homeRungs = 1
 
     /// The PITCH LADDER — the only centre-to-centre spacings the rail is allowed to run at, widest
     /// first. A CLOSED scale, and that is the stability fix (user-reported 2026-08-09: the rail read
@@ -96,11 +93,8 @@ enum CommandLadderLayout {
     /// to the cursor rather than on the oldest command in the scrollback.
     static func fit(count: Int, available: CGFloat) -> Fit {
         let rungs = rungFit(count: count + homeRungs, available: available)
-        guard rungs.shown > 0 else {
-            return Fit(shown: 0, pitch: rungs.pitch, home: false, gapBand: false)
-        }
-        let shown = max(0, rungs.shown - homeRungs)
-        return Fit(shown: shown, pitch: rungs.pitch, home: true, gapBand: shown > 0)
+        guard rungs.shown > 0 else { return Fit(shown: 0, pitch: rungs.pitch, home: false) }
+        return Fit(shown: max(0, rungs.shown - homeRungs), pitch: rungs.pitch, home: true)
     }
 
     /// How many of `count` evenly-pitched RUNGS fit in `available` points, and at what pitch — the
@@ -172,11 +166,6 @@ struct CommandLadderOverlay: View {
                                     onHover: { over in hoveredIndex = over ? block.index : nil },
                                 )
                                 .frame(height: fit.pitch)
-                            }
-                            if fit.gapBand {
-                                // The break. An EMPTY rung, not a fixed gap — see
-                                // ``CommandLadderLayout/homeRungs``.
-                                Color.clear.frame(height: fit.pitch).allowsHitTesting(false)
                             }
                             if fit.home {
                                 LadderHomeMark(
@@ -319,12 +308,15 @@ struct CommandLadderOverlay: View {
 
 /// The ladder's FOOT rung — the way back to the LIVE PROMPT, the row the cursor is blinking on.
 ///
-/// The same stroke as every tick above it, run out to ``Slate/Metric/ladderHome`` and drawn in the
-/// terminal's own FOREGROUND rather than an outcome ink: green, red and the accent each say
-/// something about how a command went, and this rung is not a command. Always live — pressing it
-/// while the viewport is already at the bottom is a harmless no-op, and that costs nothing next to
-/// the observable viewport state a "dim when already home" rule would need (round 14 weighed exactly
-/// that cost and dropped the moving viewport marker over it).
+/// The same stroke at the same beat as every tick above it, told apart by LENGTH alone: it runs out
+/// to ``Slate/Metric/ladderHome`` where a tick runs to ``Slate/Metric/ladderTick``. Its ink is the
+/// profile's ACCENT (user-directed 2026-08-09), the rail's third status ink and the one that is not
+/// an outcome — green and red each report how a command ENDED, and the way back to the cursor
+/// reports nothing of the sort.
+///
+/// Always live — pressing it while the viewport is already at the bottom is a harmless no-op, and
+/// that costs nothing next to the observable viewport state a "dim when already home" rule would
+/// need (round 14 weighed exactly that cost and dropped the moving viewport marker over it).
 ///
 /// It carries NO peek card: there is no output to excerpt at a prompt that has not run anything.
 private struct LadderHomeMark: View {
@@ -337,7 +329,7 @@ private struct LadderHomeMark: View {
     var body: some View {
         Button(action: onJump) {
             Capsule()
-                .fill(Slate.Terminal.ink)
+                .fill(Slate.Terminal.accent)
                 .frame(
                     width: Slate.Metric.ladderHome,
                     height: hovering ? Slate.Metric.ladderTickWeightActive : Slate.Metric.ladderTickWeight,
