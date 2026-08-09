@@ -116,8 +116,8 @@ components:
     rounded: "{rounded.compact-island}"
     height: "24px"
   command-ladder:
-    textColor: "status inks only — running = accent, clean = Status.ok, failed = Status.err; never a new hue"
-    note: "the terminal pane's trailing-edge tick rail (round 14): one 6x2 tick per OSC-133 command block, evenly pitched (10pt, compressing to a 4pt floor, then dropping oldest), newest at the bottom; muted at rest, full ink under the pointer; click = the navigator's own re-anchor jump + landed flash. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
+    textColor: "the GLASS's status inks — running = Terminal.accent, clean = Terminal.ok, failed = Terminal.err (the profile's OWN ANSI green/red); NEVER Status.ok/.err, which is the SYSTEM palette and read as a foreign signal green beside the Dracula Pro cells (user-reported 2026-08-09)"
+    note: "the terminal pane's trailing-edge tick rail (round 14): one 4x2 tick per OSC-133 command block (6x2 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {space.2} padding, mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (10/8/6/5/4): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 4pt floor and drops oldest. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -321,12 +321,19 @@ info status. Everything else interactive is the system's.
   `terminalEdge` line — a subtle line ON the glass, never a channel, never per-pane cards. There is
   exactly one call site; a second is the many-islands clutter coming back.
 - **The command LADDER** (round 14) rides each terminal pane's trailing edge: one short tick per
-  OSC-133 command block, oldest→newest top→down, in the status inks only (running = accent,
-  clean = ok, failed = err). Muted at rest, full ink under the pointer; a tick click is the
-  navigator's own re-anchor jump, confirmed by the existing landed flash. Ticks are EVENLY
-  pitched, never scroll-proportional — blocks carry prompt ordinals, not rows, and this house
-  draws what it knows (absent-never-wrong). An ordinal-less tick (mid-stream join) dims and
-  goes inert.
+  OSC-133 command block, oldest→newest top→down, in the GLASS's status inks (running =
+  `Terminal.accent`, clean = `Terminal.ok`, failed = `Terminal.err` — the profile's own ANSI pair,
+  never the system `Status` palette: a mark drawn on the terminal answers to the profile the
+  terminal wears). Muted at rest, full ink under the pointer; a tick click focuses the pane and
+  then runs the navigator's own re-anchor jump, confirmed by the existing landed flash. It lives in
+  the pane's GUTTER, not on the terminal — the leaf holds its surface a `space2` off its edges and
+  the ladder is mounted outside that padding and is exactly that wide, so no mark and no hit area
+  is ever over a cell (before 2026-08-09 a `plate`-wide hit column sat on the last two text columns
+  and swallowed selection drags there). The pitch is quantized to a closed rung set — it steps down
+  10 → 4 before dropping any tick, so a running pane does not re-lay its whole rail by a fraction of
+  a point per command. Ticks are EVENLY pitched, never scroll-proportional — blocks carry prompt
+  ordinals, not rows, and this house draws what it knows (absent-never-wrong). An ordinal-less tick
+  (mid-stream join) dims and goes inert.
 - The column subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
   profile's own polarity — so every semantic colour used inside resolves against the glass.
   Satellite pane windows are glass edge-to-edge and adopt the same forced scheme.
@@ -465,5 +472,8 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
   rung of `Slate.Opacity` / `Slate.Elevation` / the tracking trio, or the ladder needs a rung.
 - DON'T draw the command ladder proportionally to scrollback rows, and don't give it hues
   beyond the status trio — the even pitch is the honesty contract; the fill is the vocabulary.
+- DON'T widen the command ladder past the pane's gutter, derive its pitch from the available
+  height, or reach for `Slate.Status` inside the island: each one is a shipped bug back
+  (content overlap, a rail that re-lays itself per command, a system green among the profile's).
 - DON'T hand-roll a zero-state: list surfaces speak `SlateNoResultsLine`, panes speak
   `SlateEmptyState` — text-only, never an illustration, never a decorative glyph.

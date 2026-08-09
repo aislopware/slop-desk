@@ -99,6 +99,10 @@ struct TerminalLeafView: View {
                 // grid loses ~1 col/row each side — it reflows through the existing PaneContainer.size →
                 // resize-scrim → host TIOCSWINSZ path, no new signal needed.
                 .padding(Slate.Metric.space2)
+                // The command LADDER stands in the gutter that padding just opened, on the trailing
+                // side — mounted OUT here (not inside `terminalSurface`) precisely so it is beside
+                // the terminal rather than on it. See `CommandLadderOverlay`'s own note.
+                .overlay(alignment: .trailing) { commandLadder }
             // NO per-pane status strip on a TERMINAL pane (issue: the user judged the terminal pane footer
             // low-value and asked to drop it). The cwd / exit / progress cues are low-value; host + connection status now
             // live ONCE in the sidebar footer (`NavigatorColumn` → `ConnectionCluster`; titlebar trailing when collapsed), not per pane. The
@@ -191,17 +195,6 @@ struct TerminalLeafView: View {
                     )
                     .transition(.opacity)
                 }
-                // The command LADDER (round 14) — the thin per-command tick rail down the
-                // trailing edge, the block chrome this seam was reserved for. A DECORATION
-                // overlay (never a content branch — libghostty-freeze guardrail); it hit-tests
-                // only its own strip, and the pills/find-bar overlays mount LATER in the chain,
-                // so transient chrome draws over it.
-                if !staticMirror, let paneID = live?.id {
-                    CommandLadderOverlay(
-                        model: model,
-                        onJump: { index in store.jumpToBlock(index: index, pane: paneID) },
-                    )
-                }
             } else {
                 Color.clear
             }
@@ -272,6 +265,27 @@ struct TerminalLeafView: View {
         .animation(Slate.Anim.reveal, value: showViModePill)
         .animation(Slate.Anim.reveal, value: showViHintBar)
         .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
+    }
+
+    /// The command LADDER (round 14) — the per-command tick rail standing in the pane's trailing
+    /// gutter, the block chrome the surface seam was reserved for. A DECORATION overlay (never a
+    /// content branch — libghostty-freeze guardrail): it draws and hit-tests ONLY the gutter, so the
+    /// terminal keeps every cell and every click it had.
+    ///
+    /// A tick FOCUSES the pane as well as jumping it, the same way tapping the pane's surface does
+    /// (``PaneContainer``): the ladder rides every terminal pane, active or not, and pointing at one
+    /// command in one pane is as deliberate a choice of pane as clicking its text.
+    @ViewBuilder
+    private var commandLadder: some View {
+        if !staticMirror, let model = live?.terminalModel, let paneID = live?.id {
+            CommandLadderOverlay(
+                model: model,
+                onJump: { index in
+                    store.focusPaneTree(paneID)
+                    store.jumpToBlock(index: index, pane: paneID)
+                },
+            )
+        }
     }
 
     /// Places the terminal pixels.

@@ -101,6 +101,14 @@ struct SlateTheme: Equatable, Sendable {
     /// The on-glass ACCENT (focus corner, divider drag line, drop washes) — profile-tuned because the
     /// window accent is appearance-tuned and the glass ignores the appearance.
     let terminalAccent: Color
+    /// The on-glass OK ink — the profile's OWN green (its ANSI slot 2), not the system status green.
+    /// A status mark drawn ON the glass has to answer to the glass: the system palette is tuned for
+    /// the OS appearance and lands a saturated signal green beside a set of lightness-normalized
+    /// pastels, which is exactly how the command ladder came to wear a colour the terminal under it
+    /// never speaks (user-reported 2026-08-09).
+    let terminalOk: Color
+    /// The on-glass ERROR ink — the profile's own red (ANSI slot 1). Same rationale as ``terminalOk``.
+    let terminalErr: Color
 
     // The libghostty config values (6-hex, no `#`) — applied via ``TerminalConfigBuilder``.
     let terminalBackgroundHex: String
@@ -153,6 +161,12 @@ struct SlateTheme: Equatable, Sendable {
             terminalInk: Color(slateHex: glass.ink),
             terminalInk2: Color(slateHex: glass.ink2),
             terminalAccent: Color(slateHex: glass.accent),
+            // The status inks are READ OUT of the profile's own ANSI set rather than named a second
+            // time, so a profile cannot ship a green for its cells and a different green for the
+            // chrome standing on them. Index-guarded (never a trap on a short palette): a profile
+            // that shipped no ANSI at all falls back to its ink, which is legible if colourless.
+            terminalOk: Color(slateHex: ansi.indices.contains(ansiGreen) ? ansi[ansiGreen] : glass.ink),
+            terminalErr: Color(slateHex: ansi.indices.contains(ansiRed) ? ansi[ansiRed] : glass.ink),
             terminalBackgroundHex: hex6(glass.face),
             terminalForegroundHex: hex6(glass.ink),
             ansiPalette: ansi.map { hex6($0) },
@@ -163,6 +177,11 @@ struct SlateTheme: Equatable, Sendable {
             cursorTextHex: nil,
         )
     }
+
+    /// The ANSI slots the on-glass status inks are read from — the terminal convention (1 = red,
+    /// 2 = green), so "failed" and "clean" are drawn in the same two colours the cells below them use.
+    private static let ansiRed = 1
+    private static let ansiGreen = 2
 
     /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty config value format.
     /// Manual (no `String(format:)`) to stay allocation-cheap and trap-free.
@@ -279,6 +298,12 @@ enum Slate {
         static var edge: Color { Slate.theme.terminalEdge }
         static var raised: Color { Slate.theme.terminalRaised }
         static var accent: Color { Slate.theme.terminalAccent }
+        /// The status pair ON the glass — the profile's own green / red (``SlateTheme/terminalOk``,
+        /// ``SlateTheme/terminalErr``). Anything drawn inside the island that has to say "clean" or
+        /// "failed" reads THESE, never ``Slate/Status`` — that set is the system's, tuned for the OS
+        /// appearance and out of family beside the glass.
+        static var ok: Color { Slate.theme.terminalOk }
+        static var err: Color { Slate.theme.terminalErr }
     }
 
     /// The text tiers — a ladder MEASURED against this app's own ground rather than inherited whole
@@ -715,6 +740,31 @@ enum Slate {
         /// live indicator) rather than standing on its own. Sized to sit under a footnote's
         /// x-height so it reads as punctuation, not as a badge.
         static let dot: CGFloat = 6
+
+        // The COMMAND LADDER (`CommandLadderOverlay`) — the per-command tick rail on a terminal
+        // pane's trailing edge.
+
+        /// The ladder's RAIL — its full width, hit area included. It is the pane's own inner gutter
+        /// (`space2`, the breathing room `TerminalLeafView` already holds the terminal surface off
+        /// its edges) and not one point more, which is the whole rule: the ladder stands in ground
+        /// the pane had already cleared, so it can neither draw over a cell nor swallow a click meant
+        /// for one. Its first pass was a `plate`-wide column INSIDE the surface and did both
+        /// (user-reported 2026-08-09).
+        static let ladderRail: CGFloat = space2
+        /// One tick's length at rest — half the rail, centred, so the mark reads as a rung on an edge
+        /// rather than as something poking out of the text.
+        static let ladderTick: CGFloat = 4
+        /// A tick's length under the pointer. Still inside the rail with a point to spare on each
+        /// side: the growth is symmetric about the rail's centre line, so hovering can never push the
+        /// mark back over the terminal — the earlier trailing-anchored 6 → 12 growth did.
+        static let ladderTickActive: CGFloat = 6
+        /// A tick's thickness — two points, the smallest mark that still reads as a deliberate rung
+        /// at the pitch the ladder runs.
+        static let ladderTickWeight: CGFloat = 2
+        /// How far the ladder holds off the pane's top and bottom. Sized to clear the ISLAND'S OWN
+        /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 7pt up
+        /// from the bottom, so a shorter inset would let the last tick slide under the rounded corner.
+        static let ladderInset: CGFloat = space4
 
         /// The footer ARC GAUGE (``PulseGauge``): a ring the size of a footnote glyph box, so it
         /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.

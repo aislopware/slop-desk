@@ -184,6 +184,52 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
     }
 
+    // MARK: - Opt-in render of the command ladder in its gutter
+
+    /// Renders the command LADDER exactly as a pane mounts it — a glass pane, the terminal surface
+    /// held off its edges by the pane's own `space2`, and the rail standing in the TRAILING GUTTER
+    /// that padding opens (`command-ladder.png`, plus an 8× tile so the 4×2 marks can be read).
+    ///
+    /// This is the check the round exists for: the rail must be inside the gutter — no mark and no
+    /// hit area over a cell — and the ticks must be the GLASS's own green / red / accent rather than
+    /// the system status palette. Both are measurable off the PNG: sample the columns either side of
+    /// the gutter's inner edge. Mock "cells" stand in for libghostty (no Metal in a test — the
+    /// hang-safety rule), drawn right up to the surface's own edge so an intruding tick would land on
+    /// one.
+    ///
+    /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_LADDER_SNAPSHOT_DIR=<dir>`.
+    @MainActor
+    func testRenderCommandLadder() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_LADDER_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_LADDER_SNAPSHOT_DIR=<dir> to render the command ladder")
+        }
+        let model = TerminalViewModel()
+        // A run with every outcome in it: clean, failed, a mid-stream join with no ordinal (inert),
+        // and the newest one still running.
+        let script: [(String, Int32?, Bool)] = [
+            ("swift build", 0, true), ("make lint", 0, true), ("swift test", 1, true),
+            ("git status", 0, true), ("make test-touched", 0, true), ("ls -la", 0, true),
+            ("cargo check", 127, true), ("git log", 0, true), ("scripts/check-macos.sh", 0, true),
+            ("swift build -c release", 0, false), ("make test", nil, true),
+        ]
+        for (offset, entry) in script.enumerated() {
+            model.blocks.upsert(
+                index: UInt32(offset), commandText: entry.0, exitCode: entry.1,
+                durationMS: entry.1 == nil ? nil : 240, complete: entry.1 != nil, outputLen: 0,
+                // The one ordinal-less block is the mid-stream join — it must render dim and inert.
+                promptOrdinal: entry.2 ? UInt32(offset + 1) : 0,
+            )
+        }
+        let pane = LadderPaneMock(model: model)
+        try renderHosted(
+            pane, size: CGSize(width: 280, height: 220), to: dir, named: "command-ladder.png",
+        )
+        try renderHosted(
+            pane.frame(width: 280, height: 220).scaleEffect(4, anchor: .bottomTrailing),
+            size: CGSize(width: 280, height: 220), to: dir, named: "command-ladder-4x.png",
+        )
+    }
+
     /// One mark at the column's true size, or magnified.
     ///
     /// ⚠️ A system symbol is REDRAWN at the larger point size rather than scaled: `Image(systemName:)`
@@ -812,4 +858,44 @@ private final class ViSnapshotSurface: TerminalSurface, TerminalViewportSnapshot
     func readScreenRow(_ row: Int) -> String? { rows.indices.contains(row) ? rows[row] : nil }
     func lineRange(_ screenRow: Int) -> ClosedRange<Int>? { screenRow...screenRow } // no wrap staged
 }
+
+/// A pane MOCK for the command-ladder render: the same three ingredients ``TerminalLeafView``
+/// assembles — the glass, the terminal surface held off its edges by the pane's own `space2`, and
+/// the ladder mounted OUTSIDE that padding on the trailing side, so it stands in the gutter rather
+/// than on the terminal. The "cells" are a stand-in for libghostty (no Metal in a test): they run
+/// right up to the surface's edge, which is what makes an intruding tick visible in the PNG.
+@MainActor
+private struct LadderPaneMock: View {
+    let model: TerminalViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            cells
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(Slate.Metric.space2)
+                .overlay(alignment: .trailing) {
+                    CommandLadderOverlay(model: model, onJump: { _ in })
+                }
+        }
+        .background(Slate.Surface.terminal)
+        .environment(\.colorScheme, Slate.glassColorScheme)
+    }
+
+    /// Stand-in cells — full-bleed rows of the terminal's own ink, so the surface's right edge is
+    /// unmistakable in the render.
+    private var cells: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(0..<18, id: \.self) { row in
+                Rectangle()
+                    .fill(Slate.Terminal.ink2)
+                    .frame(height: Slate.Metric.hairline * 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, row.isMultiple(of: 3) ? Slate.Metric.space4 : 0)
+                    .opacity(Slate.Opacity.muted)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 #endif
