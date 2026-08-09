@@ -308,11 +308,14 @@ struct CommandLadderOverlay: View {
 
 /// The ladder's FOOT rung — the way back to the LIVE PROMPT, the row the cursor is blinking on.
 ///
-/// The same stroke at the same beat as every tick above it, told apart by LENGTH alone: it runs out
-/// to ``Slate/Metric/ladderHome`` where a tick runs to ``Slate/Metric/ladderTick``. Its ink is the
-/// profile's ACCENT (user-directed 2026-08-09), the rail's third status ink and the one that is not
-/// an outcome — green and red each report how a command ENDED, and the way back to the cursor
-/// reports nothing of the sort.
+/// The same stroke at the same beat as every tick above it, told apart by LENGTH: it runs out to
+/// ``Slate/Metric/ladderHome`` where a tick runs to ``Slate/Metric/ladderTick``.
+///
+/// Its ink is the terminal's own FOREGROUND, not one of the rail's status inks. The accent was
+/// tried and taken back off (user-directed 2026-08-09): it is the RUNNING tick's ink, and a running
+/// command's tick sits directly above the foot rung — two purple marks on one beat, separated by
+/// four points of length. The foreground says the thing the status inks cannot: this rung reports
+/// nothing about a command, because it is not one.
 ///
 /// Always live — pressing it while the viewport is already at the bottom is a harmless no-op, and
 /// that costs nothing next to the observable viewport state a "dim when already home" rule would
@@ -329,7 +332,7 @@ private struct LadderHomeMark: View {
     var body: some View {
         Button(action: onJump) {
             Capsule()
-                .fill(Slate.Terminal.accent)
+                .fill(Slate.Terminal.ink)
                 .frame(
                     width: Slate.Metric.ladderHome,
                     height: hovering ? Slate.Metric.ladderTickWeightActive : Slate.Metric.ladderTickWeight,
