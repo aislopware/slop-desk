@@ -329,21 +329,32 @@ enum Slate {
     /// darker quiet tier for free. It is therefore pinned to ``Slate/Opacity/bed`` — re-solve it if
     /// that alpha ever moves.
     ///
-    /// ⚠️ PINNED ON THE LIGHT SIDE ONLY. Two subtrees flip `colorScheme` to glass (the selected row's
-    /// ``SlateCompactIsland``, the pane chrome inside the terminal island); a flat hex draws
-    /// dark-on-dark there, which is exactly what the first true-size render of this ladder showed.
-    /// The dark side therefore keeps the system tiers untouched.
+    /// ⚠️ The LIGHT rungs are flat hexes; the dark side is NOT a free system fallback. Two subtrees
+    /// flip `colorScheme` to glass (the selected row's ``SlateCompactIsland``, the pane chrome inside
+    /// the terminal island), and a light-pinned hex would draw dark-on-dark there — which is why
+    /// `secondary` still defers to the system tier on that side (`secondaryLabel` composites to
+    /// 5.76 on the glass face and needs no help).
+    ///
+    /// The QUIET rung does not get that luck, and the same complaint arrived from the other side
+    /// (user-reported 2026-08-10, the selected tab's `zsh` label): the glass subtrees are not
+    /// "whatever surface happens to be there" — they are ONE surface, the profile face `#22212C`,
+    /// and `tertiaryLabel`'s 25% white composites to **2.28 : 1** on it, far under even the 3.0
+    /// non-text floor while carrying the same data the light rung was re-solved for. So this rung is
+    /// pinned on BOTH sides, each against its own ground: the cream's own colour at depth
+    /// (`#6C6B64`), and the GLASS's own face lifted 48% toward the profile ink (`#89888B`, 4.51 on
+    /// the face) — in-family on each side rather than one foreign neutral spanning both. Re-solve
+    /// the dark rung if the profile's face or ink ever moves.
     @MainActor
     enum Text {
         #if canImport(AppKit)
         static let primary = Color(nsColor: .labelColor)
         static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabelColor)
-        static let tertiary = Color(slatePinnedLight: 0x6C6B64, darkSystem: .tertiaryLabelColor)
+        static let tertiary = Color(slateDynamicLight: 0x6C6B64, dark: 0x89888B)
         static let icon = secondary
         #else
         static let primary = Color(uiColor: .label)
         static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabel)
-        static let tertiary = Color(slatePinnedLight: 0x6C6B64, darkSystem: .tertiaryLabel)
+        static let tertiary = Color(slateDynamicLight: 0x6C6B64, dark: 0x89888B)
         static let icon = secondary
         #endif
 
