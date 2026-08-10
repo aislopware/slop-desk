@@ -25,6 +25,8 @@ import Foundation
 ///   • `link-url`           — always `false`: SlopDesk owns regex link detection, highlighting and
 ///                            ⌘click, so libghostty's built-in matcher would only double-draw the
 ///                            underline. OSC 8 hyperlinks are unaffected.
+///   • `window-padding-balance` — always `true`: split the sub-cell remainder across all four edges
+///                            instead of dumping it on the right + bottom (see the emit site).
 ///   • `keybind`            — one `keybind = <chord>=<action>` line per user rebind (additive).
 public enum TerminalConfigBuilder {
     /// Per-line byte estimate to convert user-facing "scrollback lines" → Ghostty's BYTE `scrollback-limit`.
@@ -130,6 +132,16 @@ public enum TerminalConfigBuilder {
         // untouched. Emitted unconditionally: it is a structural fact about who owns link rendering
         // in this app, not a preference.
         lines.append("link-url = false")
+
+        // GRID CENTRING. A pane's viewport is never an exact multiple of the cell size, and
+        // libghostty's default (`window-padding-balance = false`) makes the top-left cell hug the edge
+        // and dumps the WHOLE remainder on the right + bottom. With the leaf's even 8pt gutter
+        // (`TerminalLeafView`) that reads as left/top = 10pt against a right/bottom of 10pt + up to
+        // one cell — visibly off-centre at a 13pt font. `true` splits the remainder across all four
+        // edges instead. Cell overlays stay aligned: their origin is the `ghostty_surface_padding`
+        // readback, which reports the BALANCED padding, not the configured one.
+        // Emitted unconditionally — a structural fact about how the pane is laid out, not a preference.
+        lines.append("window-padding-balance = true")
 
         // Additive keybind lines (one per user rebind), validate-then-skip an empty one.
         for kb in keybinds where !kb.trimmingCharacters(in: .whitespaces).isEmpty {

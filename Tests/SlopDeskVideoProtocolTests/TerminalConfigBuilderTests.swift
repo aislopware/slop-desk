@@ -184,8 +184,24 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "cursor-style = block",
             "scrollback-limit = 2560000",
             "link-url = false",
+            "window-padding-balance = true",
         ].joined(separator: "\n")
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
+    }
+
+    /// `window-padding-balance = true` rides EVERY build, with and without the controls block. libghostty's
+    /// default hugs the top-left cell to the edge and dumps the whole sub-cell remainder on the right +
+    /// bottom, which the leaf's even 8pt gutter then reads as an off-centre grid. Not a preference —
+    /// no pref gates it.
+    func testWindowPaddingBalanceIsAlwaysOn() {
+        for controls in [nil, TerminalControlsConfig()] {
+            let lines = TerminalConfigBuilder.string(for: TerminalPreferences(), controls: controls)
+                .split(separator: "\n").map(String.init)
+            XCTAssertEqual(
+                lines.filter { $0.hasPrefix("window-padding") }, ["window-padding-balance = true"],
+                "exactly one padding line, always balanced (controls: \(controls == nil ? "nil" : "set"))",
+            )
+        }
     }
 
     /// `link-url = false` rides EVERY build, with and without the controls block. libghostty's built-in
