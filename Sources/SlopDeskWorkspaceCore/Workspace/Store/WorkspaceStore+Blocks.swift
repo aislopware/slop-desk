@@ -332,36 +332,9 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Jumps a SPECIFIC pane's viewport to the block with `index` — the command LADDER's per-tick
-    /// jump (round 14). The same absolute re-anchor choreography as
-    /// ``jumpToNavigatorBlockInActivePane(index:)`` but PANE-addressed: the ladder rides every
-    /// terminal pane, active or not, and a tick click must land in its OWN pane's scrollback.
-    /// Same no-op guarantees (non-terminal pane / no seam / evicted index / ordinal-less block).
-    func jumpToBlock(index: UInt32, pane: PaneID) {
-        guard let model = (handle(for: pane) as? TerminalModelProviding)?.terminalModel,
-              let actions = model.surface as? TerminalSurfaceActions,
-              let block = model.blocks.block(at: index) else { return }
-        if BlockJump.toPromptOrdinal(block.promptOrdinal, using: actions) {
-            model.notePromptJumpIssued() // landed flash — same settle contract as the delta jump
-        }
-    }
-
-    /// Scrolls a SPECIFIC pane's viewport back to the LIVE PROMPT — the bottom of the buffer, the
-    /// row the cursor is blinking on. The command ladder's FOOT rung (user-reported 2026-08-09: the
-    /// rail indexed every command and nothing on it pointed at the prompt being typed at).
-    ///
-    /// Bare `scroll_to_bottom`, NOT a ``BlockJump``: the live prompt is not a block. The segmenter
-    /// only surfaces one once its command has passed the OSC-133 `C` mark, so a prompt still
-    /// awaiting input carries no ordinal to re-anchor on — and the bottom is exactly where it
-    /// lives, so there is nothing to approximate. No landed flash is armed either: libghostty pins
-    /// no prompt row on a bottom clamp, which is the flash's own suppression rule
-    /// (``TerminalViewModel/noteViewportScroll(atBottom:)``) — arming one here would only ever lapse.
-    ///
-    /// PANE-addressed like ``jumpToBlock(index:pane:)`` and for the same reason: the ladder rides
-    /// every terminal pane, active or not. Same no-op guarantees (non-terminal pane / no seam).
-    func scrollPaneToLivePrompt(pane: PaneID) {
-        guard let model = (handle(for: pane) as? TerminalModelProviding)?.terminalModel,
-              let actions = model.surface as? TerminalSurfaceActions else { return }
-        actions.performBindingAction("scroll_to_bottom")
-    }
+    // NO pane-addressed jump verbs here any more (`jumpToBlock(index:pane:)`,
+    // `scrollPaneToLivePrompt(pane:)`): both existed only for the command ladder's ticks and its foot
+    // rung, and the ladder was removed whole (user-directed 2026-08-10). Block navigation is
+    // ACTIVE-pane addressed again — the keyboard deltas and the Command Navigator's rows — which is
+    // the only addressing a gesture aimed at a pane the user is already in needs.
 }

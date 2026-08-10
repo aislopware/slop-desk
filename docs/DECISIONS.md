@@ -7394,3 +7394,37 @@ rather than a chrome rule outside and a glass rule inside.
 Scope is exactly the surfaces made of the glass. The paper family (`SlatePaperCard`,
 `slateSheetSurface`) keeps `Line.divider`: those are the GROUND raised, their edge answers to the
 chrome polarity, and they would need re-solving with the ground itself, not ahead of it.
+
+## The command ladder is removed WHOLE (2026-08-10)
+
+User-directed, no conditions attached: drop the command ladder entirely. It was the trailing-edge
+tick rail on every terminal pane — one mark per OSC-133 block, a foot rung home to the live prompt,
+and a hover-dwell peek card carrying a coloured excerpt of what each command printed. Four rounds of
+fixes went into it (`fa53e746` gutter mount + glass inks + quantized pitch, `e6e17c9f` the peek mode,
+`e9af5786` the wider rail + coloured excerpt, `f36d3f1c` the nerd-font cascade, `9860c56d`/`74e0367f`/
+`a4425add` the foot rung). All of it is gone; this entry is the record so no future round re-derives it
+by accident.
+
+Deleted: `CommandLadderOverlay`, `CommandLadderPeek` (layout, entry, card), `SlateAnsiInk`
+(`Slate.Ansi.ink` + `Slate.Typeface.terminalFace`'s Core Text cascade), `BlockOutputPreview` +
+`BlockOutputPreviewBuilder`, every `Slate.Metric.ladder*` token, the pane-addressed store verbs
+`jumpToBlock(index:pane:)` and `scrollPaneToLivePrompt(pane:)` (the ladder was the only caller of
+either), the opt-in `SLOPDESK_LADDER_SNAPSHOT_DIR` renders, and the four test files that pinned the
+rail's fit, the card's placement, the excerpt rule and the font chain.
+
+WHAT STAYS, and why each is not the ladder:
+- **`AnsiStyledText`** — `BlockOutputSanitizer.plainText` was rewritten as a wrapper of this pass in
+  `e9af5786`, so it is now the CLIPBOARD's skimmer. Rewriting it back to a style-blind one would put
+  22 sanitizer pins at risk to delete code nothing else depends on.
+- **`Slate.Terminal.ok` / `.err`** — a token-layer rule ("anything saying clean/failed INSIDE the
+  island is dealt the profile's own ANSI green/red, never `Slate.Status`"), with its own test. Tokens
+  legitimately outlive one consumer; the rule does not stop being true because the ladder stopped
+  being drawn.
+- **Block navigation** — `⌘PageUp`/`⌘PageDown`, jump-to-failed, the Command Navigator's rows, the
+  prompt-jump landed flash, and `b151fb18`'s state-transfer replay of the OSC-133 `A` mark all serve
+  the keyboard and navigator paths. The reconnect fix was diagnosed through the ladder but is not the
+  ladder's: without it the navigator has no prompt rows to jump to either.
+
+The pane's side padding goes back to the 8pt grid (`Slate.Metric.paneGutter` deleted). It was widened
+to 12 in `e9af5786` for one reason — a rail worth aiming a pointer at — and with the rail gone the
+gutter carries nothing, so the terminal takes back the ~1 column per side it was paying.

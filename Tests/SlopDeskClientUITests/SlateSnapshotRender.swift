@@ -184,56 +184,6 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 780, height: 420), to: dir, named: "status-marks.png")
     }
 
-    // MARK: - Opt-in render of the command ladder in its gutter
-
-    /// Renders the command LADDER exactly as a pane mounts it — a glass pane, the terminal surface
-    /// held off its sides by the pane's own `paneGutter`, and the rail standing in the TRAILING
-    /// GUTTER that padding opens (`command-ladder.png`, plus an 8× tile so the marks can be read).
-    ///
-    /// This is the check the round exists for: the rail must be inside the gutter — no mark and no
-    /// hit area over a cell — and the ticks must be the GLASS's own green / red / accent rather than
-    /// the system status palette. Both are measurable off the PNG: sample the columns either side of
-    /// the gutter's inner edge. Mock "cells" stand in for libghostty (no Metal in a test — the
-    /// hang-safety rule), drawn right up to the surface's own edge so an intruding tick would land on
-    /// one.
-    ///
-    /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_LADDER_SNAPSHOT_DIR=<dir>`.
-    @MainActor
-    func testRenderCommandLadder() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_LADDER_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_LADDER_SNAPSHOT_DIR=<dir> to render the command ladder")
-        }
-        let model = TerminalViewModel()
-        // A run with every outcome in it: clean, failed, a mid-stream join with no ordinal (inert),
-        // and the newest one still running.
-        let script: [(String, Int32?, Bool)] = [
-            ("swift build", 0, true), ("make lint", 0, true), ("swift test", 1, true),
-            ("git status", 0, true), ("make test-touched", 0, true), ("ls -la", 0, true),
-            ("cargo check", 127, true), ("git log", 0, true), ("scripts/check-macos.sh", 0, true),
-            ("swift build -c release", 0, false), ("make test", nil, true),
-        ]
-        for (offset, entry) in script.enumerated() {
-            model.blocks.upsert(
-                index: UInt32(offset), commandText: entry.0, exitCode: entry.1,
-                durationMS: entry.1 == nil ? nil : 240, complete: entry.1 != nil, outputLen: 0,
-                // The one ordinal-less block is the mid-stream join — it must render dim and inert.
-                promptOrdinal: entry.2 ? UInt32(offset + 1) : 0,
-            )
-        }
-        let pane = LadderPaneMock(model: model)
-        try renderHosted(
-            pane, size: CGSize(width: 280, height: 220), to: dir, named: "command-ladder.png",
-        )
-        try renderHosted(
-            pane.frame(width: 280, height: 220).scaleEffect(4, anchor: .bottomTrailing),
-            size: CGSize(width: 280, height: 220), to: dir, named: "command-ladder-4x.png",
-        )
-        try renderHosted(
-            LadderPeekMock(), size: CGSize(width: 700, height: 470), to: dir,
-            named: "command-ladder-peek.png",
-        )
-    }
-
     // MARK: - Opt-in render of the island chip stack
 
     /// Renders the chip family at the FOOT OF THE ISLAND, over the glass they actually stand on —
@@ -887,46 +837,6 @@ private final class ViSnapshotSurface: TerminalSurface, TerminalViewportSnapshot
     func lineRange(_ screenRow: Int) -> ClosedRange<Int>? { screenRow...screenRow } // no wrap staged
 }
 
-/// A pane MOCK for the command-ladder render: the same three ingredients ``TerminalLeafView``
-/// assembles — the glass, the terminal surface held off its edges by the pane's own `space2`, and
-/// the ladder mounted OUTSIDE that padding on the trailing side, so it stands in the gutter rather
-/// than on the terminal. The "cells" are a stand-in for libghostty (no Metal in a test): they run
-/// right up to the surface's edge, which is what makes an intruding tick visible in the PNG.
-@MainActor
-private struct LadderPaneMock: View {
-    let model: TerminalViewModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            cells
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, Slate.Metric.space2)
-                .padding(.horizontal, Slate.Metric.paneGutter)
-                .overlay(alignment: .trailing) {
-                    CommandLadderOverlay(model: model, onJump: { _ in }, onJumpToLivePrompt: {})
-                }
-        }
-        .background(Slate.Surface.terminal)
-        .environment(\.colorScheme, Slate.glassColorScheme)
-    }
-
-    /// Stand-in cells — full-bleed rows of the terminal's own ink, so the surface's right edge is
-    /// unmistakable in the render.
-    private var cells: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(0..<18, id: \.self) { row in
-                Rectangle()
-                    .fill(Slate.Terminal.ink2)
-                    .frame(height: Slate.Metric.hairline * 5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.trailing, row.isMultiple(of: 3) ? Slate.Metric.space4 : 0)
-                    .opacity(Slate.Opacity.muted)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-}
-
 /// A pane MOCK for the island-chip render: the glass canvas under a bottom-aligned chip stack, exactly
 /// as ``ContentColumn``'s `paneArea` composes it — the same overlay alignment, the same
 /// `Metric/islandChipInset` clearance, the same glass colour scope. The chips are the REAL views (no
@@ -939,8 +849,7 @@ private struct IslandChipMock: View {
     var body: some View {
         cells
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.vertical, Slate.Metric.space2)
-            .padding(.horizontal, Slate.Metric.paneGutter)
+            .padding(Slate.Metric.space2)
             .background(Slate.Surface.terminal)
             .overlay(alignment: .bottom) {
                 VStack(spacing: Slate.Metric.space2) {
@@ -984,94 +893,6 @@ private struct IslandChipMock: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-    }
-}
-
-/// The PEEK card in every state it can be read in, on the glass it is drawn over — the true-size
-/// check for the hover preview (the real card is opened by a dwell, which no static render performs).
-private struct LadderPeekMock: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space4) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                card(block(0, "make test-touched", exit: 0), .ready(clean))
-                card(block(1, "cargo check", exit: 101), .ready(failure))
-            }
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                card(block(2, "git status", exit: 0), .ready(short))
-                card(block(3, "true", exit: 0), .ready(BlockOutputPreview(
-                    lines: [], hiddenCount: 0, fromTail: false,
-                )))
-                card(block(4, "swift build --very-long-command-line-that-must-truncate", exit: 0), .loading)
-                card(block(5, "make test", exit: nil), .unavailable)
-            }
-        }
-        .padding(Slate.Metric.space4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Slate.Surface.terminal)
-        .environment(\.colorScheme, Slate.glassColorScheme)
-    }
-
-    private func card(_ block: CommandBlock, _ entry: CommandLadderPeekEntry) -> some View {
-        CommandLadderPeekCard(block: block, entry: entry)
-    }
-
-    private func block(_ index: UInt32, _ text: String, exit code: Int32?) -> CommandBlock {
-        CommandBlock(
-            index: index, commandText: text, exitCode: code,
-            durationMS: code == nil ? nil : 12400, complete: code != nil, outputLen: 4096,
-            promptOrdinal: index + 1,
-        )
-    }
-
-    /// Each string parsed on its own — one line in, one line of styled runs out, so the mock feeds
-    /// the card exactly what the wire path feeds it (``AnsiStyledParser``), escapes and all.
-    private func styled(_ raw: [String]) -> [[AnsiRun]] {
-        raw.map { AnsiStyledParser.lines(from: Data($0.utf8))[0] }
-    }
-
-    /// A clean run read from the TOP, with more below. Carries a nerd-font glyph (U+E0A0, the branch
-    /// mark) so the render also says whether the resolved face has the private-use area.
-    private var clean: BlockOutputPreview {
-        BlockOutputPreview(
-            lines: styled([
-                "\u{1B}[1mBuilding for debugging...\u{1B}[0m",
-                "[1/1103] Compiling SlopDeskClientUI CommandLadderOverlay.swift",
-                "[2/1103] Compiling SlopDeskWorkspaceCore BlockOutputPreview.swift",
-                "\u{1B}[2mTest Suite 'All tests' started at 2026-08-09 18:04:11.882\u{1B}[0m",
-                "\u{1B}[32m✓\u{1B}[0m Test Case '-[CommandLadderLayoutTests testFewTicksKeep]' \u{1B}[32mpassed\u{1B}[0m",
-                "\u{1B}[38;5;208m\u{E0A0} main\u{1B}[0m \u{1B}[36m12 files changed\u{1B}[0m",
-                "\u{1B}[1;32mExecuted 1103 tests, with 0 failures\u{1B}[0m (0 unexpected) in 12.401s",
-                "",
-            ]),
-            hiddenCount: 214, fromTail: false,
-        )
-    }
-
-    /// A failure read from the BOTTOM — the whole reason the excerpt follows the outcome.
-    private var failure: BlockOutputPreview {
-        BlockOutputPreview(
-            lines: styled([
-                "   \u{1B}[1;32mCompiling\u{1B}[0m slopdesk v0.1.0 (/Volumes/Lacie/Workspace/oss/slop-desk)",
-                "\u{1B}[1;31merror[E0433]\u{1B}[0m\u{1B}[1m: failed to resolve: use of undeclared crate\u{1B}[0m",
-                "  \u{1B}[1;34m-->\u{1B}[0m src/main.rs:42:9",
-                "   \u{1B}[1;34m|\u{1B}[0m",
-                "\u{1B}[1;34m42 |\u{1B}[0m         foo::bar();",
-                "   \u{1B}[1;34m|\u{1B}[0m         \u{1B}[1;31m^^^ use of undeclared crate `foo`\u{1B}[0m",
-                "",
-                "\u{1B}[1;31merror\u{1B}[0m\u{1B}[1m: could not compile `slopdesk` due to 1 error\u{1B}[0m",
-            ]),
-            hiddenCount: 214, fromTail: true,
-        )
-    }
-
-    private var short: BlockOutputPreview {
-        BlockOutputPreview(
-            lines: styled([
-                "On branch \u{1B}[32mmain\u{1B}[0m",
-                "\u{1B}[7m nothing to commit \u{1B}[0m, working tree clean",
-            ]),
-            hiddenCount: 0, fromTail: false,
-        )
     }
 }
 

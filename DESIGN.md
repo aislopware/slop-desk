@@ -498,10 +498,11 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
 - DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a
   rung of `Slate.Opacity` / `Slate.Elevation` / the tracking trio, or the ladder needs a rung.
-- DON'T draw the command ladder proportionally to scrollback rows, and don't give it hues
-  beyond the status trio — the even pitch is the honesty contract; the fill is the vocabulary.
-- DON'T widen the command ladder past the pane's gutter, derive its pitch from the available
-  height, or reach for `Slate.Status` inside the island: each one is a shipped bug back
-  (content overlap, a rail that re-lays itself per command, a system green among the profile's).
+- DON'T reach for `Slate.Status` inside the terminal island — the on-glass pair
+  (`Slate.Terminal.ok` / `.err`, the profile's own ANSI green/red) is what says clean/failed there;
+  the system set lands a signal green among lightness-normalized pastels.
+- DON'T put a per-command instrument back on the pane's trailing edge. The command ladder (rail,
+  foot rung, hover peek) was built over four rounds and then removed WHOLE at the user's direction
+  2026-08-10 — see `docs/DECISIONS.md`. Block navigation is keyboard + Command Navigator only.
 - DON'T hand-roll a zero-state: list surfaces speak `SlateNoResultsLine`, panes speak
   `SlateEmptyState` — text-only, never an illustration, never a decorative glyph.

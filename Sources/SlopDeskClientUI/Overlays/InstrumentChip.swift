@@ -86,7 +86,7 @@ struct NoticeChip: View {
 /// LIGHT side only (see ``Slate/Text``), so on the glass it drew `#585751` ink on a `.quaternarySystemFill`
 /// plate over `#22212C`: a chip that was there but unreadable (user-reported 2026-08-09). The glass keeps
 /// its profile palette under either OS appearance, so its own ink/edge is the only set that cannot invert
-/// against it — the same reason ``CommandLadderPeek`` is drawn this way.
+/// against it — the rule for anything drawn inside the island.
 struct InstrumentChipShell: ViewModifier {
     let accessibility: String
 

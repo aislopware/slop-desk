@@ -752,22 +752,6 @@ enum Slate {
         /// x-height so it reads as punctuation, not as a badge.
         static let dot: CGFloat = 6
 
-        // The COMMAND LADDER (`CommandLadderOverlay`) — the per-command tick rail on a terminal
-        // pane's trailing edge.
-
-        /// The pane's SIDE gutter — the breathing room `TerminalLeafView` holds the terminal surface
-        /// off its left and right edges, and therefore the ladder's whole width. Wider than the
-        /// pane's vertical breathing room (`space2`) because this gutter carries an INSTRUMENT and
-        /// that one carries nothing: at 8 the rail was a target the pointer had to be placed on
-        /// rather than aimed at (user-directed 2026-08-09). It costs about one terminal column each
-        /// side, which reflows through the existing resize path.
-        static let paneGutter: CGFloat = space3
-        /// The ladder's RAIL — its full width, hit area included. It is exactly ``paneGutter`` and
-        /// not one point more, which is the whole rule: the ladder stands in ground the pane had
-        /// already cleared, so it can neither draw over a cell nor swallow a click meant for one. Its
-        /// first pass was a `plate`-wide column INSIDE the surface and did both (user-reported
-        /// 2026-08-09).
-        static let ladderRail: CGFloat = paneGutter
         /// How far the island's transient chip stack (``IslandChipStack`` — copy receipt, notice,
         /// connection indicator) stands off the island's FOOT. Two rungs of the scale, not one,
         /// because a chip is a floating cue over live text: at the window's old 16pt inset it sat on
@@ -775,46 +759,6 @@ enum Slate {
         /// (user-reported 2026-08-09). At 24 there is a clear channel of glass under it, so the
         /// prompt stays readable while the chip is up.
         static let islandChipInset: CGFloat = space4 + space2
-        /// One tick's length at rest — half the rail, centred, so the mark reads as a rung on an edge
-        /// rather than as something poking out of the text.
-        static let ladderTick: CGFloat = 6
-        /// A tick's length under the pointer. Still inside the rail with a point to spare on each
-        /// side: the growth is symmetric about the rail's centre line, so hovering can never push the
-        /// mark back over the terminal — the earlier trailing-anchored 6 → 12 growth did.
-        static let ladderTickActive: CGFloat = 10
-        /// A tick's thickness — two points, the smallest mark that still reads as a deliberate rung
-        /// at the pitch the ladder runs.
-        static let ladderTickWeight: CGFloat = 2
-        /// A tick's thickness under the pointer. The rung thickens as well as lengthens, so the mark
-        /// the pointer has caught is unmistakable at a glance down a rail of dashes — the growth
-        /// stays symmetric about the centre line on BOTH axes.
-        static let ladderTickWeightActive: CGFloat = 3
-        /// The LIVE-PROMPT mark at the ladder's FOOT — the rung that goes back to where the cursor
-        /// is blinking (user-reported 2026-08-09: the rail indexed every command but nothing on it
-        /// pointed at the prompt being typed at). Its LENGTH, and deliberately ``ladderTickActive``
-        /// rather than a number of its own: the rail keeps ONE mark vocabulary — a dash on a centre
-        /// line — and this one is simply run out to the full length a mark may take there. LENGTH
-        /// is the whole of how it is told apart, since it stands at the ladder's ordinary pitch
-        /// (user-directed 2026-08-09: a blank band set it too far apart, and read as a mark adrift
-        /// from the rail rather than as its end). It does NOT lengthen under the pointer (there is
-        /// nowhere left to go); it thickens, exactly as a caught tick does.
-        static let ladderHome: CGFloat = ladderTickActive
-        /// How far the ladder holds off the pane's top and bottom. Sized to clear the ISLAND'S OWN
-        /// CORNER: at `ladderRail` in from the glass edge the `islandRadius` curve cuts about 4pt up
-        /// from the bottom (it cut ~7 when the rail was 8 in — the further in, the shallower the
-        /// cut), so a shorter inset would let the last tick slide under the rounded corner.
-        static let ladderInset: CGFloat = space4
-        /// The hover PEEK card's width — the excerpt of a block's output the ladder shows while the
-        /// pointer dwells on a tick. Wide enough for a build log's ordinary line, narrow enough that
-        /// it covers a strip of the pane rather than the pane.
-        static let ladderPeekWidth: CGFloat = 320
-        /// One excerpt line's row height in the peek card — the ``Typeface/footnote`` mono face's
-        /// line box, declared rather than inferred so the card's height is COMPUTABLE and its
-        /// placement beside a tick can be solved (and unit-pinned) before it is drawn.
-        static let ladderPeekLine: CGFloat = 14
-        /// The gap between the rail and the peek card's trailing edge — the card hangs off the rail,
-        /// it does not touch it.
-        static let ladderPeekGap: CGFloat = space2
 
         /// The footer ARC GAUGE (``PulseGauge``): a ring the size of a footnote glyph box, so it
         /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.

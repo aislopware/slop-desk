@@ -6,16 +6,16 @@ import Foundation
 /// ``BlockOutputSanitizer`` has always made over a block's captured output — the CR line-rewrite so a
 /// progress bar collapses to its final frame, `ESC [ K` truncation, C0 dropping, the zsh
 /// `PROMPT_EOL_MARK` chop — except that every byte it writes carries the SGR state that was live when
-/// it was written. The plain-text path is now this pass with the styles discarded, so the two can
-/// never drift apart (user-directed 2026-08-09: the ladder's peek shows a command's output the way
-/// the terminal showed it, and a second skimmer beside the first would be two behaviours).
+/// it was written. The plain-text path is this pass with the styles discarded, so the two can never
+/// drift apart. The STYLED reading had one consumer — the command ladder's peek card — and that was
+/// removed whole (user-directed 2026-08-10); the pass stays because it IS the clipboard's skimmer
+/// now, and rewriting it back to a plain one would put the 22 sanitizer pins at risk for nothing.
 ///
 /// It is NOT a terminal emulator: no cursor addressing, no scroll regions, no alternate screen. The
 /// host's captured output is already the on-screen byte stream for one command, so a linear pass with
 /// column rewriting reproduces what the user saw closely enough to preview.
 ///
-/// PURE + `nonisolated` — headlessly unit-testable, and shared by the plain-text (clipboard) and
-/// styled (peek card) callers alike.
+/// PURE + `nonisolated` — headlessly unit-testable, and the plain-text (clipboard) path's own pass.
 
 /// One colour as the wire expressed it — resolved to an actual `Color` by the VIEW layer, which is
 /// the only layer that knows the profile's palette. `nil` (the absence of this value) means "the

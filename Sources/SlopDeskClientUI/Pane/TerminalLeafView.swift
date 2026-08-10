@@ -10,8 +10,9 @@
 // panes). The leaf is keyed `.id(PaneID)` by PaneContainer so the surface / connection is never reused
 // across panes (identity hazard). SYSTEM colours only.
 //
-// The command-block decoration overlay this file long reserved a seam for is LIVE as
-// `CommandLadderOverlay` (round 14) — the per-command tick rail on the trailing edge.
+// NO command-block decoration on the surface: the per-command tick rail that stood in the trailing
+// gutter (round 14) was REMOVED WHOLE at the user's direction 2026-08-10. Block navigation keeps its
+// keyboard and Command Navigator paths; the pane's edges carry nothing.
 
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
@@ -98,15 +99,10 @@ struct TerminalLeafView: View {
                 // the inset gutter (flat, no card). NB the inset shrinks the libghostty surface, so the host PTY
                 // grid loses ~1 col/row each side — it reflows through the existing PaneContainer.size →
                 // resize-scrim → host TIOCSWINSZ path, no new signal needed.
-                .padding(.vertical, Slate.Metric.space2)
-                // WIDER at the sides than at the ends (user-directed 2026-08-09): the side gutter is
-                // the one the command ladder stands in, and the ladder is an instrument that has to
-                // be aimed at. `paneGutter` is that width, and the ladder is exactly it.
-                .padding(.horizontal, Slate.Metric.paneGutter)
-                // The command LADDER stands in the gutter that padding just opened, on the trailing
-                // side — mounted OUT here (not inside `terminalSurface`) precisely so it is beside
-                // the terminal rather than on it. See `CommandLadderOverlay`'s own note.
-                .overlay(alignment: .trailing) { commandLadder }
+                // EVEN on all four sides. The sides were briefly wider than the ends to give the
+                // command ladder a rail worth aiming at; with the ladder gone the gutter carries
+                // nothing, so it goes back to the grid and the pane gets its columns back.
+                .padding(Slate.Metric.space2)
             // NO per-pane status strip on a TERMINAL pane (issue: the user judged the terminal pane footer
             // low-value and asked to drop it). The cwd / exit / progress cues are low-value; host + connection status now
             // live ONCE in the sidebar footer (`NavigatorColumn` → `ConnectionCluster`; titlebar trailing when collapsed), not per pane. The
@@ -269,31 +265,6 @@ struct TerminalLeafView: View {
         .animation(Slate.Anim.reveal, value: showViModePill)
         .animation(Slate.Anim.reveal, value: showViHintBar)
         .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
-    }
-
-    /// The command LADDER (round 14) — the per-command tick rail standing in the pane's trailing
-    /// gutter, the block chrome the surface seam was reserved for. A DECORATION overlay (never a
-    /// content branch — libghostty-freeze guardrail): it draws and hit-tests ONLY the gutter, so the
-    /// terminal keeps every cell and every click it had.
-    ///
-    /// A tick FOCUSES the pane as well as jumping it, the same way tapping the pane's surface does
-    /// (``PaneContainer``): the ladder rides every terminal pane, active or not, and pointing at one
-    /// command in one pane is as deliberate a choice of pane as clicking its text.
-    @ViewBuilder
-    private var commandLadder: some View {
-        if !staticMirror, let model = live?.terminalModel, let paneID = live?.id {
-            CommandLadderOverlay(
-                model: model,
-                onJump: { index in
-                    store.focusPaneTree(paneID)
-                    store.jumpToBlock(index: index, pane: paneID)
-                },
-                onJumpToLivePrompt: {
-                    store.focusPaneTree(paneID)
-                    store.scrollPaneToLivePrompt(pane: paneID)
-                },
-            )
-        }
     }
 
     /// Places the terminal pixels.
