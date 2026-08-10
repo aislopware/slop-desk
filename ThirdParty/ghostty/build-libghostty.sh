@@ -77,7 +77,10 @@
 #
 # USAGE:
 #   ThirdParty/ghostty/build-libghostty.sh            # macOS arm64 native slice (fast first cut)
-#   XCFRAMEWORK_TARGET=universal ThirdParty/ghostty/build-libghostty.sh   # + iOS device + sim (needs iOS<=18 SDK)
+#   XCFRAMEWORK_TARGET=universal ThirdParty/ghostty/build-libghostty.sh   # + iOS device + sim
+#       (no iOS<=18 SDK needed — caveat #4. `universal` is ALSO the only target whose macOS
+#        slice carries the standalone dep archives; a `native` slice links the CLI but fails the
+#        ClientApp link on undefined _sentry_*/_zig_os_log_with_type. Release CI uses universal.)
 #   MACOS_SDK_SHIM_PATH=/path/to/MacOSX15.4.sdk ...   # override the old-SDK the shim points at
 #   ZIG_BUILD_TIMEOUT_SECS=1800 ...                   # cap the zig build wall clock
 #

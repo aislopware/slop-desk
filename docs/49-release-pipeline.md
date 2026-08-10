@@ -153,6 +153,21 @@ counterexample to `GuiGateLaunchContractTests`'s "names it ⇒ launches it" net.
 that file's `nonLaunchingScripts`, and a companion test re-derives the claim — add an `open` there
 and the suite fails with the verb named.
 
+## What v0.1.0 (the first real cut) established
+
+- **Notarization works end to end.** Both bundles report `accepted / source=Notarized Developer
+  ID` and the DMG carries a stapled ticket.
+- **The `tap` job has never run successfully.** On v0.1.0 it died on `Project not linked` (exit 4)
+  because it had no `actions/checkout` — the vault client resolves the project from `eas.json` in
+  the working directory. Fixed in the workflow (checkout first, ahead of `download-artifact`, so
+  nothing wipes `dist/`), but the v0.1.0 tap commit was made **by hand** from the published
+  `SHA256SUMS`. The next release is the first real exercise of that job.
+- **Only the DMG is stapled, not the apps inside it.** A cask copies `SlopDesk.app` out of the
+  image, so the installed app has no ticket of its own and Gatekeeper resolves it online. That is
+  fine on a networked machine and fails a first launch offline. Fixing it means notarizing a zip
+  of the two bundles first, stapling each, and only then building + notarizing the DMG — one extra
+  submission round per release. Not done.
+
 ## Known-fragile: the libghostty job
 
 This is the part most likely to break, and it breaks in CI in ways it does not break locally.

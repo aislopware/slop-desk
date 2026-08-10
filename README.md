@@ -19,6 +19,19 @@ Three independent transports (separate sockets, message sets, version `1` only):
 
 Agent attention (idle/working/blocked/done) drives rings, tab glow, notifications, and jump-to-unread (⌘⇧U). Also: sync-input (⌘⇧I), copy-mode (⌘⇧C), `slopdesk-ctl` for headless supervision.
 
+## Install
+
+Apple silicon, macOS 26 or newer. Signed and notarized; two packages, installed independently:
+
+```sh
+brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
+brew install aislopware/tap/slopdesk         # slopdesk, slopdesk-hostd, slopdesk-ctl
+```
+
+The app bundles carry no copy of the CLI, so wanting both means running both commands. Signed
+artifacts also live on the [releases page](https://github.com/aislopware/slop-desk/releases);
+how they are built and signed is [`docs/49-release-pipeline.md`](docs/49-release-pipeline.md).
+
 ## Build & run
 
 Headless core needs no GUI, libghostty, or signing:

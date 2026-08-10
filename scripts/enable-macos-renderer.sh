@@ -15,7 +15,9 @@
 #   2. Inject three things into Apps/ClientApp-macOS/project.yml (only if not already present):
 #        a. sources:      += the integration/GhosttySurface dir (GhosttySurface.swift +
 #                            GhosttyTerminalView.swift — they are NOT in any Package.swift target).
-#        b. dependencies: += the libghostty.xcframework (embed: true) — the link-time C-ABI symbols.
+#        b. dependencies: += the libghostty.xcframework (embed: FALSE — it wraps a static .a,
+#           so the symbols land in the executable at link time and a copy in Contents/Frameworks
+#           would only be an unsignable stowaway).
 #        c. settings.base: += SWIFT_INCLUDE_PATHS (CGhostty module map → `import CGhostty`
 #                            resolves, `#if canImport(CGhostty)` flips true), ARCHS=arm64 +
 #                            ONLY_ACTIVE_ARCH=NO (xcframework ships only macos-arm64), and
@@ -100,8 +102,13 @@ dep_block = (
     "      # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host\n"
     "      # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS\n"
     "      # slices (see scripts/enable-ios-renderer.sh); this macOS target links the macOS slice.\n"
+    "      # embed: false — the xcframework wraps a STATIC archive (macos-arm64.a). Its symbols\n"
+    "      # are already in the executable after the link; embedding additionally COPIES the .a\n"
+    "      # into Contents/Frameworks, where it is dead weight and, worse, unsignable: codesign\n"
+    "      # walks the bundle and fails the whole app with `code object is not signed at all`\n"
+    "      # on that member. A dylib would need embed: true; a .a must not have it.\n"
     "      - framework: ../../ThirdParty/ghostty/libghostty.xcframework\n"
-    "        embed: true\n"
+    "        embed: false\n"
 )
 if "libghostty.xcframework" not in text:
     if dep_anchor not in text:
