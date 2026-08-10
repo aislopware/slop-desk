@@ -154,7 +154,9 @@ jobs:
           set -euo pipefail
           umask 077
 
-          bun add -g @better-update/cli@latest
+          # Pinned, not @latest: bun's minimumReleaseAge holds back same-day publishes, so
+          # @latest can quietly resolve to a build older than the server's >0.72.0 floor.
+          bun add -g @better-update/cli@0.73.1
           vault="${RUNNER_TEMP}/vault.sh"
           better-update env pull --environment production --stdout > "${vault}"
 
@@ -259,6 +261,11 @@ jobs:
     if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     steps:
+      # BEFORE download-artifact: the vault client resolves the project from the top-level
+      # `projectId` in eas.json (docs/49), so it needs the repo in the working directory —
+      # without it `env pull` exits 4 with "Project not linked" and never reaches the token.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: slopdesk-${{ needs.package.outputs.version }}-arm64
@@ -276,7 +283,9 @@ jobs:
           set -euo pipefail
           umask 077
 
-          bun add -g @better-update/cli@latest
+          # Pinned, not @latest: bun's minimumReleaseAge holds back same-day publishes, so
+          # @latest can quietly resolve to a build older than the server's >0.72.0 floor.
+          bun add -g @better-update/cli@0.73.1
 
           # Same pull-mask-source shape as the package job. `env get` renders a table for a
           # human; only `env pull --stdout` emits machine-readable `export KEY='value'` lines.
