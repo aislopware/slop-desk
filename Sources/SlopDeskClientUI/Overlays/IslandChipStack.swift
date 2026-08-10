@@ -83,9 +83,11 @@ struct ConnectionAlertChip: View {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
             .background(Slate.Terminal.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            // The same visible rim the transient chips wear (``InstrumentChipShell``) — `edge`
+            // matches the plate's own tone and draws nothing.
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline),
+                    .strokeBorder(Slate.Terminal.rim, lineWidth: Slate.Metric.hairline),
             )
         }
         .buttonStyle(.plain)

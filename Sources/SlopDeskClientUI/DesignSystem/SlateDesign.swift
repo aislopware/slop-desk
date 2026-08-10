@@ -68,6 +68,17 @@ struct SlateTheme: Equatable, Sendable {
     let terminalEdge: Color
     /// A lifted plate ON the glass (chips, handles) — the selection fill.
     let terminalRaised: Color
+    /// The RIM around a lifted plate ON the glass — one step BRIGHTER than the plate, never equal to
+    /// it. Its own token because ``terminalEdge`` is a SEAM (a line drawn between two things that
+    /// already differ — the pane divider, the island's own edge) and a rim is the only mark saying
+    /// where a floating chip ENDS. The two shared a value until 2026-08-10, which made every chip's
+    /// border literally invisible: `edge` and `raised` are both the profile's selection tone, so the
+    /// copy receipt and every `NoticeChip` drew a `#454158` hairline on a `#454158` plate and read as
+    /// a text run floating unbounded over the terminal (user-reported). A rim on a DARK plate has to
+    /// be LIGHTER than it — the inverse of the light side's rule (``Slate/Line/overlayRim``), which is
+    /// darker than its cream — so this is derived by lifting the plate toward the profile's own
+    /// comment ink rather than by inventing a hex.
+    let terminalRim: Color
 
     /// THE GROUND — everything that is not the one island (law 1): the navigator, the code panel,
     /// the top band and the moat around the terminal. Alucard's published cream `#FFFBEB`, never
@@ -154,6 +165,11 @@ struct SlateTheme: Equatable, Sendable {
             terminal: Color(slateHex: glass.face),
             terminalEdge: Color(slateHex: glass.edge),
             terminalRaised: Color(slateHex: glass.edge),
+            // The rim is the plate lifted HALFWAY to the profile's comment ink — in-family by
+            // construction (a profile cannot ship a rim in a hue its glass does not speak) and a
+            // clear step off the plate it bounds: on the shipped profile #454158 → #5F5880 against
+            // the ink's #7970A9, which reads as an edge without reaching the label's own weight.
+            terminalRim: Color(slateHex: mix(glass.edge, glass.ink2)),
             groundHexValue: chrome.ground,
             chromeHexValue: glass.face,
             chromeLineHexValue: chrome.line,
@@ -182,6 +198,16 @@ struct SlateTheme: Equatable, Sendable {
     /// 2 = green), so "failed" and "clean" are drawn in the same two colours the cells below them use.
     private static let ansiRed = 1
     private static let ansiGreen = 2
+
+    /// The per-channel MIDPOINT of two 24-bit RGB literals — integer arithmetic, so the derived
+    /// tone is exact and reproducible (no float rounding to argue about). The one derivation the
+    /// profile does: ``terminalRim`` is the plate lifted halfway toward the on-glass comment ink.
+    static func mix(_ a: UInt32, _ b: UInt32) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            (((a >> shift) & 0xFF) + ((b >> shift) & 0xFF)) / 2
+        }
+        return (channel(16) << 16) | (channel(8) << 8) | channel(0)
+    }
 
     /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty config value format.
     /// Manual (no `String(format:)`) to stay allocation-cheap and trap-free.
@@ -297,6 +323,10 @@ enum Slate {
         static var ink2: Color { Slate.theme.terminalInk2 }
         static var edge: Color { Slate.theme.terminalEdge }
         static var raised: Color { Slate.theme.terminalRaised }
+        /// The RIM of a floating plate ON the glass (``InstrumentChipShell``, the connection chip) —
+        /// LIGHTER than the plate, unlike ``edge``, which is the same tone as it. See
+        /// ``SlateTheme/terminalRim``: a border that matches its own fill is not a border.
+        static var rim: Color { Slate.theme.terminalRim }
         static var accent: Color { Slate.theme.terminalAccent }
         /// The status pair ON the glass — the profile's own green / red (``SlateTheme/terminalOk``,
         /// ``SlateTheme/terminalErr``). Anything drawn inside the island that has to say "clean" or
@@ -391,6 +421,21 @@ enum Slate {
             slateDynamicLight: 0x000000, dark: 0xFFFFFF,
             lightAlpha: Opacity.edge, darkAlpha: Opacity.edge,
         )
+
+        /// A FLOATING SURFACE's rim — the toast card, every summoned paper card, the sheet. Its own
+        /// token, and NOT ``divider``: the system separator measures ~1.25 : 1 on this cream, which
+        /// is a rule between two visible things, not the edge of an object that has to read as
+        /// LIFTED off the ground it covers. A notification card is exactly that object, and it was
+        /// reported as having no visible border at all (2026-08-10).
+        ///
+        /// Polarity-INVERTING, which is the whole rule: a rim is drawn in the OPPOSITE polarity to
+        /// the surface it bounds — black on the light card here, and on the glass the mirror image
+        /// (``Slate/Terminal/rim`` lifts the dark plate toward its ink). One idea, spelled once per
+        /// ground, because each ground is the only thing its own rim can be solved against.
+        static let overlayRim = Color(
+            slateDynamicLight: 0x000000, dark: 0xFFFFFF,
+            lightAlpha: Opacity.rim, darkAlpha: Opacity.rim,
+        )
     }
 
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
@@ -427,6 +472,11 @@ enum Slate {
         /// different question than a hairline's: a rule separates two things that are both already
         /// visible, while this is the only mark saying where the typing area begins.
         static let edge = 0.28
+        /// A FLOATING SURFACE's rim (``Line/overlayRim``). Between ``wash`` and ``edge`` on purpose:
+        /// a card's border has to be found at a glance over busy content, but it bounds a whole
+        /// surface rather than the one small typing area ``edge`` was solved for — at 0.28 the card
+        /// reads as outlined instead of lifted.
+        static let rim = 0.20
         /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
         static let dim = 0.35
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.

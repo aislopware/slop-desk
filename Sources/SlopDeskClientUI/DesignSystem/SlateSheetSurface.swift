@@ -54,7 +54,8 @@ extension View {
     func slateSheetSurface() -> some View {
         let shape = RoundedRectangle(cornerRadius: Slate.Metric.radiusPanel, style: .continuous)
         return background(Slate.Surface.field, in: shape)
-            .overlay { shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline) }
+            // The same rim the paper cards wear — one floating family, one boundary rule.
+            .overlay { shape.strokeBorder(Slate.Line.overlayRim, lineWidth: Slate.Metric.hairline) }
             .background {
                 #if os(macOS)
                 SlateSheetWindowStyler().frame(width: 0, height: 0)

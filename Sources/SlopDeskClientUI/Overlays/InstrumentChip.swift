@@ -99,9 +99,15 @@ struct InstrumentChipShell: ViewModifier {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
             .background(Slate.Terminal.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            // ⚠️ ``Slate/Terminal/rim``, NOT `edge`. `edge` and `raised` are the SAME profile tone
+            // (the selection fill), so this border used to be `#454158` drawn on a `#454158` plate —
+            // literally invisible, which left `COPIED · N CHARS` and `TAB CLOSED · ⇧⌘T REOPENS`
+            // floating unbounded over the terminal output (user-reported 2026-08-10). The rim is the
+            // plate lifted toward the profile's ink: on a DARK surface a border must be LIGHTER than
+            // what it bounds, the mirror of the light side's rule.
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline),
+                    .strokeBorder(Slate.Terminal.rim, lineWidth: Slate.Metric.hairline),
             )
             .slateShadow(.chip, color: Slate.State.overlayShadow)
             .accessibilityLabel(accessibility)

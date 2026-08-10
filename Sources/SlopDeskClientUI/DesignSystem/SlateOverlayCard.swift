@@ -106,7 +106,12 @@ struct SlatePaperCard: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(Slate.Surface.field, in: shape)
-            .overlay { shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline) }
+            // ``Slate/Line/overlayRim``, not the system separator: this card COVERS the workspace,
+            // so its edge is the only thing saying where the object ends, and the separator lands at
+            // ~1.25 : 1 on the cream — a rule between two visible things, not a boundary. Reported
+            // as "no border tint" on the notification card specifically (2026-08-10), which is the
+            // member of the family that lands over the terminal's own busy output.
+            .overlay { shape.strokeBorder(Slate.Line.overlayRim, lineWidth: Slate.Metric.hairline) }
             // ⚠️ The card is SOLID TO CLICKS, and that is a correctness fix, not polish. The card floats
             // on a full-bleed dismiss floor; a click that lands on the card's own body — a label, the
             // padding between two fields, the gap beside a disclosure row — is not a click on the floor,
