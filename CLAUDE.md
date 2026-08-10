@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Non-derivable facts only. **`docs/46-gates-env-paths.md` = gate matrix, `SLOPDESK_*` env, three-path notes, golden procedure — read before picking a gate, touching a transport, or adding a flag.** Architecture: `docs/00-overview.md`; re-scoping → `docs/DECISIONS.md`; wire contract → `docs/20-wire-protocol.md` (update after wire changes).
+Non-derivable facts only. **`docs/46-gates-env-paths.md` = gate matrix, `SLOPDESK_*` env, three-path notes, golden procedure — read before picking a gate, touching a transport, or adding a flag.** Architecture: `docs/00-overview.md`; re-scoping → `docs/DECISIONS.md`; wire contract → `docs/20-wire-protocol.md` (update after wire changes); shipping (sign/notarize/brew) → `docs/49-release-pipeline.md`.
 
 SlopDesk = low-latency remote coding (macOS host, macOS/iOS clients). Swift owns the wire. Only C: `Sources/CSlopDeskSIMD` — GF(2⁸) NEON kernel + scalar fallback, wrapping `&*`/`&+` intentional, `GF256NeonDifferentialTests` pins NEON ≡ scalar (re-run + loopback-validate after kernel/hash edits). Clean checkout builds headless: `swift build`/`swift test` never see libghostty / VideoToolbox / ScreenCaptureKit.
 
