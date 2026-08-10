@@ -1,5 +1,5 @@
 // SlateTabRow — the sidebar tab row, descended from otty's `TabsPanelRowView` but on the house
-// ladder: one `heightTabRow` line, title in the SYSTEM face (13pt) resting on the SECONDARY ink,
+// ladder: one `heightTabRow` line, title in the SYSTEM face (`Typeface/base`) resting on the SECONDARY ink,
 // an optional leading `✳` agent marker IN the title run, and one fixed trailing slot that carries
 // the resting SHELL LABEL (`zsh` — the mono metadata voice) or a privilege marker
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
@@ -138,15 +138,19 @@ struct SlateTabRow: View {
                 // already led by the normalized mark (`normalizedProgramTitle`) single-marked.
                 // `nerdAware` so a private-use glyph riding a program title draws from the bundled
                 // symbols face.
+                // `base`, not `body` (user-directed 2026-08-10): a pane name is a UI LABEL, and at
+                // the reading rung it stood a full step above the project header that names the
+                // group it belongs to (`footnote`, 11) — the child outranking its own heading. The
+                // default label rung puts the rail back in order.
                 Text.nerdAware(
                     agentMarker ? RailRowsBuilder.agentMarkedTitle(title) : title,
-                    size: Slate.Typeface.body,
+                    size: Slate.Typeface.base,
                 )
                 // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
                 // bold says "something changed", the ring's hue says what) — the same
                 // `.medium` step the active card takes, so the two signals share one scale.
                 .font(.system(
-                    size: Slate.Typeface.body,
+                    size: Slate.Typeface.base,
                     weight: active || attentionLabel != nil ? .medium : .regular,
                 ))
                 .foregroundStyle(titleInk)
@@ -286,7 +290,9 @@ struct SlateTabRow: View {
     private var renameField: some View {
         let field = TextField("Rename", text: $draft)
             .textFieldStyle(.plain)
-            .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+            // Same rung as the title it replaces — a rename that resized the text would read as the
+            // row changing rather than opening.
+            .font(.system(size: Slate.Typeface.base, weight: active ? .medium : .regular))
             .foregroundStyle(Slate.Text.primary)
             .tint(Slate.State.accent)
             .lineLimit(1)

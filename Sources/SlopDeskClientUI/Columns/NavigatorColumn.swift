@@ -650,8 +650,8 @@ struct SidebarSectionHeaderRow: View {
                 if !segments.isEmpty {
                     // The git line is DATA — the instrument mono, one register with the rows' process
                     // labels. But it is data with STATES, and rendering all of them in one flat grey
-                    // made the counts that matter read exactly like the branch name they sit beside.
-                    // The counts step up to the body ink and go bold instead; the mono grid keeps the
+                    // made the counts that matter (a conflict, unpushed work) read exactly like the
+                    // ones that don't. Each run wears its own ink instead; the mono grid keeps the
                     // line from turning into confetti.
                     Self.gitDetailLine(segments)
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
@@ -809,44 +809,60 @@ struct SidebarSectionHeaderRow: View {
         return parts
     }
 
-    /// The ink for one run — TWO registers, not a palette.
+    /// The ink for one run — every role its own, no two alike (hue RESTORED, user-directed
+    /// 2026-08-10: the rail is no longer held to a monochrome readout).
     ///
-    /// The BRANCH is the line's identity and keeps the body-secondary ink; every COUNT takes the primary
-    /// text ink, one full step BRIGHTER than the name it sits beside. The sigils already name WHICH state
-    /// each run reports — `↑`/`↓` divergence, `+` staged, `!` modified, `?` untracked, `~` conflicts, `$`
-    /// stash — so hue was spending six colours restating what the glyph says, and a header that is mostly
-    /// folder names read as a paint chart. What the eye actually needs from this line is one bit at a
-    /// glance ("is there dirt here?"), and brightness plus bold carries that bit without the confetti.
+    /// The four WORKTREE states are a RAMP, not a set of labels: `+staged` → `!modified` → `?untracked` →
+    /// `~conflicted` is "how far this work is from being committed" (in the index → in the worktree → git
+    /// has never seen it → it is broken), and the palette's chromatics sweep that distance exactly:
+    /// green → yellow → orange → red, monotone, in the SAME left-to-right order the sigils already appear.
+    /// The ramp is the reason `?` is orange rather than one more grey — it is not a sixth arbitrary
+    /// colour, it is the rung between "you changed it" and "it is broken".
     ///
-    /// Nothing here resolves to the tertiary metadata grey — sinking the whole line into it is what made a
+    /// Off the ramp: `↑↓` divergence is where the branch sits against its upstream and `$` stash is work
+    /// parked to one side — neither is a worktree state, so both take a cool hue and stay out of the warm
+    /// sweep. The BRANCH keeps the body ink: it is the line's identity, not a count.
+    ///
+    /// The hues cannot collide with the ground they stand on: a project island's bed is solved to the
+    /// 195°–340° arc precisely so red / amber / green stay the status vocabulary's alone
+    /// (``Slate/ProjectTint``).
+    ///
+    /// Nothing here resolves to the tertiary metadata grey — painting the whole line in it is what made a
     /// conflict count read exactly like a branch name.
     static func ink(_ role: GitInk) -> Color {
         switch role {
         case .branch: Slate.Text.secondary
-        case .conflicted,
-             .divergence,
-             .modified,
-             .staged,
-             .stash,
-             .untracked: Slate.Text.primary
+        case .divergence: Slate.Status.info
+        case .staged: Slate.Status.ok
+        case .modified: Slate.Status.warn
+        case .untracked: Slate.Chroma.orange
+        case .conflicted: Slate.Status.err
+        case .stash: Slate.Chroma.purple
         }
     }
 
-    /// The weight for one run — the second half of the contrast step, on two rungs.
+    /// The weight for one run — a second channel the palette cannot supply, on three rungs.
     ///
-    /// Every COUNT is set BOLD: with hue gone the readout has exactly two channels left, and at 10 pt mono
-    /// a lighter weight leaves the sigils thin enough that the brightness step alone has to carry them. The
-    /// BRANCH stays regular — it is identity, not a status, and keeping it light is what lets the counts
-    /// read as one group beside it rather than as more of the name.
+    /// Every COUNT is set heavy: the sigil runs are the readout, and at 10 pt mono a regular weight
+    /// leaves them thin enough that the colour is doing all the work. The BRANCH stays regular — it is
+    /// the line's identity, not a status, and keeping it light is what lets the counts read as a group.
+    ///
+    /// `~conflicted` goes one rung further still, to fix a ranking hue gets backwards: the palette's red
+    /// is a mid tone while its yellow is bright, so by contrast against the sidebar the ONE state that
+    /// genuinely needs a human pulls the eye LEAST of the coloured runs. That inversion cannot be fixed by
+    /// re-assigning hues without lying about what the states mean. Weight is free of the palette — and it
+    /// survives the CVD collapse the hue set has (under protanopia `+staged` and `~conflicted` land close
+    /// enough to be indistinguishable by hue alone; the sigils already carry the meaning, and the weight
+    /// step adds a second non-colour cue).
     static func weight(_ role: GitInk) -> Font.Weight {
         switch role {
         case .branch: .regular
-        case .conflicted,
-             .divergence,
+        case .conflicted: .bold
+        case .divergence,
              .modified,
              .staged,
              .stash,
-             .untracked: .bold
+             .untracked: .semibold
         }
     }
 

@@ -975,9 +975,9 @@ enum Slate {
         static let title: CGFloat = 15
         /// Primary content + the command input field — the slightly-larger reading size.
         static let body: CGFloat = 13
-        /// Default UI label size.
+        /// Default UI label size — the sidebar's ROW TITLES included.
         static let base: CGFloat = 12
-        /// Secondary labels, chips, pills, tab titles.
+        /// Secondary labels, chips, pills, the sidebar's project headers.
         static let footnote: CGFloat = 11
         /// Captions, kbd hints, tab subtext.
         static let small: CGFloat = 10
