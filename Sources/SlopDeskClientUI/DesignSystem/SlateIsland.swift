@@ -9,8 +9,8 @@
 //     its top edge rises INTO the band and lands ON the line the band's plates hang from — except
 //     while the navigator is hidden and the band runs over this column, when the top opens to
 //     ``Slate/Metric/bandHeight``;
-//   • it carries a hairline edge, because in the light profile the ground and the glass are the same
-//     cream (law 4) and the corner alone cannot draw the boundary.
+//   • it carries a hairline edge, and that edge is the GLASS's own (``Slate/Terminal/edge``), not the
+//     chrome separator — see the note on ``View/slateIsland(clearingBand:)``.
 //
 // Nothing else calls it. A second call site is the many-islands mistake coming back.
 //
@@ -51,6 +51,18 @@ extension View {
     /// That widening is a step of most of the band, and it must never be INSTANT: collapsing the
     /// navigator animates the column's width, so the moat opens on the same curve and duration —
     /// the island widens leftward and shortens downward as one move.
+    ///
+    /// THE RIM IS THE GLASS'S OWN EDGE, NOT THE CHROME SEPARATOR (user-directed 2026-08-10). The
+    /// hairline used to be ``Slate/Line/divider``, written when a light profile existed and the
+    /// ground and the glass were the same cream; under the one appearance that separator resolves on
+    /// the LIGHT side (near-black at a tenth) and lands on `#22212C`, so it draws nothing at all and
+    /// the island's whole boundary is the ground's 13:1 tone step. That boundary is a loan from the
+    /// ground: paint the ground any darker and the island loses its edge with it. ``Slate/Terminal/edge``
+    /// is the profile's own selection tone, a step LIGHTER than the glass, which is the platform
+    /// idiom for a lifted dark surface (a dark separator is a light hairline, not a dark one), and it
+    /// is the same line the panes inside are parted by — one line vocabulary, inside and out.
+    /// It also makes the edge the island's own property: on any ground, the rim still says where the
+    /// glass ends.
     @MainActor
     func slateIsland(clearingBand: Bool = false) -> some View {
         let radius = Slate.Metric.islandRadius
@@ -62,7 +74,7 @@ extension View {
                 // Inset stroke, not a centred one: a stroke on the rounded path would be half eaten
                 // by the clip above it, and the island must not change size to draw its own edge.
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline)
+                    .strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline)
                     .allowsHitTesting(false)
             }
             .padding(.top, top)
@@ -113,6 +125,11 @@ struct SlateCompactIsland<Content: View>: View {
     /// The chip's ground. Selected draws the island plate — fill and hairline as ONE view, which is
     /// what lets the morph carry both across; hover draws the resting tint; at rest nothing.
     ///
+    /// The hairline is the GLASS's edge for the same reason the big island's is (see
+    /// ``View/slateIsland(clearingBand:)``): a chip stamped out of the island's material has to carry
+    /// the island's rim too, or the two surfaces stop being the same object the moment the ground
+    /// stops being the thing that separates them.
+    ///
     /// NO DROP SHADOW (user-directed 2026-08-09). The chip used to cast a 4% whisper, written when
     /// the plate was cream on a cream ground and needed help separating. The single profile put the
     /// island's DARK glass under the chip while the ground stayed cream, so the two are now ~13:1
@@ -124,7 +141,7 @@ struct SlateCompactIsland<Content: View>: View {
         if selected {
             let pill = shape
                 .fill(Slate.Surface.island)
-                .overlay(shape.strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline))
+                .overlay(shape.strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline))
                 .allowsHitTesting(false)
             if let morph {
                 pill.matchedGeometryEffect(id: Self.morphID, in: morph)

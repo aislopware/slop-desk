@@ -7368,3 +7368,29 @@ window-centred and pane-corner mounts were both offered and declined.
 
 ⚠️ The hit-transparency stays PER CHIP. A flag on the stack would deafen the connection chip's
 `Button` — the same ancestor-suppression lesson `OverlayHostView`'s two-layer note records.
+
+## The island's rim is the glass's own edge, so the boundary is not on loan from the ground (2026-08-10)
+
+User-directed: give the surfaces whose fill IS the dark glass a light tinted edge, so that a darker
+ground later would still leave the island standing off it — the platform's own treatment of a lifted
+dark surface.
+
+The two call sites that paint `Surface.island` — `View.slateIsland()` and the selected tab's
+`SlateCompactIsland` — stroked `Slate.Line.divider`. That token dates from the two-profile era, where
+a light profile put cream on cream and the hairline was the only thing that could say where the glass
+began. Under ONE APPEARANCE it is the system separator resolved on the LIGHT side (the app pins
+`.aqua`), which lands near-black at a tenth ON `#22212C`: measured off the render, the old rim drew
+`(31,29,40)` against a `(34,32,44)` face — **1.05:1**, a hairline that was there and did nothing. The
+island's entire boundary was the ground's 13:1 tone step, i.e. a property of the CREAM, not of the
+island. Repaint the ground dark and the island loses its edge along with the contrast.
+
+Both rims are now `Slate.Terminal.edge` (`#454158`, the profile's selection tone — a published value,
+not an invented chrome hex). Measured on the same render: `(70,63,87)`, **1.63:1** against the glass,
+and 1.6–2.2:1 against any plausible dark ground. That is the direction the platform draws a separator
+on a dark surface — the hairline LIGHTENS — and it is the same line the panes inside the island are
+already parted by (`NativePaneColor.separator`), so the window has one line vocabulary inside and out
+rather than a chrome rule outside and a glass rule inside.
+
+Scope is exactly the surfaces made of the glass. The paper family (`SlatePaperCard`,
+`slateSheetSurface`) keeps `Line.divider`: those are the GROUND raised, their edge answers to the
+chrome polarity, and they would need re-solving with the ground itself, not ahead of it.

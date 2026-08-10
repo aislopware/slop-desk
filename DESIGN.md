@@ -69,7 +69,7 @@ components:
     backgroundColor: "{colors.glass-dracula}"
     rounded: "{rounded.island} — a WINDOW-scale corner for a window-scale surface: 26 is what macOS 26 Tahoe puts on a full-chrome window (measured on this OS). The island sits ~230px clear of the frame's own corners, so nothing constrains it to stay under the window's 16 (user-directed 2026-08-08)"
     inset: "12px on ALL FOUR sides, so the island's top edge rises INTO the band, just under the traffic lights' own top edge (user-directed 2026-08-09). The one exception: while the navigator is hidden the band's own tab strip moves over this column, and the top opens to the full band so the tinted project beds keep their ground. The trailing side gives way to the panel's rail when the panel is collapsed"
-    border: "1px Slate.Line.divider, inset-stroked inside the clip"
+    border: "1px Slate.Terminal.edge, inset-stroked inside the clip — the GLASS's own edge tone, a step lighter than the face, so the rim belongs to the island rather than to the tone step against the ground (user-directed 2026-08-10). The chrome separator it replaced resolves on the light side and drew 1.05:1 on `#22212C`, i.e. nothing"
     note: "THE ONE ISLAND (user-directed 2026-08-08) — the terminal canvas, the window's only lifted surface. `View.slateIsland()` is its single call site; a second one is the many-islands clutter coming back. Panes tile it edge-to-edge, parted by the PaneDivider hairline, never by a channel"
   sidebar:
     backgroundColor: "the field (the ground, full-bleed — the navigator SINKS, it is not an island)"
@@ -321,8 +321,10 @@ info status. Everything else interactive is the system's.
 - The content column paints GROUND and lifts ONE island off it: `View.slateIsland()` — the glass,
   a 26pt continuous corner, a 12pt moat on all four sides (the band's row of controls is centred
   just below that top edge), and a 1px
-  inset `Line.divider` stroke so the boundary survives the light profile where ground and glass are
-  the same cream. Panes are flush INSIDE the island; splits are divided by the profile's
+  inset `Terminal.edge` stroke — the glass's own selection tone, a step LIGHTER than the face — so
+  the island owns its boundary instead of borrowing it from the ground's tone step. Any surface cut
+  from the island's material carries the same rim (the selected tab's `SlateCompactIsland`). Panes
+  are flush INSIDE the island; splits are divided by the profile's
   `terminalEdge` line — a subtle line ON the glass, never a channel, never per-pane cards. There is
   exactly one call site; a second is the many-islands clutter coming back.
 - **The command LADDER** (round 14) rides each terminal pane's trailing edge: one short tick per
