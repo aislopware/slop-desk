@@ -7631,3 +7631,67 @@ wherever their parent folders fall in the alphabet.
 The keyless "Other" bucket sorts LAST rather than under O: it is the absence of a name, not a name.
 Supersedes the "always creation order" half of the 2026-07-10 grouping entry; the rest of it — no
 sort UI, no recency, no manual drag-reorder, host-pushed key — stands unchanged.
+
+## The thinking mark becomes herdr's spinner, drawn (2026-08-10, user-directed)
+
+Round 23 gave the working agent the PLATFORM's indeterminate indicator — otty's own answer, an
+`NSProgressIndicator` scaled into the mark column. Replaced by `AgentSpinner`, a drawn comet on
+herdr's spinner, on the user's instruction to take herdr's reading but redraw it rather than type it.
+
+**What herdr actually draws.** One terminal cell, the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, advanced one
+per 8 ticks of a 60 Hz loop (`ui.rs: SPINNERS` / `spinner_frame`). Read as artwork rather than as
+text, those are an arc of three-to-four lit dots travelling around the six perimeter cells of a
+braille cell, one full turn per ten frames. Two of its properties are limitations of the medium, not
+the design: the rotation is quantised to six positions, and the in-between positions are faked by
+lighting a FOURTH dot — which is why the arc appears to breathe as it turns. Drawing it removes both.
+
+**The shape.** ONE arc, on the resting ring's own Ø10 circle at the resting ring's own 1.5pt weight,
+sweeping 270°, turning at herdr's exact tempo (`10 × 8/60` = 1.333 s/rev). A working agent and a
+merely present one are therefore the same silhouette, and the whole difference is that one of them is
+turning: the ring says "an agent lives in this pane", the motion says "and it is thinking right now".
+The 270° sweep is ours — herdr's arc tops out at 240° — because below roughly a quarter-turn of
+clearance a rotating arc stops reading as an arc and starts reading as a ring vibrating.
+
+**The taper, settled on pixels twice.** The arc tapers from `Opacity.dim` at the tail to full ink at
+the head, and it does NOT fade to nothing. A vanishing tail is a handsome comet at 6× and a thin
+crescent at Ø10: it left the working mark carrying less ink than the resting dashed ring beside it
+(eight dashes at full strength are a lot of ink), so the rail's hierarchy came out upside down — the
+row doing something read quieter than the row doing nothing. A hard-ended arc is also the closer
+transcription, since braille dots are lit or they are not. The taper survives only because it names
+which end is the HEAD, and therefore which way the mark is turning.
+
+**The ink is `StatusInk.info`** — a hue, deliberately not one on the attention ramp. That ramp is a
+request: amber = a question waits, green = an unread finish, red = broken, and every one of them means
+*come here*. A thinking agent means the opposite; it is the one state that wants to be left alone, and
+it is also the state a rail spends most of its day in, so putting it on the ramp would teach the eye
+to discount the ramp. `info` is off the ramp by construction and iso-lightness with it: findable in a
+still screenshot, unable to out-shout a row that needs you. Two hues it is NOT: **herdr's own yellow**,
+which it uses for exactly this state — already spoken for here as the act-now amber, and this rail
+cannot spend one colour on "answer me" and "do not disturb"; and **the accent**, which the compact
+glyph used to wear — in this app the accent means SELECTION (the reason `StatusInk.info` exists as a
+separate blue at all), so a purple mark on an unselected row reads as a row half-selecting itself.
+
+**One working mark, everywhere.** `StatusGlyph`'s `working` reading — the typed pulse `· ✢ ✳ ✶ ✻ ✽`
+that the iOS toolbar and the Peek & Reply header have spoken since MERIDIAN — now mounts the same
+`AgentSpinner`, and `StatusPresentation.agentTint(.working)` takes `thinkingMark.ink` by reference
+rather than spelling a second ink. One pane could previously be spinning in the sidebar and blooming
+in the header at the same instant. `StatusGlyph`'s other three readings stay typed. The `\u{FE0E}`
+variation-selector trap dies with the frames it guarded (it still applies to the title's `✳` marker).
+
+Three properties are load-bearing, all pinned:
+- **Phase comes off the WALL CLOCK from a fixed epoch**, not from an animation started at mount — so
+  every spinning row in the rail is at the same angle and a re-render lands the comet mid-turn.
+  `AgentSpinner.turn(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, closure at
+  each full turn, and non-negative wrap before the epoch.
+- **Pure SwiftUI**, so `ImageRenderer` can rasterize it — the platform indicator could not be
+  rendered at all, which meant the one mark that moved was the one mark no test could look at.
+  `SlateSnapshotRender` now lays one turn out flat as a phase-pinned filmstrip (`pinnedTurn`), and
+  `sidebar-section.png` gains a SELECTED working row so the mark is checked on the island's dark
+  glass too — the ground where a light/dark pair can resolve on the wrong side.
+- **Reduce Motion freezes it** — the platform used to own that call. A frozen comet is still a
+  distinct silhouette (a ring cut at 12 o'clock, tapered), so the state is never lost, only the
+  movement.
+
+`WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
+affordance (the Android device list's boot button), where matching every other spinner on the machine
+is the point.

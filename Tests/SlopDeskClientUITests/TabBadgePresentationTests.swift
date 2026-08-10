@@ -71,26 +71,52 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.agentReading(.needsPermission), .awaiting)
     }
 
-    /// The agent spinner's cadence, pinned headlessly off the pure frame function: frames advance
-    /// one per beat from the fixed epoch, wrap at the cycle's end, and a re-render at the same
-    /// instant yields the same frame (phase is a function of the wall clock, not of mount count).
-    func testSpinnerFrameCadenceAdvancesOnePerBeatAndWraps() {
-        let frames = StatusGlyph.agentFrames
-        let beat = StatusGlyph.agentBeat
+    /// The agent spinner's cadence, pinned headlessly off the pure turn function: the comet sweeps
+    /// one full revolution per period, phase locked to the fixed epoch (so every mount is at the
+    /// same angle), monotonic within a turn, and the SAME instant always yields the same angle —
+    /// which is what makes a re-render land mid-turn instead of snapping back to 12 o'clock.
+    func testSpinnerTurnsOncePerPeriodFromTheFixedEpoch() {
+        let period = StatusDot.cometPeriod
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        for step in 0..<(frames.count * 2) {
-            let at = epoch.addingTimeInterval(Double(step) * beat + beat / 2)
+        XCTAssertEqual(AgentSpinner.turn(at: epoch), 0, accuracy: 0.001, "the epoch is 12 o'clock")
+        for turn in 1...3 {
+            let full = epoch.addingTimeInterval(period * Double(turn))
             XCTAssertEqual(
-                StatusGlyph.frame(at: at, frames: frames, beat: beat),
-                frames[step % frames.count],
-                "step \(step) must land on its own frame",
+                AgentSpinner.turn(at: full), 0, accuracy: 0.001,
+                "turn \(turn) must close the circle exactly — the phase is the clock, not a counter",
             )
         }
+        for step in 1..<8 {
+            let fraction = Double(step) / 8
+            XCTAssertEqual(
+                AgentSpinner.turn(at: epoch.addingTimeInterval(period * fraction)),
+                fraction * 360, accuracy: 0.001,
+                "the sweep is LINEAR — an eased spinner reads as a stutter",
+            )
+        }
+        // Before the reference epoch the remainder goes negative; the angle must not.
+        XCTAssertEqual(
+            AgentSpinner.turn(at: epoch.addingTimeInterval(-period / 4)), 270, accuracy: 0.001,
+            "dates before the epoch wrap forward, never to a negative angle",
+        )
         let mid = epoch.addingTimeInterval(3.14)
         XCTAssertEqual(
-            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
-            StatusGlyph.frame(at: mid, frames: frames, beat: beat),
-            "same instant ⇒ same frame — a re-mount can't skip",
+            AgentSpinner.turn(at: mid), AgentSpinner.turn(at: mid),
+            "same instant ⇒ same angle — a re-mount can't restart the turn",
+        )
+    }
+
+    /// The comet is a COMET, not a ring: it must leave a gap the eye can watch travel. herdr's
+    /// braille arc lights at most four of six perimeter dots (240°); ours opens to 270° and the
+    /// remaining quarter-turn of clearance is the thing that makes the rotation legible at Ø10.
+    func testCometLeavesAGapToWatchTravel() {
+        XCTAssertLessThanOrEqual(
+            StatusDot.cometSweep, 300,
+            "a sweep this close to a full circle reads as a ring vibrating, not an arc turning",
+        )
+        XCTAssertEqual(
+            StatusDot.cometDiameter, StatusDot.ringDiameter,
+            "the working comet and the resting ring are ONE circle — only the motion differs",
         )
     }
 

@@ -5,8 +5,8 @@
 // The vocabulary is otty's, transcribed rather than approximated (docs/DECISIONS.md round 23), and
 // it is otty's `TabBadge` case for case — read out of the shipping app, not guessed at:
 //
-//   * `running` — a spinning `NSProgressIndicator`, 14×14, at the row's right edge. otty's OWN
-//     answer for "the agent is generating right now", and the one this rail now uses.
+//   * `running` — a spinner at the row's right edge. otty mounts a 14×14 `NSProgressIndicator`
+//     there; ours is DRAWN (``AgentSpinner``) on herdr's braille comet instead — see that view.
 //   * `completed` — `checkmark.circle.fill` at 12pt Medium. The AGENT's turn ending.
 //   * `awaitingInput` — lucide `hand`, carried as the literal path data otty embeds
 //     (``OttyIcon/hand``). A question is waiting on a person.
@@ -76,6 +76,28 @@ enum StatusDot {
     static let spinnerSide: CGFloat = 14
     /// The platform's own `.small` control side — what ``spinnerSide`` is scaled DOWN from.
     static let smallControlSide: CGFloat = 16
+
+    // MARK: - The thinking comet (``AgentSpinner``)
+
+    /// The comet turns on the SAME circle the resting mark draws, at the same weight. A working
+    /// agent and a merely present one are ONE silhouette — the only difference is that one of them
+    /// is turning, which is the whole reading: the ring answers "an agent lives here", the motion
+    /// answers "and it is thinking right now".
+    static let cometDiameter: CGFloat = ringDiameter
+    /// How much of the circle the comet spans, in degrees. herdr lights 3–4 of a braille cell's six
+    /// perimeter dots (180°–240°, breathing between the two as the arc crosses a half-step). Drawn,
+    /// the breathing is unnecessary — the sweep is fixed and the tail's own fade carries what the
+    /// fourth dot was standing in for — and the sweep opens to 270° so the GAP stays wide enough to
+    /// read as a gap at Ø10 (below ~90° of clearance a turning arc reads as a whole ring vibrating).
+    static let cometSweep: Double = 270
+    /// Seconds per revolution — herdr's own tempo, transcribed rather than picked: it advances one
+    /// of ten braille frames every 8 ticks of a 60 Hz loop, and those ten frames are exactly one
+    /// turn around the cell. So `10 × 8 / 60`. Slower than the platform wheel on purpose; the mark
+    /// says "alive", not "hurry".
+    static let cometPeriod: Double = 10 * 8 / 60
+    /// Where the comet's HEAD sits at zero rotation — 12 o'clock, so a frozen spinner (Reduce
+    /// Motion) reads as a deliberately-cut ring rather than a random arc.
+    static let cometHead: Double = -90
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -138,7 +160,7 @@ struct StatusDotView: View {
         } else {
             switch style.mark {
             case .working:
-                WorkingSpinner()
+                AgentSpinner(ink: style.ink)
             case .awaiting:
                 VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
             default:
@@ -158,14 +180,141 @@ struct DashedRing: Shape {
     }
 }
 
-/// The THINKING mark — otty's, literally: the platform's indeterminate circular progress indicator
-/// (`NSProgressIndicator` on macOS, `UIActivityIndicatorView` on iOS), in the 14pt box otty lays it
-/// out in. A hand-rolled spinner was tried in round 19 and pulled; this is the system's own, so it
-/// matches every other spinner the user sees and needs no ink, no cadence and no frozen frame of
-/// our choosing.
+/// The THINKING mark — herdr's spinner, DRAWN.
 ///
-/// ⚠️ Reduce Motion is the PLATFORM's call here, not ours. Every other mark in this column is
-/// static, so there is nothing left for us to freeze.
+/// herdr spends one terminal cell on it: the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, which are an arc of
+/// three-to-four lit dots travelling around the six perimeter cells of a braille cell, one full turn
+/// per ten frames. Read as artwork rather than as text, that is a COMET on a circle — and the two
+/// things braille has to fake, it fakes visibly: the rotation is quantised to six positions (so the
+/// arc jumps a sixth of a turn at a time) and the "in between" positions are approximated by lighting
+/// a FOURTH dot, which is why the arc appears to breathe as it turns.
+///
+/// So this draws what those frames are a low-resolution picture OF: one arc on the resting ring's own
+/// circle, at the resting ring's own weight, turning continuously at herdr's tempo, its tail fading
+/// out behind the head. Continuous phase means no quantisation to hide and nothing to breathe around
+/// — the motion is as smooth as the display can draw, which is the entire reason for redrawing it.
+///
+/// Three properties are load-bearing:
+///
+///  * **The phase comes off the WALL CLOCK, from a fixed epoch** — not from an animation started at
+///    mount. Every spinning row in the rail is therefore at the same angle, and a re-render (a title
+///    changing, a row scrolling back into view) lands the comet mid-turn instead of snapping it back
+///    to 12 o'clock. This is the same rule the typed pulse has followed since MERIDIAN.
+///  * **It is PURE SwiftUI**, so `ImageRenderer` can rasterize it. The platform indicator could not
+///    be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to photograph the
+///    mark sheet), which meant the one mark that moved was also the one mark no test could look at.
+///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours.
+///    A frozen comet is still a distinct silhouette (a ring cut at 12 o'clock, its tail faded) so
+///    the state is never lost, only the movement.
+struct AgentSpinner: View {
+    /// The comet's ink at full strength — the head. The tail is this same ink, fading out.
+    let ink: Color
+    var diameter: CGFloat = StatusDot.cometDiameter
+    var lineWidth: CGFloat = StatusDot.ringLineWidth
+    /// Hold the comet at ONE angle instead of turning it. The render rig's only way to photograph a
+    /// moving mark (a still of a wall-clock spinner catches an arbitrary phase, so a filmstrip of
+    /// pinned angles is what a reviewer can actually read), and `0` is also what Reduce Motion asks
+    /// for — one parameter, so the frozen mark a snapshot shows IS the frozen mark that ships.
+    var pinnedTurn: Double?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        comet.frame(width: diameter, height: diameter)
+    }
+
+    @ViewBuilder private var comet: some View {
+        if let pinnedTurn {
+            arc(turn: pinnedTurn)
+        } else if reduceMotion {
+            arc(turn: 0)
+        } else {
+            // `.animation` schedules at the display's own refresh rate, so the turn is drawn at
+            // 60/120 Hz rather than stepped — and the angle stays a pure function of the date.
+            TimelineView(.animation) { timeline in
+                arc(turn: Self.turn(at: timeline.date))
+            }
+        }
+    }
+
+    private func arc(turn: Double) -> some View {
+        CometArc(sweep: StatusDot.cometSweep, lineWidth: lineWidth)
+            // The gradient is laid over the SAME angular span the arc occupies, in the same
+            // (unrotated) space, so head and tail stay welded to their ends as the whole thing turns.
+            .stroke(
+                AngularGradient(
+                    gradient: tail,
+                    center: .center,
+                    startAngle: .degrees(StatusDot.cometHead - StatusDot.cometSweep),
+                    endAngle: .degrees(StatusDot.cometHead),
+                ),
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round),
+            )
+            .rotationEffect(.degrees(turn))
+    }
+
+    /// The taper from tail to head, on the opacity ladder's own rungs — and it TAPERS rather than
+    /// fades out: the arc still ends in a visible cap at ``Slate/Opacity/dim``.
+    ///
+    /// ⚠️ Two things were settled on pixels here, both against the version that faded to nothing.
+    /// (1) A vanishing tail is a lovely comet at 6× and a thin crescent at Ø10 — it left the working
+    /// mark carrying LESS ink than the resting dashed ring beside it (eight dashes at full strength
+    /// are a lot of ink), so the rail's hierarchy came out upside down: the row doing something read
+    /// quieter than the row doing nothing. (2) herdr's braille arc has no fade in it at all — its
+    /// dots are lit or they are not, and the "tail" is one extra dot dropped in behind the leading
+    /// one. A hard-ended arc with a gentle taper is the closer transcription AND the stronger mark;
+    /// the taper is kept only because it is what names which end is the HEAD, and therefore which
+    /// way the thing is turning.
+    private var tail: Gradient {
+        Gradient(stops: [
+            .init(color: ink.opacity(Slate.Opacity.dim), location: 0),
+            .init(color: ink.opacity(Slate.Opacity.muted), location: 0.55),
+            .init(color: ink, location: 1),
+        ])
+    }
+
+    /// The comet's rotation for one wall-clock instant, in degrees. Pure + static so the cadence is
+    /// unit-pinned headlessly: one turn per ``StatusDot/cometPeriod``, phase locked to the reference
+    /// epoch (so every mount agrees), and never negative for dates before it.
+    static func turn(at date: Date) -> Double {
+        let period = StatusDot.cometPeriod
+        guard period > 0 else { return 0 }
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+        return (phase < 0 ? phase + 1 : phase) * 360
+    }
+}
+
+/// The comet's path: one arc, ending at the head, on the circle the ring mark uses. A `Shape` (not a
+/// trimmed `Circle`) because the stroke's own width has to be inset out of the radius — a trimmed
+/// circle strokes ASTRIDE the frame's edge and the comet would be clipped a half-weight all round.
+struct CometArc: Shape {
+    /// The arc's span in degrees, measured back from the head.
+    let sweep: Double
+    let lineWidth: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let radius = (min(rect.width, rect.height) - lineWidth) / 2
+        guard radius > 0 else { return path }
+        path.addArc(
+            center: CGPoint(x: rect.midX, y: rect.midY),
+            radius: radius,
+            startAngle: .degrees(StatusDot.cometHead - sweep),
+            endAngle: .degrees(StatusDot.cometHead),
+            clockwise: false,
+        )
+        return path
+    }
+}
+
+/// The PLATFORM's indeterminate circular progress indicator — the generic "this control is waiting"
+/// spinner, in the 14pt box otty lays its own out in. NOT the agent's mark any more (that is
+/// ``AgentSpinner``): what is left here is the ordinary busy affordance a button or a list row shows
+/// while a request is in flight, where matching every other spinner on the machine is the point
+/// (`NSProgressIndicator` on macOS, `UIActivityIndicatorView` on iOS).
+///
+/// ⚠️ Reduce Motion is the PLATFORM's call here — the control makes it, which is half of why a
+/// generic wait still uses it.
 ///
 /// The control inherits the window's appearance, which follows the OS (no theme pin anywhere —
 /// user-directed 2026-08-07), so it always paints with the right contrast on the system chrome.

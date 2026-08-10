@@ -54,15 +54,14 @@ enum StatusPresentation {
     /// needs-permission = amber (act-now; red is reserved for broken), done = green (unread finish),
     /// idle/none = muted (the resting state spends no colour).
     ///
-    /// `.working` = accent is this surface's OWN choice, and the one place these two vocabularies
-    /// diverge on purpose: the rail says working with MOTION (``thinkingMark``, rounds 22–23)
-    /// because it has a mark that can move, while a glyph in a toolbar slot has only its character
-    /// and its tint.
+    /// `.working` takes ``thinkingMark``'s ink BY REFERENCE, not by agreement: the compact surfaces
+    /// now mount the rail's own spinner for that reading, so a second spelling of the ink here would
+    /// be a second chance to disagree about one pane.
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
         case .none,
              .idle: Slate.Text.secondary
-        case .working: Slate.State.accent
+        case .working: thinkingMark.ink
         case .done: Slate.StatusInk.ok
         case .needsPermission: Slate.StatusInk.warn
         }
@@ -126,9 +125,9 @@ enum StatusPresentation {
     }
 
     /// The row's trailing STATUS MARK — one column, one hue budget, and otty's own silhouettes
-    /// (docs/DECISIONS.md round 23). Exactly ONE reading moves — the thinking agent's, which is why
-    /// it needs no hue at all — and everything settled holds still. The HUE names the STATE, the
-    /// SYMBOL names what happened (``mark(for:agentFinish:)``).
+    /// (docs/DECISIONS.md round 23). Exactly ONE reading moves — the thinking agent's — and
+    /// everything settled holds still. The HUE names the STATE, the SYMBOL names what happened
+    /// (``mark(for:agentFinish:)``).
     ///
     /// The ladder: a WORKING AGENT SPINS (``thinkingMark`` — keyed on the RAW `.working` status, so
     /// the badge gate can't kill it; the badge-routed `.running` tier reads identically); a RESTING
@@ -184,21 +183,30 @@ enum StatusPresentation {
         }
     }
 
-    /// The THINKING agent's mark — otty's spinner, which is otty's own answer for exactly this
-    /// state (`TabBadge.running` shows a 14×14 `NSProgressIndicator` at the row's trailing edge).
+    /// The THINKING agent's mark — the drawn comet (``AgentSpinner``), on herdr's braille spinner.
     ///
-    /// It spends NO hue, and that is the point twice over. The rail's hue budget buys attention
-    /// states (amber question, green finish, red failure); an agent merely thinking is not a state
-    /// that wants the eye, it is one that answers "is this still alive?" when the eye arrives.
-    /// Motion answers that in the present tense, which is exactly what no static mark can forge —
-    /// so the working row spends movement instead of colour, and the whole colour budget stays with
-    /// the rows that actually need you.
+    /// **The ink is `info` — a hue, but deliberately not one on the attention ramp.** The rail's
+    /// ramp is a request: amber = a question waits, green = a finish is unread, red = something
+    /// broke. Every one of them means *come here*. A thinking agent means the exact opposite — it
+    /// is the one state that wants to be LEFT ALONE — so putting it on that ramp would teach the
+    /// eye to discount the ramp, since "busy" is by far the state a rail spends most of its day in.
+    /// `info` is off the ramp by construction and iso-lightness with it, so a working row is
+    /// findable in a still screenshot without ever being able to out-shout a row that needs you.
     ///
-    /// The ink is carried for the value's sake only: the platform indicator paints itself, which is
-    /// what makes it the same spinner as every other spinner on the machine.
+    /// Two hues it is deliberately NOT:
+    ///  * **herdr's own yellow**, which it uses for exactly this state — that hue is already spoken
+    ///    for here as the act-now amber, and this rail cannot spend the same colour on "answer me"
+    ///    and "do not disturb".
+    ///  * **the accent**, which the compact glyph used to wear. In this app the accent means
+    ///    SELECTION (the reason ``Slate/StatusInk/info`` exists as a separate blue at all), and a
+    ///    purple mark on an unselected row reads as a row half-selecting itself.
+    ///
+    /// The MOTION, meanwhile, is doing the work the hue is not: it answers "is this thing still
+    /// alive?" in the present tense, which no static mark can forge, and peripheral vision picks
+    /// motion up across a full rail far better than it picks up colour.
     @MainActor
     static var thinkingMark: StatusDotStyle {
-        StatusDotStyle(ink: Slate.Text.primary, mark: .working)
+        StatusDotStyle(ink: Slate.StatusInk.info, mark: .working)
     }
 
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue

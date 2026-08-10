@@ -14,16 +14,18 @@ import SwiftUI
 /// single character in the instrument (mono) face, centred in a fixed 16pt box — the chrome's status
 /// voice IS the pane's voice, exactly the glyphs a CLI would print:
 ///   • `resting`  → `·` muted (an idle prompt — no colour spent);
-///   • `working`  → the AI-CLI pulse `· ✢ ✳ ✶ ✻ ✽` breathing out and back — the agent's own spinner;
 ///   • `awaiting` → `?` bold in the act-now amber (answer me);
 ///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print).
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
-/// header). The sidebar rows speak the same states through the trailing ring mark's hue instead
-/// (``StatusPresentation/statusDot(working:badge:)``) — so no glyph column rides the rail, and nothing
-/// in the rail animates at all.
-/// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
-/// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
-/// Pure SwiftUI text — no video/capture (hang-safety #6).
+/// header). The sidebar rows speak the same states through the trailing mark's hue instead
+/// (``StatusPresentation/statusDot(working:badge:)``) — so no glyph column rides the rail.
+///
+/// ⚠️ `working` is the ONE reading that is not typed: it mounts the rail's own ``AgentSpinner``, the
+/// drawn comet. It used to be a typed pulse (`· ✢ ✳ ✶ ✻ ✽` breathing out and back) and the two
+/// surfaces then said the same thing two different ways — one pane could be spinning in the sidebar
+/// and blooming in the header at the same instant. There is exactly one working mark in this app now,
+/// and every mount of it turns in unison off the same wall clock.
+/// Pure SwiftUI — no video/capture (hang-safety #6).
 struct StatusGlyph: View {
     enum Reading: Equatable {
         case resting
@@ -39,27 +41,6 @@ struct StatusGlyph: View {
     /// frames (or states) swap.
     static let box: CGFloat = 16
 
-    /// The agent spinner's frames — a dot budding into an asterisk and back (the AI-CLI loading
-    /// pulse). Cycled as hard swaps; the palindrome makes the loop breathe without easing.
-    ///
-    /// ⚠️ Every star carries `\u{FE0E}` (VARIATION SELECTOR-15, text presentation). Bare U+2733 `✳`
-    /// resolves to `AppleColorEmojiUI` on Apple platforms — a COLOUR emoji that ignores `tint` and
-    /// measures 16pt of advance where its Menlo siblings measure 6.62, so that one frame flashed a
-    /// coloured star and jumped this glyph's width mid-cycle (and it is the frame this instrument
-    /// rests on longest). Same trap ``SlateTabRow`` guards for the title's `✳` marker. `·` (U+00B7)
-    /// is the mono face's own glyph and needs nothing.
-    ///
-    /// ⚠️ The rail's mark column does NOT share these frames and must not be given them: it is a STATIC
-    /// dashed ring whose hue names the state, and a whole round of work (docs/DECISIONS.md round 19/20)
-    /// established that a 12pt mark cannot carry this bloom's detail — nor any other motion worth
-    /// keeping. This instrument is 16pt in a text row, which can, so the typed bloom stays exactly here.
-    static let agentFrames = [
-        "·", "✢\u{FE0E}", "✳\u{FE0E}", "✶\u{FE0E}", "✻\u{FE0E}",
-        "✽\u{FE0E}", "✻\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢\u{FE0E}",
-    ]
-    /// Seconds per frame — the pulse breathes rather than spins.
-    static let agentBeat: Double = 0.15
-
     var body: some View {
         content
             .frame(width: Self.box, height: Self.box)
@@ -68,7 +49,10 @@ struct StatusGlyph: View {
     @ViewBuilder private var content: some View {
         switch reading {
         case .resting: glyph("·", weight: .regular)
-        case .working: spinner(Self.agentFrames, beat: Self.agentBeat)
+        // The rail's own comet, at the rail's own size: a 16pt text box carries a Ø10 mark the same
+        // way the 14pt rail column does, and using the identical view is what keeps the two surfaces
+        // from ever drifting apart on the state a user watches longest.
+        case .working: AgentSpinner(ink: tint)
         case .awaiting: glyph("?", weight: .bold)
         case .done: glyph("●", weight: .regular)
         }
@@ -79,23 +63,6 @@ struct StatusGlyph: View {
             .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: weight))
             .foregroundStyle(tint)
             .fixedSize()
-    }
-
-    /// A frame-stepped spinner on the wall clock: `TimelineView` re-renders once per beat and the
-    /// frame is a pure function of the date, so phase survives re-mounts and rows stay in unison.
-    private func spinner(_ frames: [String], beat: Double) -> some View {
-        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: beat)) { timeline in
-            glyph(Self.frame(at: timeline.date, frames: frames, beat: beat), weight: .semibold)
-        }
-    }
-
-    /// The spinner frame for one wall-clock instant — pure + static so the cadence is unit-pinned
-    /// headlessly (frames advance one per beat, wrap at the end, never skip on a re-render).
-    static func frame(at date: Date, frames: [String], beat: Double) -> String {
-        guard !frames.isEmpty, beat > 0 else { return "" }
-        let phase = date.timeIntervalSinceReferenceDate / beat
-        let index = Int(phase.rounded(.down)) % frames.count
-        return frames[index < 0 ? index + frames.count : index]
     }
 }
 
