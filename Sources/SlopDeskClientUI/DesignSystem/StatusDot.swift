@@ -6,7 +6,7 @@
 // it is otty's `TabBadge` case for case — read out of the shipping app, not guessed at:
 //
 //   * `running` — a spinner at the row's right edge. otty mounts a 14×14 `NSProgressIndicator`
-//     there; ours is DRAWN (``AgentSpinner``) on herdr's braille comet instead — see that view.
+//     there; ours is DRAWN (``AgentSpinner``) on herdr's braille caravan instead — see that view.
 //   * `completed` — `checkmark.circle.fill` at 12pt Medium. The AGENT's turn ending.
 //   * `awaitingInput` — lucide `hand`, carried as the literal path data otty embeds
 //     (``OttyIcon/hand``). A question is waiting on a person.
@@ -77,27 +77,35 @@ enum StatusDot {
     /// The platform's own `.small` control side — what ``spinnerSide`` is scaled DOWN from.
     static let smallControlSide: CGFloat = 16
 
-    // MARK: - The thinking comet (``AgentSpinner``)
+    // MARK: - The thinking caravan (``AgentSpinner``)
 
-    /// The comet turns on the SAME circle the resting mark draws, at the same weight. A working
-    /// agent and a merely present one are ONE silhouette — the only difference is that one of them
-    /// is turning, which is the whole reading: the ring answers "an agent lives here", the motion
-    /// answers "and it is thinking right now".
-    static let cometDiameter: CGFloat = ringDiameter
-    /// How much of the circle the comet spans, in degrees. herdr lights 3–4 of a braille cell's six
-    /// perimeter dots (180°–240°, breathing between the two as the arc crosses a half-step). Drawn,
-    /// the breathing is unnecessary — the sweep is fixed and the tail's own fade carries what the
-    /// fourth dot was standing in for — and the sweep opens to 270° so the GAP stays wide enough to
-    /// read as a gap at Ø10 (below ~90° of clearance a turning arc reads as a whole ring vibrating).
-    static let cometSweep: Double = 270
-    /// Seconds per revolution — herdr's own tempo, transcribed rather than picked: it advances one
-    /// of ten braille frames every 8 ticks of a 60 Hz loop, and those ten frames are exactly one
-    /// turn around the cell. So `10 × 8 / 60`. Slower than the platform wheel on purpose; the mark
-    /// says "alive", not "hurry".
-    static let cometPeriod: Double = 10 * 8 / 60
-    /// Where the comet's HEAD sits at zero rotation — 12 o'clock, so a frozen spinner (Reduce
-    /// Motion) reads as a deliberately-cut ring rather than a random arc.
-    static let cometHead: Double = -90
+    /// The TRACK the dots walk — a braille cell's own proportion, upright and taller than it is
+    /// wide. This is the shape herdr's spinner literally is: the lit dots are a short line walking
+    /// the PERIMETER OF A RECTANGLE, and reading them as an arc on a circle (which the first cut of
+    /// this mark did) throws away the one thing about the artwork that is recognisable.
+    /// Sized so the DOTS, not the track, fill the column: a dot rides half its own width outside the
+    /// track on every edge, so the drawn mark measures `track + dot` and that is what has to fit the
+    /// 14pt footprint. The first cut sized the track to the column instead and the mark came out as
+    /// three specks in a lot of air.
+    static let trackWidth: CGFloat = 8.2
+    static let trackHeight: CGFloat = 10.2
+    /// The track's corner. Not square: a dot rounding a hard 90° corner changes direction in one
+    /// frame and reads as a stutter, which is exactly the quantisation this redraw exists to remove.
+    static let trackRadius: CGFloat = 2.2
+    /// One dot. Solid and round — a braille dot, at a size that survives the rail's true scale.
+    static let dotDiameter: CGFloat = 3.6
+    /// How many dots walk together. herdr lights three of the cell's six perimeter positions (a
+    /// fourth appears only as its way of faking a half-step, which a drawn caravan does not need).
+    static let dotCount = 3
+    /// The gap between consecutive dots, as a fraction of the track's perimeter — so the caravan
+    /// keeps its shape whatever the track measures. `1/8` leaves roughly a third of a dot of air
+    /// between them, which is a braille cell's own dot rhythm: read as one LINE travelling, where a
+    /// wider gap reads as three unrelated dots blinking.
+    static let dotGap: Double = 1.0 / 8
+    /// Seconds per lap — herdr's own tempo, transcribed rather than picked: it advances one of ten
+    /// braille frames every 8 ticks of a 60 Hz loop, and those ten frames are exactly one trip
+    /// around the cell. So `10 × 8 / 60`. The mark says "alive", not "hurry".
+    static let lapPeriod: Double = 10 * 8 / 60
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -182,128 +190,178 @@ struct DashedRing: Shape {
 
 /// The THINKING mark — herdr's spinner, DRAWN.
 ///
-/// herdr spends one terminal cell on it: the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, which are an arc of
-/// three-to-four lit dots travelling around the six perimeter cells of a braille cell, one full turn
-/// per ten frames. Read as artwork rather than as text, that is a COMET on a circle — and the two
-/// things braille has to fake, it fakes visibly: the rotation is quantised to six positions (so the
-/// arc jumps a sixth of a turn at a time) and the "in between" positions are approximated by lighting
-/// a FOURTH dot, which is why the arc appears to breathe as it turns.
+/// herdr spends one terminal cell on it: the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, advanced one per 8 ticks
+/// of a 60 Hz loop. Decoded, those are three lit dots walking around the six perimeter positions of a
+/// braille cell — a short LINE OF DOTS travelling the edge of an upright RECTANGLE — one lap per ten
+/// frames. Two of its properties are the medium rather than the design: the walk is quantised to six
+/// stops, and the half-steps between them are faked by lighting a fourth dot, which is why the line
+/// appears to stretch and shrink as it goes.
 ///
-/// So this draws what those frames are a low-resolution picture OF: one arc on the resting ring's own
-/// circle, at the resting ring's own weight, turning continuously at herdr's tempo, its tail fading
-/// out behind the head. Continuous phase means no quantisation to hide and nothing to breathe around
-/// — the motion is as smooth as the display can draw, which is the entire reason for redrawing it.
+/// So this draws exactly that, without the two lies: three dots of its own, walking the perimeter of
+/// a rounded rectangle continuously at herdr's tempo, brightest at the head. Continuous phase means
+/// nothing to quantise and nothing to breathe around — the motion is as smooth as the display can
+/// draw, which is the whole reason for redrawing it instead of typing it.
+///
+/// ⚠️ The first cut of this mark read the same braille frames as an ARC ON A CIRCLE (they are, at six
+/// samples, geometrically close) and drew a comet on the resting ring's circle. It was rejected on
+/// sight: the rectangle IS the recognisable thing about the artwork, and a turning arc is just the
+/// spinner every app already has.
 ///
 /// Three properties are load-bearing:
 ///
 ///  * **The phase comes off the WALL CLOCK, from a fixed epoch** — not from an animation started at
-///    mount. Every spinning row in the rail is therefore at the same angle, and a re-render (a title
-///    changing, a row scrolling back into view) lands the comet mid-turn instead of snapping it back
-///    to 12 o'clock. This is the same rule the typed pulse has followed since MERIDIAN.
+///    mount. Every working row in the rail therefore walks in step, and a re-render (a title changing,
+///    a row scrolling back into view) lands the caravan mid-lap instead of snapping it back to the
+///    start. This is the same rule the typed pulse has followed since MERIDIAN.
 ///  * **It is PURE SwiftUI**, so `ImageRenderer` can rasterize it. The platform indicator could not
 ///    be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to photograph the
 ///    mark sheet), which meant the one mark that moved was also the one mark no test could look at.
-///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours.
-///    A frozen comet is still a distinct silhouette (a ring cut at 12 o'clock, its tail faded) so
-///    the state is never lost, only the movement.
+///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours. A
+///    frozen caravan is still a distinct silhouette (three dots down one corner of a rectangle, which
+///    no other mark in this column resembles), so the state is never lost, only the movement.
 struct AgentSpinner: View {
-    /// The comet's ink at full strength — the head. The tail is this same ink, fading out.
+    /// The head dot's ink at full strength. The dots behind it are this same ink, stepped down.
     let ink: Color
-    var diameter: CGFloat = StatusDot.cometDiameter
-    var lineWidth: CGFloat = StatusDot.ringLineWidth
-    /// Hold the comet at ONE angle instead of turning it. The render rig's only way to photograph a
-    /// moving mark (a still of a wall-clock spinner catches an arbitrary phase, so a filmstrip of
-    /// pinned angles is what a reviewer can actually read), and `0` is also what Reduce Motion asks
-    /// for — one parameter, so the frozen mark a snapshot shows IS the frozen mark that ships.
-    var pinnedTurn: Double?
+    /// Multiplies the whole mark — the render rig's way of magnifying it without resampling.
+    var zoom: CGFloat = 1
+    /// Hold the caravan at ONE point of its lap instead of walking it. The render rig's only way to
+    /// photograph a moving mark (a still of a wall-clock spinner catches an arbitrary phase, so a
+    /// filmstrip of pinned phases is what a reviewer can actually read), and `0` is also what Reduce
+    /// Motion asks for — one parameter, so the frozen mark a snapshot shows IS the one that ships.
+    var pinnedPhase: Double?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        comet.frame(width: diameter, height: diameter)
+        caravan
+            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
     }
 
-    @ViewBuilder private var comet: some View {
-        if let pinnedTurn {
-            arc(turn: pinnedTurn)
+    @ViewBuilder private var caravan: some View {
+        if let pinnedPhase {
+            dots(phase: pinnedPhase)
         } else if reduceMotion {
-            arc(turn: 0)
+            dots(phase: 0)
         } else {
-            // `.animation` schedules at the display's own refresh rate, so the turn is drawn at
-            // 60/120 Hz rather than stepped — and the angle stays a pure function of the date.
+            // `.animation` schedules at the display's own refresh rate, so the walk is drawn at
+            // 60/120 Hz rather than stepped — and the phase stays a pure function of the date.
             TimelineView(.animation) { timeline in
-                arc(turn: Self.turn(at: timeline.date))
+                dots(phase: Self.phase(at: timeline.date))
             }
         }
     }
 
-    private func arc(turn: Double) -> some View {
-        CometArc(sweep: StatusDot.cometSweep, lineWidth: lineWidth)
-            // The gradient is laid over the SAME angular span the arc occupies, in the same
-            // (unrotated) space, so head and tail stay welded to their ends as the whole thing turns.
-            .stroke(
-                AngularGradient(
-                    gradient: tail,
-                    center: .center,
-                    startAngle: .degrees(StatusDot.cometHead - StatusDot.cometSweep),
-                    endAngle: .degrees(StatusDot.cometHead),
-                ),
-                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round),
-            )
-            .rotationEffect(.degrees(turn))
+    private func dots(phase: Double) -> some View {
+        let track = Self.track(zoom: zoom)
+        let side = StatusDot.dotDiameter * zoom
+        return ZStack {
+            ForEach(0..<StatusDot.dotCount, id: \.self) { index in
+                Circle()
+                    .fill(ink.opacity(Self.dim(index)))
+                    .frame(width: side, height: side)
+                    .position(
+                        RectTrack.point(
+                            at: phase - Double(index) * StatusDot.dotGap,
+                            in: track, radius: StatusDot.trackRadius * zoom,
+                        ),
+                    )
+            }
+        }
+        .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
     }
 
-    /// The taper from tail to head, on the opacity ladder's own rungs — and it TAPERS rather than
-    /// fades out: the arc still ends in a visible cap at ``Slate/Opacity/dim``.
-    ///
-    /// ⚠️ Two things were settled on pixels here, both against the version that faded to nothing.
-    /// (1) A vanishing tail is a lovely comet at 6× and a thin crescent at Ø10 — it left the working
-    /// mark carrying LESS ink than the resting dashed ring beside it (eight dashes at full strength
-    /// are a lot of ink), so the rail's hierarchy came out upside down: the row doing something read
-    /// quieter than the row doing nothing. (2) herdr's braille arc has no fade in it at all — its
-    /// dots are lit or they are not, and the "tail" is one extra dot dropped in behind the leading
-    /// one. A hard-ended arc with a gentle taper is the closer transcription AND the stronger mark;
-    /// the taper is kept only because it is what names which end is the HEAD, and therefore which
-    /// way the thing is turning.
-    private var tail: Gradient {
-        Gradient(stops: [
-            .init(color: ink.opacity(Slate.Opacity.dim), location: 0),
-            .init(color: ink.opacity(Slate.Opacity.muted), location: 0.55),
-            .init(color: ink, location: 1),
-        ])
+    /// The track, centred in the mark column's own footprint and inset by half a dot so a dot on the
+    /// edge sits fully inside the column rather than half out of it.
+    static func track(zoom: CGFloat) -> CGRect {
+        let side = StatusDot.footprint * zoom
+        let size = CGSize(width: StatusDot.trackWidth * zoom, height: StatusDot.trackHeight * zoom)
+        return CGRect(
+            x: (side - size.width) / 2, y: (side - size.height) / 2,
+            width: size.width, height: size.height,
+        )
     }
 
-    /// The comet's rotation for one wall-clock instant, in degrees. Pure + static so the cadence is
-    /// unit-pinned headlessly: one turn per ``StatusDot/cometPeriod``, phase locked to the reference
-    /// epoch (so every mount agrees), and never negative for dates before it.
-    static func turn(at date: Date) -> Double {
-        let period = StatusDot.cometPeriod
+    /// How bright the `index`-th dot behind the head is. Stepped, on the opacity ladder's own rungs —
+    /// braille has no fade at all (a dot is lit or it is not), so this is the smallest departure that
+    /// still names WHICH end is the head, and therefore which way the line is walking.
+    static func dim(_ index: Int) -> Double {
+        switch index {
+        case 0: 1
+        case 1: Slate.Opacity.muted
+        default: Slate.Opacity.dim
+        }
+    }
+
+    /// The caravan head's position in its lap, as a fraction of the perimeter, for one wall-clock
+    /// instant. Pure + static so the cadence is unit-pinned headlessly: one lap per
+    /// ``StatusDot/lapPeriod``, phase locked to the reference epoch (so every mount agrees), and
+    /// never negative for dates before it.
+    static func phase(at date: Date) -> Double {
+        let period = StatusDot.lapPeriod
         guard period > 0 else { return 0 }
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
-        return (phase < 0 ? phase + 1 : phase) * 360
+        return phase < 0 ? phase + 1 : phase
     }
 }
 
-/// The comet's path: one arc, ending at the head, on the circle the ring mark uses. A `Shape` (not a
-/// trimmed `Circle`) because the stroke's own width has to be inset out of the radius — a trimmed
-/// circle strokes ASTRIDE the frame's edge and the comet would be clipped a half-weight all round.
-struct CometArc: Shape {
-    /// The arc's span in degrees, measured back from the head.
-    let sweep: Double
-    let lineWidth: CGFloat
+/// Where a point sits on the perimeter of a rounded rectangle, given how far around it has walked.
+///
+/// A pure function rather than a `Path` trick (`trimmedPath(from:to:).currentPoint` would also give a
+/// point) because the dots' positions are the whole mark: as values they are unit-pinnable — corners
+/// land where the geometry says, the lap closes exactly, and a fraction outside `0..<1` wraps instead
+/// of flying off the track.
+enum RectTrack {
+    /// Clockwise from the START OF THE TOP EDGE (just past the top-left corner) — the braille cell's
+    /// own dot 1, so a frozen mark at phase 0 sits where herdr's frame 0 lights up.
+    static func point(at fraction: Double, in rect: CGRect, radius: CGFloat) -> CGPoint {
+        let r = max(0, min(radius, min(rect.width, rect.height) / 2))
+        let across = rect.width - 2 * r
+        let down = rect.height - 2 * r
+        let corner = .pi / 2 * Double(r)
+        let perimeter = 2 * Double(across) + 2 * Double(down) + 4 * corner
+        guard perimeter > 0 else { return CGPoint(x: rect.midX, y: rect.midY) }
+        var walked = fraction.truncatingRemainder(dividingBy: 1)
+        if walked < 0 { walked += 1 }
+        var left = walked * perimeter
 
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let radius = (min(rect.width, rect.height) - lineWidth) / 2
-        guard radius > 0 else { return path }
-        path.addArc(
-            center: CGPoint(x: rect.midX, y: rect.midY),
-            radius: radius,
-            startAngle: .degrees(StatusDot.cometHead - sweep),
-            endAngle: .degrees(StatusDot.cometHead),
-            clockwise: false,
-        )
-        return path
+        // Each leg in walking order: a straight run, then the corner arc that turns out of it.
+        let legs: [(length: Double, point: (Double) -> CGPoint)] = [
+            (Double(across), { t in CGPoint(x: rect.minX + r + CGFloat(t), y: rect.minY) }),
+            (corner, { t in
+                Self.onArc(centre: CGPoint(x: rect.maxX - r, y: rect.minY + r), r: r, from: -90, arc: t, corner: corner)
+            }),
+            (Double(down), { t in CGPoint(x: rect.maxX, y: rect.minY + r + CGFloat(t)) }),
+            (corner, { t in
+                Self.onArc(centre: CGPoint(x: rect.maxX - r, y: rect.maxY - r), r: r, from: 0, arc: t, corner: corner)
+            }),
+            (Double(across), { t in CGPoint(x: rect.maxX - r - CGFloat(t), y: rect.maxY) }),
+            (corner, { t in
+                Self.onArc(centre: CGPoint(x: rect.minX + r, y: rect.maxY - r), r: r, from: 90, arc: t, corner: corner)
+            }),
+            (Double(down), { t in CGPoint(x: rect.minX, y: rect.maxY - r - CGFloat(t)) }),
+            (corner, { t in
+                Self.onArc(centre: CGPoint(x: rect.minX + r, y: rect.minY + r), r: r, from: 180, arc: t, corner: corner)
+            }),
+        ]
+        for leg in legs {
+            // A zero-length leg is SKIPPED, not landed on: a square track (`radius` 0) has four of
+            // them, and stopping at the first one parks every dot past the top-right corner.
+            guard leg.length > 0 else { continue }
+            if left <= leg.length { return leg.point(left) }
+            left -= leg.length
+        }
+        // Float drift on the last leg only — the lap is closed, so this is the start.
+        return CGPoint(x: rect.minX + r, y: rect.minY)
+    }
+
+    /// One quarter-turn corner: `from` is the arc's starting angle in degrees (0 = due right, growing
+    /// clockwise, because y runs down), `arc` how far along that quarter the walk has come.
+    private static func onArc(
+        centre: CGPoint, r: CGFloat, from: Double, arc: Double, corner: Double,
+    ) -> CGPoint {
+        let sweep = corner > 0 ? arc / corner * 90 : 0
+        let angle = (from + sweep) * .pi / 180
+        return CGPoint(x: centre.x + r * CGFloat(cos(angle)), y: centre.y + r * CGFloat(sin(angle)))
     }
 }
 

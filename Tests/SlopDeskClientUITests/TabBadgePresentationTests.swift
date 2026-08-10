@@ -71,53 +71,87 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.agentReading(.needsPermission), .awaiting)
     }
 
-    /// The agent spinner's cadence, pinned headlessly off the pure turn function: the comet sweeps
-    /// one full revolution per period, phase locked to the fixed epoch (so every mount is at the
-    /// same angle), monotonic within a turn, and the SAME instant always yields the same angle —
-    /// which is what makes a re-render land mid-turn instead of snapping back to 12 o'clock.
-    func testSpinnerTurnsOncePerPeriodFromTheFixedEpoch() {
-        let period = StatusDot.cometPeriod
+    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the caravan
+    /// walks one full lap per period, phase locked to the fixed epoch (so every mount is at the same
+    /// point of the lap), linear, and the SAME instant always yields the same phase — which is what
+    /// makes a re-render land mid-lap instead of snapping back to the start.
+    func testSpinnerWalksOneLapPerPeriodFromTheFixedEpoch() {
+        let period = StatusDot.lapPeriod
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        XCTAssertEqual(AgentSpinner.turn(at: epoch), 0, accuracy: 0.001, "the epoch is 12 o'clock")
-        for turn in 1...3 {
-            let full = epoch.addingTimeInterval(period * Double(turn))
+        XCTAssertEqual(AgentSpinner.phase(at: epoch), 0, accuracy: 0.0001, "the epoch starts the lap")
+        for lap in 1...3 {
             XCTAssertEqual(
-                AgentSpinner.turn(at: full), 0, accuracy: 0.001,
-                "turn \(turn) must close the circle exactly — the phase is the clock, not a counter",
+                AgentSpinner.phase(at: epoch.addingTimeInterval(period * Double(lap))), 0,
+                accuracy: 0.0001,
+                "lap \(lap) must close exactly — the phase is the clock, not a counter",
             )
         }
         for step in 1..<8 {
             let fraction = Double(step) / 8
             XCTAssertEqual(
-                AgentSpinner.turn(at: epoch.addingTimeInterval(period * fraction)),
-                fraction * 360, accuracy: 0.001,
-                "the sweep is LINEAR — an eased spinner reads as a stutter",
+                AgentSpinner.phase(at: epoch.addingTimeInterval(period * fraction)), fraction,
+                accuracy: 0.0001, "the walk is LINEAR — an eased spinner reads as a stutter",
             )
         }
-        // Before the reference epoch the remainder goes negative; the angle must not.
+        // Before the reference epoch the remainder goes negative; the phase must not.
         XCTAssertEqual(
-            AgentSpinner.turn(at: epoch.addingTimeInterval(-period / 4)), 270, accuracy: 0.001,
-            "dates before the epoch wrap forward, never to a negative angle",
+            AgentSpinner.phase(at: epoch.addingTimeInterval(-period / 4)), 0.75, accuracy: 0.0001,
+            "dates before the epoch wrap forward, never to a negative phase",
         )
         let mid = epoch.addingTimeInterval(3.14)
         XCTAssertEqual(
-            AgentSpinner.turn(at: mid), AgentSpinner.turn(at: mid),
-            "same instant ⇒ same angle — a re-mount can't restart the turn",
+            AgentSpinner.phase(at: mid), AgentSpinner.phase(at: mid),
+            "same instant ⇒ same phase — a re-mount can't restart the walk",
         )
     }
 
-    /// The comet is a COMET, not a ring: it must leave a gap the eye can watch travel. herdr's
-    /// braille arc lights at most four of six perimeter dots (240°); ours opens to 270° and the
-    /// remaining quarter-turn of clearance is the thing that makes the rotation legible at Ø10.
-    func testCometLeavesAGapToWatchTravel() {
-        XCTAssertLessThanOrEqual(
-            StatusDot.cometSweep, 300,
-            "a sweep this close to a full circle reads as a ring vibrating, not an arc turning",
+    /// The head dot leads and the ones behind it step DOWN — the only thing that names which way the
+    /// line is walking, since braille itself has no fade to copy.
+    func testTheCaravanHeadLeadsAndTheTailStepsDown() {
+        let dims = (0..<StatusDot.dotCount).map(AgentSpinner.dim)
+        XCTAssertEqual(dims.first, 1, "the head is full ink")
+        XCTAssertEqual(dims, dims.sorted(by: >), "every dot behind the head is dimmer than it")
+        XCTAssertGreaterThan(dims.last ?? 0, 0, "no dot in the caravan is invisible")
+    }
+
+    /// The track is a RECTANGLE and the walk goes CLOCKWISE from the top-left, so a frozen mark sits
+    /// where herdr's own frame 0 lights up. Corners are pinned as VALUES: the geometry is the whole
+    /// mark, and a sign error in the arc maths draws a plausible-looking shape in the wrong place.
+    func testTheTrackWalksClockwiseFromTheTopLeft() {
+        // A square with no corner rounding — perimeter 40, one side per quarter lap.
+        let square = CGRect(origin: .zero, size: CGSize(width: 10, height: 10))
+        let corners: [(Double, CGPoint)] = [
+            (0, .zero),
+            (0.25, CGPoint(x: 10, y: 0)),
+            (0.5, CGPoint(x: 10, y: 10)),
+            (0.75, CGPoint(x: 0, y: 10)),
+        ]
+        for (fraction, expected) in corners {
+            let point = RectTrack.point(at: fraction, in: square, radius: 0)
+            XCTAssertEqual(point.x, expected.x, accuracy: 0.001, "x at \(fraction)")
+            XCTAssertEqual(point.y, expected.y, accuracy: 0.001, "y at \(fraction)")
+        }
+        // The lap closes, and a fraction outside 0..<1 wraps rather than flying off the track.
+        for (fraction, same) in [(1.0, 0.0), (1.25, 0.25), (-0.25, 0.75)] {
+            let wrapped = RectTrack.point(at: fraction, in: square, radius: 0)
+            let plain = RectTrack.point(at: same, in: square, radius: 0)
+            XCTAssertEqual(wrapped.x, plain.x, accuracy: 0.001, "\(fraction) wraps to \(same)")
+            XCTAssertEqual(wrapped.y, plain.y, accuracy: 0.001, "\(fraction) wraps to \(same)")
+        }
+        // Every point of a rounded track stays inside the track's own bounds.
+        let track = CGRect(
+            origin: .zero,
+            size: CGSize(width: StatusDot.trackWidth, height: StatusDot.trackHeight),
         )
-        XCTAssertEqual(
-            StatusDot.cometDiameter, StatusDot.ringDiameter,
-            "the working comet and the resting ring are ONE circle — only the motion differs",
-        )
+        for step in 0..<64 {
+            let point = RectTrack.point(
+                at: Double(step) / 64, in: track, radius: StatusDot.trackRadius,
+            )
+            XCTAssertTrue(
+                track.insetBy(dx: -0.001, dy: -0.001).contains(point),
+                "step \(step) left the track at \(point)",
+            )
+        }
     }
 
     /// The collapsed group's roll-up: the header count borrows the STRONGEST attention ink among

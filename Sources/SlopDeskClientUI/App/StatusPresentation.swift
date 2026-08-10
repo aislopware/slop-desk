@@ -183,30 +183,25 @@ enum StatusPresentation {
         }
     }
 
-    /// The THINKING agent's mark — the drawn comet (``AgentSpinner``), on herdr's braille spinner.
+    /// The THINKING agent's mark — the drawn caravan (``AgentSpinner``), on herdr's braille spinner.
     ///
-    /// **The ink is `info` — a hue, but deliberately not one on the attention ramp.** The rail's
-    /// ramp is a request: amber = a question waits, green = a finish is unread, red = something
-    /// broke. Every one of them means *come here*. A thinking agent means the exact opposite — it
-    /// is the one state that wants to be LEFT ALONE — so putting it on that ramp would teach the
-    /// eye to discount the ramp, since "busy" is by far the state a rail spends most of its day in.
-    /// `info` is off the ramp by construction and iso-lightness with it, so a working row is
-    /// findable in a still screenshot without ever being able to out-shout a row that needs you.
+    /// **The ink is herdr's own YELLOW** (`StatusInk.warn`), user-directed 2026-08-10 after seeing
+    /// both on hardware: `info` blue shipped first, on the argument that the attention ramp (amber
+    /// question / green finish / red failure) all means *come here* while a thinking agent means the
+    /// opposite — and it simply did not carry across the rail. herdr spends yellow on exactly this
+    /// state, so this is now the reference's colour as well as its shape.
     ///
-    /// Two hues it is deliberately NOT:
-    ///  * **herdr's own yellow**, which it uses for exactly this state — that hue is already spoken
-    ///    for here as the act-now amber, and this rail cannot spend the same colour on "answer me"
-    ///    and "do not disturb".
-    ///  * **the accent**, which the compact glyph used to wear. In this app the accent means
-    ///    SELECTION (the reason ``Slate/StatusInk/info`` exists as a separate blue at all), and a
-    ///    purple mark on an unselected row reads as a row half-selecting itself.
+    /// ⚠️ That puts it on the SAME hue as ``StatusInk/warn``'s other job, the waiting question. What
+    /// keeps them apart is the silhouette and the motion, not the colour: a question is a still HAND,
+    /// a thinking agent is three dots WALKING. If a third yellow reading ever lands in this column,
+    /// this is the pair that will collide first.
     ///
-    /// The MOTION, meanwhile, is doing the work the hue is not: it answers "is this thing still
-    /// alive?" in the present tense, which no static mark can forge, and peripheral vision picks
-    /// motion up across a full rail far better than it picks up colour.
+    /// The accent was tried and rejected on the same pass (the compact glyph used to wear it): in
+    /// this app the accent means SELECTION — the reason ``Slate/StatusInk/info`` exists as a separate
+    /// blue at all — so a purple mark on an unselected row reads as a row half-selecting itself.
     @MainActor
     static var thinkingMark: StatusDotStyle {
-        StatusDotStyle(ink: Slate.StatusInk.info, mark: .working)
+        StatusDotStyle(ink: Slate.StatusInk.warn, mark: .working)
     }
 
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue

@@ -7635,41 +7635,41 @@ sort UI, no recency, no manual drag-reorder, host-pushed key — stands unchange
 ## The thinking mark becomes herdr's spinner, drawn (2026-08-10, user-directed)
 
 Round 23 gave the working agent the PLATFORM's indeterminate indicator — otty's own answer, an
-`NSProgressIndicator` scaled into the mark column. Replaced by `AgentSpinner`, a drawn comet on
-herdr's spinner, on the user's instruction to take herdr's reading but redraw it rather than type it.
+`NSProgressIndicator` scaled into the mark column. Replaced by `AgentSpinner`, on the user's
+instruction to take herdr's spinner but REDRAW it rather than type it.
 
 **What herdr actually draws.** One terminal cell, the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, advanced one
-per 8 ticks of a 60 Hz loop (`ui.rs: SPINNERS` / `spinner_frame`). Read as artwork rather than as
-text, those are an arc of three-to-four lit dots travelling around the six perimeter cells of a
-braille cell, one full turn per ten frames. Two of its properties are limitations of the medium, not
-the design: the rotation is quantised to six positions, and the in-between positions are faked by
-lighting a FOURTH dot — which is why the arc appears to breathe as it turns. Drawing it removes both.
+per 8 ticks of a 60 Hz loop (`ui.rs: SPINNERS` / `spinner_frame`). Decoded, those are three lit dots
+walking around the six perimeter positions of a braille cell — a short LINE OF DOTS travelling the
+edge of an upright RECTANGLE — one lap per ten frames. Two of its properties are the medium rather
+than the design: the walk is quantised to six stops, and the half-steps between them are faked by
+lighting a fourth dot, which is why the line appears to stretch and shrink as it goes.
 
-**The shape.** ONE arc, on the resting ring's own Ø10 circle at the resting ring's own 1.5pt weight,
-sweeping 270°, turning at herdr's exact tempo (`10 × 8/60` = 1.333 s/rev). A working agent and a
-merely present one are therefore the same silhouette, and the whole difference is that one of them is
-turning: the ring says "an agent lives in this pane", the motion says "and it is thinking right now".
-The 270° sweep is ours — herdr's arc tops out at 240° — because below roughly a quarter-turn of
-clearance a rotating arc stops reading as an arc and starts reading as a ring vibrating.
+**⚠️ The first cut read those frames as an ARC ON A CIRCLE** (at six samples they are geometrically
+close) and drew a comet on the resting ring's own circle. Rejected on sight: *"not this indicator —
+the one with the dots in a line going round a rectangle"*. The RECTANGLE is the recognisable thing
+about the artwork; a turning arc is the spinner every application already has, so transcribing the
+geometry and discarding the silhouette transcribed the wrong half.
 
-**The taper, settled on pixels twice.** The arc tapers from `Opacity.dim` at the tail to full ink at
-the head, and it does NOT fade to nothing. A vanishing tail is a handsome comet at 6× and a thin
-crescent at Ø10: it left the working mark carrying less ink than the resting dashed ring beside it
-(eight dashes at full strength are a lot of ink), so the rail's hierarchy came out upside down — the
-row doing something read quieter than the row doing nothing. A hard-ended arc is also the closer
-transcription, since braille dots are lit or they are not. The taper survives only because it names
-which end is the HEAD, and therefore which way the mark is turning.
+**The shape.** Three dots of our own, walking the perimeter of a rounded rectangle — a braille cell's
+proportion, upright — continuously, at herdr's exact tempo (`10 × 8/60` = 1.333 s/lap). Corners are
+rounded because a dot turning a hard 90° changes direction in one frame, which is a stutter, which is
+the quantisation this redraw exists to remove. Sized so the DOTS fill the column rather than the
+track: a dot rides half its width outside the track, so the drawn mark measures `track + dot` and
+that is what has to fit the 14pt footprint — the first sizing fitted the track instead and the mark
+came out as three specks in a lot of air.
 
-**The ink is `StatusInk.info`** — a hue, deliberately not one on the attention ramp. That ramp is a
-request: amber = a question waits, green = an unread finish, red = broken, and every one of them means
-*come here*. A thinking agent means the opposite; it is the one state that wants to be left alone, and
-it is also the state a rail spends most of its day in, so putting it on the ramp would teach the eye
-to discount the ramp. `info` is off the ramp by construction and iso-lightness with it: findable in a
-still screenshot, unable to out-shout a row that needs you. Two hues it is NOT: **herdr's own yellow**,
-which it uses for exactly this state — already spoken for here as the act-now amber, and this rail
-cannot spend one colour on "answer me" and "do not disturb"; and **the accent**, which the compact
-glyph used to wear — in this app the accent means SELECTION (the reason `StatusInk.info` exists as a
-separate blue at all), so a purple mark on an unselected row reads as a row half-selecting itself.
+The dots step DOWN behind the head (`1 → muted → dim`) — the only thing naming which way the line
+walks, since braille itself has no fade to copy.
+
+**The ink is herdr's own YELLOW** (`StatusInk.warn`), user-directed after seeing both on hardware.
+`info` blue shipped first, on the argument that the attention ramp (amber question / green finish /
+red failure) all means *come here* while a thinking agent means the opposite — and it simply did not
+carry across the rail. ⚠️ That puts the working mark on the SAME hue as the waiting question. What
+keeps them apart is silhouette and motion, not colour: a question is a still HAND, a thinking agent
+is three dots WALKING. A third yellow reading in this column is the collision to watch for. The
+accent was rejected on the same pass (the compact glyph used to wear it): in this app the accent
+means SELECTION, so a purple mark on an unselected row reads as a row half-selecting itself.
 
 **One working mark, everywhere.** `StatusGlyph`'s `working` reading — the typed pulse `· ✢ ✳ ✶ ✻ ✽`
 that the iOS toolbar and the Peek & Reply header have spoken since MERIDIAN — now mounts the same
@@ -7680,17 +7680,18 @@ variation-selector trap dies with the frames it guarded (it still applies to the
 
 Three properties are load-bearing, all pinned:
 - **Phase comes off the WALL CLOCK from a fixed epoch**, not from an animation started at mount — so
-  every spinning row in the rail is at the same angle and a re-render lands the comet mid-turn.
-  `AgentSpinner.turn(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, closure at
-  each full turn, and non-negative wrap before the epoch.
+  every working row in the rail walks in step and a re-render lands the caravan mid-lap.
+  `AgentSpinner.phase(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, exact lap
+  closure, and non-negative wrap before the epoch. `RectTrack.point(at:in:radius:)` is pure too, and
+  pinned as VALUES — corners land where the geometry says, the lap closes, out-of-range fractions
+  wrap instead of flying off the track, and no point of a rounded track leaves its own bounds.
 - **Pure SwiftUI**, so `ImageRenderer` can rasterize it — the platform indicator could not be
   rendered at all, which meant the one mark that moved was the one mark no test could look at.
-  `SlateSnapshotRender` now lays one turn out flat as a phase-pinned filmstrip (`pinnedTurn`), and
+  `SlateSnapshotRender` now lays one lap out flat as a phase-pinned filmstrip (`pinnedPhase`), and
   `sidebar-section.png` gains a SELECTED working row so the mark is checked on the island's dark
   glass too — the ground where a light/dark pair can resolve on the wrong side.
-- **Reduce Motion freezes it** — the platform used to own that call. A frozen comet is still a
-  distinct silhouette (a ring cut at 12 o'clock, tapered), so the state is never lost, only the
-  movement.
+- **Reduce Motion freezes it** — the platform used to own that call. A frozen caravan is still a
+  distinct silhouette (three dots down one corner of a rectangle), so the state is never lost.
 
 `WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
 affordance (the Android device list's boot button), where matching every other spinner on the machine

@@ -144,12 +144,12 @@ final class SlateSnapshotRender: XCTestCase {
     /// ⚠️ Rendered through an offscreen WINDOW rather than `ImageRenderer` — an inherited constraint
     /// that no longer binds this sheet (the working mark used to be an AppKit `NSProgressIndicator`,
     /// which `ImageRenderer` substitutes an unavailable-placeholder tile for and which never animates
-    /// without a window; the comet is pure SwiftUI). Kept because the other tiles here are still
+    /// without a window; the caravan is pure SwiftUI). Kept because the other tiles here are still
     /// AppKit-backed and one rasterizer for the whole sheet is one set of pixels to trust.
     ///
     /// ⚠️ The working mark is PINNED to a phase list here. A still of a wall-clock spinner catches
-    /// whatever angle the shutter lands on, which tells a reviewer nothing about the shape of the
-    /// motion — the filmstrip is one turn laid out flat.
+    /// whatever moment the shutter lands on, which tells a reviewer nothing about the shape of the
+    /// motion — the filmstrip is one lap laid out flat.
     ///
     /// SAME opt-in idiom as the other renders; inert unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`.
     /// Pure SwiftUI — no video/Metal (the hang-safety rule).
@@ -163,26 +163,26 @@ final class SlateSnapshotRender: XCTestCase {
             ("question", StatusDotStyle(ink: Slate.StatusInk.warn, mark: .awaiting)),
             ("agent finish", StatusDotStyle(ink: Slate.StatusInk.ok, mark: .agentFinish)),
         ]
-        // The ink candidates for the thinking comet, so the choice is settled on pixels rather than
-        // on the argument for each one. `info` is the shipping answer (off the attention ramp).
+        // The ink candidates for the thinking caravan, so the choice is settled on pixels rather
+        // than on the argument for each one. `warn` — herdr's own yellow — is the shipping answer.
         let inks: [(String, Color)] = [
-            ("info — off the attention ramp", Slate.StatusInk.info),
-            ("accent — but accent means SELECTION", Slate.State.accent),
-            ("primary ink — no hue at all, motion only", Slate.Text.primary),
+            ("warn — herdr's yellow (shipping)", Slate.StatusInk.warn),
+            ("notice — a rung louder, if yellow reads flat", Slate.StatusInk.notice),
+            ("info — off the attention ramp, and too quiet for it", Slate.StatusInk.info),
         ]
-        let phases: [Double] = [0, 45, 90, 135, 180, 225, 270, 315]
+        let phases: [Double] = (0..<8).map { Double($0) / 8 }
         let sheet = VStack(alignment: .leading, spacing: 16) {
-            captioned("one turn, flattened — true size, then 4× (\(Int(StatusDot.cometPeriod * 1000))ms/rev)") {
+            captioned("one lap, flattened — true size, then 4× (\(Int(StatusDot.lapPeriod * 1000))ms/lap)") {
                 VStack(alignment: .leading, spacing: 8) {
-                    self.strip(phases, ink: Slate.StatusInk.info, zoom: 1, spacing: 10)
-                    self.strip(phases, ink: Slate.StatusInk.info, zoom: 4, spacing: 8)
+                    self.strip(phases, ink: Slate.StatusInk.warn, zoom: 1, spacing: 10)
+                    self.strip(phases, ink: Slate.StatusInk.warn, zoom: 4, spacing: 8)
                 }
             }
             ForEach(inks.indices, id: \.self) { index in
-                self.captioned("comet ink — \(inks[index].0)") {
+                self.captioned("caravan ink — \(inks[index].0)") {
                     HStack(spacing: 16) {
-                        self.strip([315, 0, 45], ink: inks[index].1, zoom: 1, spacing: 8)
-                        self.comet(ink: inks[index].1, turn: 315, zoom: 6)
+                        self.strip([0.875, 0, 0.125], ink: inks[index].1, zoom: 1, spacing: 8)
+                        self.caravan(ink: inks[index].1, phase: 0.05, zoom: 6)
                         // Beside the marks it has to coexist with, at true size.
                         HStack(spacing: 10) {
                             ForEach(marks.indices, id: \.self) { self.still(marks[$0].1) }
@@ -210,31 +210,24 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 900, height: 860), to: dir, named: "status-marks.png")
     }
 
-    /// One turn of the comet laid out flat — the same view the rail mounts, held at each angle.
+    /// One lap of the caravan laid out flat — the same view the rail mounts, held at each point.
     @MainActor
     private func strip(
         _ phases: [Double], ink: Color, zoom: CGFloat, spacing: CGFloat,
     ) -> some View {
         HStack(spacing: spacing) {
             ForEach(phases.indices, id: \.self) { index in
-                self.comet(ink: ink, turn: phases[index], zoom: zoom)
+                self.caravan(ink: ink, phase: phases[index], zoom: zoom)
             }
         }
     }
 
-    /// One pinned comet, DRAWN at the magnified size rather than `scaleEffect`-ed to it. The arc
-    /// carries an angular gradient, which SwiftUI rasterizes before the scale is applied — so a
-    /// scaled tile is a blown-up 10pt bitmap and reads as a smudge that is nothing like what the
-    /// rail draws. Feeding the size in keeps the geometry vector all the way down.
+    /// One pinned caravan, DRAWN at the magnified size rather than `scaleEffect`-ed to it — feeding
+    /// the zoom in keeps the geometry vector all the way down, where a scaled tile is a blown-up
+    /// 14pt bitmap and reads as a smudge that is nothing like what the rail draws.
     @MainActor
-    private func comet(ink: Color, turn: Double, zoom: CGFloat) -> some View {
-        AgentSpinner(
-            ink: ink,
-            diameter: StatusDot.cometDiameter * zoom,
-            lineWidth: StatusDot.ringLineWidth * zoom,
-            pinnedTurn: turn,
-        )
-        .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+    private func caravan(ink: Color, phase: Double, zoom: CGFloat) -> some View {
+        AgentSpinner(ink: ink, zoom: zoom, pinnedPhase: phase)
     }
 
     // MARK: - Opt-in render of the island chip stack
@@ -317,13 +310,13 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING agent row: the trailing slot carries the turning comet.
+            // A WORKING agent row: the trailing slot carries the walking caravan.
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true,
                 workingLabel: "Agent working",
                 onSelect: {}, onClose: {},
             )
-            // The SAME state on the SELECTED row — the comet on the compact island's dark glass,
+            // The SAME state on the SELECTED row — the caravan on the compact island's dark glass,
             // which is the one place a light/dark pair can resolve on the wrong side (the trap that
             // made the island chips invisible). The mark must read here or it reads nowhere.
             SlateTabRow(
