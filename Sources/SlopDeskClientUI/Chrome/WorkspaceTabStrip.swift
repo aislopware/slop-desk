@@ -33,11 +33,6 @@ struct WorkspaceTabStrip: View {
     /// also carries the traffic lights and a full-height chip crowded them.
     private static let chipHeight = Slate.Metric.heightControl
 
-    /// The selection plate's morph namespace, shared by every chip in the strip so the plate TRAVELS
-    /// between tabs. The strip's own namespace, not the sidebar's: only one of the two is ever
-    /// mounted, and a plate cannot travel to a row that does not exist.
-    @Namespace private var selectionMorph
-
     var body: some View {
         let sections = RailRowsBuilder.sectionedByProject(
             rows, tabOrder: store.flatOrderedTabIDs(), query: "",
@@ -71,15 +66,23 @@ struct WorkspaceTabStrip: View {
 
     /// One project's run of tabs on its own bed. A keyless section still gets a bed (the neutral
     /// one) so the strip's rhythm does not break where a video pane sits between two projects.
+    ///
+    /// The run also OWNS its selection-morph namespace (``SlateMorphScope``), the same seam the
+    /// sidebar's islands draw: the plate slides between two tabs of one project and ignites in place
+    /// when it arrives from another (user-directed 2026-08-10). The two surfaces must agree — they
+    /// render the same rows in the same order and only one is ever mounted, so a rule that held on
+    /// one axis and not the other would read as the gesture changing when the sidebar is hidden.
     private func island(_ section: RailRowGroup, tint: Color) -> some View {
-        SlateProjectIsland(tint: tint, verticalInset: 0, horizontalInset: 0) {
-            HStack(spacing: Slate.Metric.space1) {
-                ForEach(section.rows) { row in
-                    TabStripChip(
-                        store: store, row: row, morph: selectionMorph,
-                        onSelect: { onSelect(row.id) },
-                    )
-                    .id(row.leafIdentity)
+        SlateMorphScope { morph in
+            SlateProjectIsland(tint: tint, verticalInset: 0, horizontalInset: 0) {
+                HStack(spacing: Slate.Metric.space1) {
+                    ForEach(section.rows) { row in
+                        TabStripChip(
+                            store: store, row: row, morph: morph,
+                            onSelect: { onSelect(row.id) },
+                        )
+                        .id(row.leafIdentity)
+                    }
                 }
             }
         }

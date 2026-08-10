@@ -65,10 +65,6 @@ struct NavigatorColumn: View {
     /// Session-scoped presentation state — a fresh launch opens every group.
     @State private var collapsedSections: Set<String> = []
 
-    /// The selection plate's morph namespace, shared by EVERY row in the panel — including rows in
-    /// different project islands, so the plate travels across a group boundary the same way it
-    /// travels between two rows of one project.
-    @Namespace private var selectionMorph
     #endif
 
     /// The focused pane — the ONE volatile value the sidebar body watches, and only so the selection
@@ -286,49 +282,58 @@ struct NavigatorColumn: View {
     /// One project's ISLAND: the group's header and its rows on one bed washed in the project's
     /// identity hue (``SlateProjectIsland``). A section with no header is the ungrouped flat list —
     /// it gets no bed, because there is no project for a colour to name.
+    ///
+    /// The island is also the SELECTION PLATE's travel boundary (user-directed 2026-08-10): its
+    /// ``SlateMorphScope`` hands one namespace to this island's rows and no others, so focus moving
+    /// between two rows of this project morphs the plate across as before, while focus arriving from
+    /// another project finds no partner and the plate ignites in place instead. The scope is the
+    /// OUTERMOST wrapper on purpose — it must survive the header collapsing the rows away, or a
+    /// group toggled shut and open again would deal its rows a fresh namespace.
     @ViewBuilder
     private func projectIsland(_ section: RowSection, tint: Color) -> some View {
         let collapseKey = Self.collapseKey(section.projectKey)
         let collapsed = collapsedSections.contains(collapseKey)
-        let rows = VStack(alignment: .leading, spacing: 2) {
-            if let header = section.header {
-                SidebarSectionHeaderRow(
-                    store: store, title: header, projectKey: section.projectKey,
-                    collapsed: collapsed, count: section.rows.count,
-                    rows: section.rows,
-                    onToggle: {
-                        // Animated (otty snaps its collapse in one frame; the glide is a deliberate
-                        // refinement) — the chevron turns, the rows fade, and the islands below
-                        // slide up in the same curve.
-                        withAnimation(Slate.Anim.standard) {
-                            if collapsed { collapsedSections.remove(collapseKey) }
-                            else { collapsedSections.insert(collapseKey) }
-                        }
-                    },
-                )
-            }
-            if !collapsed {
-                ForEach(section.rows) { row in
-                    macRow(row)
+        SlateMorphScope { morph in
+            let rows = VStack(alignment: .leading, spacing: 2) {
+                if let header = section.header {
+                    SidebarSectionHeaderRow(
+                        store: store, title: header, projectKey: section.projectKey,
+                        collapsed: collapsed, count: section.rows.count,
+                        rows: section.rows,
+                        onToggle: {
+                            // Animated (otty snaps its collapse in one frame; the glide is a
+                            // deliberate refinement) — the chevron turns, the rows fade, and the
+                            // islands below slide up in the same curve.
+                            withAnimation(Slate.Anim.standard) {
+                                if collapsed { collapsedSections.remove(collapseKey) }
+                                else { collapsedSections.insert(collapseKey) }
+                            }
+                        },
+                    )
+                }
+                if !collapsed {
+                    ForEach(section.rows) { row in
+                        macRow(row, morph: morph)
+                    }
                 }
             }
-        }
-        if section.header == nil {
-            rows
-        } else {
-            SlateProjectIsland(tint: tint) { rows }
+            if section.header == nil {
+                rows
+            } else {
+                SlateProjectIsland(tint: tint) { rows }
+            }
         }
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome
     /// is read inside ``SidebarLiveRow``, so a pane's status tick re-renders that one leaf, not
     /// this sidebar body.
-    private func macRow(_ row: RailRow) -> some View {
+    private func macRow(_ row: RailRow, morph: Namespace.ID) -> some View {
         SidebarLiveRow(
             store: store,
             row: row,
             fallbackTitle: defaultTitle(for: row.kind),
-            morph: selectionMorph,
+            morph: morph,
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },

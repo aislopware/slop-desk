@@ -1191,6 +1191,19 @@ enum Slate {
         /// rather than a move (measured: the plate cleared 128pt in ~120ms). This is still well
         /// under the column slide — the plate is the smaller object and must not feel heavier.
         static let selectionMorph = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.26)
+        /// How far the selection plate is CLOSED at the start of an ignite — the height it opens
+        /// FROM when it arrives in an island the previous selection was not in (user-directed
+        /// 2026-08-10). Not a `Metric`: it is a ratio the motion spends, not a dimension the layout
+        /// reserves, and the plate it scales is whatever rung its surface uses (a sidebar row here,
+        /// a band chip there).
+        ///
+        /// 0.80, not the 0.88 first tried, and the reason is the CURVE rather than the depth. On the
+        /// emphasized curve most of a scale is spent in the first fifth of its duration: measured in
+        /// the running app, an 0.88 plate was back to full height 53ms in — while it was still almost
+        /// transparent — so the opening finished before there was anything to watch and the change
+        /// read as the plain cross-fade it was supposed to replace. Opening from 0.80 at full ink
+        /// (see ``SwiftUI/AnyTransition/plateIgnite``) puts the motion where the eye already is.
+        static let plateIgniteScale: CGFloat = 0.80
         /// A SPLIT COLUMN opening or closing — the sidebar and the code panel (user-directed
         /// 2026-08-09). The longest move in the app: an entire column's width travels, so it takes
         /// the emphasized curve and a beat more than `stackReflow` to keep the terminal's re-wrap

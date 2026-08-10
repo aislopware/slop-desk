@@ -104,6 +104,11 @@ struct SlateCompactIsland<Content: View>: View {
     /// a per-row background that cross-fades and becomes ONE plate that TRAVELS from the old row to
     /// the new one (user-directed 2026-08-09: selection "jumped"). `nil` — a lone chip with no
     /// siblings to travel between — keeps the plain fade.
+    ///
+    /// The namespace's SCOPE is what decides whether a given selection change travels at all: it is
+    /// handed out one per PROJECT ISLAND (``SlateMorphScope``), so two chips in the same project
+    /// share it and morph, while two chips in different projects do not and the plate IGNITES in
+    /// place instead (user-directed 2026-08-10).
     var morph: Namespace.ID?
     @ViewBuilder let content: () -> Content
 
@@ -131,6 +136,11 @@ struct SlateCompactIsland<Content: View>: View {
     /// the island's rim too, or the two surfaces stop being the same object the moment the ground
     /// stops being the thing that separates them.
     ///
+    /// The plate also carries ``SwiftUI/AnyTransition/plateIgnite``, which is what a selection change
+    /// that CANNOT morph falls back to. The two cases share this one line because they are the same
+    /// two SwiftUI events — a plate removed here, a plate inserted there — and only the namespace
+    /// decides whether a match fuses them into a travel.
+    ///
     /// NO DROP SHADOW (user-directed 2026-08-09). The chip used to cast a 4% whisper, written when
     /// the plate was cream on a cream ground and needed help separating. The single profile put the
     /// island's DARK glass under the chip while the ground stayed cream, so the two are now ~13:1
@@ -145,13 +155,81 @@ struct SlateCompactIsland<Content: View>: View {
                 .overlay(shape.strokeBorder(Slate.Terminal.edge, lineWidth: Slate.Metric.hairline))
                 .allowsHitTesting(false)
             if let morph {
-                pill.matchedGeometryEffect(id: Self.morphID, in: morph)
+                pill.matchedGeometryEffect(id: Self.morphID, in: morph).transition(.plateIgnite)
             } else {
                 pill
             }
         } else if hovering {
             shape.fill(Slate.State.hover).allowsHitTesting(false)
         }
+    }
+}
+
+/// The selection plate ARRIVING somewhere it could not travel to — the cross-project case
+/// (user-directed 2026-08-10: the plate must not slide from one project to another).
+///
+/// INSERTION ONLY, and that asymmetry is the whole load-bearing part. A selection change is always
+/// the same pair of events, a removal and an insertion; when the two chips share a namespace
+/// ``SwiftUI/View/matchedGeometryEffect(id:in:properties:anchor:isSource:)`` fuses them into one
+/// travelling plate, and the transition still runs on both ends underneath it. Giving the REMOVAL a
+/// shape too therefore taxes the travel the user asked to leave alone — measured on a 2s-slowed
+/// mock, a symmetric collapse pinched the travelling plate to 30/32pt across six frames. With the
+/// removal left on the plain fade the outgoing plate stays full height for the whole crossing and
+/// covers the arriving one, and the travel measures IDENTICAL to no transition at all (32pt on every
+/// frame, same positions). So: within a project this costs nothing, and across projects — where
+/// there is no partner to hide behind — the arriving plate is seen to open.
+///
+/// Vertical only. A uniform scale reads as a thing flying toward the viewer, which is a second
+/// spatial claim on top of the one the plate just declined to make; closing the height alone reads
+/// as a light coming on in the other island, which is exactly what happened.
+///
+/// And it arrives at FULL INK — no fade on the way in. The first cut faded, and measured in the
+/// running app it defeated itself: the plate was back to full height 53ms after the click, while
+/// still nearly transparent, so by the time it was dark enough to see there was no opening left to
+/// watch. Arriving opaque also makes the handoff legible in a way the cross-fade never was — the
+/// destination is solid IMMEDIATELY and the plate being left behind is visibly the ghost, instead of
+/// two half-lit plates sitting in two islands with neither one reading as the answer. The removal
+/// keeps its plain fade, which is the part that must not change (see above).
+extension AnyTransition {
+    static var plateIgnite: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(
+                active: SlatePlateIgnite(closed: true), identity: SlatePlateIgnite(closed: false),
+            ),
+            removal: .opacity,
+        )
+    }
+}
+
+/// The two ends of ``SwiftUI/AnyTransition/plateIgnite``: closed (short) → open (full). Height only —
+/// the ink is already at full strength on the first frame.
+private struct SlatePlateIgnite: ViewModifier {
+    let closed: Bool
+
+    func body(content: Content) -> some View {
+        content.scaleEffect(x: 1, y: closed ? Slate.Anim.plateIgniteScale : 1, anchor: .center)
+    }
+}
+
+/// One selection-morph namespace, scoped to whatever mounts it — the seam that decides where the
+/// plate may travel (user-directed 2026-08-10).
+///
+/// A namespace cannot be built in a `func` (`@Namespace` is view storage), and the scope wanted here
+/// is per PROJECT ISLAND, which both tab surfaces render from a loop. So the scope is a view: mount
+/// one inside each island's `ForEach` body and every island gets its own stable namespace, keyed by
+/// the same identity the section already has. Chips in one island match and morph; chips in two
+/// islands cannot see each other's ids and fall to ``SwiftUI/AnyTransition/plateIgnite``.
+///
+/// Nothing else has to know. There is no "did this change cross a project" flag anywhere, and there
+/// deliberately is not one: it would need the PREVIOUS selection, which no leaf can read live, and
+/// carrying it down as a parameter is the exact stale-value class that left the old row lit
+/// (``SlateCompactIsland``). The namespace's scope IS the predicate.
+struct SlateMorphScope<Content: View>: View {
+    @Namespace private var morph
+    @ViewBuilder let content: (Namespace.ID) -> Content
+
+    var body: some View {
+        content(morph)
     }
 }
 
