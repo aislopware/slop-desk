@@ -67,9 +67,11 @@ repos:
 
       - id: rustfmt
         name: rustfmt (apply)
-        entry: bash -c 'cd rust && cargo fmt --all'
+        # NIGHTLY: rust/rustfmt.toml enables unstable options (wrap_comments, group_imports,
+        # format_strings). Only the formatter needs it — the crate builds/tests on stable.
+        entry: bash -c 'cd rust && cargo +nightly fmt --all'
         language: system
-        files: '^rust/.*\.rs$'
+        files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
 
       - id: shfmt
@@ -105,9 +107,18 @@ repos:
 
       - id: clippy
         name: cargo clippy -D warnings
-        entry: bash -c 'cd rust && cargo clippy --workspace --all-targets -- -D warnings'
+        entry: bash -c 'cd rust && cargo clippy --workspace --all-targets --all-features -- -D warnings'
         language: system
-        files: '^rust/.*\.rs$'
+        files: '^rust/.*\.(rs|toml)$'
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test (hook relay)
+        # The relay's framing is a WIRE contract with AgentHookRecord.split on the host; the
+        # byte-for-byte tests are the pin, so they gate the commit like golden-check does.
+        entry: bash -c 'cd rust && cargo test --workspace --quiet'
+        language: system
+        files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
 
       - id: shellcheck

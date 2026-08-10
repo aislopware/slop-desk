@@ -57,13 +57,17 @@ if arguments.count >= 2, arguments[1] == "integration" {
     }
     guard target == "claude" else { fail("unknown integration target '\(target)' (only 'claude')") }
     let settingsPath = AgentInstaller.defaultSettingsPath()
-    let scriptPath = AgentInstaller.defaultScriptPath()
+    let hookPath = AgentInstaller.defaultHookPath()
     do {
         switch sub {
         case "install":
-            _ = try AgentInstaller.install(settingsPath: settingsPath, scriptPath: scriptPath)
+            _ = try AgentInstaller.install(
+                settingsPath: settingsPath,
+                hookPath: hookPath,
+                binarySource: AgentInstaller.bundledBinaryPath(),
+            )
             print("slopdesk: installed Claude Code hooks → \(settingsPath)")
-            print("slopdesk: hook script → \(scriptPath)")
+            print("slopdesk: hook relay → \(hookPath)")
             print("slopdesk: restart claude in a slopdesk pane — the host is already listening.")
             exit(0)
         case "uninstall":

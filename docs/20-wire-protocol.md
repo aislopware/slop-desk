@@ -218,7 +218,7 @@ never offers or falls back to another version.
     which never performs a side effect; the iOS client routes open/reveal TO the host over this same wire.
   - **`installAgentHooks` (11) / `uninstallAgentHooks` (12) / `agentHookStatus` (13) are the agent-hooks
     verbs** (E13 — the Agents settings card). 11/12 are **side-effecting** like 9/10: the host writes (the
-    hook script + a merge into `~/.claude/settings.json`) or strips exactly our entries via `AgentInstaller`
+    hook RELAY BINARY + a merge into `~/.claude/settings.json`) or strips exactly our entries via `AgentInstaller`
     and replies with an **empty payload** + a status (`ok` on a successful write, `error` if it threw).
     13 is a **pure read** that returns status `ok` + a **2-byte** payload
     `[UInt8 installed][UInt8 listenerActive]` — `installed` (`1`/`0`) is the `settings.json` install

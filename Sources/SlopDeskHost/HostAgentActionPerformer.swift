@@ -65,14 +65,16 @@ enum HostAgentActionPerformer {
         Data([installed ? 1 : 0, listenerActive ? 1 : 0])
     }
 
-    /// Installs the slopdesk Claude Code hooks (script + `settings.json` merge) on the host. `.ok` on a
-    /// successful write, `.error` if the install threw (a disk / permission failure). Named `installHooks`,
-    /// NOT `install`, to keep the shim's surface self-describing alongside `uninstallHooks`.
+    /// Installs the slopdesk Claude Code hooks (relay binary + `settings.json` merge) on the host.
+    /// `.ok` on a successful write, `.error` if the install threw (a disk / permission failure, or a
+    /// relay binary that was never staged beside the host). Named `installHooks`, NOT `install`, to
+    /// keep the shim's surface self-describing alongside `uninstallHooks`.
     static func installHooks() -> MetadataStatus {
         do {
             try AgentInstaller.install(
                 settingsPath: AgentInstaller.defaultSettingsPath(),
-                scriptPath: AgentInstaller.defaultScriptPath(),
+                hookPath: AgentInstaller.defaultHookPath(),
+                binarySource: AgentInstaller.bundledBinaryPath(),
             )
             return .ok
         } catch {

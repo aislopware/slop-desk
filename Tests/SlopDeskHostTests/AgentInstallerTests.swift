@@ -119,21 +119,19 @@ final class AgentInstallerTests: XCTestCase {
         }
     }
 
-    // MARK: hook script + command text
+    // MARK: relay path + command text
 
-    func testHookScriptIsRecognizedExecutableShellAndReferencesSocketEnv() {
-        let script = AgentInstaller.hookScript()
-        XCTAssertTrue(script.hasPrefix("#!/bin/sh"), "the hook script is a POSIX-sh script")
-        XCTAssertTrue(script.contains("SLOPDESK_SOCKET_PATH"), "it reads the host's socket path from env")
-        XCTAssertTrue(script.contains("nc -U"), "it POSTs over the Unix socket (Muxy transport)")
-        // Claude Code waits on this script SYNCHRONOUSLY (30s ceiling) around every edit — an
-        // unbounded `nc` turned a slow host into a frozen agent. The bound is part of the contract.
-        XCTAssertTrue(script.contains("nc -U -w "), "the POST is time-bounded — it blocks the agent")
+    func testCommandCarriesTheMarkerViaHookPath() {
+        let cmd = AgentInstaller.hookCommand(hookPath: "/Users/dev/.claude/hooks/slopdesk-agent")
+        XCTAssertTrue(cmd.contains(AgentInstaller.hookMarker), "the command path carries the merge marker")
     }
 
-    func testCommandCarriesTheMarkerViaScriptPath() {
-        let cmd = AgentInstaller.hookCommand(scriptPath: "/Users/dev/.claude/hooks/slopdesk-agent.sh")
-        XCTAssertTrue(cmd.contains(AgentInstaller.hookMarker), "the command path carries the merge marker")
+    func testTheRelayBinaryResolvesBesideTheHostExecutable() {
+        let exe = URL(fileURLWithPath: "/opt/slopdesk/bin/slopdesk-hostd")
+        XCTAssertEqual(
+            AgentInstaller.bundledBinaryPath(executableURL: exe),
+            "/opt/slopdesk/bin/slopdesk-hook",
+        )
     }
 
     func testDefaultPathsHonorClaudeConfigDir() {
@@ -143,8 +141,8 @@ final class AgentInstallerTests: XCTestCase {
             "/tmp/cfg/settings.json",
         )
         XCTAssertEqual(
-            AgentInstaller.defaultScriptPath(environment: env, home: "/Users/dev"),
-            "/tmp/cfg/hooks/slopdesk-agent.sh",
+            AgentInstaller.defaultHookPath(environment: env, home: "/Users/dev"),
+            "/tmp/cfg/hooks/slopdesk-agent",
         )
         // Without the override → ~/.claude.
         XCTAssertEqual(
@@ -160,20 +158,33 @@ final class AgentInstallerTests: XCTestCase {
             .appendingPathComponent("slopdesk-installer-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let settingsPath = dir.appendingPathComponent("settings.json").path
-        let scriptPath = dir.appendingPathComponent("hooks/slopdesk-agent.sh").path
+        let hookPath = dir.appendingPathComponent("hooks/slopdesk-agent").path
 
         // Pre-seed an existing user setting so we can prove preservation across disk I/O.
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(#"{"theme":"dark"}"#.utf8).write(to: URL(fileURLWithPath: settingsPath))
 
-        // Install twice (idempotency over the disk shim).
-        _ = try AgentInstaller.install(settingsPath: settingsPath, scriptPath: scriptPath)
-        let secondInstall = try AgentInstaller.install(settingsPath: settingsPath, scriptPath: scriptPath)
+        // Stand in for the staged relay binary. The installer only copies bytes, so its content
+        // is irrelevant here — what matters is that it lands executable at `hookPath`.
+        let source = dir.appendingPathComponent("slopdesk-hook").path
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: source))
 
-        XCTAssertTrue(FileManager.default.fileExists(atPath: scriptPath), "the hook script is written")
-        // The script is executable.
-        let perms = try FileManager.default.attributesOfItem(atPath: scriptPath)[.posixPermissions] as? Int
-        XCTAssertEqual(perms, 0o755, "the hook script is chmod +x")
+        // Install twice (idempotency over the disk shim, and the second run must replace a
+        // relay that is already on disk rather than fail the copy).
+        _ = try AgentInstaller.install(
+            settingsPath: settingsPath, hookPath: hookPath, binarySource: source,
+        )
+        let secondInstall = try AgentInstaller.install(
+            settingsPath: settingsPath, hookPath: hookPath, binarySource: source,
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: hookPath), "the relay binary is staged")
+        let perms = try FileManager.default.attributesOfItem(atPath: hookPath)[.posixPermissions] as? Int
+        XCTAssertEqual(perms, 0o755, "the relay is chmod +x")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent("hooks/slopdesk-hook.staging").path),
+            "the staging copy is not left behind",
+        )
 
         let afterTwo = try JSONDecoder().decode(JSONValue.self, from: Data(secondInstall.utf8))
         guard case let .object(obj2) = afterTwo, case let .object(hooks2)? = obj2["hooks"],
@@ -192,5 +203,28 @@ final class AgentInstallerTests: XCTestCase {
         }
         XCTAssertNil(obj3["hooks"], "uninstall removes our (all-ours) hooks")
         XCTAssertEqual(obj3["theme"], .string("dark"), "uninstall preserves the user's settings")
+    }
+
+    func testAMissingRelayBinaryFailsTheInstallInsteadOfWiringADeadCommand() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("slopdesk-installer-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let settingsPath = dir.appendingPathComponent("settings.json").path
+
+        // Settings must stay untouched: a half-install that points every hook event at a command
+        // which does not exist reads as "installed" while relaying nothing.
+        XCTAssertThrowsError(
+            try AgentInstaller.install(
+                settingsPath: settingsPath,
+                hookPath: dir.appendingPathComponent("hooks/slopdesk-agent").path,
+                binarySource: dir.appendingPathComponent("absent").path,
+            ),
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: settingsPath),
+            "a failed install does not write settings",
+        )
+        XCTAssertFalse(AgentInstaller.isInstalled(settingsPath: settingsPath))
     }
 }

@@ -5678,7 +5678,57 @@ return.
   `onRecord?(record)` it replaced.
 
 → touches `AgentHookListener.swift`, `AgentInstaller.hookScript()`. An already-installed hook script is
-stale until the host reinstalls it (or it is edited in place).
+stale until the host reinstalls it (or it is edited in place). **Superseded 2026-08-10** — the script is a
+compiled relay now; see below.
+
+## The hook relay is a compiled binary, because the cost was fork, not transport (2026-08-10)
+
+The 2026-07-31 fix stopped the hook from PARKING. It did not make it cheap. Measured on the installed
+script: **12.4ms per invocation**, twice per tool call, synchronously on the agent's critical path.
+
+Decomposed, the shape is the whole argument:
+
+| | |
+|---|---|
+| `sh` fork/exec | ~6.1 ms |
+| `cat` (a subprocess, only to slurp stdin) | ~2.3 ms |
+| `nc` fork/exec | ~4.5 ms |
+| **the AF_UNIX round-trip itself** | **0.011 ms** |
+
+The transport was never the cost. Three processes were being forked to move ~60 bytes over a socket that
+answers in 11µs.
+
+- ✅ **`rust/slopdesk-hook` replaces the generated shell.** ONE fork/exec instead of three: **12.4ms → 3.2ms**
+  (13.6× on the work above the process-spawn floor). Zero dependencies — every crate linked is startup cost
+  on the critical path. `AgentInstaller` copies the binary to `~/.claude/hooks/slopdesk-agent` (the basename
+  still carries `hookMarker`, so `merge`/`remove` strip the old `.sh` entry with no migration code).
+- ✅ **Byte-identical framing, verified against the script it replaces.** Both were run against one listener
+  over 6 payload shapes (empty, trailing/embedded newlines, unicode, 256KB) and the received bytes compared.
+  `payload="$(cat)"` stripped every trailing newline before `printf '%s\n' `added one back, so the relay
+  replicates exactly that — a `trailing_newlines_collapse_to_exactly_one` test pins it.
+- ✅ **It is still SYNCHRONOUS, and this is now measured rather than argued.** `sh -c 'exit 0'` alone costs
+  ~10.5ms of the old 12.4ms; detaching would have hidden 11µs and kept the fork. Ordering remains the real
+  reason — see the serial-queue entry above.
+- ⛔️ **`PostToolUse` is NOT droppable, though it maps to the same `.working` as `PreToolUse`.** Halving the
+  forks per tool call was the obvious next move and it is wrong twice: `PreToolUse` of `AskUserQuestion` maps
+  to a BLOCK that only the tool's `PostToolUse` resolves, and `ClaudePaneDetector` stamps `lastAuthoritativeAt`
+  on every record so a long turn survives the ~1Hz foreground poll under a wrapper (`node`/`npx`/`mise`).
+- ⛔️ **`#![no_main]` to skip Rust's runtime init is rejected.** The relay already costs exactly what an EMPTY
+  Rust binary costs (3.07 vs 3.09ms) — all of its own work is below measurement noise. The only remaining
+  0.45ms is `std::rt` init (a do-nothing C binary is 2.64ms), and buying it back means giving up
+  `unsafe_code = "forbid"` for ~0.2s per session.
+- ⚠️ **AF_UNIX defaults to an 8KB `SO_SNDBUF` on macOS; TCP loopback gets 128KB.** Measured here: unix wins
+  round-trip 4.2µs vs 19.2µs, but LOSES bulk 15.4 vs 49.0 Gbit/s at defaults — and wins it 179 vs 114 Gbit/s
+  once `SO_SNDBUF` is raised. Only the SENDER's buffer matters (`SO_RCVBUF` changed nothing). Anyone moving a
+  bulk path to AF_UNIX without raising it makes that path ~3× slower.
+- ⛔️ **The other same-machine hops stay TCP loopback** (hostd → code-server, hostd → simulator child, hostd →
+  `adb forward`). Each sits behind a cross-machine mesh leg whose measured RTT is 11ms, so the ~15µs a unix
+  socket would save is 0.14% of the path. The webview → `CodeSidebarProxy` hop *cannot* move: browsers need
+  loopback for a secure context.
+
+→ touches `rust/slopdesk-hook/`, `AgentInstaller.swift` (`hookScript()` deleted, `install` copies a binary,
+`defaultScriptPath` → `defaultHookPath`), `HostAgentActionPerformer.swift`, `slopdesk-hostd/main.swift`,
+`Makefile` (`hook`, `hook-test`, `lint-rust`, `fmt-rust`).
 
 ## The switcher is measured against its window, and the walk is a LOOK (2026-07-31)
 

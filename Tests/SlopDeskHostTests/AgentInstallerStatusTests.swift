@@ -9,15 +9,24 @@ import XCTest
 /// a hard-coded `true`/`false` would fail the opposite-state case; trapping on a corrupt file would crash
 /// the tolerance test.
 final class AgentInstallerStatusTests: XCTestCase {
-    /// Makes a fresh, unique temp dir + the settings/script paths under it; cleaned up by the caller.
-    private func makePaths() -> (dir: URL, settings: String, script: String) {
+    /// Makes a fresh, unique temp dir + the settings/relay paths under it; cleaned up by the caller.
+    private func makePaths() -> (dir: URL, settings: String, hook: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("slopdesk-installer-status-\(UUID().uuidString)")
         return (
             dir,
             dir.appendingPathComponent("settings.json").path,
-            dir.appendingPathComponent("hooks/slopdesk-agent.sh").path,
+            dir.appendingPathComponent("hooks/slopdesk-agent").path,
         )
+    }
+
+    /// Writes a stand-in for the staged relay binary. `install` only copies bytes, so the content
+    /// is irrelevant — it just has to exist, or the install refuses to wire a dead command.
+    private func stageRelay(in dir: URL) throws -> String {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let source = dir.appendingPathComponent("slopdesk-hook").path
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: source))
+        return source
     }
 
     func testIsInstalledFalseWhenSettingsFileMissing() {
@@ -28,12 +37,13 @@ final class AgentInstallerStatusTests: XCTestCase {
     }
 
     func testIsInstalledTrueAfterInstallThenFalseAfterUninstall() throws {
-        let (dir, settings, script) = makePaths()
+        let (dir, settings, hook) = makePaths()
         defer { try? FileManager.default.removeItem(at: dir) }
+        let relay = try stageRelay(in: dir)
 
         XCTAssertFalse(AgentInstaller.isInstalled(settingsPath: settings), "not installed before install")
 
-        _ = try AgentInstaller.install(settingsPath: settings, scriptPath: script)
+        _ = try AgentInstaller.install(settingsPath: settings, hookPath: hook, binarySource: relay)
         XCTAssertTrue(AgentInstaller.isInstalled(settingsPath: settings), "installed after install")
 
         _ = try AgentInstaller.uninstall(settingsPath: settings)
@@ -52,13 +62,13 @@ final class AgentInstallerStatusTests: XCTestCase {
     }
 
     func testIsInstalledTrueWhenOursSitsAlongsideTheUsersHook() throws {
-        let (dir, settings, script) = makePaths()
+        let (dir, settings, hook) = makePaths()
         defer { try? FileManager.default.removeItem(at: dir) }
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let relay = try stageRelay(in: dir)
         try Data("""
         {"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/usr/local/bin/notify-me"}]}]}}
         """.utf8).write(to: URL(fileURLWithPath: settings))
-        _ = try AgentInstaller.install(settingsPath: settings, scriptPath: script)
+        _ = try AgentInstaller.install(settingsPath: settings, hookPath: hook, binarySource: relay)
         XCTAssertTrue(AgentInstaller.isInstalled(settingsPath: settings), "ours is detected next to the user's hook")
     }
 

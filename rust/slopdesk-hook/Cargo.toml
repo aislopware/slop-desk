@@ -1,0 +1,23 @@
+[package]
+name = "slopdesk-hook"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Claude Code hook relay — POSTs a hook event to the slopdesk host's AF_UNIX listener"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+# Zero dependencies on purpose: this binary is forked twice per tool call, and
+# every crate linked in is startup cost paid on the agent's critical path.
+[dependencies]
+
+[[bin]]
+name = "slopdesk-hook"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_hook"
+path = "src/lib.rs"

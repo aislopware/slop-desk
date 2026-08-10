@@ -65,3 +65,6 @@ docs/ui-shell/screenshots/*.webm
 
 # python bytecode from repo scripts
 __pycache__/
+
+# Rust build products (rust/slopdesk-hook — the Claude Code hook relay)
+rust/target/
