@@ -7714,6 +7714,18 @@ Three properties are load-bearing, all pinned:
 - **Reduce Motion freezes it** — the platform used to own that call. A frozen cell is still a
   distinct silhouette (a lit block with one corner missing), so the state is never lost.
 
+**The RESTING mark is recut in the same pass** (user-directed): the agent-presence ring was lucide
+`circle-dashed`, stroked with an eight-segment 0.6-fill dash pattern, and is now eight round DOTS
+standing further apart than those dashes did (`DottedRing`, Ø1.8 on the same Ø10 circle, ≈2.13 of air
+between neighbours against the dashes' 1.57). A dash is a fragment of a line that happens to be
+curved; a dot is its own shape, and at this size that is the difference between a ring that looks
+BROKEN and a ring that looks MADE OF PARTS. The dots ride on the circle and spill half their width
+outside it exactly as the stroke did, so the ring's visual diameter — matched by eye to a 12pt
+`checkmark.circle.fill`, so a row that finishes does not change size — is unchanged. Ø1.8 also keeps
+it under the thinking cell's Ø2.6: a PRESENT agent must never out-weigh a WORKING one, and size is
+half of how the column says so. The gap is pinned as a value, because shrinking it turns the mark
+quietly back into a dashed ring with short dashes.
+
 `WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
 affordance (the Android device list's boot button), where matching every other spinner on the machine
 is the point.

@@ -356,18 +356,47 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: - Geometry
 
-    /// The ring's dash pattern tiles the circumference EXACTLY — `ringDashCount` whole periods,
-    /// so the dashes stay evenly spread with no seam where the stroke closes.
-    func testRingDashTilesTheCircumferenceEvenly() {
-        let dash = StatusDot.ringDash
-        XCTAssertEqual(dash.count, 2, "one dash length, one gap length")
-        let period = dash[0] + dash[1]
-        let circumference = CGFloat.pi * StatusDot.ringDiameter
+    /// The resting ring is DOTS, and they stand FURTHER APART than the dashes they replaced — the
+    /// whole point of the recut (user-directed 2026-08-10). Pinned as a value: shrink the gap and the
+    /// mark quietly becomes a dashed ring with short dashes again, which is what it stopped being.
+    func testTheRestingRingIsDotsSpacedWiderThanTheDashesItReplaced() {
+        let period = CGFloat.pi * StatusDot.ringDiameter / CGFloat(StatusDot.ringDotCount)
         XCTAssertEqual(
-            Double(period * CGFloat(StatusDot.ringDashCount)), Double(circumference),
-            accuracy: 1e-9, "whole periods around the ring — no seam",
+            StatusDot.ringDotGap, period - StatusDot.ringDotDiameter, accuracy: 1e-9,
+            "the gap is what the dots leave of their own period",
         )
-        XCTAssertGreaterThan(dash[0], dash[1], "drawn beats gap — the ring reads as a circle")
+        // The cut it replaced: eight dashes at a 0.6 fill, so the old air was 40% of the period.
+        XCTAssertGreaterThan(
+            StatusDot.ringDotGap, period * 0.4,
+            "dots have to stand further apart than the dashes did, or nothing changed",
+        )
+        XCTAssertGreaterThan(
+            StatusDot.ringDotGap, StatusDot.ringDotDiameter,
+            "more air than dot — a ring of PARTS, not a circle with nicks in it",
+        )
+        // Quieter than the thinking cell, which shares this column: a present agent must never
+        // out-weigh a working one.
+        XCTAssertLessThan(
+            StatusDot.ringDotDiameter, StatusDot.dotDiameter,
+            "the resting dot stays smaller than the working cell's",
+        )
+    }
+
+    /// The dots ride ON the ring's circle at even turns from 12 o'clock, so the mark keeps the
+    /// four-fold symmetry that makes eight small shapes read as one circle. Pinned through the
+    /// `Shape` itself — the path IS the artwork, and a phase or radius slip draws a plausible ring
+    /// that is subtly off its own column.
+    func testTheRingDotsSitOnTheCircleStartingAtTwelveOClock() {
+        let side = StatusDot.ringDiameter
+        let box = CGRect(origin: .zero, size: CGSize(width: side, height: side))
+        let bounds = DottedRing().path(in: box).boundingRect
+        // Eight dots on a Ø10 circle, each spilling half its width outside it — exactly as the
+        // stroke they replaced did, so the ring's visual diameter is unchanged.
+        let spread = side + StatusDot.ringDotDiameter
+        XCTAssertEqual(bounds.width, spread, accuracy: 0.001, "dots at 3 and 9 o'clock set the width")
+        XCTAssertEqual(bounds.height, spread, accuracy: 0.001, "dots at 12 and 6 set the height")
+        XCTAssertEqual(bounds.midX, box.midX, accuracy: 0.001, "the ring is centred in its box")
+        XCTAssertEqual(bounds.midY, box.midY, accuracy: 0.001, "the ring is centred in its box")
     }
 
     /// ⚠️ The column is sized to otty's OWN badge box (14pt), and every mark is drawn to fit inside
@@ -380,8 +409,8 @@ final class StatusDotTests: XCTestCase {
             XCTAssertLessThanOrEqual(size, StatusDot.footprint, "a symbol must fit its column")
         }
         XCTAssertLessThanOrEqual(
-            StatusDot.ringDiameter + StatusDot.ringLineWidth, StatusDot.footprint,
-            "the ring's stroke stays inside the column, so the right edge never wavers",
+            StatusDot.ringDiameter + StatusDot.ringDotDiameter, StatusDot.footprint,
+            "the ring's dots stay inside the column, so the right edge never wavers",
         )
         // otty configures its own badges at these exact sizes: the finish a point larger than the
         // rest, because a filled straight-edged glyph out-weighs a circle at equal point size.

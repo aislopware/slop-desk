@@ -12,9 +12,9 @@
 //     (``OttyIcon/hand``). A question is waiting on a person.
 //
 // Plus one mark that is OURS, because otty has no need for it: an agent that is merely PRESENT
-// takes lucide `circle-dashed`, muted. otty draws nothing there; our rail needs it, because
-// `claude` sitting at its prompt is otherwise indistinguishable from a shell that has been busy for
-// an hour.
+// takes a muted ring of DOTS (``DottedRing``, lucide `circle-dashed` recut). otty draws nothing
+// there; our rail needs it, because `claude` sitting at its prompt is otherwise indistinguishable
+// from a shell that has been busy for an hour.
 //
 // ⚠️ A COMMAND's outcome has no mark here at all (round 24). It used to take otty's two — the plain
 // disc for a clean exit, the alert triangle for a failure — and the row printed a symbol where the
@@ -41,21 +41,20 @@ enum StatusDot {
     /// The agent-presence ring's diameter. Matched by eye at true size to the outer circle of a
     /// 12pt `checkmark.circle.fill`, so a row that finishes does not visibly change size.
     static let ringDiameter: CGFloat = 10
-    static let ringLineWidth: CGFloat = 1.5
-    /// Dash segments around the ring — the lucide `circle-dashed` cut.
-    static let ringDashCount = 8
-    /// The drawn fraction of each dash period — lucide's roughly-even dash/gap rhythm.
-    static let ringDashFill: CGFloat = 0.6
+    /// How many dots ride the ring. Eight keeps the four-fold symmetry that lets a small circle of
+    /// marks read as a CIRCLE — the dots at 12, 3, 6 and 9 o'clock do that work on their own.
+    static let ringDotCount = 8
+    /// One dot's diameter. Fatter than the 1.5 hairline the ring used to be stroked at, so a dot
+    /// reads as a dot rather than as a nick in a thin line, and still under the working cell's Ø2.6:
+    /// a PRESENT agent must stay quieter than a thinking one, and size is half of how it does that.
+    static let ringDotDiameter: CGFloat = 1.8
 
-    /// The dash pattern: ``ringDashCount`` segments spread evenly around the circumference.
-    static var ringDash: [CGFloat] {
-        let period = .pi * ringDiameter / CGFloat(ringDashCount)
-        return [period * ringDashFill, period * (1 - ringDashFill)]
-    }
-
-    /// The ring's stroke — lucide's dash rhythm at the ring's own weight.
-    static var ringStroke: StrokeStyle {
-        StrokeStyle(lineWidth: ringLineWidth, dash: ringDash)
+    /// The air between two neighbouring dots, measured edge to edge along the circumference. ⚠️ This
+    /// is what the round is FOR — user-directed 2026-08-10: the ring is dots now, not dashes, and the
+    /// dots stand further apart than the dashes did. Pinned as a value rather than eyeballed, because
+    /// it is the only number that separates "a ring of dots" from "a dashed ring with short dashes".
+    static var ringDotGap: CGFloat {
+        .pi * ringDiameter / CGFloat(ringDotCount) - ringDotDiameter
     }
 
     // MARK: - otty's badge sizes
@@ -115,7 +114,7 @@ enum StatusDot {
 enum StatusMark: Equatable {
     /// The agent is generating RIGHT NOW — otty's spinner. The only thing on this rail that moves.
     case working
-    /// The agent is present in this pane but idle — lucide `circle-dashed`, muted.
+    /// The agent is present in this pane but idle — a muted ring of dots (``DottedRing``).
     case agentRing
     /// A person's turn: the agent is blocked on input — lucide `hand`, otty's own awaiting badge.
     case awaiting
@@ -173,19 +172,48 @@ struct StatusDotView: View {
             case .awaiting:
                 VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
             default:
-                DashedRing()
-                    .stroke(style.ink, style: StatusDot.ringStroke)
+                DottedRing()
+                    .fill(style.ink)
                     .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             }
         }
     }
 }
 
-/// The agent-presence ring. A `Shape` rather than a bare `Circle` so the ring has one definition
-/// the resting mark and any future reading of it must share.
-struct DashedRing: Shape {
+/// The agent-presence ring: ``StatusDot/ringDotCount`` DOTS spaced evenly round a circle, the first
+/// at 12 o'clock. A `Shape` rather than a stack of circles so the ring has one definition every
+/// reading of it must share — and so it is a `Path`, which can be filled, hit-tested and scaled
+/// like any other.
+///
+/// ⚠️ It was a DASHED ring until 2026-08-10 (lucide `circle-dashed`, stroked with a 0.6-fill dash
+/// pattern), replaced on the user's instruction by dots standing further apart than those dashes did.
+/// A dash is a fragment of a line that happens to be curved; a dot is its own shape, and at this size
+/// that is the difference between a ring that looks broken and a ring that looks made of parts.
+///
+/// The dot size scales with the rect, so a magnified still is a true redraw rather than a blown-up
+/// 10pt bitmap — the same lesson ``AgentSpinner`` learned about `scaleEffect`.
+struct DottedRing: Shape {
     func path(in rect: CGRect) -> Path {
-        Path(ellipseIn: rect)
+        let side = min(rect.width, rect.height)
+        let radius = side / 2
+        // The dots ride ON the circle and spill half their width outside it, exactly as the stroke
+        // they replace did — so the ring's visual diameter, matched by eye to a 12pt
+        // `checkmark.circle.fill`, does not change with the cut.
+        let dot = StatusDot.ringDotDiameter * (side / StatusDot.ringDiameter)
+        var path = Path()
+        for index in 0..<StatusDot.ringDotCount {
+            let turn = 2 * Double.pi * Double(index) / Double(StatusDot.ringDotCount) - .pi / 2
+            let centre = CGPoint(
+                x: rect.midX + radius * CGFloat(cos(turn)),
+                y: rect.midY + radius * CGFloat(sin(turn)),
+            )
+            path.addEllipse(
+                in: CGRect(
+                    x: centre.x - dot / 2, y: centre.y - dot / 2, width: dot, height: dot,
+                ),
+            )
+        }
+        return path
     }
 }
 
