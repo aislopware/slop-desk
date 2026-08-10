@@ -123,10 +123,20 @@ you own the leak.
 
 ## Cutting a release
 
-1. Bump `CLIVersion.version` in `Sources/SlopDeskCLICore/CLIVersion.swift` and `MARKETING_VERSION`
-   in both `Apps/ClientApp-macOS/project.yml` and `Apps/HostApp-macOS/project.yml`.
-   `package-release.sh` asks the built binary for its version and **refuses to package** on drift —
-   this is the gate that stops a binary shipping a version it does not report.
+1. Bump the version in **five** places — `grep -rn '<old version>' Sources Apps` before you tag:
+
+   | File | Key | Why it is separate |
+   |---|---|---|
+   | `Sources/SlopDeskCLICore/CLIVersion.swift` | `version` | what `slopdesk version` prints |
+   | `Apps/ClientApp-macOS/project.yml` | `MARKETING_VERSION` **and** `info.properties.CFBundleShortVersionString` | `GENERATE_INFOPLIST_FILE: NO`, so the literal in `info.properties` is what lands in Info.plist — `MARKETING_VERSION` does **not** reach it |
+   | `Apps/HostApp-macOS/project.yml` | same two | same reason |
+   | `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
+
+   `package-release.sh` asks the built **CLI binary** for its version and **refuses to package** on
+   drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
+   reads `HostEnvironment.buildVersion`, so those two can ship stale with a fully green pipeline.
+   `Apps/ClientApp-iOS/*.yml` carry their own `0.1.0` and are deliberately left alone: no iOS
+   release pipeline exists (see "Deliberately not done").
 2. `make check` (lint + build + test + golden).
 3. Dry run: Actions → Release → `workflow_dispatch`, version `x.y.z`, **dry-run checked**. Builds
    and signs, skips notarization, the Release and the tap bump. Artifacts land on the run.
