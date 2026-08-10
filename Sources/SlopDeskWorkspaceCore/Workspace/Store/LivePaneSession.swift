@@ -74,6 +74,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// Observed so the leaf chrome re-renders.
     public private(set) var claudeStatus: ClaudeStatus = .none
 
+    /// The `kind` qualifier of the LAST type-27 the host sent (`.none` before the first one) — read by
+    /// ``WorkspaceStore`` right after the fold to decide whether the transition may be ANNOUNCED.
+    /// ``AgentStatusKind/quiet`` means the host already knows what this edge looks like and has ruled
+    /// it bookkeeping (the `/compact` boundary), so the dots move but nothing rings.
+    ///
+    /// Not observed: it qualifies a status change rather than being drawn, and it is always read in
+    /// the same turn the status it belongs to is committed.
+    public private(set) var lastStatusKind: AgentStatusKind = .none
+
     /// The last foreground process basename the host reported (type 26) — a COARSE display-only hint, NOT
     /// a status source: a transient child process taking the PTY must never wipe a
     /// `.needsPermission` the host set via a hook, so type-26 updates THIS string only. `nil` until the
@@ -473,9 +482,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             let trimmed = name.isEmpty ? nil : name
             if foregroundProcessName != trimmed { foregroundProcessName = trimmed }
             return claudeStatus
-        case let .claudeStatus(state, _, _):
+        case let .claudeStatus(state, kind, _):
             // TRUST the host's verdict: map the raw urgency byte → ClaudeStatus directly (forward-tolerant
             // — an unknown/future byte degrades to `.none`; a hostile datagram can never trap the client).
+            // The `kind` qualifier rides alongside (same forward-tolerance) so the store can tell an
+            // ANNOUNCEABLE transition from a bookkeeping one — see ``lastStatusKind``.
+            lastStatusKind = AgentStatusKind(wireByte: kind)
             applyDetectedStatus(ClaudeStatus(urgency: Int(state)))
             return claudeStatus
         default:

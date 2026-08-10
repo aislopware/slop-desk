@@ -69,6 +69,34 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// end. Armed by a `sessionEnd` hook (only that path — see ``terminate(at:armLockout:)``).
     private var exitLockoutUntil: TimeInterval?
 
+    /// TRUE between a `preCompact` hook and the next thing that happens — the COMPACTION MARKER.
+    ///
+    /// Claude Code ends a `/compact` the way it ends any turn: with a `Stop`. That put the pane at
+    /// `.done`, which fired the finished-turn notification, the sound and the unread badge for a
+    /// housekeeping command the user ran themselves and watched complete (user-reported
+    /// 2026-08-10). `.done` means "your work is finished"; a compaction finishing is the agent
+    /// simply available again, which is `.idle`.
+    ///
+    /// A one-shot ARMED by `preCompact` and DISARMED by any subsequent turn activity (a tool
+    /// starting or finishing, a new prompt, a block being raised, a session boundary). That
+    /// disarming is what keeps the AUTOMATIC mid-turn compaction honest: it fires `preCompact`,
+    /// then the turn RESUMES — more tools, more work — and the `Stop` at the end of that is a
+    /// genuine finish, so by then the marker is long gone. Only a compaction that is the last thing
+    /// to happen before the turn ends spends it.
+    private var compactionPending: Bool
+
+    /// TRUE while the CURRENT status is one the human must not be told about — today, exactly the
+    /// `.idle` a spent compaction marker produced.
+    ///
+    /// Dropping the compaction's `Stop` from `.done` to `.idle` is only half the fix: `.working →
+    /// .idle` is the hook-less COMPLETION edge every non-Claude agent finishes on, so the client
+    /// would announce the compaction anyway. This flag rides out to the client on the wire `kind`
+    /// byte (``AgentStatusKind/quiet``) so the transition arrives labelled as bookkeeping.
+    ///
+    /// Set only on that one branch and cleared by EVERY other status transition (``enter``,
+    /// ``enterBlocked``, ``terminate``), so it can never outlive the status it qualifies.
+    public private(set) var isQuiet: Bool
+
     /// Seconds a hook-announced session end vetoes every WEAK liveness signal.
     ///
     /// `SessionEnd` fires while the `claude` process is still alive: the PTY foreground was measured
@@ -108,6 +136,8 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         blockSource = .none
         blockedSince = nil
         exitLockoutUntil = nil
+        compactionPending = false
+        isQuiet = false
     }
 
     /// Fold one signal at absolute time `now`, returning the new status.
@@ -139,11 +169,12 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             break // pure time advance; decay handled below
 
         case .userInput:
-            // A keystroke into a blocked pane = the modal is being HANDLED. Demote to idle: an
-            // answered dialog re-promotes via its own PreToolUse a beat later, and an Esc-cancel
-            // (which fires NO Stop hook) leaves idle as the truth. Every other status is
-            // untouched — a keystroke never conjures presence, never demotes a live turn, and
-            // never cuts the done decay.
+            // A CANCEL key into a blocked pane = the modal is being DISMISSED. Demote to idle: an
+            // Esc-cancel fires NO Stop hook, so idle is the truth nothing else would report. Every
+            // other status is untouched — a keystroke never conjures presence, never demotes a live
+            // turn, and never cuts the done decay. (Only a cancel reaches here: a dialog resolved
+            // any other way re-promotes through its own hook, and demoting on plain navigation keys
+            // manufactured a blocked→idle→blocked flap that re-rang the cue — see `ClaudeSignal`.)
             if status == .needsPermission { enter(.idle, label: nil) }
         }
 
@@ -154,7 +185,18 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     // MARK: - Hook events (authoritative)
 
     private mutating func apply(_ event: ClaudeHookEvent, at now: TimeInterval) {
+        // The compaction marker is spent or dropped by the FIRST hook after it — `preCompact` arms
+        // it below, every other event disarms it here (before the switch, so no branch can forget),
+        // and `.stop` reads the armed copy taken on this line. See ``compactionPending``.
+        let compactionEnded = compactionPending
+        if case .preCompact = event {} else { compactionPending = false }
         switch event {
+        case .preCompact:
+            // No status of its own: a compaction runs INSIDE whatever the pane is already doing.
+            // It only arms the marker (and corroborates presence like any other hook).
+            compactionPending = true
+            liftPresenceFloor(at: now)
+
         case .sessionStart:
             // Session opened → present & at rest. Clears any stale block/label.
             enter(.idle, label: nil)
@@ -186,7 +228,20 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             }
 
         case let .stop(_, label):
-            enter(.done, label: label, at: now)
+            // A turn that ended on a COMPACTION is not a finished task — the agent is just
+            // available again. `.idle` carries no notification, no sound and no unread badge, which
+            // is the whole point: `/compact` used to announce "Claude is done" for housekeeping the
+            // user ran themselves (user-reported 2026-08-10). The label goes with it — the last
+            // assistant message belongs to the turn BEFORE the compaction, and captioning an idle
+            // row with it would restate stale news.
+            if compactionEnded {
+                enter(.idle, label: nil)
+                // …and MARK it: `.working → .idle` is the hook-less completion edge, so without this
+                // the client re-announces the very finish this branch just suppressed (see ``isQuiet``).
+                isQuiet = true
+            } else {
+                enter(.done, label: label, at: now)
+            }
 
         case .subagentStop:
             // A subagent stopping does not change the parent pane's coarse status.
@@ -339,6 +394,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
     private mutating func enterBlocked(label: String?, source: BlockSource, at now: TimeInterval) {
         clearExitLockout()
+        isQuiet = false
         // A re-assertion of a standing block keeps the ORIGINAL entry time — the override grace
         // measures how long the dialog has been up, not how recently a hook repeated itself.
         if status != .needsPermission { blockedSince = now }
@@ -351,6 +407,9 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// Enter a non-blocked status. `at` non-nil marks the done-decay anchor.
     private mutating func enter(_ next: ClaudeStatus, label newLabel: String?, at now: TimeInterval? = nil) {
         clearExitLockout()
+        // Cleared HERE (the one funnel for every non-blocked transition) and re-set by the single
+        // caller that means it — so a quiet mark can never survive into a status it did not qualify.
+        isQuiet = false
         blockSource = .none
         blockedSince = nil
         status = next
@@ -371,6 +430,10 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         doneSince = nil
         blockSource = .none
         blockedSince = nil
+        // A session boundary retires the marker with everything else — a compaction cannot straddle
+        // two sessions, and a stale one would swallow the next session's first genuine finish.
+        compactionPending = false
+        isQuiet = false
         if armLockout { exitLockoutUntil = now + Self.postExitFloorLockout }
     }
 

@@ -97,4 +97,86 @@ final class PaneInputClassifierTests: XCTestCase {
     func testReportOnlyBurstDoesNotCount() {
         XCTAssertFalse(PaneInputClassifier.containsUserKeystroke(bytes("\(esc)[I\(esc)[0n\(esc)[?62c")))
     }
+
+    // MARK: X10 mouse (the hover-rings-the-cue regression, user-reported 2026-08-10)
+
+    /// The X10/UTF-8 mouse encoding has no private marker and puts its three POSITION bytes BEHIND
+    /// the final `M`. Both halves used to break the scan: the final byte read as a keystroke, and
+    /// the trailing bytes re-entered the loop as raw text. Merely HOVERING a blocked pane sends a
+    /// stream of these (motion reporting), which unblocked the pane on every pointer move and let
+    /// the still-visible dialog re-raise it — one awaiting-input cue per mouse movement.
+    func testX10MouseDoesNotCount() {
+        // `CSI M` + Cb/Cx/Cy = (32, 33, 33): button 0 press at column 1, row 1.
+        let press = Data([0x1B, 0x5B, 0x4D, 32, 33, 33])
+        XCTAssertFalse(PaneInputClassifier.containsUserKeystroke(press), "X10 mouse press")
+        // The position bytes must be CONSUMED, not left to be read as text: a report-only burst of
+        // two motion events in one write still classifies as no key.
+        let motion = press + Data([0x1B, 0x5B, 0x4D, 35, 40, 45])
+        XCTAssertFalse(PaneInputClassifier.containsUserKeystroke(motion), "two X10 events in one chunk")
+        // …and a real key AFTER the mouse bytes still lands (the scan resumes at the right offset).
+        XCTAssertTrue(PaneInputClassifier.containsUserKeystroke(press + bytes("y")), "key after X10 mouse")
+    }
+
+    /// urxvt (1015) mouse — parameterised `CSI Cb;Cx;Cy M`, position IN the parameters, so nothing
+    /// trails the final byte. Still a report.
+    func testUrxvtMouseDoesNotCount() {
+        XCTAssertFalse(PaneInputClassifier.containsUserKeystroke(bytes("\(esc)[32;10;10M")))
+    }
+
+    /// XTWINOPS geometry answers (`CSI 8;24;80t`) are the emulator replying about its own size.
+    func testWindowGeometryReportDoesNotCount() {
+        XCTAssertFalse(PaneInputClassifier.containsUserKeystroke(bytes("\(esc)[8;24;80t")))
+    }
+
+    // MARK: Cancel-only predicate (what may actually demote a block)
+
+    func testCancelRecognisesEveryEscEncoding() {
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(Data([0x1B])), "bare legacy Esc")
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(Data([0x1B, 0x1B])), "ESC ESC")
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(bytes("\(esc)[27u")), "kitty Esc")
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(bytes("\(esc)[27;1u")), "kitty Esc + mods")
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(Data([0x03])), "ctrl-C")
+    }
+
+    /// The narrowing itself: navigating an `AskUserQuestion`'s options, or typing an answer, is NOT
+    /// a cancel. Each of these used to demote the block and let the dialog re-raise it, re-ringing
+    /// the cue once per keypress.
+    func testOrdinaryKeysAreNotCancels() {
+        for chunk in [
+            "\(esc)[A",
+            "\(esc)[B",
+            "\(esc)[Z",
+            "\(esc)[1;5B",
+            "\(esc)[3~",
+            "\(esc)[13u",
+            "y",
+            "1",
+            "\r",
+            "\t",
+            "\(esc)OP",
+            "\(esc)f",
+        ] {
+            XCTAssertTrue(
+                PaneInputClassifier.containsUserKeystroke(bytes(chunk)), "\(chunk.debugDescription) is a key",
+            )
+            XCTAssertFalse(
+                PaneInputClassifier.containsCancelKeystroke(bytes(chunk)),
+                "\(chunk.debugDescription) must not unblock",
+            )
+        }
+    }
+
+    /// A chunk that BATCHES a navigation key and an Esc into one write must still read as a cancel —
+    /// the scan steps over the arrow instead of answering on it.
+    func testCancelFoundBehindANavigationKey() {
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(bytes("\(esc)[A\(esc)[27u")))
+        XCTAssertTrue(PaneInputClassifier.containsCancelKeystroke(bytes("abc\u{03}")))
+    }
+
+    func testReportsAreNeverCancels() {
+        XCTAssertFalse(PaneInputClassifier.containsCancelKeystroke(bytes("\(esc)[I")), "focus-in")
+        XCTAssertFalse(PaneInputClassifier.containsCancelKeystroke(bytes("\(esc)[12;40R")), "CPR")
+        XCTAssertFalse(PaneInputClassifier.containsCancelKeystroke(Data([0x1B, 0x5B, 0x4D, 32, 33, 33])), "X10 mouse")
+        XCTAssertFalse(PaneInputClassifier.containsCancelKeystroke(Data()), "empty chunk")
+    }
 }

@@ -385,6 +385,39 @@ final class AttentionTests: XCTestCase {
         XCTAssertEqual(fired.count, 4, "none → idle (presence floor) stays silent")
     }
 
+    /// The QUIET qualifier (wire `kind == 4`): the host has already ruled this transition
+    /// bookkeeping, so the completion edge must not fire for it. A `/compact` produces exactly this
+    /// shape — `.working → .idle` — and rang the finished-turn cue for housekeeping the user ran
+    /// themselves and watched complete (user-reported 2026-08-10). Everything visual still lands: the
+    /// status is committed and the coalescing memory re-armed, so the pane's NEXT genuine finish
+    /// notifies normally.
+    func testStoreQuietCompletionIsCommittedButNeverAnnounced() throws {
+        let store = makeTreeStore()
+        let pump = installAttentionPump(on: store)
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        var fired = 0
+        store.onAgentAttention = { _, _, _, _ in fired += 1 }
+
+        store.setAgentStatus(.working, for: pane)
+        store.setAgentStatus(.idle, for: pane, quiet: true)
+        pump()
+        XCTAssertEqual(fired, 0, "a compaction boundary is not a finish")
+        XCTAssertEqual(store.agentStatus(for: pane), .idle, "…but the pane's state still moved")
+
+        // The very next real turn is announced normally — the suppression qualified ONE transition.
+        store.setAgentStatus(.working, for: pane)
+        store.setAgentStatus(.idle, for: pane)
+        pump()
+        XCTAssertEqual(fired, 1, "the next genuine finish notifies")
+
+        // A quiet flag can never mute a BLOCK (the host clears it on every entry into one), but pin
+        // the store's own behaviour anyway: quiet suppresses the ring, not the state.
+        store.setAgentStatus(.needsPermission, for: pane, quiet: true)
+        pump()
+        XCTAssertEqual(fired, 1, "quiet suppresses the announcement")
+        XCTAssertEqual(store.agentStatus(for: pane), .needsPermission)
+    }
+
     /// The host label is captured and surfaced as the notification detail.
     func testStoreEdgeCarriesLabelDetail() throws {
         let store = makeTreeStore()

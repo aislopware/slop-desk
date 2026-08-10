@@ -35,7 +35,13 @@ public extension WorkspaceStore {
     /// EDGE detection runs here. It captures the last-notified state before the mutation and, after
     /// committing, runs ``applyAttentionEdge(for:lastNotified:status:)`` — a genuine entry into
     /// needsPermission/done notifies once (coalesced), a flap does not.
-    func setAgentStatus(_ status: ClaudeStatus, for id: PaneID, at date: Date = Date()) {
+    ///
+    /// `quiet` = the host qualified this transition as BOOKKEEPING (wire `kind` ==
+    /// ``AgentStatusKind/quiet``; today only the `/compact` boundary). Everything visual still
+    /// happens — the dots, the recency stamp, the rollups — but no attention is raised: neither the
+    /// coalesced edge nor the hook-less completion edge may fire for it. Defaulted `false` so every
+    /// non-wire writer (tests, the seen-sweep's `.done → .idle`) keeps its behaviour verbatim.
+    func setAgentStatus(_ status: ClaudeStatus, for id: PaneID, at date: Date = Date(), quiet: Bool = false) {
         guard paneAgentStatus[id] != status else { return }
         let previous = paneAgentStatus[id] ?? .none
         let lastNotified = lastNotifiedStatus[id] ?? .none
@@ -44,13 +50,15 @@ public extension WorkspaceStore {
         // on and the stale ring must never sound.
         pendingAgentAttention.removeValue(forKey: id)
         if status == .none { paneAgentStatus.removeValue(forKey: id) } else { paneAgentStatus[id] = status }
-        applyAttentionEdge(for: id, lastNotified: lastNotified, status: status)
+        applyAttentionEdge(for: id, lastNotified: lastNotified, status: status, quiet: quiet)
         // The HOOK-LESS completion edge (herdr `Working|Blocked → Idle`): a screen-detected agent
         // (codex, gemini, … — no Stop hook to mint `.done`) finishing its turn fires the SAME
         // attention sink as a Claude Stop, so its toast/banner/sound coverage matches herdr's.
         // Distinct from `applyAttentionEdge` on purpose: this edge needs the REAL previous status
         // (`.done → .idle` decay must stay silent), not the last-notified coalescing state.
-        if AttentionEdge.isCompletion(prev: previous, current: status) {
+        // `quiet` vetoes it: a `/compact` lands on exactly this shape (`.working → .idle`) without
+        // being a finish, and the host is the only party that can tell the difference.
+        if !quiet, AttentionEdge.isCompletion(prev: previous, current: status) {
             scheduleAgentAttention(for: id, status: status)
         }
         // The NEEDS-ATTENTION `since` fallback: a genuine status transition (past the idempotency guard)
@@ -387,8 +395,17 @@ public extension WorkspaceStore {
     /// new status: fires the notification on a genuine transition INTO needsPermission/done from the
     /// LAST-NOTIFIED state (not just the previous status, so a flap can't re-fire), and re-arms the
     /// coalescing memory when the pane leaves the attention bucket.
-    internal func applyAttentionEdge(for id: PaneID, lastNotified: ClaudeStatus, status: ClaudeStatus) {
-        if AttentionEdge.shouldNotify(prev: lastNotified, current: status) {
+    ///
+    /// `quiet` suppresses only the FIRE. The coalescing memory is still re-armed: a bookkeeping
+    /// transition is a real state change, and leaving the memory latched would swallow the pane's next
+    /// genuine block/finish.
+    internal func applyAttentionEdge(
+        for id: PaneID,
+        lastNotified: ClaudeStatus,
+        status: ClaudeStatus,
+        quiet: Bool = false,
+    ) {
+        if !quiet, AttentionEdge.shouldNotify(prev: lastNotified, current: status) {
             lastNotifiedStatus[id] = status
             scheduleAgentAttention(for: id, status: status)
         } else if status == .idle || status == .working || status == .none {

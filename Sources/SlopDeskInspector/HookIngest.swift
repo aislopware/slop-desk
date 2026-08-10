@@ -61,6 +61,12 @@ public enum HookPayload: Sendable, Equatable {
     /// `SessionEnd` → the session ended (claude is gone → *none*). Carries the session
     /// identity. 1:1 → `ClaudeHookEvent.sessionEnd(sessionID:)` (W10).
     case sessionEnd(SessionInfo)
+
+    /// `PreCompact` → the transcript is about to be compacted (manual `/compact` or the automatic
+    /// mid-turn compaction). Not a status of its own — it is the MARKER that whatever `Stop` comes
+    /// next may be the compaction's own end rather than a finished task. 1:1 →
+    /// `ClaudeHookEvent.preCompact(sessionID:)`; see that case for how the marker is spent.
+    case preCompact(SessionInfo)
 }
 
 /// The semantic class of a `Notification` hook (doc 14 §Hooks, docs/41 §2.6 matcher
@@ -246,6 +252,11 @@ public enum HookParser {
 
         case "SessionEnd":
             return .sessionEnd(sessionInfo(from: obj))
+
+        case "PreCompact":
+            // Carries `trigger` (`manual`/`auto`) + `custom_instructions`; the detector needs
+            // neither — only that a compaction is starting in THIS session.
+            return .preCompact(sessionInfo(from: obj))
 
         default:
             return nil

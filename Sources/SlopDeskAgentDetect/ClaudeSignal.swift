@@ -29,6 +29,14 @@ public enum ClaudeHookEvent: Sendable, Equatable {
     case subagentStop(agentID: String?)
     /// The session ended → claude is gone (none).
     case sessionEnd(sessionID: String?)
+    /// A transcript COMPACTION is starting (`/compact`, or the automatic mid-turn one). Carries no
+    /// status of its own — it ARMS a one-shot marker saying "the next turn end may be the
+    /// compaction's, not a task's". See ``ClaudeStatusMachine`` for how the marker is spent: a
+    /// `Stop` that arrives with it still armed lands on `.idle` instead of `.done`, so finishing a
+    /// `/compact` stops announcing "Claude is done" for work nobody asked about (user-reported
+    /// 2026-08-10); any real turn activity in between (a tool, a new prompt) disarms it, so an
+    /// AUTO-compaction mid-turn still ends on a genuine `.done`.
+    case preCompact(sessionID: String?)
 
     /// The semantic class of a `Notification` hook (matcher field, docs/41 §2.6).
     public enum NotificationKind: Sendable, Equatable {
@@ -64,11 +72,12 @@ public enum ClaudeSignal: Sendable, Equatable {
     /// have painted (a VISIBLE idle prompt box / live spinner proves the dialog is gone).
     /// `skipStateUpdate` verdicts (transcript viewer / model picker) freeze the status.
     case screen(AgentScreenDetection)
-    /// A USER KEYSTROKE routed into the pane's PTY (the caller has already excluded the terminal
-    /// emulator's automatic replies via ``PaneInputClassifier``). Narrowly scoped: it demotes ONLY
-    /// a standing `.needsPermission` — a modal dialog being typed at is being HANDLED. Esc-cancel
-    /// fires no Stop hook and the ✳ rest title shows while the dialog is still up, so a keystroke
-    /// is the only host-visible unblock edge; an answered dialog re-promotes to `.working` via its
-    /// own PreToolUse a beat later.
+    /// A CANCEL key (`Esc` / `Ctrl-C`) routed into the pane's PTY — the caller classifies via
+    /// ``PaneInputClassifier/containsCancelKeystroke(_:)``, which excludes the emulator's automatic
+    /// replies (focus reports, device answers, mouse motion) AND every non-cancel key. Narrowly
+    /// scoped: it demotes ONLY a standing `.needsPermission`, because Esc-cancel fires no Stop hook
+    /// and the ✳ rest title shows while the dialog is still up, making it the one unblock edge the
+    /// host can see. Every OTHER way out of a dialog re-promotes itself through a hook, so widening
+    /// this to any keystroke only manufactured false blocked→idle→blocked flaps (see the classifier).
     case userInput
 }

@@ -152,9 +152,12 @@ never offers or falls back to another version.
   - **`claudeStatus`** is the rich hook path: the host folds Claude Code `Notification`/`Stop`/
     `SessionEnd` hooks (via `SlopDeskInspector.HookParser`) into `[UInt8 state][UInt8 kind][UInt16
     labelLen (BE)][label UTF-8]`. `state` = `ClaudeStatus.urgency` (`0` none / `1` idle / `2` done /
-    `3` working / `4` needsPermission); `kind` = the notification class (`0` none / `1` permission /
-    `2` waitingForInput / `3` other); `label` = the (often empty, length-prefixed) Stop/Notification
-    message, capped at the UInt16 length field. The wire carries the RAW `state`/`kind` bytes —
+    `3` working / `4` needsPermission); `kind` QUALIFIES the state — the notification class while the
+    pane is blocked (`0` none / `1` permission / `2` waitingForInput / `3` other) plus `4` **quiet**,
+    which says this transition is BOOKKEEPING and must raise no attention (no toast/banner/sound/unread;
+    the dots still move). `4` rides a `/compact` boundary's `idle`, whose `working → idle` shape is
+    otherwise the hook-less completion edge. `label` = the (often empty, length-prefixed)
+    Stop/Notification message, capped at the UInt16 length field. The wire carries the RAW `state`/`kind` bytes —
     `SlopDeskProtocol` does not depend on `SlopDeskAgentDetect`; the client maps them back, and a
     decoder is forward-tolerant of an unknown future `state`/`kind` value (the consumer clamps it).
   - The decoder **validates the declared `labelLen` before reading** (a short body → `truncated`,

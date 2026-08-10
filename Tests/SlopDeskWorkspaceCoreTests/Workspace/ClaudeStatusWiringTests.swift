@@ -57,6 +57,21 @@ final class ClaudeStatusWiringTests: XCTestCase {
         XCTAssertEqual(session.claudeStatus, .needsPermission)
     }
 
+    /// The `kind` QUALIFIER is decoded alongside the state and parked on the session for the store to
+    /// read in the same turn (``LivePaneSession/lastStatusKind``). `4` = quiet: the host's marker for a
+    /// transition that must be displayed but not announced (the `/compact` boundary). Forward-tolerant —
+    /// an unknown future byte degrades to `.none`, i.e. an ordinary announceable status.
+    func testClaudeStatusKindQualifierIsDecodedAndForwardTolerant() {
+        let session = makeTerminalSession()
+        XCTAssertEqual(session.lastStatusKind, .none, "nothing decoded yet")
+        _ = session.feedAgentSignal(.claudeStatus(state: 3, kind: 0, label: ""))
+        XCTAssertFalse(session.lastStatusKind.isQuiet, "an ordinary working status is announceable")
+        XCTAssertEqual(session.feedAgentSignal(.claudeStatus(state: 1, kind: 4, label: "")), .idle)
+        XCTAssertTrue(session.lastStatusKind.isQuiet, "kind 4 → the compaction's quiet idle")
+        _ = session.feedAgentSignal(.claudeStatus(state: 3, kind: 200, label: ""))
+        XCTAssertEqual(session.lastStatusKind, .none, "an unknown/future kind degrades, never traps")
+    }
+
     /// P1: a type-26 `foregroundProcess` is a DISPLAY-ONLY process-name hint — it updates
     /// ``LivePaneSession/foregroundProcessName`` and NEVER touches ``claudeStatus`` (the host's type-27
     /// is the single source of truth). So even `foregroundProcess("claude")` leaves the status at `.none`

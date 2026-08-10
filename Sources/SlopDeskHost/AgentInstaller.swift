@@ -30,9 +30,16 @@ public enum AgentInstaller {
     /// The Claude Code hook events we install (docs/41 §2.6). Each drives a ``ClaudeStatus``
     /// transition through the status machine: SessionStart→idle, UserPromptSubmit/PreToolUse/
     /// PostToolUse→working (PreToolUse of `AskUserQuestion`→blocked), PermissionRequest/
-    /// Notification→blocked, Stop/StopFailure→done, SessionEnd→none. Deliberately NOT installed:
-    /// SubagentStart/SubagentStop (a subagent completing after the main turn stopped must never
-    /// revive an idle pane — the herdr bug class) and PreCompact (no status meaning).
+    /// Notification→blocked, Stop/StopFailure→done, SessionEnd→none, PreCompact→(no status; it arms
+    /// the compaction marker so the `Stop` ending a `/compact` lands on idle rather than announcing
+    /// a finished task). Deliberately NOT installed: SubagentStart/SubagentStop (a subagent
+    /// completing after the main turn stopped must never revive an idle pane — the herdr bug class).
+    ///
+    /// PreCompact was in that same excluded list until 2026-08-10, on the reading that it has "no
+    /// status meaning". It has no status of its OWN — that much was right — but it is the only
+    /// signal that distinguishes the two things a `Stop` can mean, and without it finishing a
+    /// `/compact` fired the full done treatment (banner, Submarine, unread badge) for housekeeping
+    /// the user had just run and watched (user-reported).
     public static let installedEvents = [
         "SessionStart",
         "UserPromptSubmit",
@@ -43,6 +50,7 @@ public enum AgentInstaller {
         "Stop",
         "StopFailure",
         "SessionEnd",
+        "PreCompact",
     ]
 
     // MARK: - Pure merge / unmerge (JSONValue → JSONValue)

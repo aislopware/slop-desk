@@ -247,11 +247,11 @@ final class ClaudeStatusMachineTests: XCTestCase {
     // MARK: Pane keystrokes (the Esc-cancel unblock)
 
     func testUserInputDemotesAHookBlockToIdle() {
-        // The user types into the blocked pane (Esc-cancel / a dialog answer). The modal is being
-        // handled — the block demotes to idle. If the input actually answered the dialog, the next
-        // PreToolUse re-promotes to working; Esc-cancel leaves idle standing (Claude Code fires NO
-        // Stop hook on a user interrupt, and the ✳ rest title already shows WHILE the dialog is up,
-        // so keystrokes are the only host-visible unblock edge).
+        // A CANCEL key reaches the blocked pane (`PaneInputClassifier.containsCancelKeystroke` is
+        // what gates the signal upstream — ordinary keys never get here). The modal is being
+        // dismissed, so the block demotes to idle: Claude Code fires NO Stop hook on a user
+        // interrupt, and the ✳ rest title already shows WHILE the dialog is up, so this is the only
+        // host-visible unblock edge. A dialog resolved any OTHER way re-promotes via its own hook.
         var m = ClaudeStatusMachine()
         _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
         _ = m.reduce(.hook(.notification(kind: .permission, label: "Allow Bash?")), at: 1)
@@ -314,5 +314,79 @@ final class ClaudeStatusMachineTests: XCTestCase {
         XCTAssertTrue(ClaudeStatusMachine.titleShowsRest("✳ Claude Code"))
         XCTAssertFalse(ClaudeStatusMachine.titleShowsRest("Claude ✳"))
         XCTAssertFalse(ClaudeStatusMachine.titleShowsRest(""))
+    }
+
+    // MARK: Compaction (the `/compact` announces-done regression, user-reported 2026-08-10)
+
+    /// `/compact` ends like any turn — with a `Stop` — which used to mint `.done` and announce a
+    /// finished task for housekeeping the user ran themselves and watched complete. The `PreCompact`
+    /// marker spends itself on that `Stop`, landing on `.idle` and flagging it QUIET so the client's
+    /// own hook-less completion edge (`.working → .idle`) does not re-announce what this suppressed.
+    func testCompactionStopLandsOnQuietIdleNotDone() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
+        XCTAssertEqual(
+            m.reduce(.hook(.preCompact(sessionID: "s1")), at: 1),
+            .working,
+            "compaction runs inside the turn",
+        )
+        XCTAssertEqual(m.reduce(.hook(.stop(sessionID: "s1", label: "old news")), at: 2), .idle)
+        XCTAssertTrue(m.isQuiet, "the client must not announce this transition")
+        XCTAssertNil(m.label, "the last assistant line belongs to the turn BEFORE the compaction")
+    }
+
+    /// The marker is a ONE-SHOT: an AUTOMATIC mid-turn compaction is followed by more work, and the
+    /// `Stop` that ends THAT is a genuine finish. Any turn activity disarms it.
+    func testWorkAfterCompactionRestoresTheGenuineDone() {
+        for resume in [
+            ClaudeHookEvent.preToolUse(sessionID: "s1", tool: "Bash"),
+            .postToolUse(sessionID: "s1", tool: "Bash"),
+            .userPromptSubmit(sessionID: "s1"),
+        ] {
+            var m = ClaudeStatusMachine()
+            _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
+            _ = m.reduce(.hook(.preCompact(sessionID: "s1")), at: 1)
+            _ = m.reduce(.hook(resume), at: 2)
+            XCTAssertEqual(m.reduce(.hook(.stop(sessionID: "s1", label: "done")), at: 3), .done, "\(resume)")
+            XCTAssertFalse(m.isQuiet, "a genuine finish is announceable — \(resume)")
+            XCTAssertEqual(m.label, "done")
+        }
+    }
+
+    /// A compaction cannot straddle two sessions: the marker dies with the session, so the next
+    /// session's first real finish is never swallowed.
+    func testSessionBoundaryRetiresTheCompactionMarker() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
+        _ = m.reduce(.hook(.preCompact(sessionID: "s1")), at: 1)
+        _ = m.reduce(.hook(.sessionEnd(sessionID: "s1")), at: 2)
+        _ = m.reduce(.hook(.sessionStart(sessionID: "s2")), at: 10)
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s2")), at: 11)
+        XCTAssertEqual(m.reduce(.hook(.stop(sessionID: "s2", label: "real")), at: 12), .done)
+        XCTAssertFalse(m.isQuiet)
+    }
+
+    /// The quiet mark qualifies ONE status and never outlives it — anything that moves the machine
+    /// clears it, so a later idle (the ordinary done→idle decay) is announceable-normal.
+    func testQuietMarkDiesWithTheStatusItQualified() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
+        _ = m.reduce(.hook(.preCompact(sessionID: "s1")), at: 1)
+        _ = m.reduce(.hook(.stop(sessionID: "s1")), at: 2)
+        XCTAssertTrue(m.isQuiet)
+        XCTAssertEqual(m.reduce(.hook(.notification(kind: .permission, label: "Allow?")), at: 3), .needsPermission)
+        XCTAssertFalse(m.isQuiet, "a block is never quiet")
+        _ = m.reduce(.hook(.stop(sessionID: "s1", label: "fin")), at: 4)
+        XCTAssertEqual(m.status, .done)
+        XCTAssertEqual(m.reduce(.tick, at: 20), .idle, "the ordinary decay")
+        XCTAssertFalse(m.isQuiet, "a decayed idle is not a compaction idle")
+    }
+
+    /// `PreCompact` carries no status of its own — it must not conjure presence past the post-exit
+    /// lockout, and on a live pane it changes nothing.
+    func testPreCompactAloneOnlyCorroboratesPresence() {
+        var m = ClaudeStatusMachine()
+        XCTAssertEqual(m.reduce(.hook(.preCompact(sessionID: "s1")), at: 0), .idle, "corroborates presence")
+        XCTAssertFalse(m.isQuiet)
     }
 }

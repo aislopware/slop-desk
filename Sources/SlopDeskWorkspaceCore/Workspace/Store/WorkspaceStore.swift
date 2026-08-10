@@ -3852,7 +3852,13 @@ public final class WorkspaceStore {
         // tab floats up under the `.updated` sort, and non-wire status writes stamp too. A blanket
         // per-signal stamp HERE would be wrong: it also fires on a type-26 foreground-process change, which
         // carries no status transition.
-        setAgentStatus(status, for: id)
+        // A QUIET type-27 (`kind == 4`) is a status change the host has already ruled bookkeeping — the
+        // `/compact` boundary, whose `.working → .idle` would otherwise read as the hook-less completion
+        // edge and announce a finish nobody asked about. The dots still move; only the announcement is
+        // withheld. type-26 carries no kind, so only a type-27 fold can be quiet.
+        var quiet = false
+        if case .claudeStatus = event { quiet = session.lastStatusKind.isQuiet }
+        setAgentStatus(status, for: id, quiet: quiet)
     }
 
     /// LATCHED-MODE PERSISTENCE (the `RemoteWindowModel.onModesChanged` sink): records pane `id`'s

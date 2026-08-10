@@ -144,7 +144,8 @@ public struct EventBuilder {
              .notification,
              .stop,
              .stopFailure,
-             .sessionEnd:
+             .sessionEnd,
+             .preCompact:
             // W8 detection-only signals. These drive the `SlopDeskAgentDetect` coarse
             // state machine (working / blocked / done / none) via the W10 adapter, which
             // consumes the `HookPayload` directly — they have no `InspectorEvent` of their

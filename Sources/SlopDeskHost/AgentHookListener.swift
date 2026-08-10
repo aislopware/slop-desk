@@ -33,7 +33,9 @@ import SlopDeskProtocol
 /// `ClaudeStatus.urgency` / `ClaudeHookEvent.NotificationKind` — `SlopDeskProtocol` does not
 /// depend on `SlopDeskAgentDetect`, so the bytes are the contract):
 /// - `state` = `ClaudeStatus.urgency` (`0 none / 1 idle / 2 done / 3 working / 4 needsPermission`).
-/// - `kind`  = `0 none / 1 permission / 2 waitingForInput / 3 other` (the last Notification class).
+/// - `kind`  = `0 none / 1 permission / 2 waitingForInput / 3 other` (the last Notification class),
+///   plus `4 quiet` — emitted by ``ClaudePaneDetector`` (not this handler) for a status change the
+///   client must display but not announce. See `SlopDeskAgentDetect.AgentStatusKind`.
 /// - `label` = the Stop `last_assistant_message` / Notification `message`, clamped on the wire.
 public struct AgentHookHandler: Sendable {
     /// The embedded per-pane state machine (W7). One handler instance = one pane's hook feed.
@@ -125,6 +127,11 @@ public struct AgentHookHandler: Sendable {
 
         case let .sessionEnd(info):
             return (.sessionEnd(sessionID: info.sessionID), 0)
+
+        case let .preCompact(info):
+            // No status byte of its own — it arms the machine's compaction marker so the `Stop`
+            // that ends a `/compact` lands on idle instead of announcing a finished task.
+            return (.preCompact(sessionID: info.sessionID), 0)
         }
     }
 

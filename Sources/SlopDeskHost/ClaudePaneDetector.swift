@@ -409,16 +409,22 @@ public struct ClaudePaneDetector: Sendable {
 
     /// Fold one client→PTY input chunk at `now` — the Esc-cancel unblock edge. Scoped hard: it
     /// looks at the bytes ONLY while the machine sits at `.needsPermission`, and only a genuine
-    /// USER KEYSTROKE (``PaneInputClassifier`` — focus reports, device replies and mouse wheel are
-    /// excluded) demotes the block to `.idle`. A keystroke into an open modal is the user HANDLING
-    /// it: Esc-cancel fires no Stop hook and the ✳ rest title already shows while the dialog is
-    /// up, so this is the only host-visible unblock signal; an answered dialog re-promotes to
-    /// `.working` via its own PreToolUse a beat later. NOT an authoritative fold — it stamps no
-    /// stickiness anchor. Emits type-27 iff the status triple changed.
+    /// CANCEL key (``PaneInputClassifier/containsCancelKeystroke(_:)`` — `Esc` / `Ctrl-C`) demotes
+    /// the block to `.idle`. Esc-cancel fires no Stop hook and the ✳ rest title already shows while
+    /// the dialog is up, so this is the only host-visible unblock signal there is.
+    ///
+    /// ⚠️ It used to fire on ANY keystroke, on the reasoning that typing at a modal is HANDLING it.
+    /// That was both unnecessary and harmful. Unnecessary because every other way of resolving a
+    /// dialog announces itself with a hook that re-promotes the pane on its own — a permission
+    /// answer fires `PreToolUse`, an `AskUserQuestion` answer fires its `PostToolUse`. Harmful
+    /// because NAVIGATING a dialog is keystrokes too: arrowing between an `AskUserQuestion`'s
+    /// options demoted the block, the still-visible dialog re-raised it a scan later, and the fresh
+    /// entry rang the awaiting-input cue — once per keypress (user-reported 2026-08-10). NOT an
+    /// authoritative fold — it stamps no stickiness anchor. Emits type-27 iff the triple changed.
     public mutating func userInput(bytes: Data, at now: TimeInterval) -> Emission {
         var emission = Emission()
         guard machine.status == .needsPermission,
-              PaneInputClassifier.containsUserKeystroke(bytes)
+              PaneInputClassifier.containsCancelKeystroke(bytes)
         else { return emission }
         machine.reduce(.userInput, at: now)
         if machine.status != .needsPermission { lastNotificationKind = 0 }
@@ -443,7 +449,7 @@ public struct ClaudePaneDetector: Sendable {
         if lastEmittedStatus != nil {
             let triple = ForegroundProcessDetector.StatusTriple(
                 state: UInt8(truncatingIfNeeded: machine.status.urgency),
-                kind: lastNotificationKind,
+                kind: statusKindByte,
                 label: machine.displayLabel ?? "",
             )
             lastEmittedStatus = triple
@@ -538,12 +544,23 @@ public struct ClaudePaneDetector: Sendable {
 
     // MARK: - Status dedupe (ONE anchor for the ONE type-27 stream)
 
+    /// The wire `kind` byte for the CURRENT machine status — the qualifier the `state` byte has no
+    /// room for. Two disjoint producers, checked in urgency order: a live block reports its
+    /// ``lastNotificationKind`` (permission / waiting / other), and a QUIET transition (today: the
+    /// `/compact` boundary's `.idle`, ``ClaudeStatusMachine/isQuiet``) reports
+    /// ``AgentStatusKind/quiet`` so the client delivers the status without announcing it. They
+    /// cannot collide — the machine clears the quiet mark on every transition into a block.
+    private var statusKindByte: UInt8 {
+        if machine.isQuiet { return AgentStatusKind.quiet.rawValue }
+        return lastNotificationKind
+    }
+
     /// Returns a type-27 `claudeStatus` message iff the machine's `(state, kind, label)` triple changed
     /// since the last emit; `nil` when unchanged (dedupe). `kind` reflects the live block class.
     private mutating func statusEmissionIfChanged() -> WireMessage? {
         let triple = ForegroundProcessDetector.StatusTriple(
             state: UInt8(truncatingIfNeeded: machine.status.urgency),
-            kind: lastNotificationKind,
+            kind: statusKindByte,
             label: machine.displayLabel ?? "",
         )
         if triple == lastEmittedStatus { return nil }

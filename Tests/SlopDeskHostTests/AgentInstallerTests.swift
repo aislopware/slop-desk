@@ -25,6 +25,14 @@ final class AgentInstallerTests: XCTestCase {
         }
     }
 
+    /// `PreCompact` is load-bearing, not completeness: it is the ONLY signal that distinguishes a
+    /// `/compact` finishing from a task finishing, and without it every compaction announces a done
+    /// (user-reported 2026-08-10). Pinned by name so a future trim of the event list has to argue
+    /// with this test.
+    func testPreCompactIsInstalled() {
+        XCTAssertTrue(AgentInstaller.installedEvents.contains("PreCompact"))
+    }
+
     // MARK: idempotency — re-running does not duplicate
 
     func testMergeIsIdempotent() {

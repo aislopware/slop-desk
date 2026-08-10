@@ -78,6 +78,45 @@ public enum ClaudeStatus: String, Sendable, Equatable, Codable, CaseIterable {
     }
 }
 
+/// The `kind` byte of the wire type-27 `claudeStatus(state:kind:label:)` frame — the QUALIFIER on the
+/// status byte. Historically it carried only the last hook `Notification` class, which is meaningful
+/// while the pane is blocked and `0` otherwise; `quiet` reuses that spare capacity on a NON-blocked
+/// status to say something the `state` byte cannot.
+///
+/// Lives here (not in `SlopDeskProtocol`) for the same reason ``ClaudeStatus/urgency`` does: the wire
+/// module carries raw bytes and does not depend on this one. Both ends map through this enum, and the
+/// mapping is FORWARD-TOLERANT — an unknown/future byte degrades to ``none`` rather than trapping
+/// (CLAUDE.md untrusted-input contract), which is also what makes ``quiet`` additive: an older client
+/// that never heard of `4` reads it as a plain unqualified status and behaves exactly as before.
+public enum AgentStatusKind: UInt8, Sendable, Equatable, CaseIterable {
+    /// No qualifier (the common case — every status that is not a live block).
+    case none = 0
+    /// `permission_prompt` — the block is an approval request.
+    case permission = 1
+    /// The block is a waiting-for-input prompt (including `AskUserQuestion`).
+    case waitingForInput = 2
+    /// Any other `Notification` class (informational).
+    case other = 3
+    /// QUIET: this status change is BOOKKEEPING, not news — deliver it to the dots and the chrome,
+    /// but raise NO attention (no toast, no banner, no sound, no unread badge).
+    ///
+    /// The one producer today is the `/compact` boundary. A compaction ends the turn with a `Stop`
+    /// hook, which the machine now lands on `.idle` instead of `.done` — but `.working → .idle` is
+    /// itself the hook-less COMPLETION edge (`AttentionEdge.isCompletion`, herdr's rule for agents
+    /// with no Stop hook at all), so the client would still announce the finish the host just
+    /// decided not to announce. This byte is how the host says "I know what this transition looks
+    /// like; it is not a finish" (user-reported 2026-08-10).
+    case quiet = 4
+
+    /// Maps a raw wire byte, degrading an unknown/future value to ``none``.
+    public init(wireByte: UInt8) {
+        self = Self(rawValue: wireByte) ?? .none
+    }
+
+    /// TRUE when the qualified status change must raise no attention (see ``quiet``).
+    public var isQuiet: Bool { self == .quiet }
+}
+
 extension ClaudeStatus: Comparable {
     /// Ordered by `urgency` so `max(...)` over a pane set IS the rollup.
     public static func < (lhs: ClaudeStatus, rhs: ClaudeStatus) -> Bool {

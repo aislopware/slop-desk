@@ -235,6 +235,76 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(d.status, .needsPermission, "the block stands until a real key arrives")
     }
 
+    /// The narrowing to CANCEL keys (user-reported 2026-08-10). An `AskUserQuestion` is a block, and
+    /// arrowing between its options — or hovering one, which floods X10 mouse motion down the same
+    /// input path — used to demote the block; the still-visible dialog then re-raised it, so the
+    /// awaiting-input cue rang again on every keypress and every pointer move. Only Esc / Ctrl-C may
+    /// unblock: every other resolution announces itself through its own hook.
+    func testOnlyCancelKeysUnblockAnAskUserQuestion() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}"#),
+            at: 0,
+        )
+        XCTAssertEqual(d.status, .needsPermission, "AskUserQuestion blocks on the human")
+
+        var t = 1.0
+        // Navigating the options, and hovering one (X10 mouse: `CSI M` + three position bytes).
+        for chunk in [
+            Data("\u{1B}[A".utf8),
+            Data("\u{1B}[B".utf8),
+            Data("\u{1B}[13u".utf8),
+            Data([0x1B, 0x5B, 0x4D, 32, 33, 33]),
+            Data("y".utf8),
+        ] {
+            XCTAssertNil(d.userInput(bytes: chunk, at: t).status, "\(Array(chunk)) must emit nothing")
+            XCTAssertEqual(d.status, .needsPermission, "the hand stays up")
+            t += 1
+        }
+        // kitty's Esc — what Claude Code's own keyboard mode actually sends — DOES unblock.
+        XCTAssertEqual(stateByte(d.userInput(bytes: Data("\u{1B}[27u".utf8), at: t).status), 1, "Esc cancels")
+        XCTAssertEqual(d.status, .idle)
+    }
+
+    // MARK: - Compaction (the `/compact` announces-done regression)
+
+    /// A `/compact` ends with a `Stop` like any turn. Before the `PreCompact` marker that minted
+    /// `.done` and rang the finished-turn cue for housekeeping the user ran themselves. Now the turn
+    /// lands on `.idle`, carried with the QUIET kind byte so the client — for whom `.working → .idle`
+    /// is itself the hook-less completion edge — knows not to re-announce it.
+    func testCompactionEmitsAQuietIdleNotADone() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"/compact"}"#), at: 0)
+        XCTAssertEqual(d.status, .working)
+        let compacting = d.hook(bytes: json(#"{"hook_event_name":"PreCompact","trigger":"manual"}"#), at: 1)
+        XCTAssertNil(compacting.status, "a compaction starting is not a status of its own")
+
+        let ended = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"old"}"#), at: 2)
+        guard case let .claudeStatus(state, kind, label)? = ended.status else {
+            XCTFail("expected a type-27, got \(String(describing: ended.status))")
+            return
+        }
+        XCTAssertEqual(state, 1, "idle, NOT done (2)")
+        XCTAssertEqual(kind, AgentStatusKind.quiet.rawValue, "…and marked as bookkeeping for the client")
+        XCTAssertEqual(label, "", "the pre-compaction assistant line is stale news")
+    }
+
+    /// The next REAL turn after a compaction still announces normally — the marker is a one-shot,
+    /// and the quiet byte dies with the status it qualified.
+    func testTurnAfterACompactionIsAnnouncedNormally() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"PreCompact","trigger":"auto"}"#), at: 0)
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"ship it"}"#), at: 1)
+        let done = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"shipped"}"#), at: 2)
+        guard case let .claudeStatus(state, kind, label)? = done.status else {
+            XCTFail("expected a type-27, got \(String(describing: done.status))")
+            return
+        }
+        XCTAssertEqual(state, 2, "a genuine done")
+        XCTAssertEqual(kind, 0, "announceable")
+        XCTAssertEqual(label, "shipped")
+    }
+
     /// Keystrokes while NOT blocked never touch the machine (typing a prompt, a queued message
     /// mid-turn) — the unblock signal is scoped to exactly the modal-dialog state.
     func testKeystrokesOutsideABlockAreIgnored() {
