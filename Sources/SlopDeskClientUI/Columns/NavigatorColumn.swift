@@ -1134,7 +1134,7 @@ private struct SidebarLiveRow: View {
             // verdict is the detection's own "claude is here, waiting for a prompt"; a plain
             // shell (agent `.none`) never reaches it, however busy it is.
             agentIdle: chrome.status == .idle,
-            // Whose finish it is — the agent's ring closes, a command's takes the outcome dot.
+            // Whose finish it is — the agent's ring closes, a command's prints a slot receipt.
             agentFinish: agentFinish,
             // The foreground process labels the slot — a real program (`vim`, `make`) AND a bare
             // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
@@ -1264,13 +1264,28 @@ private struct IOSSidebarLiveRow: View {
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
             } else if let receipt {
-                Text(receipt.name)
-                    .font(Slate.Typeface.instrument(
-                        Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
-                    ))
-                    .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
-                    .lineLimit(1)
-                    .fixedSize()
+                // The macOS receipt, glyph included (round 25): the name in the register it wore
+                // while running, closed by the small grey tick on a clean exit — a failure says it
+                // in red and takes no mark. Same tight gap, so the tick reads as the name's own
+                // punctuation rather than a second trailing item.
+                HStack(spacing: 3) {
+                    Text(receipt.name)
+                        .font(Slate.Typeface.instrument(
+                            Slate.Typeface.small, weight: StatusPresentation.slotNameWeight,
+                        ))
+                        .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
+                        .lineLimit(1)
+                        .fixedSize()
+                    if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
+                        Image(systemSymbol: tick)
+                            .font(.system(
+                                size: StatusDot.receiptCheckSize,
+                                weight: StatusDot.receiptCheckWeight,
+                            ))
+                            .foregroundStyle(Slate.Text.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                }
             }
             // The same trailing status mark as the macOS row (the T3 Code port) — rightmost, so
             // state reads down one fixed column on iOS too.

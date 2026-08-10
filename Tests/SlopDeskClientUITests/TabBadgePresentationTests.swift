@@ -213,18 +213,17 @@ final class TabBadgePresentationTests: XCTestCase {
         }
     }
 
-    /// Parked between two dots, the hole is exactly those two — fully out, everything else at FULL
-    /// ink. Nothing in between: braille has no half-lit dot, and a gap that is merely dimmer than its
-    /// neighbours is not a gap.
-    func testAParkedHoleIsWholeDotsFullyOutAndTheRestFullyLit() {
-        XCTAssertEqual(StatusDot.holeWidth, 2, "two dots wide — the user-directed cut")
-        for first in 0..<BrailleCell.dotCount {
-            let second = (first + 1) % BrailleCell.dotCount
-            // Centred on the seam BETWEEN the pair, which is where whole dots go out together.
-            let inks = (0..<BrailleCell.dotCount).map { AgentSpinner.lit($0, hole: Double(first) + 0.5) }
-            XCTAssertEqual(inks[first], StatusDot.holeFloor, accuracy: 0.0001, "dot \(first) is out")
-            XCTAssertEqual(inks[second], StatusDot.holeFloor, accuracy: 0.0001, "dot \(second) is out")
-            for index in 0..<BrailleCell.dotCount where index != first && index != second {
+    /// Parked ON a dot, the hole is exactly that ONE dot — fully out, every other dot at FULL ink.
+    /// Nothing in between: braille has no half-lit dot, and a gap that is merely dimmer than its
+    /// neighbours is not a gap. ⚠️ The width pin is the point of this test: a two-dot hole shipped
+    /// for part of 2026-08-10 and was reversed (a quarter of the cell out at once reads as a broken
+    /// cell), and at `1` every parked frame is one the braille set itself draws.
+    func testAParkedHoleIsOneWholeDotOutAndTheRestFullyLit() {
+        XCTAssertEqual(StatusDot.holeWidth, 1, "one dot wide — back to `⣾⣽⣻⢿⡿⣟⣯⣷`, user-directed")
+        for dark in 0..<BrailleCell.dotCount {
+            let inks = (0..<BrailleCell.dotCount).map { AgentSpinner.lit($0, hole: Double(dark)) }
+            XCTAssertEqual(inks[dark], StatusDot.holeFloor, accuracy: 0.0001, "dot \(dark) is out")
+            for index in 0..<BrailleCell.dotCount where index != dark {
                 XCTAssertEqual(
                     inks[index], 1, accuracy: 0.0001,
                     "dot \(index) is outside the hole — a lit cell dot is FULL ink",
@@ -233,19 +232,20 @@ final class TabBadgePresentationTests: XCTestCase {
         }
     }
 
-    /// Between those parked positions the darkness SLIDES rather than hops: roll the centre onto a
-    /// dot and that dot is out with half a dot's worth spilling either side. This is the one thing
+    /// Between those parked positions the darkness SLIDES rather than hops: park the centre on the
+    /// seam between two dots and each of the pair carries half the hole. This is the one thing
     /// drawing buys over the typed frames — and it has to hold across the wrap, or the lap would
     /// visibly stutter once per turn.
     func testTheHoleGlidesBetweenDotsAndAcrossTheWrap() {
         let last = BrailleCell.dotCount - 1
-        // Centred ON dot 1: it is out, and dots 0 and 2 are half-dark.
-        XCTAssertEqual(AgentSpinner.lit(1, hole: 1), StatusDot.holeFloor, accuracy: 0.0001)
-        XCTAssertEqual(AgentSpinner.lit(0, hole: 1), 0.5, accuracy: 0.0001)
-        XCTAssertEqual(AgentSpinner.lit(2, hole: 1), 0.5, accuracy: 0.0001)
-        XCTAssertEqual(AgentSpinner.lit(3, hole: 1), 1, accuracy: 0.0001, "only the pair either side dims")
-        // The seam: past the last dot the hole runs back onto the first ones.
-        XCTAssertEqual(AgentSpinner.lit(last, hole: 0), 0.5, accuracy: 0.0001)
+        // Centred on the seam between dots 1 and 2: both are half-dark, and nothing else moves.
+        XCTAssertEqual(AgentSpinner.lit(1, hole: 1.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(2, hole: 1.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(0, hole: 1.5), 1, accuracy: 0.0001, "only the pair it lies between dims")
+        XCTAssertEqual(AgentSpinner.lit(3, hole: 1.5), 1, accuracy: 0.0001, "only the pair it lies between dims")
+        // The seam: past the last dot the hole runs back onto the first one.
+        XCTAssertEqual(AgentSpinner.lit(last, hole: Double(last) + 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(0, hole: Double(last) + 0.5), 0.5, accuracy: 0.0001)
         XCTAssertEqual(AgentSpinner.lit(0, hole: 0), StatusDot.holeFloor, accuracy: 0.0001)
         XCTAssertEqual(
             AgentSpinner.lit(0, hole: Double(BrailleCell.dotCount)), StatusDot.holeFloor,

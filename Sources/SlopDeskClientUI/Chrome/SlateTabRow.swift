@@ -7,9 +7,11 @@
 //
 // Status has two speakers, split by WHOSE it is. The AGENT's is the trailing ``StatusDotView`` mark
 // — one column where the HUE names the state (muted = a code agent at rest, green = its turn ended,
-// amber = a question waits) and only the thinking spinner moves. A COMMAND's outcome is the trailing
-// SLOT's own text: the command's NAME, bold on the primary ink when it exited clean and bold on red
-// when it did not — two answers, not a glyph vocabulary of its own. A
+// amber = a question waits) and only the thinking spinner moves. A COMMAND lives entirely in the
+// trailing SLOT: its NAME, bold on the primary ink FROM THE MOMENT IT STARTS (round 25) — the row
+// does not restyle the word at the finish line — closed by a small grey tick when it exits clean,
+// turned red when it does not. The bare login shell that pane returns to stays on the quiet tertiary
+// metadata grey; it is the answer to "what is this pane running" for a pane running nothing. A
 // plain shell — busy or not — mounts nothing. The title spends the WEIGHT step on every state that
 // waits on you (a step above the active card's, so an unread row reads "bold + a coloured ring" the
 // way a mail row reads unread) and, for the two URGENT states only — a blocked agent, a failed
@@ -59,16 +61,17 @@ struct SlateTabRow: View {
     /// the agent's column, not a generic "something is running" lamp.
     var agentIdle: Bool = false
     /// Whether a finish badge on this row is the AGENT's turn ending rather than a command's clean
-    /// exit — the bit that decides whether the trailing mark closes the agent's ring or draws the
-    /// command-outcome dot. Resolved by ``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``.
+    /// exit — the bit that decides whether the trailing MARK closes the agent's ring or the slot
+    /// prints a receipt. Resolved by ``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``.
     var agentFinish: Bool = false
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`), shown only when
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
-    /// A finished COMMAND's receipt — the command's name in the outcome's ink, which is how a
-    /// command's exit reads on this rail (there is no outcome MARK: see ``StatusDot``). Outranks
-    /// the resting process label, which by then names the shell the command exited back into.
+    /// A finished COMMAND's receipt — the command's name in the outcome's ink, closed by a small
+    /// grey tick when it exited clean (``receiptSlot(_:)``); the trailing MARK column stays the
+    /// agent's either way (see ``StatusDot``). Outranks the resting process label, which by then
+    /// names the shell the command exited back into.
     var commandReceipt: RailRowsBuilder.CommandReceipt?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
@@ -108,6 +111,10 @@ struct SlateTabRow: View {
     /// the slot, and the hover `×` always has a landing zone even on a bare row.
     private static let slotMinWidth: CGFloat = 28
     private static let slotHeight: CGFloat = 18
+    /// The air between a receipt's command name and its completion tick. HALF the trailing group's
+    /// own 6: the tick is that name's punctuation, and at the group's spacing it detaches and reads
+    /// as a second, separate item sharing the slot.
+    private static let receiptTickGap: CGFloat = 3
 
     /// The SELECTED tab is a COMPACT ISLAND — the chip is stamped out of the terminal island's own
     /// material (user-directed 2026-08-08), so on a dark profile the active row inverts to a dark
@@ -256,24 +263,23 @@ struct SlateTabRow: View {
                     if let badge, StatusPresentation.tabBadge(badge) != nil {
                         TabBadgeView(kind: badge)
                     } else if let commandReceipt {
-                        // The command's OUTCOME, in the same instrument mono the resting label
-                        // uses — the register steps up, the voice does not change: bold on the
-                        // primary ink for a clean exit, bold on red for a failure — the slot's own
-                        // two answers (``StatusPresentation/outcomeInk(_:)``).
-                        Text(commandReceipt.name)
-                            .font(Slate.Typeface.instrument(
-                                Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,
-                            ))
-                            .foregroundStyle(StatusPresentation.outcomeInk(commandReceipt.outcome))
-                            .lineLimit(1)
-                            .fixedSize()
+                        // The command's RECEIPT: the same name, weight and ink the row already
+                        // carried while the command ran — a finish does not restyle the word. What
+                        // it adds is the tick (``StatusPresentation/outcomeSymbol(_:)``), and for a
+                        // failure the red (``StatusPresentation/outcomeInk(_:)``).
+                        receiptSlot(commandReceipt)
                     } else if let processLabel {
-                        // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
-                        // in the instrument mono at the caption size on the tertiary ink — one
-                        // register with the git line, counts and telemetry.
+                        // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads in
+                        // the instrument mono at the caption size — the tertiary ink at rest, and
+                        // the bold primary once that name is a COMMAND, which is the register it
+                        // will keep through its own exit.
+                        let isCommand = RailRowsBuilder.slotLabelIsCommand(processLabel)
                         Text(processLabel)
-                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                            .foregroundStyle(Slate.Text.tertiary)
+                            .font(Slate.Typeface.instrument(
+                                Slate.Typeface.small,
+                                weight: isCommand ? StatusPresentation.slotNameWeight : .regular,
+                            ))
+                            .foregroundStyle(StatusPresentation.slotNameInk(isCommand: isCommand))
                             .lineLimit(1)
                             .fixedSize()
                     }
@@ -291,6 +297,38 @@ struct SlateTabRow: View {
         }
         .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
         .frame(height: Self.slotHeight)
+    }
+
+    /// A finished command's receipt: the name it already wore while running, plus the outcome's
+    /// punctuation — a small grey tick for a clean exit, nothing for a failure (the red on the name
+    /// is that one's whole statement).
+    ///
+    /// ⚠️ The tick rides INSIDE the label group, not in the trailing mark column: that column is the
+    /// agent's alphabet (``StatusDot``), and this is a receipt closing its own line. The gap is
+    /// tighter than the group's own 6 so the tick reads as attached to the word rather than as a
+    /// second item in the slot.
+    private func receiptSlot(_ receipt: RailRowsBuilder.CommandReceipt) -> some View {
+        HStack(spacing: Self.receiptTickGap) {
+            Text(receipt.name)
+                .font(Slate.Typeface.instrument(
+                    Slate.Typeface.small, weight: StatusPresentation.slotNameWeight,
+                ))
+                .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
+                .lineLimit(1)
+                .fixedSize()
+            if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
+                Image(systemSymbol: tick)
+                    .font(.system(
+                        size: StatusDot.receiptCheckSize, weight: StatusDot.receiptCheckWeight,
+                    ))
+                    // The metadata grey, NOT the name's ink: the tick states the fact, the name
+                    // stays the thing being read. Green belongs to the agent's own finish.
+                    .foregroundStyle(Slate.Text.tertiary)
+                    // The row title's accessibility value already speaks the outcome; a second
+                    // announcement here would read the same exit twice.
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits

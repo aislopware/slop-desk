@@ -3309,6 +3309,54 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 25 — the command name is bold ALL ALONG, and a tick closes it (2026-08-10)
+
+The user split round 24's single treatment in two: the command NAME goes bold from the moment it
+starts running, not only once it exits — and because that spends the weight step early, a clean exit
+is given a SYMBOL instead, one deliberately quieter than the agent's finish, with the text colour
+left normal. The trailing slot now reads `make` (running) → `make ✓` (exit 0) → `make` in red
+(exit ≠ 0): one register for the word, and the news carried by punctuation and hue alone.
+
+- ✅ **The row no longer restyles the word at the finish line.** Under round 24 a command was tertiary
+  regular while it ran and primary bold once it exited, so the slot brightened and thickened at the
+  same instant — two channels saying one thing, and the WORD ITSELF changing appearance as you
+  watched it. Holding the name in one register the whole way through is what the user asked for, and
+  it makes the finish a thing that is ADDED rather than a restyling.
+- ⚠️⚠️ **Weight was the completion signal, so removing it forced a replacement.** This is the whole
+  causal chain of the round, and `testAFinishDoesNotRestyleTheCommandName` pins it from the other
+  end: `outcomeInk(.succeeded) == slotNameInk(isCommand: true)`. If those two ever diverge again the
+  brightness step is back, the tick has become decoration on a signal already being sent, and this
+  round is undone without anyone editing the symbol.
+- ⚠️⚠️ **A glyph returns to a command's outcome, sixteen rounds after round 24 removed one — and it
+  is NOT the same proposal.** Round 24's disc lived in the MARK COLUMN, competing with the agent's
+  alphabet and saying only "something happened". This one is punctuation ON the receipt, inside the
+  slot, closing a name that is already printed. `mark(for:agentFinish:)` is still `nil` for every
+  command tier and `testEveryBadgeHasExactlyOneVoice` still holds unchanged: the receipt is one
+  voice however many glyphs that voice is drawn with.
+- ⚠️ **Three simultaneous steps down from the agent's check, all pinned.** The agent's finish is
+  `checkmark.circle.fill`, 13pt, green. The receipt's is a bare `checkmark`, 9pt
+  (`StatusDot.receiptCheckSize`), on the tertiary metadata grey. No plate, four points smaller, no
+  hue — and it needs all three: any one of them alone would read as the agent's check gone faulty
+  rather than as a smaller, different speaker. `testTheCleanExitTickStaysQuieterThanTheAgentsCheck`
+  asserts the symbol differs, the size is strictly smaller, and it sits under the 10pt name it
+  closes.
+- ⚠️ **A FAILURE takes no glyph.** Red is already the exception's whole budget, and a cross beside a
+  red word is the same news twice — precisely the fault that cost round 23's triangle its place. The
+  asymmetry is the argument: success needed a symbol because it had nothing else left to say it.
+- ⚠️ **A bare login shell stays quiet.** `processLabel` is not only commands — an idle pane shows
+  `zsh` there, and bolding every resting row would spend the exact step this round reserves for
+  work. `RailRowsBuilder.slotLabelIsCommand` reuses `processDisplayName`'s login-shell set rather
+  than re-spelling it, so "is this a real program" keeps one answer across the title fallback and
+  the slot.
+- ✅ **Both platforms, one reading.** The iOS row (`NavigatorColumn`) carries the same name/weight/
+  tick, since the receipt was already shared.
+- ⚠️ **Cost, accepted:** a finished row's name shifts left by the tick's width, so the slot jiggles
+  once at the exit. Reserving the tick's width permanently was the alternative and is worse — it
+  would hold a gap open beside every running command for a mark that is not there yet.
+- ✅ **Judged by rendering.** `testRenderTabRowBadges` puts the agent's green filled check and the
+  receipt's bare grey tick in one image, four rows apart; that gap is the round, and a still is the
+  only place it can be read.
+
 ### Round 24 — a command's outcome is a WORD, not a mark (2026-07-31)
 
 The user pulled the command-outcome indicator outright: drop the mark, and let the text at the row's
@@ -7800,10 +7848,11 @@ Three properties are load-bearing, all pinned:
 - **Reduce Motion freezes it** — the platform used to own that call. A frozen cell is still a
   distinct silhouette (a lit block with one corner missing), so the state is never lost.
 
-**The hole is TWO dots wide** (user-directed): one dark dot in a cell of eight is a small thing to
-notice at rail size. ⚠️ This is where the mark stops being a transcription of `⣾⣽⣻⢿⡿⣟⣯⣷` and becomes
-a drawing — no frame of that set clears two bits. `StatusDot.holeWidth` carries it and
-`AgentSpinner.lit(_:hole:)` is the only reader, so `1` restores the literal set. The width is
+**The hole is TWO dots wide** (user-directed) — ⚠️ **REVERSED the same day, see the entry at the foot
+of this file; the shipping width is ONE.** The argument here was that one dark dot in a cell of eight
+is a small thing to notice at rail size, and this is where the mark stopped being a transcription of
+`⣾⣽⣻⢿⡿⣟⣯⣷` and became a drawing — no frame of that set clears two bits. `StatusDot.holeWidth` carries
+it and `AgentSpinner.lit(_:hole:)` is the only reader, so `1` restores the literal set. The width is
 CONSERVED at every instant (pinned): parked between two dots the hole is exactly those two, fully
 out, everything else at full ink; rolled onto a dot, that dot is out with half a dot's worth spilling
 each side. A gap that gained and lost darkness as it travelled would read as a mark BREATHING, which
@@ -7924,3 +7973,21 @@ cream ground), which is right for a line inside a form and wrong for the only th
 floating object ends. It is polarity-INVERTING by construction (`slateDynamicLight: 0x000000, dark:
 0xFFFFFF` at `Opacity.rim` 0.20), which is the rule the user stated: a light surface takes a dark rim,
 a dark surface takes a light one.
+
+## The thinking mark's hole goes back to ONE dot (2026-08-10, user-directed)
+
+A same-day reversal of the two-dot hole recorded above. Two dark dots out of eight is a QUARTER of
+the cell gone at once, and at rail size the block then reads as a cell that is broken rather than as
+a lit cell with something travelling round it. The silhouette is half of what this mark says — the
+column has to be readable as "thinking" at a glance without waiting for the motion — so a gap that
+costs the silhouette is not paid for by being easier to spot.
+
+`StatusDot.holeWidth = 1`. Nothing else changes: `AgentSpinner.lit(_:hole:)` is still the only
+reader, the walk, the tempo wander and the wall-clock phase are untouched, and the width stays
+CONSERVED (the pin loops over the whole lap). What flips is which frames are the whole-dot ones —
+parked ON a dot it is that dot alone fully out with every other at full ink, and on the seam between
+two the pair is half dark each, which is the mirror of how the two-dot hole parked.
+
+⚠️ The mark is a TRANSCRIPTION again: every parked frame is one `⣾⣽⣻⢿⡿⣟⣯⣷` actually draws (`0xFF`
+with exactly one bit cleared), so `SlateSnapshotRender`'s eight-phase filmstrip can once more be read
+straight against that set — which is what it always claimed to be for.

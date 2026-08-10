@@ -296,10 +296,11 @@ enum StatusPresentation {
     /// went back to a hue per role on `07da1f5d` and this one deliberately did not follow — a command
     /// has two outcomes, not seven states.)
     ///
-    /// A clean exit takes the primary text ink — one full step above the tertiary metadata grey the
-    /// resting slot rests on, which is the whole signal: this row DID something. Green was tried in
-    /// the mark and is not worth a colour here; "it worked" is the expected outcome, and spending a
-    /// hue on the expected leaves nothing to spend on the exception.
+    /// A clean exit takes the primary text ink — ``slotNameInk(isCommand:)``'s answer for a running
+    /// command too, and DELIBERATELY the same one (round 25, user-directed): the name of a command
+    /// no longer changes as it finishes, so the ink is not the completion signal and cannot be read
+    /// as one. Green was tried in the mark and is not worth a colour here; "it worked" is the
+    /// expected outcome, and spending a hue on the expected leaves nothing to spend on the exception.
     static func outcomeInk(_ outcome: CommandOutcome) -> Color {
         switch outcome {
         case .succeeded: Slate.Text.primary
@@ -307,10 +308,50 @@ enum StatusPresentation {
         }
     }
 
-    /// The WEIGHT a command's outcome reads at — bold, both outcomes, for the reason the git line
-    /// weights its counts: at the 10pt instrument size a regular weight leaves the brightness step
-    /// alone carrying the signal, and it isn't enough.
-    static let outcomeWeight: Font.Weight = .bold
+    /// The SYMBOL a command's outcome sets after its name — a bare `checkmark` for a clean exit,
+    /// NOTHING for a failure.
+    ///
+    /// ⚠️ Round 25 (user-directed) puts a glyph back on a command's exit, sixteen rounds after round
+    /// 24 pulled the outcome marks. What makes it a different proposal from the disc round 24 killed:
+    /// that one lived in the MARK COLUMN, competing with the agent's own alphabet and saying only
+    /// "something happened"; this one is punctuation ON the receipt, inside the slot, closing a name
+    /// that is already printed. The mark column stays the agent's — ``mark(for:agentFinish:)`` is
+    /// still `nil` for every command tier, and `testEveryBadgeHasExactlyOneVoice` still holds,
+    /// because the receipt (name + tick) is ONE voice however many marks it is drawn with.
+    ///
+    /// A failure gets none on purpose. Red is already the exception's whole budget, and a cross
+    /// beside a red word is the same news twice — the very fault that cost the disc its place. The
+    /// asymmetry is the point: the tick exists because a SUCCESS has nothing else left to say it
+    /// (the ink and the weight are now shared with the running state), and a failure has red.
+    static func outcomeSymbol(_ outcome: CommandOutcome) -> SFSymbol? {
+        switch outcome {
+        case .succeeded: .checkmark
+        case .failed: nil
+        }
+    }
+
+    /// The WEIGHT the trailing slot sets a COMMAND's name in — bold, running or finished, clean or
+    /// broken, for the reason the git line weights its counts: at the 10pt instrument size a regular
+    /// weight leaves the brightness step alone carrying the signal, and it isn't enough.
+    ///
+    /// ⚠️ Round 25 (user-directed) widened this from the receipt to the running label as well, and
+    /// that is what forced ``outcomeSymbol(_:)`` into existence: while the weight stepped up only at
+    /// the end, WEIGHT WAS the completion signal, and a command that is bold the whole way through
+    /// has to be given the news back some other way.
+    static let slotNameWeight: Font.Weight = .bold
+
+    /// The INK the trailing slot's resting label reads in, for a real program (`make`, `vim`) versus
+    /// a bare login shell (`zsh`).
+    ///
+    /// A COMMAND takes the primary ink and ``slotNameWeight`` — the same register it will keep once
+    /// it exits, so the row does not brighten at the finish line. A bare SHELL stays on the tertiary
+    /// metadata grey at the regular weight: it is the answer to "what is this pane running" for a
+    /// pane that is running nothing, and bolding every idle `zsh` on the rail would spend the whole
+    /// step this round is trying to reserve for work. The split is
+    /// ``RailRowsBuilder/slotLabelIsCommand(_:)``'s.
+    static func slotNameInk(isCommand: Bool) -> Color {
+        isCommand ? Slate.Text.primary : Slate.Text.tertiary
+    }
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers, drawn as
     /// otty draws them: a SHIELD for sudo, a CUP for caffeinate, both muted. They used to be the

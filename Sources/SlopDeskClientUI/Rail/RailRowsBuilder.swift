@@ -420,6 +420,18 @@ enum RailRowsBuilder {
         return name.isEmpty ? nil : name
     }
 
+    /// Whether a resting slot label names a COMMAND (`make`, `vim`, `npm`) rather than the shell that
+    /// pane is idling in (`zsh`) — the split that decides which register the slot sets it in
+    /// (``StatusPresentation/slotNameInk(isCommand:)``, ``StatusPresentation/slotNameWeight``).
+    ///
+    /// Reuses ``processDisplayName(_:)``'s login-shell set rather than re-spelling it: "is this a real
+    /// program" is one question with one answer, and the TITLE fallback has been asking it since long
+    /// before the slot needed to. Idempotent on an already-``slotProcessName(_:)``-cleaned label, which
+    /// is the form the row actually holds. Pure + static so the register is unit-pinned.
+    static func slotLabelIsCommand(_ label: String?) -> Bool {
+        processDisplayName(label) != nil
+    }
+
     /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any
     /// braille spinner frame U+2800–U+28FF, or one of `·✢✳✶✻✽`, an optional variation selector, then
     /// whitespace/end) is stripped — the glyph is claude's activity channel, already spoken by the

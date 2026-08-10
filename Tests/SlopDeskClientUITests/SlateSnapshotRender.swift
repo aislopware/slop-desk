@@ -90,8 +90,12 @@ final class SlateSnapshotRender: XCTestCase {
             badgeRow("plan next move", badge: .awaitingInput, agent: true)
             badgeRow("OpenCode", badge: .completed, agentFinish: true, agent: true)
             badgeRow("refactor the reassembler", badge: .finished, agentFinish: true, agent: true)
-            // A COMMAND's alphabet — no mark at all: the slot names what finished, bold on the
-            // primary ink for a clean exit and bold on red for a failure.
+            // A COMMAND's alphabet — nothing in the MARK column: the slot names what finished, in
+            // the same bold primary it wore while running, closed by a small grey tick for a clean
+            // exit; a failure turns the name red and takes no tick. ⚠️ Read the two check marks in
+            // this image against each other — the agent's green filled circle above and the
+            // receipt's bare grey tick below are the round-25 gap, and the render is the only place
+            // it can be judged.
             badgeRow(
                 "running build task", badge: .error, process: "make",
                 receipt: .init(name: "make", outcome: .failed),

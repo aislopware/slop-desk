@@ -18,13 +18,19 @@
 // there; our rail needs it, because `claude` sitting at its prompt is otherwise indistinguishable
 // from a shell that has been busy for an hour.
 //
-// ⚠️ A COMMAND's outcome has no mark here at all (round 24). It used to take otty's two — the plain
-// disc for a clean exit, the alert triangle for a failure — and the row printed a symbol where the
-// slot beside it was going empty anyway. A command's exit is a fact about a NAME (`make` passed,
-// `make` failed), so it reads as that name in the trailing slot instead, in the slot's own register
-// (``StatusPresentation/outcomeInk(_:)``): bright + bold for the exit that worked, red for the one
-// that didn't. One less glyph vocabulary to
-// learn, and the row now says WHAT finished rather than only that something did.
+// ⚠️ A COMMAND's outcome has no mark here at all (round 24, and still true). It used to take otty's
+// two — the plain disc for a clean exit, the alert triangle for a failure — and the row printed a
+// symbol where the slot beside it was going empty anyway. A command's exit is a fact about a NAME
+// (`make` passed, `make` failed), so it reads as that name in the trailing SLOT instead, one less
+// glyph vocabulary to learn, and the row now says WHAT finished rather than only that something did.
+//
+// ⚠️ Round 25 (user-directed) moved the line WITHIN that slot. The command's name is bold on the
+// primary ink from the moment it starts running, not only once it exits, so weight and brightness no
+// longer mean "finished" — which left a clean exit with nothing to say itself. It gets a bare
+// `checkmark` (``StatusPresentation/outcomeSymbol(_:)``) at ``receiptCheckSize``, on the tertiary
+// grey, set after the name like punctuation. That is the SAME WORD as `completed` above, three steps
+// quieter: no circle, four points smaller, no hue. A failure still takes none — red is that one's
+// whole statement, and a cross beside a red word is what cost the triangle its place.
 //
 // ONE state moves — the spinner — and everything settled holds absolutely still (round 19's lesson
 // survives: a settled rail must not twitch).
@@ -75,6 +81,20 @@ enum StatusDot {
     /// filled straight-edged glyph out-weighs a circle at equal point size. The privilege shield
     /// (``TabBadgeView``) is the one left that uses it.
     static let badgeSymbolSize: CGFloat = 11
+    /// The point size of the RECEIPT's completion check — the bare `checkmark` a cleanly-exited
+    /// command sets after its name in the trailing slot (``StatusPresentation/outcomeSymbol(_:)``).
+    ///
+    /// ⚠️ NINE, and the gap to ``finishSymbolSize`` is the whole design: this is the same WORD the
+    /// agent's finish says, said quietly. Three things separate them at once — the circle is gone
+    /// (no plate, no fill, just the tick), the ink is the tertiary metadata grey instead of green,
+    /// and it is four points smaller. Any one of those alone would read as the agent's check gone
+    /// faulty; all three read as a different, smaller speaker. It sits a point UNDER the 10pt name
+    /// it follows for the same reason a receipt's tick is smaller than the line it closes.
+    static let receiptCheckSize: CGFloat = 9
+    /// The weight that check is stroked at. `.semibold`: a 9pt tick on a tertiary ink goes to smudge
+    /// at `.regular` (the same floor ``symbolWeight`` exists for), and the name beside it is bold —
+    /// a hairline tick after a bold word reads as a rendering artefact rather than a mark.
+    static let receiptCheckWeight: Font.Weight = .semibold
     /// otty renders every badge at `NSFontWeightMedium`. Not `.regular`: at 11pt a regular-weight
     /// symbol goes thin enough on a muted ink to read as smudge rather than mark.
     static let symbolWeight: Font.Weight = .medium
@@ -101,13 +121,16 @@ enum StatusDot {
     static let dotPitchY: CGFloat = 3.4
     /// What the hole is dimmed TO. Zero — braille has no half-lit dot, and the gap has to be a gap.
     static let holeFloor: Double = 0
-    /// How many dots the hole is WIDE. ⚠️ Two, user-directed 2026-08-10: one dark dot in a cell of
-    /// eight is a small thing to notice at rail size, and a wider gap gives the walk more to say.
+    /// How many dots the hole is WIDE. ⚠️ ONE — back to the braille set, user-directed 2026-08-10,
+    /// reversing the two-dot cut made earlier the same day. Two dark dots out of eight took a quarter
+    /// of the cell away at once: the block stopped reading as a lit cell with a gap travelling round
+    /// it and started reading as a broken cell, and the silhouette is the half of this mark that
+    /// carries the state.
     ///
-    /// This is where the mark stops being a transcription of `⣾⣽⣻⢿⡿⣟⣯⣷` and starts being a drawing —
-    /// the set clears exactly one bit per frame. Set it back to `1` and the frames are that set again;
-    /// ``AgentSpinner/lit(_:hole:)`` carries the width, so nothing else needs touching either way.
-    static let holeWidth: Double = 2
+    /// At `1` every frame of the walk is a frame `⣾⣽⣻⢿⡿⣟⣯⣷` actually draws (each is `0xFF` with
+    /// exactly one bit cleared), so the mark is a transcription again rather than a drawing.
+    /// ``AgentSpinner/lit(_:hole:)`` is the only reader, so the width is the whole switch either way.
+    static let holeWidth: Double = 1
     /// herdr's own tempo: one braille frame per 8 ticks of a 60 Hz loop, eight frames to the lap.
     /// The QUICK end of the wander below, and nothing quicker — on its own it read as a hurry.
     static let herdrLapPeriod: Double = 8 * 8 / 60
@@ -283,9 +306,10 @@ struct DottedRing: Shape {
 ///
 /// It starts from `⣾⣽⣻⢿⡿⣟⣯⣷`: a braille cell with every one of its eight dots lit and one switched
 /// OFF, the dark one stepping round the cell, one lap per eight frames. So the mark is a small
-/// upright BLOCK OF DOTS, and the thing that moves is the GAP in it. ⚠️ That gap is now TWO dots wide
-/// (``StatusDot/holeWidth``), which no frame of the set draws — one dark dot in eight was too small
-/// a thing to notice at rail size. It turns CLOCKWISE, which
+/// upright BLOCK OF DOTS, and the thing that moves is the GAP in it — ONE dot wide
+/// (``StatusDot/holeWidth``), exactly as the set draws it. ⚠️ A two-dot gap was tried and reversed
+/// on the same day (user-directed): a quarter of the cell out at once reads as a BROKEN cell rather
+/// than a lit one with something travelling round it. It turns CLOCKWISE, which
 /// is the reverse of what the bitmask says — see ``BrailleCell/walk``. herdr's own tempo (a frame per
 /// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped as the only tempo and read as a hurry; it is now the
 /// QUICK END of a tempo that WANDERS as the mark runs — see ``StatusDot/tempoSwells``.
@@ -382,10 +406,10 @@ struct AgentSpinner: View {
     /// How lit the `index`-th dot is with the hole centred at `hole` (in dot-steps around the cell).
     ///
     /// The hole is ``StatusDot/holeWidth`` dots wide: everything within half that of its centre is
-    /// fully dark, and the edge ramps over exactly one more step. So the darkness SLIDES — with the
-    /// centre parked between two dots both are out; roll the centre onto a dot and that dot is out
-    /// with half a dot's worth spilling either side. The total ink removed is the same at every
-    /// instant, which is what stops the walk pulsing as it goes.
+    /// fully dark, and the edge ramps over exactly one more step. At the shipping width of one, that
+    /// means the darkness SLIDES — parked ON a dot it is that dot alone, fully out, everything else
+    /// at full ink; rolled to the seam between two, each of the pair is half dark. The total ink
+    /// removed is the same at every instant, which is what stops the walk pulsing as it goes.
     static func lit(_ index: Int, hole: Double) -> Double {
         let count = Double(BrailleCell.dotCount)
         var gap = abs(Double(index) - hole).truncatingRemainder(dividingBy: count)

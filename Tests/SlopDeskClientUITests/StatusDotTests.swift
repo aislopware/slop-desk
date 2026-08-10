@@ -185,9 +185,11 @@ final class StatusDotTests: XCTestCase {
 
     // MARK: - The command's outcome speaks in the slot (round 24)
 
-    /// ⚠️ A badge has exactly ONE voice. Every kind resolves to a mark or to a slot receipt, and
-    /// never to both — the mark column is the agent's, so a command's exit that also drew a symbol
-    /// would be the same news twice in two dialects.
+    /// ⚠️ A badge has exactly ONE voice. Every kind resolves to a MARK or to a slot RECEIPT, and
+    /// never to both — the mark column is the agent's, so a command's exit that also mounted a mark
+    /// there would be the same news twice in two dialects. (Round 25's tick does not touch this: it
+    /// is drawn inside the receipt, closing a name the receipt already prints, so the slot is still
+    /// one voice however many glyphs that voice uses.)
     @MainActor
     func testEveryBadgeHasExactlyOneVoice() {
         let everyKind: [TabBadgeKind] = [
@@ -235,19 +237,75 @@ final class StatusDotTests: XCTestCase {
             XCTAssertNil(StatusPresentation.commandOutcome(badge: kind, agentFinish: false))
         }
         XCTAssertNil(StatusPresentation.commandOutcome(badge: nil, agentFinish: false))
-        // The slot's OWN register: the working exit spends BRIGHTNESS, not a hue, and red stays
-        // reserved for broken. (It was written as the git line's while that line was monochrome; the
-        // git readout took hues back per role on `07da1f5d` and this slot deliberately did not
-        // follow — a command has two outcomes, not seven states.) Both are BOLD — at 10pt mono the
-        // brightness step alone does not carry. The red is the INK cut, `StatusInk`, since a 10pt
-        // mono run is the case the system palette read faintest in.
+        // The slot's OWN register: red stays reserved for broken, and a clean exit spends no hue at
+        // all. (It was written as the git line's while that line was monochrome; the git readout
+        // took hues back per role on `07da1f5d` and this slot deliberately did not follow — a
+        // command has two outcomes, not seven states.) The red is the INK cut, `StatusInk`, since a
+        // 10pt mono run is the case the system palette read faintest in.
         XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
         XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.StatusInk.err)
         XCTAssertNotEqual(
             StatusPresentation.outcomeInk(.succeeded), Slate.StatusInk.ok,
             "green was the mark's answer; 'it worked' is the expected case and buys no hue",
         )
-        XCTAssertEqual(StatusPresentation.outcomeWeight, .bold)
+        XCTAssertEqual(StatusPresentation.slotNameWeight, .bold)
+    }
+
+    /// ⚠️ A clean exit is NOT a brightness step any more (round 25, user-directed). The running
+    /// command already reads bold on the primary ink, so the succeeded receipt is byte-for-byte the
+    /// same register — this is the pin that says so, and the reason ``outcomeSymbol`` has to exist:
+    /// if these two ever diverge again, the tick has become decoration on a signal that is already
+    /// being sent, and the round is undone.
+    @MainActor
+    func testAFinishDoesNotRestyleTheCommandName() {
+        XCTAssertEqual(
+            StatusPresentation.outcomeInk(.succeeded),
+            StatusPresentation.slotNameInk(isCommand: true),
+            "a clean exit must read in the same ink the command wore while it ran",
+        )
+        // A bare login shell is the one slot label that stays quiet — bolding every idle `zsh` on
+        // the rail spends exactly the step this round reserves for work.
+        XCTAssertEqual(StatusPresentation.slotNameInk(isCommand: false), Slate.Text.tertiary)
+        XCTAssertNotEqual(
+            StatusPresentation.slotNameInk(isCommand: true),
+            StatusPresentation.slotNameInk(isCommand: false),
+        )
+        XCTAssertTrue(RailRowsBuilder.slotLabelIsCommand("make"))
+        XCTAssertTrue(RailRowsBuilder.slotLabelIsCommand("/usr/bin/vim"))
+        for shell in ["zsh", "-zsh", "bash", "fish"] {
+            XCTAssertFalse(
+                RailRowsBuilder.slotLabelIsCommand(shell), "\(shell) is the pane at rest, not work",
+            )
+        }
+        XCTAssertFalse(RailRowsBuilder.slotLabelIsCommand(nil))
+    }
+
+    /// The completion GLYPH: a bare tick for a clean exit, NOTHING for a failure — and every way it
+    /// is kept quieter than the agent's own finish.
+    ///
+    /// ⚠️ Round 25 puts a glyph back on a command's outcome, which round 24 removed. The thing that
+    /// makes it a different proposal is the distance from `checkmark.circle.fill`: no plate, four
+    /// points smaller, grey rather than green. Any ONE of those collapsing turns the receipt's tick
+    /// into the agent's check gone faulty, so all three are pinned.
+    @MainActor
+    func testTheCleanExitTickStaysQuieterThanTheAgentsCheck() {
+        XCTAssertEqual(StatusPresentation.outcomeSymbol(.succeeded), .checkmark)
+        XCTAssertNil(
+            StatusPresentation.outcomeSymbol(.failed),
+            "red already says it; a cross beside a red word is the same news twice",
+        )
+        let agentCheck = StatusMark.agentFinish.systemSymbol
+        XCTAssertEqual(agentCheck?.symbol, .checkmarkCircleFill)
+        XCTAssertNotEqual(
+            StatusPresentation.outcomeSymbol(.succeeded), agentCheck?.symbol,
+            "the receipt's tick wears no plate — the circle is what makes the agent's a badge",
+        )
+        XCTAssertLessThan(
+            StatusDot.receiptCheckSize, agentCheck?.size ?? 0,
+            "a command's exit must not carry as much ink as the agent's turn ending",
+        )
+        // And a point under the 10pt name it closes — punctuation, not a peer.
+        XCTAssertLessThan(StatusDot.receiptCheckSize, Slate.Typeface.small)
     }
 
     /// A waiting question raises otty's HAND — the one state on this rail that is asking a person
