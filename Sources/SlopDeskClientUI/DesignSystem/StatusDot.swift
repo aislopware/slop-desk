@@ -92,19 +92,21 @@ enum StatusDot {
     static let dotPitchY: CGFloat = 3.4
     /// What the hole is dimmed TO. Zero — braille has no half-lit dot, and the gap has to be a gap.
     static let holeFloor: Double = 0
-    /// Seconds per lap. herdr's own tempo is `8 × 8 / 60` ≈ 1.07 s (one braille frame per 8 ticks of
-    /// a 60 Hz loop, eight frames to the lap) — transcribed first, then rejected on hardware for
-    /// reading as a HURRY. This is the settled middle of the range, and the value every still, every
-    /// test and every frozen mark uses.
+    /// herdr's own tempo: one braille frame per 8 ticks of a 60 Hz loop, eight frames to the lap.
+    /// The FAST end of the range below, and nothing quicker — on its own it read as a hurry.
+    static let herdrLapPeriod: Double = 8 * 8 / 60
+    /// Seconds per lap for a mark that is NOT running: every still, every test, every frozen mark.
+    /// The middle of the range, not an end of it, so a snapshot shows neither extreme.
     static let lapPeriod: Double = 1.8
     /// ⚠️ EXPERIMENT, user-requested 2026-08-10: each mounted mark rolls its OWN lap time inside this
     /// range instead of every mark sharing one. The point is to watch a spread of tempos on hardware
-    /// and pick, so the range is deliberately wide enough to feel at both ends.
+    /// and pick, so the range is deliberately wide enough to feel at both ends — herdr's own 1.07 s at
+    /// the fast end (too quick as the ONLY tempo, fine as the quick end of a spread) out to 2.6 s.
     ///
     /// This is the one thing that breaks the marks' unison — see ``AgentSpinner``, which still takes
     /// its PHASE off the wall clock, so a re-render lands mid-lap at whatever tempo that mount rolled.
     /// Collapsing this back to a single value is a one-line change once a tempo is chosen.
-    static let lapPeriodRange: ClosedRange<Double> = 1.3...2.6
+    static let lapPeriodRange: ClosedRange<Double> = herdrLapPeriod...2.6
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -193,8 +195,8 @@ struct DashedRing: Shape {
 /// switched OFF, the dark one stepping round the cell, one lap per eight frames. So the mark is a
 /// small upright BLOCK OF DOTS, and the thing that moves is the GAP in it. It turns CLOCKWISE, which
 /// is the reverse of what the bitmask says — see ``BrailleCell/walk``. herdr's own tempo (a frame per
-/// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped first and read as a hurry; see
-/// ``StatusDot/lapPeriodRange``.
+/// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped as the only tempo and read as a hurry; it is now the
+/// FAST end of a rolled range — see ``StatusDot/lapPeriodRange``.
 ///
 /// Drawn, the one lie in the original goes away: the hole no longer teleports between eight discrete
 /// dots, it GLIDES. Each dot's ink is a function of how far the hole currently is from it, so with

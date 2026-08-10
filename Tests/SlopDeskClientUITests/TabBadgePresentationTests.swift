@@ -120,6 +120,10 @@ final class TabBadgePresentationTests: XCTestCase {
             range.upperBound, range.lowerBound,
             "a collapsed range is the old single tempo — the roll would be a no-op",
         )
+        XCTAssertEqual(
+            range.lowerBound, StatusDot.herdrLapPeriod, accuracy: 0.0001,
+            "the quick end IS herdr's own tempo — fine as an end of a spread, rejected as the only one",
+        )
         for period in [range.lowerBound, StatusDot.lapPeriod, range.upperBound] {
             let epoch = Date(timeIntervalSinceReferenceDate: 0)
             XCTAssertEqual(

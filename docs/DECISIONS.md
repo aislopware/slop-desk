@@ -7650,10 +7650,12 @@ per eight frames (`8 × 8/60` ≈ 1.07 s).
 same way: a spinner is judged by EYE, not derived from a bitmask.** The direction is REVERSED — the
 hole now runs down the RIGHT column and up the LEFT, clockwise, the way every other spinner on the
 machine turns; a mark running against that reads as wrong before it reads as anything. And the tempo
-is SLOWER: `8 × 8/60` is herdr's loop rate, not a design decision, and at mark size it read as a
+is SLOWER: `8 × 8/60` is herdr's loop rate, not a design decision, and as the ONLY tempo it read as a
 hurry. ⚠️ **The lap time is currently an EXPERIMENT** — each mounted mark rolls its own from
-`StatusDot.lapPeriodRange` (1.3–2.6 s) so a spread can be judged at once, with `lapPeriod` (1.8 s) as
-the settled middle that every still, every test and every frozen mark uses. That roll is the ONE
+`StatusDot.lapPeriodRange` so a spread can be judged at once, with `lapPeriod` (1.8 s) as the middle
+that every still, every test and every frozen mark uses. The range keeps herdr's 1.07 s as its QUICK
+END and runs out to 2.6 s: the same tempo that was rejected alone is fine as one end of a spread,
+which is the point of rolling rather than picking. That roll is the ONE
 thing that broke the marks' unison; collapsing the range to a single value once a tempo is chosen is
 a one-line change, and the phase still comes off the wall clock either way.
 
