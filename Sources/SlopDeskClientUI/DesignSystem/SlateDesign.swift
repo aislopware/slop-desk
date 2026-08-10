@@ -767,18 +767,34 @@ enum Slate {
         /// It is the OUTER margin only — nothing inside the island moves, so the panes keep their own
         /// spacing.
         static let islandInset: CGFloat = 8
-        /// The island's corner — a WINDOW-SCALE corner, because the island is a window-scale surface
-        /// (~880 × 775pt). 26 is what macOS 26 Tahoe puts on a full-chrome window, measured on this
-        /// OS; the island wearing it reads as a window floating inside the window, which is the
-        /// metaphor.
+        /// The island's corner — THE FRAME'S OWN, so the glass and the window that holds it speak one
+        /// corner. Equal to ``windowRadius`` by intent, not by coincidence: this app runs
+        /// `.hiddenTitleBar`, and 16 is what macOS 26 Tahoe measures on a titlebar-only window.
         ///
-        /// The earlier 8, then 14, came from a concentricity rule — inner = outer − inset — that does
-        /// NOT apply here: the island lives in the CENTRE column, ~230pt clear of the window's own
-        /// corners, so its corners are never seen beside the frame's and nothing constrains them to
-        /// stay under 16. Its neighbours are flat dividers and bare ground. (JetBrains' `Island.arc`
-        /// and Rio Canario's ≈7.5 are small because their islands tile a window edge to edge; ours is
-        /// one card in the middle of a field.) User-directed 2026-08-08, twice.
-        static let islandRadius: CGFloat = 26
+        /// DOWN FROM 26 (user-directed 2026-08-10), settled on a true-size board rather than on the
+        /// argument: 26 / 21 / 16 rendered at the reference 1280 × 800 from this token layer, with the
+        /// real ground, glass and rim, and read at 1:1. At 26 the arc starts before the eye reaches
+        /// the edge and the canvas reads soft.
+        ///
+        /// 26 was picked on 2026-08-08 because it is what Tahoe puts on a FULL-CHROME window — but
+        /// that number belongs to a window carrying a `.unified` toolbar, and the island carries no
+        /// chrome at all; it is a bare canvas. Borrowing a toolbar window's corner for it spent the
+        /// top of the system's scale on the one surface with the least reason to ask for it. The
+        /// island stays a window-scale surface (~880 × 775pt) — it just wears THIS window's corner
+        /// instead of a bigger window's.
+        ///
+        /// Apple's own rule for macOS 26 is a RELATION, never a table: fixed, capsule, or concentric
+        /// (`inner = outer − padding`), with `ConcentricRectangle` / `.rect(corner: .containerConcentric)`
+        /// as the API. Strict concentricity would say 16 − 8 = 8 here, which is the number two earlier
+        /// rounds already rejected as boxy; 16 is the nearest rung that stops the island from being
+        /// ROUNDER than the frame containing it, which is the direction concentricity actually forbids.
+        /// The 2026-08-08 note that the two corners are never seen together (the island sits in the
+        /// CENTRE column, ~230pt clear of the frame's) still holds and is why 8 is not owed — it just
+        /// never licensed going past the frame. (JetBrains' `Island.arc` and Rio Canario's ≈7.5 are
+        /// small because their islands tile a window edge to edge; ours is one card in a field.)
+        ///
+        /// History: 8 → 14 → 26 → 16.
+        static let islandRadius: CGFloat = 16
         /// The COMPACT island — the SELECTED tab's chip, at ``heightRow``/``plate`` scale. Not the
         /// big number scaled down (a corner is read against the surface it cuts, not as a ratio):
         /// this is one rung above the 8 macOS Tahoe puts on its own selected sidebar row (measured in

@@ -4,7 +4,8 @@
 // There is exactly one lifted SURFACE in the window: the terminal canvas. `slateIsland()` is where it
 // is made, so law 1 lives in one place instead of being re-derived per column:
 //   • the island paints ``Slate/Surface/island`` — the profile's own glass, never a chrome tone;
-//   • it clips to ``Slate/Metric/islandRadius``, a window-scale corner for a window-scale surface;
+//   • it clips to ``Slate/Metric/islandRadius`` — the FRAME's own corner, so the glass never rounds
+//     harder than the window holding it;
 //   • it floats in an ``Slate/Metric/islandInset`` moat of GROUND, the same on all four sides, so
 //     its top edge rises INTO the band and lands ON the line the band's plates hang from — except
 //     while the navigator is hidden and the band runs over this column, when the top opens to

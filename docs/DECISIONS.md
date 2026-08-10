@@ -7570,3 +7570,36 @@ half could otherwise drift green). The render's grounds sample to `(255,251,235)
 and `(34,33,44)`, all eighteen inks land exactly on the solved hexes, and the measured contrasts are
 6.75–6.81 / 6.02–6.07 / 5.52–5.55 — iso to within 0.05. `project-beds.png` confirms the git line now
 carries six distinct inks with zero pixels of any system hue left.
+
+## The island comes back to the frame's own corner, 26 → 16 (2026-08-10, user-directed)
+
+`Slate.Metric.islandRadius` is now 16 — equal to `windowRadius`, by intent. The glass and the window
+holding it speak one corner, and the island stops being rounder than its own frame.
+
+Settled on a BOARD, not on an argument. 26 / 21 / 16 were rendered at the reference 1280 × 800
+(`.defaultSize`) from this token layer — real ground, real glass, real `Terminal.edge` rim, real moat
+of 8 and `bandInset` of 8, the frame clipped to its own 16 — at `ImageRenderer` scale 2, then read at
+1:1 alongside a three-abreast crop of the top-left corner. At 26 the arc begins before the eye
+reaches the edge and an ~880 × 775pt canvas reads soft.
+
+What the 2026-08-08 round got wrong was not the SCALE but the SOURCE. 26 is what Tahoe measures on a
+window carrying a `.unified` toolbar; the island carries no chrome at all. Spending the top of the
+system's scale on the one surface with the least chrome to wrap around it is what read as
+over-rounded. The island is still a window-scale surface — it now wears THIS window's corner rather
+than a bigger window's.
+
+Apple's macOS 26 guidance publishes no radius table, and that is deliberate: the new design system
+gives three shape RELATIONS — fixed, capsule (radius = half the height), and concentric
+(`inner = outer − padding`) — expressed as `ConcentricRectangle` / `.rect(corner: .containerConcentric)`
+in SwiftUI and `borderShape` / `NSGlassEffectView.cornerRadius` in AppKit, with window radius
+explicitly varying by titlebar style (larger with a toolbar, scaling to it; smaller titlebar-only).
+Numbers exist only in the design-resource kits or by measurement. Strict concentricity would put this
+island at 16 − 8 = 8, the number the first two rounds already rejected as boxy; the 2026-08-08
+observation that the two corners are never seen together (centre column, ~230pt clear of the frame's)
+is why 8 is not owed. It never licensed going PAST the frame, which is the one direction the relation
+forbids.
+
+Reach is one token: `SlateOverlayCard` and the whole floating family keep `radiusPanel` (12) — they
+were briefly re-pointed at `islandRadius` in the 26 round and pointed back — and selection keeps
+`islandRadiusCompact` (10). History: 8 → 14 → 26 → 16. Supersedes "The island takes a window's corner"
+above, in the radius only; the compact-island half of that entry stands.
