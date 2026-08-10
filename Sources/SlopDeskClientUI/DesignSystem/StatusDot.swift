@@ -40,8 +40,9 @@ enum StatusDot {
     /// row's trailing edge), and every mark here is drawn to fit it: the reason the previous port
     /// read as fussy detail was that it squeezed the same silhouettes into 8.
     static let footprint: CGFloat = 14
-    /// The agent-presence ring's diameter. Matched by eye at true size to the outer circle of a
-    /// 12pt `checkmark.circle.fill`, so a row that finishes does not visibly change size.
+    /// The agent-presence ring's diameter. Matched by eye at true size to the outer circle of the
+    /// finish mark — ⚠️ which now sits a point ABOVE it (``finishSymbolSize``, user-directed), so a
+    /// row that finishes gains a hair of size where it used to gain none.
     static let ringDiameter: CGFloat = 10
     /// How many dots ride the ring. Eight keeps the four-fold symmetry that lets a small circle of
     /// marks read as a CIRCLE — the dots at 12, 3, 6 and 9 o'clock do that work on their own.
@@ -61,8 +62,15 @@ enum StatusDot {
 
     // MARK: - otty's badge sizes
 
-    /// The finish mark's point size — otty configures `checkmark.circle.fill` at exactly this.
-    static let finishSymbolSize: CGFloat = 12
+    /// The finish mark's point size. ⚠️ 13, user-directed 2026-08-10 — otty configures
+    /// `checkmark.circle.fill` at 12, and this is the first place the column stops taking otty's
+    /// number. Measured at 12 it was NOT the smaller mark it read as (12.12pt of ink across, against
+    /// the resting ring's 11.88 and five times its mass) — it read small because the ring is eight
+    /// separate dots and the eye counts the air between them as part of the object, while a filled
+    /// disc is only as big as itself. So the correction is to what it READS as, not to a measured
+    /// defect: 13 puts ≈13.1pt across the column, a point clear of the ring, still inside the 14pt
+    /// box. Its one cost is that a row now grows very slightly when it finishes.
+    static let finishSymbolSize: CGFloat = 13
     /// The size otty gives its other badge symbols — a point smaller than the finish, because a
     /// filled straight-edged glyph out-weighs a circle at equal point size. The privilege shield
     /// (``TabBadgeView``) is the one left that uses it.
@@ -101,20 +109,65 @@ enum StatusDot {
     /// ``AgentSpinner/lit(_:hole:)`` carries the width, so nothing else needs touching either way.
     static let holeWidth: Double = 2
     /// herdr's own tempo: one braille frame per 8 ticks of a 60 Hz loop, eight frames to the lap.
-    /// The FAST end of the range below, and nothing quicker — on its own it read as a hurry.
+    /// The QUICK end of the wander below, and nothing quicker — on its own it read as a hurry.
     static let herdrLapPeriod: Double = 8 * 8 / 60
-    /// Seconds per lap for a mark that is NOT running: every still, every test, every frozen mark.
-    /// The middle of the range, not an end of it, so a snapshot shows neither extreme.
-    static let lapPeriod: Double = 1.8
-    /// ⚠️ EXPERIMENT, user-requested 2026-08-10: each mounted mark rolls its OWN lap time inside this
-    /// range instead of every mark sharing one. The point is to watch a spread of tempos on hardware
-    /// and pick, so the range is deliberately wide enough to feel at both ends — herdr's own 1.07 s at
-    /// the fast end (too quick as the ONLY tempo, fine as the quick end of a spread) out to 2.6 s.
+    /// The SLOW end. Slower than this and a lap stops reading as motion and starts reading as a mark
+    /// that has stopped between two frames.
+    static let slowestLapPeriod: Double = 2.6
+    /// The tempos a running mark passes THROUGH. ⚠️ User-directed 2026-08-10, second cut: the same
+    /// spread used to be rolled ONCE PER MOUNT, so a pane picked a speed at birth and held it for its
+    /// whole life — a rail of panes each turning at its own fixed rate. The spread now happens in
+    /// TIME instead of across panes: one mark speeds up and slows down as it runs, because that is
+    /// what thinking looks like from outside, and a perfectly even wheel looks like a progress bar.
+    /// The ends are unchanged, so this is the same band of speeds already judged on hardware.
+    static let lapPeriodRange: ClosedRange<Double> = herdrLapPeriod...slowestLapPeriod
+
+    // MARK: - The wandering tempo
+
+    /// Laps per second at the quick end of the wander, and at the slow end.
+    static var quickRate: Double { 1 / lapPeriodRange.lowerBound }
+    static var slowRate: Double { 1 / lapPeriodRange.upperBound }
+    /// The tempo the wander swings around, and how far to each side of it.
     ///
-    /// This is the one thing that breaks the marks' unison — see ``AgentSpinner``, which still takes
-    /// its PHASE off the wall clock, so a re-render lands mid-lap at whatever tempo that mount rolled.
-    /// Collapsing this back to a single value is a one-line change once a tempo is chosen.
-    static let lapPeriodRange: ClosedRange<Double> = herdrLapPeriod...2.6
+    /// ⚠️ The wander is symmetric in RATE, not in period: a spinner's speed is laps per second, and
+    /// the period is its reciprocal, so a swing that looked even in seconds-per-lap would spend far
+    /// longer crawling than hurrying. The consequence is that the AVERAGE lap is the harmonic middle
+    /// of the two ends (≈1.51 s), a touch quicker than the 1.8 s that shipped as the single settled
+    /// tempo — the mark's mean speed is the one thing this round changes about how fast it looks.
+    static var midRate: Double { (quickRate + slowRate) / 2 }
+    static var rateSwing: Double { (quickRate - slowRate) / 2 }
+    /// Seconds per lap AT THE MIDDLE of the wander — the tempo of a mark that is not wandering: the
+    /// linear term of the phase, every still, every test, every frozen mark.
+    static var lapPeriod: Double { 1 / midRate }
+
+    /// One component of the tempo's wander: a sine on the mark's SPEED, `share` of the full swing
+    /// wide, `turn` of a cycle ahead of the epoch.
+    struct TempoSwell {
+        let period: Double
+        let share: Double
+        let turn: Double
+    }
+
+    /// What the wander is MADE OF — three swells whose shares sum to exactly 1, so the tempo reaches
+    /// both ends of ``lapPeriodRange`` and can never pass either (past the slow end it would stall or
+    /// run backwards; a spinner that reverses reads as a bug, not as a pause).
+    ///
+    /// ⚠️ The periods are deliberately in NON-INTEGER ratios: three sines whose periods divide each
+    /// other resynchronise, and a tempo that repeats on a cycle you can count is a mechanism, which
+    /// is the thing being designed away. As set, the sum has no visible period — the long swell
+    /// carries the mood, the middle one shapes it, the short one keeps it from ever gliding evenly.
+    /// It covers ~93% of the swing inside 30 s, so the wander is legible without watching for it.
+    static let tempoSwells: [TempoSwell] = [
+        TempoSwell(period: 13.1, share: 0.5, turn: 0),
+        TempoSwell(period: 5.9, share: 0.3, turn: 0.37),
+        TempoSwell(period: 2.7, share: 0.2, turn: 0.61),
+    ]
+
+    /// How far apart two mounts' wanders are set, in seconds of the same clock. Every mark obeys one
+    /// tempo law; each rolls its own offset INTO it, so two panes thinking at once are never at the
+    /// same point of the same swell. Without this the whole rail would speed up and slow down in
+    /// lockstep, which reads as the application hitching rather than as agents thinking.
+    static let tempoSeedSpan: Double = 600
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -235,7 +288,15 @@ struct DottedRing: Shape {
 /// a thing to notice at rail size. It turns CLOCKWISE, which
 /// is the reverse of what the bitmask says — see ``BrailleCell/walk``. herdr's own tempo (a frame per
 /// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped as the only tempo and read as a hurry; it is now the
-/// FAST end of a rolled range — see ``StatusDot/lapPeriodRange``.
+/// QUICK END of a tempo that WANDERS as the mark runs — see ``StatusDot/tempoSwells``.
+///
+/// ⚠️ The wander is the point of the second cut (user-directed): a spinner turning at a constant rate
+/// is a machine reporting that something is switched on, and the thing this mark reports is an agent
+/// THINKING. So it hurries and it dwells — the speed drifts across the whole band between herdr's
+/// 1.07 s lap and a 2.6 s one, and never sits at either. That band used to be rolled once per MOUNT,
+/// which gave a rail of panes each turning evenly at its own speed; the same spread now happens in
+/// time, inside every mark. It never stops and never reverses: the tempo is a sum of three swells
+/// whose shares add to exactly one, so the speed reaches the slow end and turns back from it.
 ///
 /// Drawn, the one lie in the original goes away: the hole no longer teleports between eight discrete
 /// dots, it GLIDES. Each dot's ink is a function of how far the hole's centre currently is from it,
@@ -252,9 +313,10 @@ struct DottedRing: Shape {
 ///
 ///  * **The phase comes off the WALL CLOCK, from a fixed epoch** — not from an animation started at
 ///    mount. A re-render (a title changing, a row scrolling back into view) therefore lands the hole
-///    mid-lap instead of snapping it back to the start. This is the rule the typed pulse has followed
-///    since MERIDIAN. ⚠️ Rows no longer turn in UNISON, which they did until the per-mount tempo roll
-///    (``StatusDot/lapPeriodRange``) — that is the experiment's one real cost.
+///    mid-lap instead of snapping it back to the start, and lands it at the tempo the wander is
+///    CURRENTLY at rather than restarting the wander too. This is the rule the typed pulse has
+///    followed since MERIDIAN. ⚠️ Rows no longer turn in UNISON, which they did until the tempo
+///    stopped being one shared number — see ``StatusDot/tempoSeedSpan`` for why that is deliberate.
 ///  * **It is PURE SwiftUI**, so `ImageRenderer` can rasterize it. The platform indicator could not
 ///    be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to photograph the
 ///    mark sheet), which meant the one mark that moved was also the one mark no test could look at.
@@ -274,12 +336,12 @@ struct AgentSpinner: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// This mount's own lap time, rolled once from ``StatusDot/lapPeriodRange`` and held for as long
-    /// as the view keeps its identity — see that range's note: an EXPERIMENT, so a spread of tempos
-    /// can be judged on hardware at once. `@State` rather than a computed roll because a fresh number
-    /// on every re-render would make the hole jump, which is the exact defect the wall-clock phase
-    /// exists to prevent.
-    @State private var period = Double.random(in: StatusDot.lapPeriodRange)
+    /// Where in the shared wander this mount sits, rolled once and held for as long as the view keeps
+    /// its identity (``StatusDot/tempoSeedSpan``). Every mark obeys the same tempo law; the seed is
+    /// only an offset into it, so two panes are never hurrying and dwelling in step. `@State` rather
+    /// than a computed roll because a fresh number on every re-render would make the hole jump, which
+    /// is the exact defect the wall-clock phase exists to prevent.
+    @State private var seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
 
     var body: some View {
         cell
@@ -295,7 +357,7 @@ struct AgentSpinner: View {
             // `.animation` schedules at the display's own refresh rate, so the hole slides at
             // 60/120 Hz rather than stepping — and the phase stays a pure function of the date.
             TimelineView(.animation) { timeline in
-                dots(phase: Self.phase(at: timeline.date, period: period))
+                dots(phase: Self.phase(at: timeline.date, seed: seed))
             }
         }
     }
@@ -332,14 +394,52 @@ struct AgentSpinner: View {
         return StatusDot.holeFloor + (1 - StatusDot.holeFloor) * shade
     }
 
+    /// How fast the mark is turning at one wall-clock instant, in LAPS PER SECOND — the wander
+    /// itself, as a value. Pure + static, so what the mark is doing at a given moment can be pinned
+    /// headlessly; ``phase(at:seed:)`` is this function's integral and nothing else reads it.
+    ///
+    /// Between ``StatusDot/slowRate`` and ``StatusDot/quickRate`` at every instant, because the
+    /// swells' shares sum to one. That bound is the whole safety argument: the mark can dwell but it
+    /// can never stall, and it can never run backwards.
+    static func rate(at date: Date, seed: Double = 0) -> Double {
+        let time = date.timeIntervalSinceReferenceDate + seed
+        let wander = StatusDot.tempoSwells.reduce(0) { sum, swell in
+            sum + swell.share * sin(2 * .pi * (turn(of: time, in: swell.period) + swell.turn))
+        }
+        return StatusDot.midRate + StatusDot.rateSwing * wander
+    }
+
     /// The hole's position in its lap, as a fraction of the cell, for one wall-clock instant. Pure +
-    /// static so the cadence is unit-pinned headlessly: one lap per `period`, phase locked to the
-    /// reference epoch (so a mark's lap is a function of the CLOCK, not of when it was mounted — a
-    /// re-render lands mid-lap), and never negative for dates before that epoch.
-    static func phase(at date: Date, period: Double = StatusDot.lapPeriod) -> Double {
-        guard period > 0 else { return 0 }
-        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+    /// static so the cadence is unit-pinned headlessly: the phase is locked to the reference epoch
+    /// (so a mark's lap is a function of the CLOCK, not of when it was mounted — a re-render lands
+    /// mid-lap), and never negative for dates before that epoch.
+    ///
+    /// This is ``rate(at:seed:)`` INTEGRATED, in closed form rather than accumulated frame by frame:
+    /// a sine on the speed integrates to a cosine on the position, so each swell contributes a lead
+    /// or a lag to where the hole has got to. Integrating analytically is what keeps the wall clock
+    /// load-bearing — a spinner that added `rate × Δt` every frame would depend on WHEN it started
+    /// and on which frames it happened to be drawn on, and two panes showing the same agent would
+    /// drift apart while a scrolled-away row would come back holding a stale position.
+    static func phase(at date: Date, seed: Double = 0) -> Double {
+        let time = date.timeIntervalSinceReferenceDate + seed
+        // Reduced to its own lap FIRST: the fraction has to keep its precision a couple of decades
+        // out from the reference epoch, which the raw interval (~10⁹ s) would spend on the integer
+        // part of the lap count nobody reads.
+        var laps = turn(of: time, in: StatusDot.lapPeriod)
+        for swell in StatusDot.tempoSwells {
+            laps -= StatusDot.rateSwing * swell.share * swell.period / (2 * .pi)
+                * cos(2 * .pi * (turn(of: time, in: swell.period) + swell.turn))
+        }
+        let phase = laps.truncatingRemainder(dividingBy: 1)
         return phase < 0 ? phase + 1 : phase
+    }
+
+    /// `time` as a fraction of one cycle of `period`, wrapped into `0..<1` — including for instants
+    /// before the reference epoch, where the raw remainder goes negative.
+    private static func turn(of time: Double, in period: Double) -> Double {
+        guard period > 0 else { return 0 }
+        let turn = time.truncatingRemainder(dividingBy: period) / period
+        return turn < 0 ? turn + 1 : turn
     }
 }
 

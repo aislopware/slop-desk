@@ -412,9 +412,17 @@ final class StatusDotTests: XCTestCase {
             StatusDot.ringDiameter + StatusDot.ringDotDiameter, StatusDot.footprint,
             "the ring's dots stay inside the column, so the right edge never wavers",
         )
-        // otty configures its own badges at these exact sizes: the finish a point larger than the
-        // rest, because a filled straight-edged glyph out-weighs a circle at equal point size.
-        XCTAssertEqual(StatusDot.finishSymbolSize, 12)
+        // ⚠️ The finish is 13, a point ABOVE otty's own 12 (user-directed 2026-08-10): measured, it
+        // was never the smaller mark it read as — a filled disc simply reads smaller than a ring of
+        // eight dots the eye counts the air inside. It must stay AHEAD of the ring's outer extent,
+        // which is what the reading correction bought, and inside the box, which is checked above.
+        XCTAssertEqual(StatusDot.finishSymbolSize, 13)
+        XCTAssertGreaterThan(
+            StatusDot.finishSymbolSize, StatusDot.ringDiameter + StatusDot.ringDotDiameter,
+            "the finish mark reads at least as large as the resting ring it replaces on the row",
+        )
+        // otty's size for the rest, kept: a filled straight-edged glyph out-weighs a circle at equal
+        // point size, so the privilege shield sits a point under the finish's original 12.
         XCTAssertEqual(StatusDot.badgeSymbolSize, 11)
         XCTAssertEqual(StatusDot.symbolWeight, .medium, "otty draws every badge at Medium")
     }

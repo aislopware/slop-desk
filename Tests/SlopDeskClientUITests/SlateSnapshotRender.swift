@@ -174,11 +174,14 @@ final class SlateSnapshotRender: XCTestCase {
         let sheet = VStack(alignment: .leading, spacing: 16) {
             let low = Int(StatusDot.lapPeriodRange.lowerBound * 1000)
             let high = Int(StatusDot.lapPeriodRange.upperBound * 1000)
-            captioned("one lap, flattened — true size, then 4× (each mount rolls \(low)–\(high)ms/lap)") {
+            captioned("one lap, flattened — true size, then 4× (the tempo wanders \(low)–\(high)ms/lap)") {
                 VStack(alignment: .leading, spacing: 8) {
                     self.strip(phases, ink: Slate.StatusInk.warn, zoom: 1, spacing: 10)
                     self.strip(phases, ink: Slate.StatusInk.warn, zoom: 4, spacing: 8)
                 }
+            }
+            captioned("the WANDER — 16 frames 250ms apart, so the hole covers uneven ground per step") {
+                self.strip(Self.wanderFrames(), ink: Slate.StatusInk.warn, zoom: 3, spacing: 8)
             }
             ForEach(inks.indices, id: \.self) { index in
                 self.captioned("cell ink — \(inks[index].0)") {
@@ -209,7 +212,16 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(20)
         .frame(width: 900, alignment: .leading)
         .background(Slate.Surface.ground)
-        try renderHosted(sheet, size: CGSize(width: 900, height: 860), to: dir, named: "status-marks.png")
+        try renderHosted(sheet, size: CGSize(width: 900, height: 940), to: dir, named: "status-marks.png")
+    }
+
+    /// The mark sampled at EQUAL wall-clock steps, off the shipping phase function — so the strip
+    /// shows the one thing a per-lap filmstrip cannot: the hole covering different ground each
+    /// quarter-second, because the tempo wanders (``StatusDot/tempoSwells``). Read as spacing, not as
+    /// shape: even steps here would mean the wander has been flattened back to a constant tempo.
+    @MainActor
+    private static func wanderFrames() -> [Double] {
+        (0..<16).map { AgentSpinner.phase(at: Date(timeIntervalSinceReferenceDate: Double($0) / 4)) }
     }
 
     /// One lap laid out flat — the same view the rail mounts, held at each of the EIGHT points the

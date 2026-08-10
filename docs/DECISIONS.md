@@ -7701,13 +7701,49 @@ same way: a spinner is judged by EYE, not derived from a bitmask.** The directio
 hole now runs down the RIGHT column and up the LEFT, clockwise, the way every other spinner on the
 machine turns; a mark running against that reads as wrong before it reads as anything. And the tempo
 is SLOWER: `8 × 8/60` is herdr's loop rate, not a design decision, and as the ONLY tempo it read as a
-hurry. ⚠️ **The lap time is currently an EXPERIMENT** — each mounted mark rolls its own from
-`StatusDot.lapPeriodRange` so a spread can be judged at once, with `lapPeriod` (1.8 s) as the middle
-that every still, every test and every frozen mark uses. The range keeps herdr's 1.07 s as its QUICK
-END and runs out to 2.6 s: the same tempo that was rejected alone is fine as one end of a spread,
-which is the point of rolling rather than picking. That roll is the ONE
-thing that broke the marks' unison; collapsing the range to a single value once a tempo is chosen is
-a one-line change, and the phase still comes off the wall clock either way.
+hurry. The band it was replaced by — herdr's 1.07 s as the QUICK END, out to 2.6 s — is unchanged and
+still `StatusDot.lapPeriodRange`; what changed twice is HOW a mark moves through it. First each mount
+ROLLED one lap time from it and held it for life (an experiment: a spread of tempos judged at once).
+⚠️ **That roll is SUPERSEDED by the wander below** — a rolled tempo is still a constant tempo, just a
+different one per pane.
+
+**⚠️ The tempo WANDERS as the mark runs (2026-08-10, user-directed, second cut).** *"Let the speed be
+random AS IT RUNS — sometimes quick, sometimes slow, like it is really thinking, not turning evenly."*
+A wheel at a constant rate reports that something is SWITCHED ON; the thing this mark reports is an
+agent THINKING, and thinking is not evenly paced. So the spread that used to be spent across panes is
+now spent inside every mark: the speed drifts over the whole band, hurrying and dwelling, and never
+sits at either end.
+
+- **It is a function of the CLOCK, integrated in closed form** — `AgentSpinner.rate(at:seed:)` is a
+  sine sum on the SPEED, `phase(at:seed:)` is its integral (sine on speed ⇒ cosine on position). ⚠️
+  Not accumulated frame by frame: `phase += rate × Δt` would depend on when the view mounted and on
+  which frames it was drawn on, so two panes showing one agent would drift apart and a scrolled-away
+  row would come back holding a stale position. Analytic integration is what keeps the wall clock
+  load-bearing, which is the property this mark has had since it was drawn.
+- **`StatusDot.tempoSwells` — three swells (13.1 s / 5.9 s / 2.7 s), shares 0.5 / 0.3 / 0.2.** The
+  shares summing to EXACTLY 1 is the safety argument: the speed touches the slow end and turns back,
+  so the mark can dwell but can never stall or reverse (a spinner that runs backwards reads as a bug,
+  not as a pause). ⚠️ The periods are in non-integer ratios on purpose — swells that divide each other
+  resynchronise, and a rhythm you can count is the mechanism being designed away. It covers ~93% of
+  the band inside 30 s, so the wander is legible without being watched for.
+- **The wander is symmetric in RATE, not in period** — speed is laps per second and the period is its
+  reciprocal, so an even-looking swing in seconds-per-lap would spend far longer crawling than
+  hurrying. The consequence is the one real change to how FAST the mark looks: the mean lap is now the
+  harmonic middle of the two ends (≈1.51 s) rather than the 1.8 s that shipped as the single settled
+  tempo. `StatusDot.lapPeriod` is that middle, derived — it is still what every still, every test and
+  every frozen mark is drawn at.
+- **Each mount still rolls ONE number, but it is an OFFSET into the shared wander, not a tempo**
+  (`StatusDot.tempoSeedSpan`). Every mark now has the same average speed and the same law; without the
+  offset a whole rail would hurry and dwell in lockstep, which reads as the application hitching
+  rather than as agents thinking. Unison stays broken, deliberately, and for a different reason than
+  the roll broke it.
+- Pinned in `TabBadgePresentationTests`: the rate never leaves `[slowRate, quickRate]` over 10 min,
+  the phase differenced at 120 Hz equals the rate (the two are written separately — a sign slip would
+  leave a mark turning smoothly at the WRONG times, which no still can show) and always advances, the
+  band is covered inside 30 s while the long-run mean is the middle, two seeds are out of step, and
+  the phase is still pure in the clock and non-negative before the epoch. `SlateSnapshotRender` gains
+  a second filmstrip sampled at EQUAL wall-clock steps (250 ms) beside the per-lap one: read as
+  SPACING, not shape — even steps there would mean the wander has been flattened back to a constant.
 
 **⚠️ TWO cuts were rejected on sight, both from the wrong set.** The first read the frames as an ARC
 ON A CIRCLE (at six samples they are geometrically close) and drew a comet on the resting ring's own
@@ -7746,15 +7782,15 @@ variation-selector trap dies with the frames it guarded (it still applies to the
 
 Three properties are load-bearing, all pinned:
 - **Phase comes off the WALL CLOCK from a fixed epoch**, not from an animation started at mount — so
-  a re-render lands the hole mid-lap rather than snapping it back to the start (⚠️ rows walked in
-  STEP as well until the per-mount tempo roll above).
-  `AgentSpinner.phase(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, exact lap
-  closure, and non-negative wrap before the epoch. `AgentSpinner.lit(_:hole:)` and `BrailleCell` are
+  a re-render lands the hole mid-lap rather than snapping it back to the start, and at the tempo the
+  wander is currently at rather than restarting the wander too (⚠️ rows walked in STEP as well until
+  the tempo stopped being one shared number). `AgentSpinner.phase(at:seed:)` is pure and static; its
+  pins are listed with the wander above. `AgentSpinner.lit(_:hole:)` and `BrailleCell` are
   pure too, and pinned as VALUES — exactly one dark dot at a time with every other at FULL ink, a
   half-step hole splitting evenly across the pair it lies between (including across the seam, or the
   lap would visibly stutter once per turn), the walk order down-RIGHT-then-up-LEFT (a sign slip there
-  silently restores the rejected direction), a tempo range that straddles the settled period and
-  stays positive at both ends, and the block centred in the footprint with its dots' radius inside it.
+  silently restores the rejected direction), a tempo band whose ends stay positive with the settled
+  middle inside them, and the block centred in the footprint with its dots' radius inside it.
 - **Pure SwiftUI**, so `ImageRenderer` can rasterize it — the platform indicator could not be
   rendered at all, which meant the one mark that moved was the one mark no test could look at.
   `SlateSnapshotRender` now lays one lap out flat as a phase-pinned filmstrip (`pinnedPhase`) at the
@@ -7784,6 +7820,18 @@ outside it exactly as the stroke did, so the ring's visual diameter — matched 
 it under the thinking cell's Ø2.6: a PRESENT agent must never out-weigh a WORKING one, and size is
 half of how the column says so. The gap is pinned as a value, because shrinking it turns the mark
 quietly back into a dashed ring with short dashes.
+
+**The FINISH mark goes to 13pt** (`StatusDot.finishSymbolSize`, user-directed 2026-08-10) — ⚠️ the
+first place this column stops taking otty's own number (12). It was reported as reading SMALLER than
+the resting ring, so it was MEASURED first, by rendering the shipping `StatusDotView` into a 16×
+bitmap and taking the ink's bounding box: at 12pt the check was **12.12pt** across against the ring's
+**11.88**, with **five times** the ink (105.6 pt² of disc against 20.1 pt² of eight Ø1.8 dots). It was
+never the smaller mark — it read small because a ring of separate dots claims the air between them as
+part of the object while a filled disc is only as big as itself. ⚠️ **So the fix is to what it READS
+as, and that is only legitimate BECAUSE the measurement came first** — the same complaint about a mark
+that measured genuinely small would have been a different bug with a different fix. 13pt puts it at
+**13.12pt**, a point clear of the ring and still inside the 14pt box. Its one cost: the old promise
+that a row does not change size when it finishes is now approximate rather than exact.
 
 `WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
 affordance (the Android device list's boot button), where matching every other spinner on the machine

@@ -71,68 +71,129 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.agentReading(.needsPermission), .awaiting)
     }
 
-    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the hole walks one
-    /// full lap of the cell per period, phase locked to the fixed epoch (so a mark's lap is a function
-    /// of the CLOCK, not of when it was mounted), linear, and the SAME instant always yields the same
-    /// phase — which is what makes a re-render land mid-lap instead of snapping back to the start.
-    func testSpinnerWalksOneLapPerPeriodFromTheFixedEpoch() {
-        let period = StatusDot.lapPeriod
-        let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        XCTAssertEqual(AgentSpinner.phase(at: epoch), 0, accuracy: 0.0001, "the epoch starts the lap")
-        for lap in 1...3 {
-            XCTAssertEqual(
-                AgentSpinner.phase(at: epoch.addingTimeInterval(period * Double(lap))), 0,
-                accuracy: 0.0001,
-                "lap \(lap) must close exactly — the phase is the clock, not a counter",
-            )
-        }
-        for step in 1..<8 {
-            let fraction = Double(step) / 8
-            XCTAssertEqual(
-                AgentSpinner.phase(at: epoch.addingTimeInterval(period * fraction)), fraction,
-                accuracy: 0.0001, "the walk is LINEAR — an eased spinner reads as a stutter",
-            )
-        }
-        // Before the reference epoch the remainder goes negative; the phase must not.
+    /// The tempo WANDERS, and it stays inside the band it wanders through. ⚠️ This is the invariant
+    /// the whole cadence rests on: the swells' shares sum to exactly one, so the speed reaches the
+    /// slow end and turns back from it. Push the shares past one (a fourth swell added without
+    /// re-dividing them, a share nudged for feel) and the rate goes through zero — the mark would
+    /// STALL mid-lap and then run BACKWARDS, which reads as a bug rather than as a pause.
+    func testTheTempoStaysInsideItsBandAndNeverStalls() {
         XCTAssertEqual(
-            AgentSpinner.phase(at: epoch.addingTimeInterval(-period / 4)), 0.75, accuracy: 0.0001,
-            "dates before the epoch wrap forward, never to a negative phase",
+            StatusDot.tempoSwells.map(\.share).reduce(0, +), 1, accuracy: 0.0001,
+            "the shares ARE the bound — anything over 1 reverses the spinner at the slow end",
         )
-        let mid = epoch.addingTimeInterval(3.14)
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        for step in 0..<12000 {
+            let rate = AgentSpinner.rate(at: epoch.addingTimeInterval(Double(step) / 20))
+            XCTAssertGreaterThanOrEqual(
+                rate, StatusDot.slowRate - 0.0001, "the mark may dwell, never stall or reverse",
+            )
+            XCTAssertLessThanOrEqual(
+                rate, StatusDot.quickRate + 0.0001, "nothing quicker than herdr's own tempo",
+            )
+        }
+    }
+
+    /// The wander has to be VISIBLE, and visible soon — a drift too slight or too slow to notice is
+    /// the constant tempo it replaces, at more cost. Half a minute of watching must cover most of the
+    /// band, and the mean over a long window must sit at the middle of it (a wander that spent its
+    /// time at one end would just be a different constant tempo).
+    func testTheWanderCoversMostOfItsBandWithinHalfAMinuteAndAveragesTheMiddle() {
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        var quickest = -Double.infinity
+        var slowest = Double.infinity
+        for step in 0...3000 {
+            let rate = AgentSpinner.rate(at: epoch.addingTimeInterval(Double(step) / 100))
+            quickest = Swift.max(quickest, rate)
+            slowest = Swift.min(slowest, rate)
+        }
+        XCTAssertGreaterThan(
+            (quickest - slowest) / (2 * StatusDot.rateSwing), 0.7,
+            "30s must show most of the band — a wander you have to look for is not a wander",
+        )
+        var total = 0.0
+        let samples = 60000
+        for step in 0..<samples { total += AgentSpinner.rate(at: epoch.addingTimeInterval(Double(step) / 100)) }
+        XCTAssertEqual(
+            total / Double(samples), StatusDot.midRate, accuracy: 0.01,
+            "the long-run tempo is the MIDDLE of the band, not one of its ends",
+        )
+    }
+
+    /// The drawn phase IS the integral of that tempo — pinned by differencing it at a display's own
+    /// frame rate. ⚠️ The two are written separately (a sine on the speed, a cosine on the position),
+    /// so a sign slip or a dropped factor in either would leave a mark that turns smoothly at the
+    /// WRONG times, which no still can show. It also pins that the hole always moves FORWARD.
+    func testThePhaseIsTheIntegralOfTheTempo() {
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        let frame = 1.0 / 120
+        for step in 0..<36000 {
+            let time = Double(step) * frame
+            var advance = AgentSpinner.phase(at: epoch.addingTimeInterval(time + frame))
+                - AgentSpinner.phase(at: epoch.addingTimeInterval(time))
+            if advance < 0 { advance += 1 }
+            XCTAssertGreaterThan(advance, 0, "every frame moves the hole ON — never back, never stuck")
+            XCTAssertEqual(
+                advance / frame, AgentSpinner.rate(at: epoch.addingTimeInterval(time + frame / 2)),
+                accuracy: 0.001, "the position and the speed must be the same function",
+            )
+        }
+    }
+
+    /// What the wall clock buys, unchanged by the wander: the same instant is the same phase, so a
+    /// re-render lands mid-lap instead of snapping back to the start, and instants before the
+    /// reference epoch wrap forward rather than to a negative phase.
+    func testThePhaseIsAPureFunctionOfTheClock() {
+        let mid = Date(timeIntervalSinceReferenceDate: 3.14)
         XCTAssertEqual(
             AgentSpinner.phase(at: mid), AgentSpinner.phase(at: mid),
             "same instant ⇒ same phase — a re-mount can't restart the walk",
         )
+        for step in 1...200 {
+            let phase = AgentSpinner.phase(at: Date(timeIntervalSinceReferenceDate: -Double(step) / 7))
+            XCTAssertGreaterThanOrEqual(phase, 0, "a date before the epoch must not wrap to a negative phase")
+            XCTAssertLessThan(phase, 1, "the phase is a fraction of one lap")
+        }
     }
 
-    /// The per-mount tempo roll (⚠️ an experiment — see `StatusDot.lapPeriodRange`): the range has to
-    /// be a real spread around the settled middle, and BOTH ends have to keep the lap a lap — a
-    /// non-positive period would divide the phase by zero, and the guard returning 0 would leave a
-    /// working row frozen on dot 0 while claiming to be alive.
-    func testTheTempoRangeStraddlesTheSettledPeriodAndStaysPositive() {
+    /// Two mounts wander INDEPENDENTLY. Every mark obeys one tempo law and rolls its own offset into
+    /// it (`StatusDot.tempoSeedSpan`); without that offset a whole rail of thinking agents would
+    /// hurry and dwell in step, which reads as the application hitching rather than as agents
+    /// thinking — the one thing the old per-mount tempo roll did buy, kept.
+    func testTwoMountsWanderOutOfStepWithEachOther() {
+        let instant = Date(timeIntervalSinceReferenceDate: 12.5)
+        XCTAssertGreaterThan(StatusDot.tempoSeedSpan, 0, "a zero span puts every mark back in lockstep")
+        XCTAssertNotEqual(
+            AgentSpinner.rate(at: instant, seed: 0), AgentSpinner.rate(at: instant, seed: 3.7),
+            accuracy: 0.001, "seeded marks are at different points of the wander at the same instant",
+        )
+        XCTAssertNotEqual(
+            AgentSpinner.phase(at: instant, seed: 0), AgentSpinner.phase(at: instant, seed: 3.7),
+            accuracy: 0.001, "…and their holes are in different places too",
+        )
+    }
+
+    /// The band itself: the ends are the ones already judged on hardware, and the middle the stills
+    /// are drawn at lies inside them. ⚠️ The quick end IS herdr's own tempo — rejected as the ONLY
+    /// tempo, which is not the same as rejected: as the fast extreme of a wander, it is exactly the
+    /// hurry the mark needs to have somewhere.
+    func testTheTempoBandKeepsTheEndsThatWereJudged() {
         let range = StatusDot.lapPeriodRange
         XCTAssertGreaterThan(range.lowerBound, 0, "a zero-or-negative lap would freeze the mark")
-        XCTAssertTrue(
-            range.contains(StatusDot.lapPeriod),
-            "the still/frozen/pinned period must be inside the range the live marks roll from",
-        )
         XCTAssertGreaterThan(
-            range.upperBound, range.lowerBound,
-            "a collapsed range is the old single tempo — the roll would be a no-op",
+            range.upperBound, range.lowerBound, "a collapsed band is a constant tempo again",
         )
         XCTAssertEqual(
             range.lowerBound, StatusDot.herdrLapPeriod, accuracy: 0.0001,
             "the quick end IS herdr's own tempo — fine as an end of a spread, rejected as the only one",
         )
-        for period in [range.lowerBound, StatusDot.lapPeriod, range.upperBound] {
-            let epoch = Date(timeIntervalSinceReferenceDate: 0)
-            XCTAssertEqual(
-                AgentSpinner.phase(at: epoch.addingTimeInterval(period / 2), period: period), 0.5,
-                accuracy: 0.0001, "a \(period)s lap is half done at \(period / 2)s",
-            )
-        }
-        // The guard, not the crash: a degenerate period parks the phase instead of dividing by zero.
-        XCTAssertEqual(AgentSpinner.phase(at: Date(timeIntervalSinceReferenceDate: 3), period: 0), 0)
+        XCTAssertTrue(
+            range.contains(StatusDot.lapPeriod),
+            "the middle every still and every frozen mark is drawn at must lie inside the band",
+        )
+        XCTAssertEqual(
+            StatusDot.lapPeriod, 1 / StatusDot.midRate, accuracy: 0.0001,
+            "the middle is the middle in RATE — averaging seconds-per-lap would dwell far too long",
+        )
     }
 
     /// The hole is ``StatusDot/holeWidth`` dots WIDE and that width is CONSERVED — at every instant
