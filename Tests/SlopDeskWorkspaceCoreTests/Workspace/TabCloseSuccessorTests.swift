@@ -23,7 +23,10 @@ final class TabCloseSuccessorTests: XCTestCase {
         let creationOrder = [a, b, c]
         let display = TabOrderingEngine.projectGroupedTabOrder(creationOrder, projectKey: { keys[$0] })
 
-        XCTAssertEqual(display, [a, c, b], "project grouping pulls the second slop-desk tab beside the first")
+        XCTAssertEqual(
+            display, [b, a, c],
+            "project grouping pulls the second slop-desk tab beside the first, and the sections sort A→Z",
+        )
 
         // No focus history (a cold launch) — rule 2 must carry it on its own.
         XCTAssertEqual(
@@ -95,8 +98,8 @@ final class TabCloseSuccessorTests: XCTestCase {
         let keys: [TabID: String] = [b: "/w/proj", d: "/w/proj/"]
         XCTAssertEqual(
             TabOrderingEngine.projectGroupedTabOrder([a, b, c, d], projectKey: { keys[$0] }),
-            [a, c, b, d],
-            "both keyless tabs bucket together; the trailing slash does not fork a second section",
+            [b, d, a, c],
+            "both keyless tabs bucket together, behind the named project; the trailing slash does not fork",
         )
     }
 

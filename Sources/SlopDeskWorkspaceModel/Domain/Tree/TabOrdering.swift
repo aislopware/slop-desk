@@ -2,10 +2,10 @@ import Foundation
 
 // MARK: - TabOrderingEngine (the pure By-Project key helpers)
 
-/// The PURE helpers behind the sidebar's single layout: sections are ALWAYS bucketed by the By-Project key
-/// and both sections and rows follow first-appearance in `session.tabs` (creation order) — there is no
-/// grouping/sort hamburger, `.byDate` buckets, `.updated` recency sort, or manual drag-reorder; see
-/// `docs/DECISIONS.md` for the rationale. The bucketing itself lives in
+/// The PURE helpers behind the sidebar's single layout: sections are ALWAYS bucketed by the By-Project key,
+/// SECTIONS sort A→Z on their displayed header and ROWS inside one follow first-appearance in
+/// `session.tabs` (creation order) — there is no grouping/sort hamburger, `.byDate` buckets, `.updated`
+/// recency sort, or manual drag-reorder; see `docs/DECISIONS.md` for the rationale. The bucketing itself lives in
 /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` (per-PANE, so a split tab's panes land in
 /// their respective projects), but the BUCKETING ITSELF is ``bucketedByProject(_:projectKey:)`` right
 /// here — the rail and the close rule read the same sections from the same code, at their two different
@@ -107,8 +107,9 @@ public enum TabOrderingEngine {
 
     // MARK: - By-Project bucketing (the ONE sectioning rule)
 
-    /// Buckets `elements` into By-Project sections: keys ``normalizedProjectKey``-folded, SECTIONS in
-    /// first-appearance order, elements WITHIN a section in their incoming order. The sidebar's single
+    /// Buckets `elements` into By-Project sections: keys ``normalizedProjectKey``-folded, SECTIONS
+    /// ALPHABETICAL by their displayed header (``sectionPrecedes(_:_:)``), elements WITHIN a section in
+    /// their incoming order. The sidebar's single
     /// layout, expressed once and generically so its two granularities share it —
     /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` passes pane ROWS (a split tab's panes
     /// land in their respective projects) and ``projectGroupedTabOrder(_:projectKey:)`` passes TABs (what
@@ -118,8 +119,7 @@ public enum TabOrderingEngine {
     /// Sections are (key, elements) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for
     /// the keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
     /// "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
-    /// Linear section lookup is right at these counts (sections in the tens) and keeps first-appearance
-    /// order without a side table.
+    /// Linear section lookup is right at these counts (sections in the tens).
     public static func bucketedByProject<Element>(
         _ elements: [Element],
         projectKey: (Element) -> String?,
@@ -133,7 +133,30 @@ public enum TabOrderingEngine {
                 sections.append((bucket, [element]))
             }
         }
-        return sections
+        return sections.sorted { sectionPrecedes($0.key, $1.key) }
+    }
+
+    /// The SECTION order: named projects A→Z by the header the sidebar actually shows, the keyless
+    /// "Other" bucket last (user-directed 2026-08-10 — the list used to follow first appearance in
+    /// `session.tabs`, so where a project sat was a fact about when you happened to open it).
+    ///
+    /// Ordering on the HEADER (the key's basename), not the key, because the header is what the eye
+    /// scans: `/w/zeta/alpha` reads "alpha" and belongs under A. `localizedStandardCompare` is the
+    /// Finder's comparison — case- and diacritic-insensitive, with digit runs read as numbers, so
+    /// `app2` precedes `app10`.
+    ///
+    /// The key breaks a header tie, which makes this a TOTAL order (keys are unique per section, so
+    /// two sections can never compare equal) — `sorted(by:)` is not documented stable, and two
+    /// same-basename worktrees are exactly the case that would otherwise shuffle between renders. It
+    /// is also the order their parent-qualified headers will read in
+    /// (``RailRowsBuilder/headerDisambiguated(_:)`` turns `/w/feature-a/myapp` into `feature-a/myapp`).
+    public static func sectionPrecedes(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhs else { return false } // the keyless bucket never precedes a named project
+        guard let rhs else { return true }
+        let byHeader = projectSectionHeader(for: lhs)
+            .localizedStandardCompare(projectSectionHeader(for: rhs))
+        if byHeader != .orderedSame { return byHeader == .orderedAscending }
+        return lhs.localizedStandardCompare(rhs) == .orderedAscending
     }
 
     // MARK: - Close → next selection

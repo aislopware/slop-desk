@@ -834,8 +834,8 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// The survivors bucket into project sections (basename headers): the two `…/alpha` tabs land together
-    /// in section 1, the lone `…/beta` tab in section 2 — first-appearance (creation) order.
-    func testSectionedByProjectBucketsRowsByCreationOrder() {
+    /// in section 1, the lone `…/beta` tab in section 2 — sections A→Z, rows inside one in creation order.
+    func testSectionedByProjectBucketsRowsIntoAlphabeticalSections() {
         let store = makeThreeProjectStore()
         let sections = RailRowsBuilder.sectionedByProject(
             RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
@@ -843,6 +843,29 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(sections.map(\.header), ["alpha", "beta"], "section headers are the cwd basenames")
         XCTAssertEqual(sections[0].rows.map(\.tabNumber), [1, 2], "both alpha tabs share section 1")
         XCTAssertEqual(sections[1].rows.map(\.tabNumber), [3], "the lone beta tab is section 2")
+    }
+
+    /// THE ALPHABETICAL SECTION ORDER (user-directed 2026-08-10). A project's slot is a fact about its
+    /// NAME, not about when you happened to open it: three tabs created zulu → alpha → mid draw as
+    /// alpha, mid, zulu. Rows keep creation order INSIDE a section — only the sections move. FAILS on
+    /// the old first-appearance bucketing (which draws zulu first because it was opened first).
+    func testSectionedByProjectOrdersSectionsAlphabeticallyNotByCreation() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let seeded = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/Users/me/zulu", for: seeded[0].id)
+        store.setLastKnownCwd("/Users/me/alpha", for: seeded[1].id)
+        store.setLastKnownCwd("/Users/me/mid", for: seeded[2].id)
+
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+        )
+        XCTAssertEqual(sections.map(\.header), ["alpha", "mid", "zulu"], "sections sort A→Z")
+        XCTAssertEqual(
+            sections.map { $0.rows.map(\.tabNumber) }, [[2], [3], [1]],
+            "the tab numbers are still creation-order — it is the SECTIONS that moved, not the rows",
+        )
     }
 
     /// The search filter composes with the grouping: a query that only matches the `beta` cwd drops the
@@ -999,7 +1022,8 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// A pane with no project key (a video pane, or a cwd-less terminal) lands in the deterministic "Other"
-    /// bucket, ordered by first appearance; the query filter still composes and drops an all-filtered section.
+    /// bucket, which sorts LAST behind every named project; the query filter still composes and drops an
+    /// all-filtered section.
     func testByProjectSectioningKeylessPaneGoesToOther() {
         let store = makeThreeProjectStore()
         // Blank tab-3's cwd so its pane is keyless → "Other" (tab 3 is the third single-pane row).
@@ -1013,9 +1037,8 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// By-Project SECTION order is STABLE across a tab switch: selecting a tab must NOT reorder the
-    /// sections (they follow first-appearance in `session.tabs` — creation order — never focus/recency).
-    /// Two single-pane tabs in different projects keep their creation-order section layout regardless of
-    /// which is focused.
+    /// sections (they sort on their header — never focus/recency). Two single-pane tabs in different
+    /// projects keep their A→Z layout regardless of which is focused.
     func testByProjectSectionOrderStableAcrossTabSwitch() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // two single-pane tabs
@@ -1030,11 +1053,11 @@ final class RailRowBuilderTests: XCTestCase {
         }
 
         store.selectTab(0)
-        XCTAssertEqual(headers(), ["alpha", "beta"], "creation-order section layout")
+        XCTAssertEqual(headers(), ["alpha", "beta"], "A→Z section layout")
         store.selectTab(1)
         XCTAssertEqual(
             headers(), ["alpha", "beta"],
-            "section order stays put across a tab switch — creation order, never focus-derived",
+            "section order stays put across a tab switch — alphabetical, never focus-derived",
         )
     }
 

@@ -1,13 +1,14 @@
 import Foundation
 import SlopDeskWorkspaceModel
 
-// MARK: - Sidebar ordering (ALWAYS grouped By-Project, in creation order) + tab selection helpers
+// MARK: - Sidebar ordering (ALWAYS grouped By-Project, sections A→Z) + tab selection helpers
 
 /// The sidebar-ordering surface factored out of ``WorkspaceStore`` so the class body stays under the
 /// `type_body_length` ceiling (like `WorkspaceStore+Attention.swift` / `WorkspaceStore+Completion.swift`).
 ///
-/// The sidebar has exactly ONE layout (see `docs/DECISIONS.md`): panes bucket by their By-Project key
-/// and both sections and rows follow first-appearance in `session.tabs` (creation order). There is no
+/// The sidebar has exactly ONE layout (see `docs/DECISIONS.md`): panes bucket by their By-Project key,
+/// sections sort A→Z on their header, and rows within a section follow first-appearance in `session.tabs`
+/// (creation order). There is no
 /// client-side grouping/sorting, recency stamps, manual drag-reorder, or git-toplevel sweep — the key is
 /// HOST-pushed (wire type 34 → ``WorkspaceStore/setProjectKey(_:for:)``) so every reconnect converges on
 /// the same sections regardless of client-side state.
@@ -36,8 +37,9 @@ public extension WorkspaceStore {
     /// then flattened section by section.
     ///
     /// This is the numbering ⌘1…⌘9 lands on: the digit must name the row the EYE counts down the
-    /// sidebar, and the sidebar is project-grouped — the moment a new tab for an already-open project
-    /// appends past a different project's tab, creation order and drawn order disagree (the pane-level
+    /// sidebar, and the sidebar is project-grouped and alphabetical — the moment a new tab for an
+    /// already-open project appends past a different project's tab (or opens a project whose name sorts
+    /// above the ones already there), creation order and drawn order disagree (the pane-level
     /// twin of ``TabOrderingEngine/projectGroupedTabOrder(_:projectKey:)``, which exists for the same
     /// reason at tab granularity). Section collapse and the search filter are view state and
     /// deliberately do NOT move numbers — a number moves only when a pane opens, closes, moves, or

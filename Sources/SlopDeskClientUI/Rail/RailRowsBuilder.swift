@@ -699,13 +699,19 @@ enum RailRowsBuilder {
     ///   • the section a pane sits in no longer depends on which pane is focused (no header flicker —
     ///     `projectKey` is a per-pane value, not `tab.activePane`),
     ///   • a single-pane tab's one pane == the tab's project.
-    /// Section ORDER is STABLE: first appearance of each project key while walking rows in their natural
-    /// CREATION order (`rows` are emitted in `session.tabs` order then pane pre-order) — so a section never
-    /// jumps position when you switch tabs. WITHIN each section rows follow `tabOrder`
-    /// (``WorkspaceStore/flatOrderedTabIDs()`` — the same creation order) then pane pre-order. The keyless
-    /// "Other" bucket (video / cwd-less panes) takes its first-appearance slot too. Query filter composes
-    /// first; an all-filtered section is DROPPED. Pure + static so the per-pane grouping rule is
+    /// Section ORDER is ALPHABETICAL by header and STABLE with it (``TabOrderingEngine/sectionPrecedes(_:_:)``):
+    /// a section's slot is a fact about its NAME, so it never jumps when you switch tabs or open a new one.
+    /// WITHIN each section rows follow `tabOrder` (``WorkspaceStore/flatOrderedTabIDs()`` — creation order)
+    /// then pane pre-order. The keyless "Other" bucket (video / cwd-less panes) sorts LAST. Query filter
+    /// composes first; an all-filtered section is DROPPED. Pure + static so the per-pane grouping rule is
     /// unit-pinned without a SwiftUI view.
+    ///
+    /// Sorting happens in the bucketing rather than here, so the close rule's tab-level reading
+    /// (``TabOrderingEngine/projectGroupedTabOrder(_:projectKey:)``) moves with it — "the neighbouring tab"
+    /// has to mean adjacent on SCREEN. The one thing it cannot see is
+    /// ``headerDisambiguated(_:)`` below, which runs after: a parent-qualified header (`feature-a/myapp`)
+    /// sorts under its BASENAME (`myapp`), with the parent segment breaking the tie — colliding worktrees
+    /// stay adjacent instead of scattering to wherever their parent folders happen to fall in the alphabet.
     ///
     /// The bucketing is ``TabOrderingEngine/bucketedByProject(_:projectKey:)`` — the SAME code the close
     /// rule reads at tab granularity, so focus after a close can only land where this drew something.

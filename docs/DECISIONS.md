@@ -723,7 +723,7 @@
 > The user asked to remove the settings group and sort-by controls, always group by project with no sorting, and to compute these on the server so a reconnecting client never recomputes them (instant) — and a standing directive that the SERVER is the single source of truth so any number of client reconnects converges on the same state.
 
 - ✅ **WIRE EXTENSION (golden corpus +1 vector): new CONTROL type 34 `projectKey(path)` (host → client).** The host is now the single source of truth for the By-Project sidebar key: it derives the pane's cwd (OSC-7 sniff when the shell emits it, else a `proc_pidinfo` probe at the OSC-133 B/D **prompt edge** — exactly when a `cd` becomes observable; Starship/hookless shells covered), resolves the **git worktree toplevel with a pure filesystem walk-up** (`ProjectKeyResolver` — never a `git` subprocess on the PTY read-loop thread; `.git` file counts, so linked worktrees group under their own checkout), and emits type 34 **only on change edges** (two dedupe anchors: cwd, then resolved key). Latched at the SNIFF point (the `lastProgress` idiom) and **re-asserted on reattach** alongside 23/26/27/31/32 — plus a latched type-33 `cwd` re-assert, making reattach cwd host-pushed instead of client-RPC-pulled.
-- ✅ **Grouping/sort UI + machinery REMOVED (always By-Project, always creation order).** The sidebar hamburger (`SlateSortMenuButton`), `TabGrouping`/`TabSort` + their persisted `SettingsKey`s, `.byDate` bucketing, `.updated` recency sort (+ `tabLastActiveAt` stamps), `.manual` drag-reorder, and the whole client-side toplevel computation (`paneGitToplevel` cache + debounced `gitStatus` RPC sweep `refreshProjectKeysIfNeeded`/`fetchMissingProjectKeys`) are deleted. `paneProjectKey` = host-pushed key (persisted per-pane in `PaneSpec.projectKey`, so a cold relaunch renders the FINAL sections from disk — the brief cwd-fallback→toplevel re-bucketing flash on reconnect is structurally gone) → `lastKnownCwd` fallback until the first push. Sections order by first-appearance in `session.tabs` (creation order); rows within a section likewise.
+- ✅ **Grouping/sort UI + machinery REMOVED (always By-Project, always creation order).** The sidebar hamburger (`SlateSortMenuButton`), `TabGrouping`/`TabSort` + their persisted `SettingsKey`s, `.byDate` bucketing, `.updated` recency sort (+ `tabLastActiveAt` stamps), `.manual` drag-reorder, and the whole client-side toplevel computation (`paneGitToplevel` cache + debounced `gitStatus` RPC sweep `refreshProjectKeysIfNeeded`/`fetchMissingProjectKeys`) are deleted. `paneProjectKey` = host-pushed key (persisted per-pane in `PaneSpec.projectKey`, so a cold relaunch renders the FINAL sections from disk — the brief cwd-fallback→toplevel re-bucketing flash on reconnect is structurally gone) → `lastKnownCwd` fallback until the first push. Sections order by first-appearance in `session.tabs` (creation order); rows within a section likewise. *(Superseded in the SECTION order only — see "Sidebar projects sort A→Z", 2026-08-10.)*
 
 ## SSOT / week-long-stability / perf audit: 12 confirmed findings fixed (2026-07-11)
 
@@ -7603,3 +7603,31 @@ Reach is one token: `SlateOverlayCard` and the whole floating family keep `radiu
 were briefly re-pointed at `islandRadius` in the 26 round and pointed back — and selection keeps
 `islandRadiusCompact` (10). History: 8 → 14 → 26 → 16. Supersedes "The island takes a window's corner"
 above, in the radius only; the compact-island half of that entry stands.
+
+## Sidebar projects sort A→Z (2026-08-10, user-directed)
+
+Section order in the navigator was first-appearance in `session.tabs` — a project's slot was a fact
+about WHEN you happened to open it, so the list read as unordered and moved for reasons the user had
+no reason to model. Sections now sort alphabetically; rows inside a section still follow creation
+order (`tabOrder` then pane pre-order), which is the one place chronology is the honest answer.
+
+The sort lives in `TabOrderingEngine.bucketedByProject` — the bucketing primitive itself, not in
+`RailRowsBuilder.sectionedByProject` — because three surfaces read it and they must agree: the
+navigator column, the horizontal `WorkspaceTabStrip`, and, at TAB granularity, the close rule
+(`projectGroupedTabOrder` → `successorAfterClose`) plus the ⌘1…⌘9 numbering
+(`displayOrderedPaneIDs`). "Focus the neighbouring tab" and "the third row down" have to mean
+adjacent/third ON SCREEN; sorting one reading and not the other is precisely how focus lands
+somewhere the sidebar never drew.
+
+Ordering is on the DISPLAYED header (`projectSectionHeader`, the key's basename), not the whole key:
+`/w/zeta/alpha` reads "alpha" in the sidebar and belongs under A. `localizedStandardCompare` — the
+Finder's comparison, case- and diacritic-insensitive, digit runs read as numbers (`app2` before
+`app10`). The KEY breaks a header tie, which makes the comparator a TOTAL order (`sorted(by:)` is not
+documented stable, and two same-basename worktrees would otherwise shuffle between renders) and
+happens to be the order their parent-qualified headers read in — `headerDisambiguated` runs after the
+sort, so colliding worktrees stay adjacent under their shared basename instead of scattering to
+wherever their parent folders fall in the alphabet.
+
+The keyless "Other" bucket sorts LAST rather than under O: it is the absence of a name, not a name.
+Supersedes the "always creation order" half of the 2026-07-10 grouping entry; the rest of it — no
+sort UI, no recency, no manual drag-reorder, host-pushed key — stands unchanged.
