@@ -19,10 +19,16 @@ final class PTYProcessTests: XCTestCase {
     /// a PTY master never EOFs on child exit, so the read stays pending forever and the test-end
     /// `close(masterFD)` (PTYProcess.deinit) deadlocks against it in the kernel: the "unkillable 40-min
     /// hang" the resize-burst test's doc describes, surfaced reliably by `swift test --parallel` load.
+    ///
+    /// The timeout is PATIENCE, never an assertion. Every caller asserts on the needle it got back, so a
+    /// genuinely broken PTY fails at any value — waiting longer only costs seconds on a real break. It was
+    /// 5s and `testResizeAfterSpawn` flaked once in a full `make test` (8187 tests, every core busy): the
+    /// spawned `/bin/sh` did not get scheduled to answer the second `stty size` inside the window, so the
+    /// helper returned the shell's own echo. Under that load 5s is a measure of the machine, not the code.
     private func readUntil(
         fd: Int32,
         needle: String,
-        timeout: TimeInterval = 5.0,
+        timeout: TimeInterval = 20.0,
     ) -> String {
         let sink = ByteSink()
         let needleData = Data(needle.utf8)
@@ -297,7 +303,7 @@ final class PTYProcessTests: XCTestCase {
         // slave is genuinely this session's controlling terminal — without that, `/dev/tty` reports
         // "Device not configured"/"not a tty" for interactive zsh.
         Self.write(pty.masterFD, "tty </dev/tty\n")
-        let ttyOut = readUntil(fd: pty.masterFD, needle: "/dev/tty", timeout: 5.0)
+        let ttyOut = readUntil(fd: pty.masterFD, needle: "/dev/tty")
         XCTAssertTrue(
             ttyOut.contains("/dev/tty"),
             "interactive zsh has NO controlling terminal (login_tty/TIOCSCTTY broken): \(ttyOut)",
@@ -317,7 +323,7 @@ final class PTYProcessTests: XCTestCase {
         pty.setWindowSize(cols: 132, rows: 40)
         Thread.sleep(forTimeInterval: 0.3)
         Self.write(pty.masterFD, "print -r -- SLOPDESK_COLS=$COLUMNS\n")
-        let colsOut = readUntil(fd: pty.masterFD, needle: "SLOPDESK_COLS=132", timeout: 5.0)
+        let colsOut = readUntil(fd: pty.masterFD, needle: "SLOPDESK_COLS=132")
         XCTAssertTrue(
             colsOut.contains("SLOPDESK_COLS=132"),
             "zsh did NOT update $COLUMNS after TIOCSWINSZ — SIGWINCH was not delivered to the "
@@ -374,10 +380,10 @@ final class PTYProcessTests: XCTestCase {
         // Wait for the first prompt (ZLE up, history machinery live), then type a marker whose
         // OUTPUT differs from its echoed input — seeing `slopdesk_hist_41001` proves the command
         // RAN (was accepted into history), not merely that the terminal echoed the keystrokes.
-        _ = readUntil(fd: pty.masterFD, needle: "hist-test", timeout: 5.0)
+        _ = readUntil(fd: pty.masterFD, needle: "hist-test")
         let marker = "echo slopdesk_hist_$((41000+1))"
         Self.write(pty.masterFD, marker + "\n")
-        let ran = readUntil(fd: pty.masterFD, needle: "slopdesk_hist_41001", timeout: 5.0)
+        let ran = readUntil(fd: pty.masterFD, needle: "slopdesk_hist_41001")
         XCTAssertTrue(ran.contains("slopdesk_hist_41001"), "zsh never ran the marker: \(ran)")
 
         // THE destroy ladder from `MuxChannelSession.shutdown()` — including the master drain:
@@ -817,7 +823,7 @@ final class PTYProcessTests: XCTestCase {
 
         // zsh's TRAPWINCH fires and prints NUDGE_COLS=<current columns> (80 at spawn). We only need
         // the marker to appear — its presence proves SIGWINCH was delivered.
-        let out = readUntil(fd: pty.masterFD, needle: "NUDGE_COLS=", timeout: 5.0)
+        let out = readUntil(fd: pty.masterFD, needle: "NUDGE_COLS=")
         XCTAssertTrue(
             out.contains("NUDGE_COLS="),
             "nudgeRedraw() must deliver SIGWINCH to the interactive zsh foreground pgrp "
