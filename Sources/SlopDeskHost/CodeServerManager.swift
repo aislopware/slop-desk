@@ -512,6 +512,23 @@ final class CodeServerManager: @unchecked Sendable {
     /// outright when rendered here: the workbench sizes that element in px and tells Monaco those
     /// numbers, so shrinking it in CSS desynchronises the two. With one colour there is nothing to
     /// gap ANYWAY; the edge is the whole island.
+    /// THE EDITOR DRAWS ITSELF ON THE GPU (v33, user-directed 2026-08-10):
+    /// `editor.experimentalGpuAcceleration: "on"` moves Monaco's view layers off the DOM and onto a
+    /// WebGPU canvas. It is a REGISTERED editor option — `Vp(46, "experimentalGpuAcceleration",
+    /// "off", ["off", "on"])` in the 4.131 bundle — so it carries none of the v7 unknown-key trap
+    /// that `chat.commandCenter.enabled` and `window.customTitleBarVisibility` did.
+    /// It is seeded because the panel can actually TAKE that path, which was not obvious and was
+    /// measured rather than assumed: a standalone `WKWebView` probe on this macOS returned
+    /// `navigator.gpu` present, `requestAdapter()` → `requestDevice()` both succeeding on the Apple
+    /// GPU, and a live `getContext("webgpu")` (`maxTextureDimension2D` 8192). Had the device request
+    /// failed the cost would still be bounded — the workbench raises a warning notification whose
+    /// action writes the key back to `"off"` — but a seed that lands on a silent fallback is a seed
+    /// nobody can reason about.
+    /// ⚠️ This changes what is DRAWN, not how keys ARRIVE. The sibling input-path option
+    /// `editor.editContext` defaults on but is `included`-gated on the `EditContext` DOM API, and
+    /// the same probe found `window.EditContext` UNDEFINED — WebKit does not ship it, so Monaco
+    /// keeps the legacy hidden-textarea path in this panel no matter what is seeded here. Typing
+    /// latency lives there and in the mesh round trip; do not expect this key to move it.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -611,6 +628,7 @@ final class CodeServerManager: @unchecked Sendable {
         "editor.guides.bracketPairs": "active",
         "editor.stickyScroll.enabled": true,
         "editor.renderWhitespace": "trailing",
+        "editor.experimentalGpuAcceleration": "on",
         "workbench.tree.renderIndentGuides": "always",
         "workbench.tree.indent": 16,
         "files.autoSave": "onFocusChange"

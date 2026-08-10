@@ -815,6 +815,20 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(min, 38, "below the workbench's own floor")
     }
 
+    func testSeededEditorDrawsOnTheGpuAndClaimsNothingAboutTheInputPath() {
+        // The option is an ENUM in the bundle — `["off", "on"]` — so a boolean or a line-count
+        // number here reads as set while the editor silently keeps the DOM renderer.
+        XCTAssertEqual(seedValue("editor.experimentalGpuAcceleration") as? String, "on")
+        XCTAssertNil(
+            seedValue("editor.experimentalGpuAcceleration") as? Bool,
+            "the enum takes \"on\"/\"off\", never a boolean",
+        )
+        // Its sibling rides the `EditContext` DOM API, which WebKit does not ship — measured
+        // `undefined` in a WKWebView probe. Seeding it would claim an input path this panel can
+        // never take; the fallback is Monaco's hidden textarea either way.
+        XCTAssertNil(seedValue("editor.editContext"))
+    }
+
     func testWorkbenchWrittenThemeKeysDoNotStrandAHost() throws {
         // The workbench re-materialises its theme bookkeeping after a theme change even when the
         // seed omits those keys. Such a file was never user-edited and must still upgrade.
