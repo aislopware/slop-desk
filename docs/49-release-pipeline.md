@@ -43,9 +43,14 @@ better-update has **no macOS platform** — its build/submit pipeline is `ios | 
 (`apps/cli/src/lib/build-profile.ts`). It is used here purely as the end-to-end-encrypted
 credential vault, which is platform-agnostic. Do not try to `better-update build` this repo.
 
-SlopDesk is linked as a **non-Expo** project, so `better-update init --name slop-desk` writes the
-project id to a top-level `projectId` in `eas.json` at the repo root (not `app.json` — there is no
-Expo config here). That file is the only better-update footprint in the tree.
+SlopDesk is linked as a **non-Expo** project, so `better-update init` writes the project id to a
+top-level `projectId` in `eas.json` at the repo root (not `app.json` — there is no Expo config
+here). That file is the only better-update footprint in the tree.
+
+`init` also scaffolds `development` / `preview` / `production` **build** profiles into that file,
+including an Android `aab` format. They were deleted deliberately: better-update never builds this
+repo, and leaving them implies a native pipeline that does not exist. `eas.json` here is one key.
+If you re-run `init`, trim it again.
 
 Variables in environment `production`, all `--visibility sensitive`:
 
@@ -83,8 +88,15 @@ better-update env set APPLE_CERTIFICATE_PASSWORD='<the passphrase>' \
 rm ~/Desktop/developer-id.p12          # the vault is now the only copy outside the keychain
 ```
 
-The CLI must be newer than `0.72.0` (`bun add -g @better-update/cli@latest`); older builds are
-refused by the server.
+The CLI must be newer than `0.72.0` — older builds are refused by the server. **Pin the version
+explicitly** (`bun add -g @better-update/cli@0.73.1`): bun's `minimumReleaseAge` holds back
+packages published in the last 24 h, so `@latest` can quietly resolve to a build the server then
+rejects.
+
+Every `credentials` and `env set` command needs the org vault **unlocked** on this device
+(`better-update credentials unlock`, which prompts for the device passphrase and caches the key in
+the OS keychain). A locked vault does not error — the command sits on a prompt, which in a
+non-interactive context reads as a hang.
 
 ### The CI robot
 
