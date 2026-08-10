@@ -103,9 +103,22 @@ step "Building CLI (swift build -c release)"
 # universal-capable toolchain: the tarball claims arm64 and must contain only arm64. The three
 # shipped executables are `.executableTarget`s with no declared product (Package.swift's
 # `products:` are all libraries), so this is `--target`, not `--product`.
-CLI_BIN="${REPO_ROOT}/.build/arm64-apple-macosx/release"
 for tool in "${CLI_TOOLS[@]}"; do
   (cd "${REPO_ROOT}" && swift build -c release --arch arm64 --target "${tool}")
+done
+
+# ASK SwiftPM where it put them. The triple-named directory (.build/arm64-apple-macosx/release
+# on one host) is not stable across toolchains — hardcoding it built fine and then failed at the
+# copy, which is the worst place to learn it. `--show-bin-path` builds nothing.
+CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --show-bin-path)"
+[[ -d "${CLI_BIN}" ]] || die "swift build --show-bin-path returned no directory: ${CLI_BIN}"
+
+CLI_STAGE="${STAGE}/slopdesk-cli-${VERSION}-arm64"
+mkdir -p "${CLI_STAGE}"
+for tool in "${CLI_TOOLS[@]}"; do
+  built="${CLI_BIN}/${tool}"
+  [[ -x "${built}" ]] || die "swift build did not produce ${built}"
+  cp "${built}" "${CLI_STAGE}/${tool}"
 done
 
 # `slopdesk version` reads a SOURCE constant (Sources/SlopDeskCLICore/CLIVersion.swift), not the
@@ -116,14 +129,6 @@ declared="$("${CLI_BIN}/slopdesk" version | head -1 | awk '{print $2}')"
   die "version drift: \`slopdesk version\` says ${declared}, this release is ${VERSION}.
   Bump Sources/SlopDeskCLICore/CLIVersion.swift (and the MARKETING_VERSION in both
   Apps/*/project.yml) to ${VERSION} before tagging."
-
-CLI_STAGE="${STAGE}/slopdesk-cli-${VERSION}-arm64"
-mkdir -p "${CLI_STAGE}"
-for tool in "${CLI_TOOLS[@]}"; do
-  built="${CLI_BIN}/${tool}"
-  [[ -x "${built}" ]] || die "swift build did not produce ${built}"
-  cp "${built}" "${CLI_STAGE}/${tool}"
-done
 
 step "Signing CLI binaries"
 for tool in "${CLI_TOOLS[@]}"; do
