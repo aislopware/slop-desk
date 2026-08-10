@@ -7788,3 +7788,91 @@ quietly back into a dashed ring with short dashes.
 `WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
 affordance (the Android device list's boot button), where matching every other spinner on the machine
 is the point.
+
+## The urgent pair recolours the row title, and attention outranks active in weight (2026-08-10, user-directed)
+
+Rounds 9–10 retired the ink dialect on titles: every state renders as the same mark, only the HUE
+names it, and the title keeps the neutral ladder with a `.medium` weight bump for attention (the
+mail-unread idiom). That rule is now PARTLY reversed on the user's instruction, in the two places
+where it cost the most.
+
+**Hue, for the urgent pair only.** A BLOCKED agent (amber) and a FAILED command (red) wear the mark's
+own ink across the whole title (`StatusPresentation.urgentInk`, derived from `attentionInk` so the two
+cannot spell the hue differently). The argument that retired the dialect still holds for everything
+else — but it was written when the loudest thing in the rail was an unread finish, and it put the news
+that a run just broke into a 10 pt ring at the far right edge of a row whose title is the widest thing
+on it. A FINISH deliberately stays neutral: green is the calm end of the ramp, and recolouring for it
+would leave the urgent pair nothing louder to be. The mark column is unchanged — this adds a second
+voice for two states, it does not take the state away from the marks.
+
+**Weight, above the active card.** Attention steps to `StatusPresentation.attentionWeight`
+(`.semibold`) instead of sharing the active row's `.medium`. Sharing one step meant a row that needs
+you and a row you are standing on read identically; on one scale, "needs you" has to outrank "you are
+here". Both rails spend it — the sidebar row and the split strip — but only the sidebar takes the hue:
+the strip names the splits of the tab you are already inside, and its rows sit a line from the mark
+that carries the colour.
+
+## The status detector stops announcing things nobody did (2026-08-10, user-reported)
+
+Three false edges, reported together, with three different causes. The comparison against herdr
+(pin `83c7bde`, `scripts/herdr.pin`) is part of the finding: herdr does not have the first two
+BY CONSTRUCTION, and it DOES have the third.
+
+**Hovering an `AskUserQuestion` re-rang the blocked cue.** `PaneInputClassifier` read the X10/UTF-8
+mouse report (`CSI M Cb Cx Cy`) as a keystroke: no private marker, a final byte the switch did not
+know, and three raw position bytes riding BEHIND the final byte that then re-entered the scan as
+text. libghostty encodes mouse in whatever scheme the program asked for, and motion reporting means
+merely moving the pointer over the pane floods that path. `M` and `t` are now unconditionally
+reports (no keyboard encoding produces either), and the X10 form's trailing bytes are consumed with
+it.
+
+**Arrowing between the options did too.** The unblock demoted a standing block on ANY keystroke,
+and the still-visible dialog immediately re-raised it — one blocked→idle→blocked lap, and one cue,
+per keypress. The signal is now CANCEL-ONLY (`containsCancelKeystroke`: Esc in every encoding —
+bare `0x1B`, `ESC ESC`, and kitty's `CSI 27 u`, which is what Claude Code's own keyboard mode
+actually sends — plus `Ctrl-C`). Nothing is lost: an Esc-cancel is the ONE resolution that fires no
+hook; every other way out of a dialog re-promotes through `PreToolUse`/`PostToolUse`.
+⚠️ herdr has no keystroke unblock path at all, which is exactly why it never flaps here — the flap
+was ours, invented along with the feature.
+
+**`/compact` announced a finished turn.** Claude Code ends a compaction the way it ends any turn,
+with `Stop`, which minted `.done` and rang the finish cue for housekeeping the user ran themselves
+and watched complete. `PreCompact` is now installed (reversing its old "no status meaning"
+exclusion) and ARMS a one-shot marker: a `Stop` that arrives with it still armed lands on `.idle`,
+and any turn activity in between disarms it, so an AUTOMATIC mid-turn compaction still ends on a
+genuine `.done`.
+
+⚠️ **That fix is only half a fix on its own, and the half that is easy to miss is the client's.**
+`.working → .idle` is itself the hook-less COMPLETION edge (`AttentionEdge.isCompletion`, herdr's
+rule for agents that have no Stop hook at all), so the client would have re-announced exactly what
+the host just decided not to announce. The boundary therefore travels: the type-27 `kind` byte —
+until now the notification class, meaningful only while blocked and `0` otherwise — gains `4 =
+QUIET`, "display this, do not announce it". No new wire field, so no golden-vector change, and the
+byte was already forward-tolerant on both ends, so an older peer reads `4` as a plain status and
+behaves as before. `setAgentStatus(quiet:)` suppresses the FIRE only: the status commits, the dots
+move, and the coalescing memory is still re-armed so the pane's next real finish notifies.
+
+⚠️ **herdr shares the `/compact` symptom** — its `claude.toml` has no compaction rule, and its
+Claude state is 100 % screen detection (`install_claude` explicitly REMOVES every state hook and
+installs only `SessionStart → session`, an identity report), so a compaction there goes
+Working → Idle → completion transition → done sound. There was no upstream fix to port; this is a
+place where the port is now ahead of its source.
+
+## A border that matches its own fill is not a border — `Terminal.rim` and `Line.overlayRim` (2026-08-10, user-reported)
+
+Reported as "the terminal notices — copied N chars, tab closed — have no border tint, so they are hard
+to read on a dark background". The cause was literal: `terminalEdge` and `terminalRaised` were the
+SAME value (`glass.edge`, `#454158`), so `InstrumentChipShell` stroked its border in exactly the colour
+it filled the plate with. Every chip on the glass had been drawing an invisible border.
+
+**`Slate.Terminal.rim`** is the fix: the plate lifted HALFWAY toward the profile's comment ink
+(`mix(glass.edge, glass.ink2)` → `#5F5880` on Dracula Pro), derived from the profile rather than picked,
+so it follows every terminal theme instead of pinning one. The chip shells and the connection chip take
+it; `edge` keeps its own job (the line BETWEEN things on the glass).
+
+**`Slate.Line.overlayRim`** is the light-side twin, for the surfaces that COVER the workspace — the
+notification/toast card and every summoned sheet. They were using the system separator (~1.25:1 on the
+cream ground), which is right for a line inside a form and wrong for the only thing saying where a
+floating object ends. It is polarity-INVERTING by construction (`slateDynamicLight: 0x000000, dark:
+0xFFFFFF` at `Opacity.rim` 0.20), which is the rule the user stated: a light surface takes a dark rim,
+a dark surface takes a light one.
