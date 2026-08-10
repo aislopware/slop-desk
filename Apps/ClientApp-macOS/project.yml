@@ -65,7 +65,7 @@ targets:
       properties:
         LSMinimumSystemVersion: "26.0"
         NSHighResolutionCapable: true
-        CFBundleShortVersionString: "0.2.0"
+        CFBundleShortVersionString: "0.2.1"
         CFBundleVersion: "1"
         # The CODE panel's WKWebView loads the host's code-server over plain HTTP on the WireGuard
         # mesh (security = the mesh, no app-layer crypto by invariant). ATS only exempts literal
@@ -85,7 +85,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.macos
         PRODUCT_NAME: SlopDesk
-        MARKETING_VERSION: "0.2.0"
+        MARKETING_VERSION: "0.2.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: SlopDesk
