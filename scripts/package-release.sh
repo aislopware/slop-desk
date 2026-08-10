@@ -115,33 +115,57 @@ done
 # fall back to searching .build for a real Mach-O of that name under a release directory.
 CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --show-bin-path 2> /dev/null || true)"
 
+# Search roots, widest last: the scratch dir is not guaranteed to be .build at all — a toolchain
+# that defaults to the Xcode build service can land products in DerivedData.
+SEARCH_ROOTS=("${REPO_ROOT}/.build" "${HOME}/Library/Developer/Xcode/DerivedData")
+
 locate_tool() {
-  local tool="$1" cand matches
-  if [[ -n "${CLI_BIN}" && -f "${CLI_BIN}/${tool}" && -x "${CLI_BIN}/${tool}" ]]; then
+  local tool="$1" cand root
+  if [[ -n "${CLI_BIN}" && -f "${CLI_BIN}/${tool}" ]]; then
     printf '%s\n' "${CLI_BIN}/${tool}"
     return 0
   fi
-  matches="$(find "${REPO_ROOT}/.build" -type f -perm -111 -name "${tool}" 2> /dev/null || true)"
-  [[ -n "${matches}" ]] || return 1
-  while IFS= read -r cand; do
-    # Only a release path. A stale debug build of the same name must never reach the tarball.
-    case "${cand}" in
-      */[Rr]elease/*) ;;
-      *) continue ;;
-    esac
-    file -b "${cand}" | grep -q 'Mach-O' || continue
-    printf '%s\n' "${cand}"
-    return 0
-  done <<< "${matches}"
+  for root in "${SEARCH_ROOTS[@]}"; do
+    [[ -d "${root}" ]] || continue
+    while IFS= read -r cand; do
+      # Release paths only. A stale debug build of the same name must never reach the tarball.
+      # No -perm filter: a product directory created 0700 is still the product.
+      case "${cand}" in
+        */[Rr]elease*/*) ;;
+        *) continue ;;
+      esac
+      file -b "${cand}" 2> /dev/null | grep -q 'Mach-O.*execut' || continue
+      printf '%s\n' "${cand}"
+      return 0
+    done < <(find "${root}" -type f -name "${tool}" 2> /dev/null)
+  done
   return 1
+}
+
+# One failure here costs a five-minute rebuild to diagnose, so spend the listing up front rather
+# than learning the layout one CI round-trip at a time.
+dump_build_layout() {
+  local root
+  echo "--- where did the products go? ---" >&2
+  for root in "${SEARCH_ROOTS[@]}"; do
+    echo "[${root}]" >&2
+    [[ -d "${root}" ]] || {
+      echo "  (does not exist)" >&2
+      continue
+    }
+    find "${root}" -maxdepth 4 -type d 2> /dev/null | head -40 >&2
+    find "${root}" -type f -name '*slopdesk*' 2> /dev/null | head -40 >&2
+  done
 }
 
 CLI_STAGE="${STAGE}/slopdesk-cli-${VERSION}-arm64"
 mkdir -p "${CLI_STAGE}"
 for tool in "${CLI_TOOLS[@]}"; do
-  built="$(locate_tool "${tool}")" ||
-    die "swift build reported success but no release ${tool} Mach-O exists under ${REPO_ROOT}/.build
+  if ! built="$(locate_tool "${tool}")"; then
+    dump_build_layout
+    die "swift build reported success but no release ${tool} executable exists
   (--show-bin-path said: ${CLI_BIN:-<nothing>})"
+  fi
   echo "  ${tool} <- ${built}"
   cp "${built}" "${CLI_STAGE}/${tool}"
 done
