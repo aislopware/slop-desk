@@ -91,6 +91,13 @@ enum StatusDot {
     static let dotPitchY: CGFloat = 3.4
     /// What the hole is dimmed TO. Zero — braille has no half-lit dot, and the gap has to be a gap.
     static let holeFloor: Double = 0
+    /// How many dots the hole is WIDE. ⚠️ Two, user-directed 2026-08-10: one dark dot in a cell of
+    /// eight is a small thing to notice at rail size, and a wider gap gives the walk more to say.
+    ///
+    /// This is where the mark stops being a transcription of `⣾⣽⣻⢿⡿⣟⣯⣷` and starts being a drawing —
+    /// the set clears exactly one bit per frame. Set it back to `1` and the frames are that set again;
+    /// ``AgentSpinner/lit(_:hole:)`` carries the width, so nothing else needs touching either way.
+    static let holeWidth: Double = 2
     /// herdr's own tempo: one braille frame per 8 ticks of a 60 Hz loop, eight frames to the lap.
     /// The FAST end of the range below, and nothing quicker — on its own it read as a hurry.
     static let herdrLapPeriod: Double = 8 * 8 / 60
@@ -219,16 +226,18 @@ struct DottedRing: Shape {
 
 /// The THINKING mark — herdr's spinner, DRAWN.
 ///
-/// The frames are `⣾⣽⣻⢿⡿⣟⣯⣷`: a braille cell with every one of its eight dots lit and exactly one
-/// switched OFF, the dark one stepping round the cell, one lap per eight frames. So the mark is a
-/// small upright BLOCK OF DOTS, and the thing that moves is the GAP in it. It turns CLOCKWISE, which
+/// It starts from `⣾⣽⣻⢿⡿⣟⣯⣷`: a braille cell with every one of its eight dots lit and one switched
+/// OFF, the dark one stepping round the cell, one lap per eight frames. So the mark is a small
+/// upright BLOCK OF DOTS, and the thing that moves is the GAP in it. ⚠️ That gap is now TWO dots wide
+/// (``StatusDot/holeWidth``), which no frame of the set draws — one dark dot in eight was too small
+/// a thing to notice at rail size. It turns CLOCKWISE, which
 /// is the reverse of what the bitmask says — see ``BrailleCell/walk``. herdr's own tempo (a frame per
 /// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped as the only tempo and read as a hurry; it is now the
 /// FAST end of a rolled range — see ``StatusDot/lapPeriodRange``.
 ///
 /// Drawn, the one lie in the original goes away: the hole no longer teleports between eight discrete
-/// dots, it GLIDES. Each dot's ink is a function of how far the hole currently is from it, so with
-/// the hole half a step along, the two dots it sits between are half-dark each — the darkness slides
+/// dots, it GLIDES. Each dot's ink is a function of how far the hole's centre currently is from it,
+/// so a half-step of travel spills half a dot's darkness onto the next dot along — the gap slides
 /// across the block instead of hopping, at whatever rate the display can draw.
 ///
 /// ⚠️ TWO earlier cuts were rejected on sight, both from reading the WRONG braille set (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`,
@@ -306,15 +315,19 @@ struct AgentSpinner: View {
         .frame(width: box.width, height: box.height)
     }
 
-    /// How lit the `index`-th dot is with the hole at `hole` (in dot-steps around the cell). Linear
-    /// in the circular distance and clamped at one step: the hole is one dot wide, so at any instant
-    /// it is either sitting ON a dot or split across the two it lies between — which is exactly what
-    /// makes the darkness slide rather than hop.
+    /// How lit the `index`-th dot is with the hole centred at `hole` (in dot-steps around the cell).
+    ///
+    /// The hole is ``StatusDot/holeWidth`` dots wide: everything within half that of its centre is
+    /// fully dark, and the edge ramps over exactly one more step. So the darkness SLIDES — with the
+    /// centre parked between two dots both are out; roll the centre onto a dot and that dot is out
+    /// with half a dot's worth spilling either side. The total ink removed is the same at every
+    /// instant, which is what stops the walk pulsing as it goes.
     static func lit(_ index: Int, hole: Double) -> Double {
         let count = Double(BrailleCell.dotCount)
         var gap = abs(Double(index) - hole).truncatingRemainder(dividingBy: count)
         if gap > count / 2 { gap = count - gap }
-        return StatusDot.holeFloor + (1 - StatusDot.holeFloor) * min(1, gap)
+        let shade = min(1, max(0, gap - (StatusDot.holeWidth - 1) / 2))
+        return StatusDot.holeFloor + (1 - StatusDot.holeFloor) * shade
     }
 
     /// The hole's position in its lap, as a fraction of the cell, for one wall-clock instant. Pure +

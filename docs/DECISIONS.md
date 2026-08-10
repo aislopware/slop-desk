@@ -7714,6 +7714,15 @@ Three properties are load-bearing, all pinned:
 - **Reduce Motion freezes it** — the platform used to own that call. A frozen cell is still a
   distinct silhouette (a lit block with one corner missing), so the state is never lost.
 
+**The hole is TWO dots wide** (user-directed): one dark dot in a cell of eight is a small thing to
+notice at rail size. ⚠️ This is where the mark stops being a transcription of `⣾⣽⣻⢿⡿⣟⣯⣷` and becomes
+a drawing — no frame of that set clears two bits. `StatusDot.holeWidth` carries it and
+`AgentSpinner.lit(_:hole:)` is the only reader, so `1` restores the literal set. The width is
+CONSERVED at every instant (pinned): parked between two dots the hole is exactly those two, fully
+out, everything else at full ink; rolled onto a dot, that dot is out with half a dot's worth spilling
+each side. A gap that gained and lost darkness as it travelled would read as a mark BREATHING, which
+is another state's vocabulary in this column.
+
 **The RESTING mark is recut in the same pass** (user-directed): the agent-presence ring was lucide
 `circle-dashed`, stroked with an eight-segment 0.6-fill dash pattern, and is now eight round DOTS
 standing further apart than those dashes did (`DottedRing`, Ø1.8 on the same Ø10 circle, ≈2.13 of air
