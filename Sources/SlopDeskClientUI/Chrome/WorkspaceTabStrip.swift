@@ -142,7 +142,9 @@ private struct TabStripChip: View {
                 )
                 .font(.system(
                     size: Slate.Typeface.footnote,
-                    weight: active || attention(chrome.badge) ? .medium : .regular,
+                    weight: attention(chrome.badge)
+                        ? StatusPresentation.attentionWeight
+                        : (active ? .medium : .regular),
                 ))
                 .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
                 .lineLimit(1)
@@ -165,8 +167,10 @@ private struct TabStripChip: View {
         .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// The same weight step the sidebar row spends: a state that WAITS on you reads bold, and the
-    /// mark's hue beside it says which state.
+    /// The same weight step the sidebar row spends (``StatusPresentation/attentionWeight``): a state
+    /// that WAITS on you reads bold, and the mark's hue beside it says which state. The sidebar's
+    /// urgent-title HUE deliberately stops there — this strip names the SPLITS of the tab you are
+    /// already in, and its rows are one line apart from the mark that carries the hue.
     private func attention(_ badge: TabBadgeKind?) -> Bool {
         guard let badge else { return false }
         return StatusPresentation.attentionInk(badge) != nil

@@ -75,11 +75,10 @@ enum StatusPresentation {
     // MARK: Tab badge
 
     /// A `needsAttention` state's HUE on the hue budget: amber = act-now (a question waits), red
-    /// = broken, green = unread-done. `nil` for every non-attention kind. The sidebar row's TITLE
-    /// never recolours — this ink is worn by the row's trailing ring mark
-    /// (``statusDot(working:badge:)``) and the collapsed-group roll-up count
-    /// (``attentionRollupInk(_:)``), so every surface names one
-    /// pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
+    /// = broken, green = unread-done. `nil` for every non-attention kind. This ink is worn by the row's
+    /// trailing ring mark (``statusDot(working:badge:)``), the collapsed-group roll-up count
+    /// (``attentionRollupInk(_:)``) and — for the URGENT pair only — the row's title
+    /// (``urgentInk(_:)``), so every surface names one pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
     /// in the rail animates).
     ///
     /// The hues are ``Slate/StatusInk`` — the INK cut of the vocabulary, not the system `Status` set.
@@ -108,6 +107,41 @@ enum StatusPresentation {
              .sudo: nil
         }
     }
+
+    /// The TITLE's ink for an URGENT row — the subset of ``attentionInk(_:)`` that means *something is
+    /// wrong or stopped and it is waiting on you*: a blocked agent (amber) and a failed command (red).
+    /// `nil` for every other kind, which keeps the neutral ladder.
+    ///
+    /// The rail used to hold the title monochrome on principle — hue was the trailing mark's alone, and
+    /// the title spent only a weight step. That held while the loudest state was an unread finish;
+    /// user-directed 2026-08-10, the two states that STOP work now carry their hue across the whole row,
+    /// because a 10 pt ring at the right edge is a poor place to put the news that a run just broke.
+    ///
+    /// A FINISH is deliberately not here. Green is the "nothing is wrong, come look when you can" end of
+    /// the ramp; recolouring the title for it would leave the urgent pair nothing louder to be. It still
+    /// takes the weight step (the mail idiom — bold says *changed*), so an unread finish is legible
+    /// without spending the hue budget's headroom.
+    ///
+    /// Derived from ``attentionInk(_:)`` rather than respelling the hues, so the title and the mark on
+    /// one row can never disagree about which amber or which red.
+    static func urgentInk(_ kind: TabBadgeKind) -> Color? {
+        switch kind {
+        case .awaitingInput,
+             .error: attentionInk(kind)
+        case .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .completed,
+             .finished,
+             .running,
+             .sudo: nil
+        }
+    }
+
+    /// The WEIGHT a row's title reads at — the ATTENTION step. A state that waits on you (a question,
+    /// a failure, an unread finish) reads bolder than the ACTIVE row's own `.medium`, so "needs you"
+    /// outranks "you are here" on the one scale both spend. Everything else stays regular.
+    static let attentionWeight: Font.Weight = .semibold
 
     /// The COLLAPSED group's roll-up ink: the strongest attention ink among the hidden rows' fused
     /// badges, in the resolver's own urgency order — a waiting question outranks an error outranks

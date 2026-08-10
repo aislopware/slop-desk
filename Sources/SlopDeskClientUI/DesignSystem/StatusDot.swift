@@ -1,6 +1,8 @@
 // StatusDot — the sidebar row's trailing status mark: one fixed right-edge column, one hue budget.
 // The HUE names the state — muted = a resting agent, green = an unread finish, amber = a question
-// waiting — and the title never recolours: the mark column is the AGENT's whole status voice.
+// waiting. The mark column is the agent's status voice for everything EXCEPT the two urgent states —
+// a blocked agent and a failed command — whose hue now also runs across the row's title
+// (`StatusPresentation.urgentInk`, user-directed 2026-08-10); a finish keeps the neutral title.
 //
 // The vocabulary is otty's, transcribed rather than approximated (docs/DECISIONS.md round 23), and
 // it is otty's `TabBadge` case for case — read out of the shipping app, not guessed at:

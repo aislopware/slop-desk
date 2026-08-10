@@ -10,10 +10,13 @@
 // amber = a question waits) and only the thinking spinner moves. A COMMAND's outcome is the trailing
 // SLOT's own text: the command's NAME, bold on the primary ink when it exited clean and bold on red
 // when it did not — two answers, not a glyph vocabulary of its own. A
-// plain shell — busy or not — mounts nothing. The title NEVER
-// recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
-// one the active card takes) on the states that wait on you, so an unread row reads "bold + a
-// coloured ring" the way a mail row reads unread. No row wash, no tinted
+// plain shell — busy or not — mounts nothing. The title spends the WEIGHT step on every state that
+// waits on you (a step above the active card's, so an unread row reads "bold + a coloured ring" the
+// way a mail row reads unread) and, for the two URGENT states only — a blocked agent, a failed
+// command — takes the mark's own hue across the whole run (user-directed 2026-08-10; the rail used to
+// hold the title monochrome, which put the news that a run just broke in a 10pt ring at the far
+// edge). A finish keeps the neutral ink: green is the calm end of the ramp, and recolouring for it
+// would leave the urgent pair nothing louder to be. No row wash, no tinted
 // fill: the rail is monochrome except the marks that carry state. ACTIVE is the raised card
 // (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides the row: no
 // subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
@@ -147,11 +150,14 @@ struct SlateTabRow: View {
                     size: Slate.Typeface.base,
                 )
                 // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
-                // bold says "something changed", the ring's hue says what) — the same
-                // `.medium` step the active card takes, so the two signals share one scale.
+                // bold says "something changed", the ring's hue says what). It takes a step
+                // ABOVE the active card's `.medium` — one scale, and "needs you" outranks
+                // "you are here" on it.
                 .font(.system(
                     size: Slate.Typeface.base,
-                    weight: active || attentionLabel != nil ? .medium : .regular,
+                    weight: attentionLabel != nil
+                        ? StatusPresentation.attentionWeight
+                        : (active ? .medium : .regular),
                 ))
                 .foregroundStyle(titleInk)
                 .lineLimit(1)
@@ -170,12 +176,18 @@ struct SlateTabRow: View {
         .frame(height: Slate.Metric.heightTabRow)
     }
 
-    /// The title's ink — the NEUTRAL live-otty ladder only (state hue belongs to the trailing
-    /// mark): a resting title reads on the SECONDARY ink; the active card's title steps up to
-    /// primary (with the weight bump), and a THINKING agent's title also steps up — the row that
-    /// is doing something reads a shade brighter than the ones that aren't.
+    /// The title's ink. Two ladders, urgency first:
+    ///
+    ///  * an URGENT row — a blocked agent, a failed command — wears the MARK's own hue across the
+    ///    title (``StatusPresentation/urgentInk(_:)``, user-directed 2026-08-10). It outranks
+    ///    everything below, including the active card: a row you are standing on that just broke
+    ///    still reads as broken.
+    ///  * everything else keeps the NEUTRAL live-otty ladder — resting titles on the SECONDARY ink,
+    ///    the active card and a THINKING agent stepping up to primary (the row that is doing
+    ///    something reads a shade brighter than the ones that aren't).
     private var titleInk: Color {
-        active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
+        if let urgent = badge.flatMap(StatusPresentation.urgentInk) { return urgent }
+        return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
     }
 
     /// The AX value for an attention-marked row ("Awaiting input" / "Error" / "Finished"), so the
