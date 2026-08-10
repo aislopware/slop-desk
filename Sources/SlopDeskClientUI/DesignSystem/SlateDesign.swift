@@ -512,7 +512,7 @@ enum Slate {
     /// re-optimising would buy back separation the round just decided to spend, and the ``Deal``
     /// already guarantees the case the eye actually meets (two ADJACENT islands never share a hue).
     ///
-    /// Never spend an entry of this register as an ink, a stroke or a mark. Use ``Slate/Chroma``.
+    /// Never spend an entry of this register as an ink, a stroke or a mark. Use ``Slate/StatusInk``.
     enum ProjectTint {
         /// The five identity BED SOURCES — teal, blue, indigo, magenta, rose. Read the type note
         /// before touching a hex: these are solved values, not picked ones, and each is meaningful
@@ -690,7 +690,7 @@ enum Slate {
     /// was spending its loudest vocabulary on its faintest ink: a `+3` staged count was two and a
     /// half times quieter than the `zsh` label beside it (user-reported 2026-08-10).
     ///
-    /// Two more faults died with it. `Status.warn` and ``Chroma/orange`` are BOTH `systemOrange`, so
+    /// Two more faults died with it. `Status.warn` and the retired `Chroma.orange` were BOTH `systemOrange`, so
     /// the git line's documented green→yellow→orange→red ramp rendered `!modified` and `?untracked`
     /// in one identical colour — a four-rung ramp with three rungs. And `info` (the accent) sat
     /// 12.6° from `Chroma.purple` in Lab hue, so `↑↓` and `$` were near-indistinguishable too.

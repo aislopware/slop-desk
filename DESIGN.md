@@ -51,7 +51,7 @@ rounded:
   compact-island: "10px"
   panel: "12px"
   pill: "20px"
-  island: "26px"
+  island: "16px"
 spacing:
   space1: "4px"
   space2: "8px"
@@ -67,8 +67,8 @@ components:
     note: "FlatDividerSplitView paints the divider AND the split-view backing layer in the ground colour, so the three columns read as one continuous sunken field; the only boundary the window draws is the island's own edge
   island:
     backgroundColor: "{colors.glass-dracula}"
-    rounded: "{rounded.island} — a WINDOW-scale corner for a window-scale surface: 26 is what macOS 26 Tahoe puts on a full-chrome window (measured on this OS). The island sits ~230px clear of the frame's own corners, so nothing constrains it to stay under the window's 16 (user-directed 2026-08-08)"
-    inset: "12px on ALL FOUR sides, so the island's top edge rises INTO the band, just under the traffic lights' own top edge (user-directed 2026-08-09). The one exception: while the navigator is hidden the band's own tab strip moves over this column, and the top opens to the full band so the tinted project beds keep their ground. The trailing side gives way to the panel's rail when the panel is collapsed"
+    rounded: "{rounded.island} — THE FRAME'S OWN corner, so the glass and the window holding it speak one corner: 16 is what macOS 26 Tahoe measures on a titlebar-only window, which is what this app runs. DOWN FROM 26 (user-directed 2026-08-10) — 26 belongs to a `.unified`-toolbar window, and at 26 the arc starts before the eye reaches the edge and the canvas reads soft. History: 8 → 14 → 26 → 16"
+    inset: "8px on ALL FOUR sides, so the island's top edge rises INTO the band, just under the traffic lights' own top edge (user-directed 2026-08-09). DOWN FROM 12: the navigator and the panel each hold their content off their edges by 8, so a 12pt moat put 20pt of ground between a tab card and the glass while the bottom edge — which meets the window frame with nothing in between — got 12. Eight is what makes the four gaps read alike. The one exception: while the navigator is hidden the band's own tab strip moves over this column, and the top opens to the full band so the tinted project beds keep their ground. The trailing side gives way to the panel's rail when the panel is collapsed"
     border: "1px Slate.Terminal.edge, inset-stroked inside the clip — the GLASS's own edge tone, a step lighter than the face, so the rim belongs to the island rather than to the tone step against the ground (user-directed 2026-08-10). The chrome separator it replaced resolves on the light side and drew 1.05:1 on `#22212C`, i.e. nothing"
     note: "THE ONE ISLAND (user-directed 2026-08-08) — the terminal canvas, the window's only lifted surface. `View.slateIsland()` is its single call site; a second one is the many-islands clutter coming back. Panes tile it edge-to-edge, parted by the PaneDivider hairline, never by a channel"
   sidebar:
@@ -115,9 +115,6 @@ components:
     backgroundColor: "transparent at rest; State.hover wash on hover; SELECTED = a compact island — the island fill + a divider hairline, ink flipped to the glass polarity (user-directed 2026-08-08)"
     rounded: "{rounded.compact-island}"
     height: "24px"
-  command-ladder:
-    textColor: "the GLASS's status inks — running = Terminal.accent, clean = Terminal.ok, failed = Terminal.err (the profile's OWN ANSI green/red); NEVER Status.ok/.err, which is the SYSTEM palette and read as a foreign signal green beside the Dracula Pro cells (user-reported 2026-08-09)"
-    note: "PEEK: a 1s dwell on a tick ARMS a preview MODE (not a tooltip) — the card carries the command, its outcome and an excerpt of its output, and while armed moving down the rail swaps it instantly; leaving the rail disarms after a 400ms grace. The excerpt follows the OUTCOME: clean = first lines, failed = LAST lines (the first lines of a failing build are the banner every build prints), and the card names which end it took. Drawn in the GLASS vocabulary + the TERMINAL's own face — the pane's family with its fallbacks + the symbols faces behind it as a Core Text CASCADE (a family alone leaves PUA glyphs on .LastResort, i.e. boxes) and NEVER hit-testable; the excerpt keeps its ANSI COLOURS, parsed from the block's RAW bytes and resolved against the profile's own palette. One wire fetch per block, cached, never for a running one (the host retains output only on completion). The tick's AppKit `.help` is GONE — it would open a second, poorer tooltip over this. || the terminal pane's trailing-edge tick rail (round 14): one 6x2 tick per OSC-133 command block (10x3 under the pointer), newest at the bottom; muted at rest, full ink under the pointer; click = focus the pane, then the navigator's own re-anchor jump + landed flash. It stands in the pane's GUTTER — the leaf's own {metric.paneGutter} SIDE padding (wider than its {space.2} ends), mounted OUTSIDE it — so neither mark nor hit area is ever over a cell and no trailing-edge click is taken from the terminal. Pitch is QUANTIZED to a closed rung set (14/12/10/8/6): a continuous available/count pitch shifted every tick a fraction of a point per command. Steps down the rungs before any tick is dropped, then holds the 6pt floor and drops oldest. The pitch is also a tick's hit HEIGHT, which is why the rungs were stepped up (2026-08-09): a band is 12x14, a bit over twice the old target. Evenly pitched ON PURPOSE — blocks carry prompt ordinals, not rows, and a proportional minimap would be a drawing of a guess (absent-never-wrong)"
   no-results-line:
     textColor: "Slate.Text.tertiary (overlay cards: SlateOverlayInk.tertiary)"
     note: "SlateNoResultsLine — the ONE zero-state voice for list surfaces (palette, search, popover rows): a single centred body line, text-only, no illustration, no glyph. Full-pane emptiness is SlateEmptyState."
@@ -192,7 +189,7 @@ varies behind it, and after ONE ISLAND there are exactly two flat opaque tones b
 effect degraded to a grey slab that also flipped relationship halfway across itself — light-over-cream
 at the card's edges, light-over-glass in its middle. Apple's own guidance points the same way (do not
 stack glass; apply the material once, at the top). The family is now PAPER: `Surface.field`, opaque,
-cut at the island's 26, hairline-edged, on the `palette` shadow rung. Rendered side by side at true
+cut at the island's corner, hairline-edged, on the `palette` shadow rung. Rendered side by side at true
 size the choice was not close — a dark card lands centred, which is exactly where the dark island
 already is, so it disappeared; the cream one reads as a sheet laid on the canvas at ~13:1. The card
 takes `Surface.field` and NOT the island's glass for that reason, and it keeps the neutral
@@ -204,11 +201,11 @@ cream lifted off the ground, and nothing but the cast tells them apart at the ca
 
 ### Geometry
 
-Window 16, moat **12 on all four sides**, island **26**, compact island (selected tab) **10**.
+Window 16, moat **8 on all four sides**, island **16**, compact island (selected tab) **10**.
 
 The band is **40** = one 24pt control with a grid step above and below, and everything in it —
 lights, toggle, the collapsed-state tab beds, the panel's surface tabs and its action plates — sits
-on ONE ROW OF CENTRES at 20 (user-directed 2026-08-09). The island's top edge lands at 12, inside
+on ONE ROW OF CENTRES at 20 (user-directed 2026-08-09). The island's top edge lands at 8, inside
 that row rather than under it: the moat is uniform, so the glass rises to just under the lights.
 40 is also where every column's SECOND row starts — the search field, the editor tabs, and (only
 while the navigator is hidden, when the band's tab strip moves over the middle column) the island.
@@ -226,14 +223,23 @@ it runs `.hiddenTitleBar`), **`.unifiedCompact` toolbar 21**, **`.unified` toolb
 System Settings both land there). The same method on Tahoe's smaller surfaces: a grouped content card
 ≈ 11, a selected sidebar row ≈ 8.
 
-The island wears **26** — the top of that scale, the corner the OS puts on a full-chrome window —
-because the island IS a window-scale surface (~880 × 775pt), and one wearing a window's corner reads
-as a window floating inside the window, which is the metaphor. The earlier 8, then 14, came from a
-concentricity rule (inner = outer − inset) that does not apply: the island lives in the CENTRE
-column, ~230pt clear of the frame's own corners, so the two are never seen side by side and nothing
-holds the island under 16. Its neighbours are flat dividers and bare ground. JetBrains' `Island.arc`
-and Canario's ≈7.5 are small because their islands tile a window edge to edge; ours is one card in
-the middle of a field.
+The island wears **16** — THIS window's own corner, so the glass and the frame holding it speak one
+corner. It stays a window-scale surface (~880 × 775pt); it just no longer borrows a bigger window's
+arc. **Down from 26** (user-directed 2026-08-10), settled on a true-size board rather than on the
+argument: 26 / 21 / 16 rendered at the reference 1280 × 800 from this token layer, with the real
+ground, glass and rim, read at 1:1. At 26 the arc starts before the eye reaches the edge and the
+canvas reads soft — and 26 belongs to a window carrying a `.unified` toolbar, while the island
+carries no chrome at all.
+
+Apple's rule for macOS 26 is a RELATION, never a table: fixed, capsule, or concentric
+(`inner = outer − padding`), with `ConcentricRectangle` / `.rect(corner: .containerConcentric)` as
+the API. Strict concentricity would say 16 − 8 = 8, the number two earlier rounds already rejected as
+boxy; 16 is the nearest rung that stops the island being ROUNDER than the frame containing it, which
+is the direction concentricity actually forbids. The 2026-08-08 observation still holds — the island
+lives in the CENTRE column, ~230pt clear of the frame's own corners, so the two are never seen side
+by side — it just never licensed going PAST the frame. Its neighbours are flat dividers and bare
+ground. JetBrains' `Island.arc` and Canario's ≈7.5 are small because their islands tile a window edge
+to edge; ours is one card in the middle of a field. History: 8 → 14 → 26 → 16.
 
 The compact island is not that number scaled down — a corner is read against the surface it cuts, not
 as a ratio. 10 is one rung above Tahoe's own selected-row 8: clearly a rounded island, still clear of
@@ -319,7 +325,7 @@ info status. Everything else interactive is the system's.
 ## Glass — the island
 
 - The content column paints GROUND and lifts ONE island off it: `View.slateIsland()` — the glass,
-  a 26pt continuous corner, a 12pt moat on all four sides (the band's row of controls is centred
+  a 16pt continuous corner, an 8pt moat on all four sides (the band's row of controls is centred
   just below that top edge), and a 1px
   inset `Terminal.edge` stroke — the glass's own selection tone, a step LIGHTER than the face — so
   the island owns its boundary instead of borrowing it from the ground's tone step. Any surface cut
@@ -327,41 +333,6 @@ info status. Everything else interactive is the system's.
   are flush INSIDE the island; splits are divided by the profile's
   `terminalEdge` line — a subtle line ON the glass, never a channel, never per-pane cards. There is
   exactly one call site; a second is the many-islands clutter coming back.
-- **The command LADDER** (round 14) rides each terminal pane's trailing edge: one short tick per
-  OSC-133 command block, oldest→newest top→down, in the GLASS's status inks (running =
-  `Terminal.accent`, clean = `Terminal.ok`, failed = `Terminal.err` — the profile's own ANSI pair,
-  never the system `Status` palette: a mark drawn on the terminal answers to the profile the
-  terminal wears). Muted at rest, full ink under the pointer; a tick click focuses the pane and
-  then runs the navigator's own re-anchor jump, confirmed by the existing landed flash. It lives in
-  the pane's GUTTER, not on the terminal — the leaf holds its surface a `paneGutter` off its SIDES
-  (wider than the `space2` at its ends, because this gutter carries an instrument and that one
-  carries nothing) and the ladder is mounted outside that padding and is exactly that wide, so no
-  mark and no hit area is ever over a cell (before 2026-08-09 a `plate`-wide hit column sat on the
-  last two text columns and swallowed selection drags there). The pitch is quantized to a closed
-  rung set — it steps down 14 → 6 before dropping any tick, so a running pane does not re-lay its
-  whole rail by a fraction of a point per command. Rail and rungs were BOTH stepped up on
-  2026-08-09 (user-directed): the pitch is also a tick's hit height, so the roomier ladder is a
-  bigger target as much as it is a calmer drawing — a band went from 8 × 10 to 12 × 14 points, and
-  the caught rung thickens as well as lengthens so it is unmistakable down a rail of dashes. Ticks are EVENLY pitched, never scroll-proportional — blocks carry prompt
-  ordinals, not rows, and this house draws what it knows (absent-never-wrong). An ordinal-less tick
-  (mid-stream join) dims and goes inert.
-- **The ladder's PEEK** (user-directed 2026-08-09) is a MODE, not a tooltip: a one-second dwell on a
-  tick arms it, and from then on moving down the rail swaps the card at once — reading back through a
-  session is one gesture rather than a second per command. It disarms 400ms after the rail is left.
-  The card is drawn on the glass in the TERMINAL'S OWN FACE — the pane's configured family, with
-  the pane's declared fallbacks and then the symbols faces hung BEHIND it as a Core Text cascade,
-  because the family alone is not enough: plain `JetBrains Mono` carries the powerline subset but
-  not the wider private-use area, no system face claims those code points, and macOS's automatic
-  fallback therefore lands on `.LastResort` — the box (user-reported 2026-08-09; libghostty never
-  had the bug because it carries a symbols fallback of its own) — because it is terminal output shown inside the terminal island; a paper card
-  here would be a bright plate carrying dark-on-light terminal text. The excerpt keeps the COLOURS
-  the terminal drew (user-directed 2026-08-09): it is built from the block's raw captured bytes, so
-  a test runner's greens, a compiler's bold error and a `git status` inverse bed all survive, with
-  every palette slot resolved against the PROFILE's own ANSI entries — the same table libghostty is
-  configured with, so a slot means one thing in the card and in the cells. It never takes a hit. Its excerpt follows the OUTCOME — a clean command is read from its first
-  lines, a failed one from its LAST, since the opening lines of a failing build are the same banner
-  every build prints — and the card says which end it took, because a preview whose provenance is
-  invisible is a preview that can mislead.
 - The column subtree runs under `.environment(\.colorScheme, Slate.glassColorScheme)` — the
   profile's own polarity — so every semantic colour used inside resolves against the glass.
   Satellite pane windows are glass edge-to-edge and adopt the same forced scheme.
@@ -373,8 +344,8 @@ info status. Everything else interactive is the system's.
   traffic lights, the sidebar toggle, the collapsed-state tab strip and the panel's surface tabs,
   every one of them centred at 20 (user-directed 2026-08-09) — a 24pt plate hangs from 8, a 16pt
   disc from 12, and the two read level because their CENTRES agree, not their top edges. The band is
-  40 and every column's second row starts there; the island's top edge lands at 12, inside the row.
-  NO chrome object stands on the glass any more: the panel's old reopen plate had to clear the 26pt
+  40 and every column's second row starts there; the island's top edge lands at 8, inside the row.
+  NO chrome object stands on the glass any more: the panel's old reopen plate had to clear the island's
   corner to stay readable, and it was replaced by the rail (see below). Nothing was lost with the
   title: split / move / close keep their chords, and the cwd readout and Copy Path live in the
   palette's DIRECTORY section.

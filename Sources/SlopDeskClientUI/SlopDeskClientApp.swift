@@ -88,9 +88,11 @@ public struct SlopDeskClientApp: App {
     /// ``WorkspaceRootView`` (both platforms); iOS reads only the two collapse flags (pin is an inert no-op).
     @State private var chrome: WorkspaceChromeState
     #if os(macOS)
-    /// The host-windows feed (docs/45): the ONE `@Observable` store behind the RIGHT rail + Open
-    /// Quickly's host-window rows. App-owned so its renewal loop outlives column mounts; the loop
-    /// itself runs in a scene `.task` and self-gates on chrome/OQ/connection.
+    /// The host-windows feed: the `@Observable` store behind Open Quickly's host-window rows and
+    /// ``AppLaunchMonitor``'s layout auto-switch. (The RIGHT rail it was also built for was retired
+    /// with the host-windows rail in `6a015eab` — the feed outlived it, see the `init` note.)
+    /// App-owned so its renewal loop outlives column mounts; the loop itself runs in a scene `.task`
+    /// and self-gates on chrome/OQ/connection.
     @State private var hostWindowFeed: HostWindowFeed
     /// A WEAK handle to THIS scene's `NSWindow`, captured in the blessed `.introspect(.window)`
     /// closure so the `.onChange(of: chrome.pinned)` pin actuator can re-level the live window WITHOUT the

@@ -44,24 +44,6 @@ private enum Art {
     static let inset: CGFloat = 2
 }
 
-// MARK: - Colour from a palette hex (cross-platform)
-
-extension Color {
-    /// A colour from a bare 6-hex RGB string (a `SlateTheme.ansiPalette` entry / `terminal*Hex`), or `nil` when
-    /// the string isn't 6 hex digits. Reuses the pure, unit-pinned ``CursorColorHex`` parser rather than adding
-    /// a second hex path, and stays AppKit-free so the theme swatch draws on iOS too.
-    init?(paletteHex hex: String) {
-        guard let rgb = CursorColorHex.rgb(hex) else { return nil }
-        self.init(
-            .sRGB,
-            red: Double(rgb.r) / 255,
-            green: Double(rgb.g) / 255,
-            blue: Double(rgb.b) / 255,
-            opacity: 1,
-        )
-    }
-}
-
 // MARK: - CursorCaret (the shared caret shape)
 
 /// The terminal caret in one of the four cursor styles — the ONE place the caret geometry lives, drawn by both
@@ -333,111 +315,6 @@ struct SettingsRememberArt: View {
                 style: StrokeStyle(lineWidth: Slate.Metric.hairline, dash: [2, 2]),
             )
             .padding(Slate.Metric.space1)
-    }
-}
-
-// MARK: - SettingsThemeSwatch (theme-gallery card)
-
-/// A theme as a MINIATURE OF ITSELF: its own background, a title strip, three code lines in its own ANSI
-/// colours, its caret. otty's theme list settles for the name plus four dots (`theme-list.png`); a terminal
-/// theme's real subject is how code looks in it, so the swatch shows code.
-///
-/// Every colour comes from the `SlateTheme` being previewed — NOT from `Slate.*` (which reads the ACTIVE
-/// theme). A swatch that tinted itself with the active theme would render nine identical cards.
-struct SettingsThemeSwatch: View {
-    let theme: SlateTheme
-
-    var body: some View {
-        VStack(spacing: 0) {
-            titleStrip
-            codeLines
-        }
-        .background(background)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                .strokeBorder(SettingsInk.hairline, lineWidth: Slate.Metric.hairline),
-        )
-    }
-
-    /// The header band — the profile's `terminalEdge` tone (one step off the glass), so the swatch
-    /// shows the face/edge relationship the island's internal dividers use as well as the palette.
-    private var titleStrip: some View {
-        HStack(spacing: Art.gap / 2) {
-            ForEach(Array(dotColors.enumerated()), id: \.offset) { _, color in
-                Circle().fill(color).frame(width: Art.dot / 2, height: Art.dot / 2)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Slate.Metric.space1)
-        .frame(height: Art.titleStrip)
-        .background(theme.terminalEdge)
-    }
-
-    /// Three "code lines": a prompt run, a mixed line, and a short line with the caret — each a bar in one of
-    /// the theme's own ANSI colours.
-    ///
-    /// Bar widths are FRACTIONS of the measured container, not of a card-width constant. HW review caught why
-    /// that matters: the System card packs TWO swatches side by side, so each gets half a card — with
-    /// card-width-relative bars the second swatch's content overflowed and was clipped by its neighbour.
-    /// Measuring means one swatch renders correctly at any width it's handed.
-    private var codeLines: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            VStack(alignment: .leading, spacing: Art.gap) {
-                line(fractions: [0.22, 0.34], colors: [ansi(2), ansi(4)], width: width)
-                line(fractions: [0.16, 0.28, 0.2], colors: [ansi(5), theme.terminalInk, ansi(3)], width: width)
-                HStack(spacing: Art.gap) {
-                    bar(fraction: 0.12, color: ansi(1), width: width)
-                    Rectangle()
-                        .fill(caretColor)
-                        .frame(width: Art.bar, height: Art.bar * 2)
-                    Spacer(minLength: 0)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        }
-        .padding(Slate.Metric.space1)
-    }
-
-    private func line(fractions: [CGFloat], colors: [Color], width: CGFloat) -> some View {
-        HStack(spacing: Art.gap) {
-            ForEach(Array(zip(fractions, colors).enumerated()), id: \.offset) { _, pair in
-                bar(fraction: pair.0, color: pair.1, width: width)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func bar(fraction: CGFloat, color: Color, width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-            .fill(color)
-            .frame(width: width * fraction, height: Art.bar)
-    }
-
-    /// The theme's own caret colour, falling back to its foreground (which is what `cursorHex == nil` means).
-    private var caretColor: Color {
-        Color(paletteHex: theme.cursorHex ?? theme.terminalForegroundHex) ?? theme.terminalInk
-    }
-
-    /// The terminal BACKGROUND (`terminalBackgroundHex`), which is what a user recognises a theme by — falling
-    /// back to the profile's glass `Color` when a theme ships an unparseable hex.
-    private var background: Color {
-        Color(paletteHex: theme.terminalBackgroundHex) ?? theme.terminal
-    }
-
-    /// The traffic-light trio, tinted from the theme's own red / yellow / green so even the chrome band carries
-    /// the palette.
-    private var dotColors: [Color] {
-        [ansi(1), ansi(3), ansi(2)]
-    }
-
-    /// One ANSI slot as a colour, falling back to the theme's foreground for a short / malformed palette.
-    private func ansi(_ index: Int) -> Color {
-        guard theme.ansiPalette.indices.contains(index),
-              let color = Color(paletteHex: theme.ansiPalette[index])
-        else { return theme.terminalInk }
-        return color
     }
 }
 

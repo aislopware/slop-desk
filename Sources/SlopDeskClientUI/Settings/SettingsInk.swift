@@ -12,9 +12,10 @@
 // contrast, and the user's accent choice), and every font is a Dynamic-Type text style rather than a fixed
 // point size. `Slate.Metric.*` (the 8pt grid, radii, the height ladder) is theme-free geometry and stays.
 //
-// THE ONE EXCEPTION, deliberately: ``SettingsThemeSwatch`` and the theme gallery draw from the SlateTheme
-// they are PREVIEWING (`theme.ground`, `theme.ansiPalette`, …). A theme picker whose swatches were painted in
-// system colours would show nine identical cards — there, the palette IS the content.
+// NO EXCEPTIONS remain. The theme gallery and its `SettingsThemeSwatch` were the one surface allowed to
+// paint from a `SlateTheme` — they went with the theme picker (ONE appearance, see `DESIGN.md`), and the
+// dead swatch was removed on 2026-08-10. Settings is system semantics end to end; do not add a surface
+// here that draws from `Slate.*`.
 
 #if canImport(SwiftUI)
 import SwiftUI

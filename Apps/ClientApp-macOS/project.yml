@@ -28,7 +28,7 @@ targets:
     platform: macOS
     sources:
       - path: ../Shared
-      # Brand: the Signal S app icon as an Icon Composer bundle (docs/brand is its
+      # Brand: the Slopcat app icon as an Icon Composer bundle (docs/brand is its
       # canonical home — one copy, three targets). Compiled by actool into Assets.car
       # + SlopDesk.icns; pairs with ASSETCATALOG_COMPILER_APPICON_NAME below.
       - path: ../../docs/brand/SlopDesk.icon

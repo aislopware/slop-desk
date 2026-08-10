@@ -34,7 +34,7 @@ targets:
       # The Swift files in THIS directory only (NOT Apps/Shared — that carries the client's
       # own `@main struct ClientAppMain`; the host app has its own `@main` here).
       - path: .
-      # Brand: the Signal S app icon (Icon Composer bundle, canonical copy in docs/brand).
+      # Brand: the Slopcat app icon (Icon Composer bundle, canonical copy in docs/brand).
       # LSUIElement hides the Dock tile, but Finder/Spotlight/About still show the icon.
       - path: ../../docs/brand/SlopDesk.icon
         buildPhase: resources

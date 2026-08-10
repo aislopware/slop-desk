@@ -1,12 +1,5 @@
 // swift-tools-version:6.3
-import Foundation
 import PackageDescription
-
-// Absolute package-root path from the manifest's own location. Makes the Rust staticlib `-L`
-// search path absolute so it resolves in BOTH `swift build` (CWD = package root) AND an Xcode
-// app build (CWD = DerivedData), where relative `-Lrust/target/release` is not found. Recomputes
-// if the repo moves.
-let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
 // SlopDesk — terminal-first remote-coding for Apple platforms.
 //

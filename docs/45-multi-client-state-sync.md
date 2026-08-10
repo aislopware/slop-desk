@@ -1,6 +1,10 @@
 # 45 — Multi-client state sync: the host-owned workspace document
 
-> **STATUS: PROPOSED.** Design for `WorkspaceDocument` — one host-owned workspace state object,
+> **STATUS: SHIPPED — the design record.** Built and unconditional on both ends: the gating flags
+> `SLOPDESK_WORKSPACE_DOC` / `SLOPDESK_PANE_FANOUT` were **deleted**, not defaulted-on
+> ([46](46-gates-env-paths.md) "Deleted deliberately — do not reintroduce"). Sections below that
+> still describe a flag or a fallback are the bake-in-era plan, kept for the reasoning; each carries
+> its own *Terminal state* note. Design for `WorkspaceDocument` — one host-owned workspace state object,
 > synced to N simultaneously-attached clients, host as the only source of truth. Supersedes the
 > client-owned tree of [22](22-workspace-architecture.md) §1.1 for *ownership*; the tree-of-intent ⟂
 > table-of-liveness split, the pure ops, and the `makeSession` test seam survive verbatim. Wire
