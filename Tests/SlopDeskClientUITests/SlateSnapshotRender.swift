@@ -144,7 +144,7 @@ final class SlateSnapshotRender: XCTestCase {
     /// ⚠️ Rendered through an offscreen WINDOW rather than `ImageRenderer` — an inherited constraint
     /// that no longer binds this sheet (the working mark used to be an AppKit `NSProgressIndicator`,
     /// which `ImageRenderer` substitutes an unavailable-placeholder tile for and which never animates
-    /// without a window; the caravan is pure SwiftUI). Kept because the other tiles here are still
+    /// without a window; the drawn cell is pure SwiftUI). Kept because the other tiles here are still
     /// AppKit-backed and one rasterizer for the whole sheet is one set of pixels to trust.
     ///
     /// ⚠️ The working mark is PINNED to a phase list here. A still of a wall-clock spinner catches
@@ -163,7 +163,7 @@ final class SlateSnapshotRender: XCTestCase {
             ("question", StatusDotStyle(ink: Slate.StatusInk.warn, mark: .awaiting)),
             ("agent finish", StatusDotStyle(ink: Slate.StatusInk.ok, mark: .agentFinish)),
         ]
-        // The ink candidates for the thinking caravan, so the choice is settled on pixels rather
+        // The ink candidates for the thinking cell, so the choice is settled on pixels rather
         // than on the argument for each one. `warn` — herdr's own yellow — is the shipping answer.
         let inks: [(String, Color)] = [
             ("warn — herdr's yellow (shipping)", Slate.StatusInk.warn),
@@ -179,10 +179,10 @@ final class SlateSnapshotRender: XCTestCase {
                 }
             }
             ForEach(inks.indices, id: \.self) { index in
-                self.captioned("caravan ink — \(inks[index].0)") {
+                self.captioned("cell ink — \(inks[index].0)") {
                     HStack(spacing: 16) {
                         self.strip([0.875, 0, 0.125], ink: inks[index].1, zoom: 1, spacing: 8)
-                        self.caravan(ink: inks[index].1, phase: 0.05, zoom: 6)
+                        self.cell(ink: inks[index].1, phase: 0.05, zoom: 6)
                         // Beside the marks it has to coexist with, at true size.
                         HStack(spacing: 10) {
                             ForEach(marks.indices, id: \.self) { self.still(marks[$0].1) }
@@ -210,23 +210,24 @@ final class SlateSnapshotRender: XCTestCase {
         try renderHosted(sheet, size: CGSize(width: 900, height: 860), to: dir, named: "status-marks.png")
     }
 
-    /// One lap of the caravan laid out flat — the same view the rail mounts, held at each point.
+    /// One lap laid out flat — the same view the rail mounts, held at each of the EIGHT points the
+    /// braille set itself has, so the strip reads as `⣾⣽⣻⢿⡿⣟⣯⣷` and can be compared to it directly.
     @MainActor
     private func strip(
         _ phases: [Double], ink: Color, zoom: CGFloat, spacing: CGFloat,
     ) -> some View {
         HStack(spacing: spacing) {
             ForEach(phases.indices, id: \.self) { index in
-                self.caravan(ink: ink, phase: phases[index], zoom: zoom)
+                self.cell(ink: ink, phase: phases[index], zoom: zoom)
             }
         }
     }
 
-    /// One pinned caravan, DRAWN at the magnified size rather than `scaleEffect`-ed to it — feeding
+    /// One pinned cell, DRAWN at the magnified size rather than `scaleEffect`-ed to it — feeding
     /// the zoom in keeps the geometry vector all the way down, where a scaled tile is a blown-up
     /// 14pt bitmap and reads as a smudge that is nothing like what the rail draws.
     @MainActor
-    private func caravan(ink: Color, phase: Double, zoom: CGFloat) -> some View {
+    private func cell(ink: Color, phase: Double, zoom: CGFloat) -> some View {
         AgentSpinner(ink: ink, zoom: zoom, pinnedPhase: phase)
     }
 
@@ -310,13 +311,13 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING agent row: the trailing slot carries the walking caravan.
+            // A WORKING agent row: the trailing slot carries the lit cell with its travelling hole.
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true,
                 workingLabel: "Agent working",
                 onSelect: {}, onClose: {},
             )
-            // The SAME state on the SELECTED row — the caravan on the compact island's dark glass,
+            // The SAME state on the SELECTED row — the cell on the compact island's dark glass,
             // which is the one place a light/dark pair can resolve on the wrong side (the trap that
             // made the island chips invisible). The mark must read here or it reads nowhere.
             SlateTabRow(

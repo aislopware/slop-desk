@@ -7638,36 +7638,39 @@ Round 23 gave the working agent the PLATFORM's indeterminate indicator — otty'
 `NSProgressIndicator` scaled into the mark column. Replaced by `AgentSpinner`, on the user's
 instruction to take herdr's spinner but REDRAW it rather than type it.
 
-**What herdr actually draws.** One terminal cell, the braille frames `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, advanced one
-per 8 ticks of a 60 Hz loop (`ui.rs: SPINNERS` / `spinner_frame`). Decoded, those are three lit dots
-walking around the six perimeter positions of a braille cell — a short LINE OF DOTS travelling the
-edge of an upright RECTANGLE — one lap per ten frames. Two of its properties are the medium rather
-than the design: the walk is quantised to six stops, and the half-steps between them are faked by
-lighting a fourth dot, which is why the line appears to stretch and shrink as it goes.
+**What herdr actually draws.** One terminal cell of braille, advanced one frame per 8 ticks of a
+60 Hz loop (`ui.rs: SPINNERS` / `spinner_frame`). ⚠️ It ships TWO sets and the mark went to the wrong
+one twice. `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` is three LIT dots walking the perimeter of an otherwise empty cell; the set
+the user was pointing at is `⣾⣽⣻⢿⡿⣟⣯⣷`, which is the INVERSE — every frame is `0xFF` with exactly
+one bit cleared, so the cell is fully lit and a single dark HOLE steps round it. Decoded bit by bit
+the hole runs dots 1·2·3·7 then 8·6·5·4: down the left column, up the right, anticlockwise, one lap
+per eight frames (`8 × 8/60` = 1.067 s, transcribed rather than picked).
 
-**⚠️ The first cut read those frames as an ARC ON A CIRCLE** (at six samples they are geometrically
-close) and drew a comet on the resting ring's own circle. Rejected on sight: *"not this indicator —
-the one with the dots in a line going round a rectangle"*. The RECTANGLE is the recognisable thing
-about the artwork; a turning arc is the spinner every application already has, so transcribing the
-geometry and discarding the silhouette transcribed the wrong half.
+**⚠️ TWO cuts were rejected on sight, both from the wrong set.** The first read the frames as an ARC
+ON A CIRCLE (at six samples they are geometrically close) and drew a comet on the resting ring's own
+circle — *"not this indicator — the one with the dots in a line going round a rectangle"*. The
+silhouette is the recognisable thing about the artwork; a turning arc is the spinner every
+application already has, so transcribing the geometry and discarding the shape transcribed the wrong
+half. The second cut took that correction literally and walked three dots round a rounded rectangle —
+still the empty-track set. The mark is a FILLED BLOCK WITH A HOLE IN IT, not a line of dots on a
+track.
 
-**The shape.** Three dots of our own, walking the perimeter of a rounded rectangle — a braille cell's
-proportion, upright — continuously, at herdr's exact tempo (`10 × 8/60` = 1.333 s/lap). Corners are
-rounded because a dot turning a hard 90° changes direction in one frame, which is a stutter, which is
-the quantisation this redraw exists to remove. Sized so the DOTS fill the column rather than the
-track: a dot rides half its width outside the track, so the drawn mark measures `track + dot` and
-that is what has to fit the 14pt footprint — the first sizing fitted the track instead and the mark
-came out as three specks in a lot of air.
-
-The dots step DOWN behind the head (`1 → muted → dim`) — the only thing naming which way the line
-walks, since braille itself has no fade to copy.
+**The shape.** A 2 × 4 braille cell, all eight dots lit in the ink, one of them dark and travelling.
+Dots Ø2.6 on a 4.4 × 3.4 pitch, centred in the 14pt mark footprint — wider across than down, as a
+real cell is, so the two columns stay legible as columns while the four rows read as one run. What
+the redraw buys over the typed frames is the ONE lie in the original: the hole no longer teleports
+between eight discrete dots, it GLIDES. Each dot's ink is linear in its circular distance from the
+hole's continuous position and clamped at one step, so with the hole half a step along, the two dots
+it lies between are half-dark each and the darkness slides at whatever rate the display can draw.
+The hole floor is ZERO — braille has no half-lit dot, and a gap that is merely dimmer is not a gap.
 
 **The ink is herdr's own YELLOW** (`StatusInk.warn`), user-directed after seeing both on hardware.
 `info` blue shipped first, on the argument that the attention ramp (amber question / green finish /
 red failure) all means *come here* while a thinking agent means the opposite — and it simply did not
 carry across the rail. ⚠️ That puts the working mark on the SAME hue as the waiting question. What
 keeps them apart is silhouette and motion, not colour: a question is a still HAND, a thinking agent
-is three dots WALKING. A third yellow reading in this column is the collision to watch for. The
+is a lit BLOCK with a hole running round it. A third yellow reading in this column is the collision
+to watch for. The
 accent was rejected on the same pass (the compact glyph used to wear it): in this app the accent
 means SELECTION, so a purple mark on an unselected row reads as a row half-selecting itself.
 
@@ -7680,18 +7683,21 @@ variation-selector trap dies with the frames it guarded (it still applies to the
 
 Three properties are load-bearing, all pinned:
 - **Phase comes off the WALL CLOCK from a fixed epoch**, not from an animation started at mount — so
-  every working row in the rail walks in step and a re-render lands the caravan mid-lap.
+  every working row in the rail walks in step and a re-render lands the hole mid-lap.
   `AgentSpinner.phase(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, exact lap
-  closure, and non-negative wrap before the epoch. `RectTrack.point(at:in:radius:)` is pure too, and
-  pinned as VALUES — corners land where the geometry says, the lap closes, out-of-range fractions
-  wrap instead of flying off the track, and no point of a rounded track leaves its own bounds.
+  closure, and non-negative wrap before the epoch. `AgentSpinner.lit(_:hole:)` and `BrailleCell` are
+  pure too, and pinned as VALUES — exactly one dark dot at a time with every other at FULL ink, a
+  half-step hole splitting evenly across the pair it lies between (including across the seam, or the
+  lap would visibly stutter once per turn), the walk order down-left-then-up-right, and the block
+  centred in the footprint with its dots' own radius inside it.
 - **Pure SwiftUI**, so `ImageRenderer` can rasterize it — the platform indicator could not be
   rendered at all, which meant the one mark that moved was the one mark no test could look at.
-  `SlateSnapshotRender` now lays one lap out flat as a phase-pinned filmstrip (`pinnedPhase`), and
+  `SlateSnapshotRender` now lays one lap out flat as a phase-pinned filmstrip (`pinnedPhase`) at the
+  EIGHT points the braille set itself has, so the strip can be read against `⣾⣽⣻⢿⡿⣟⣯⣷` directly, and
   `sidebar-section.png` gains a SELECTED working row so the mark is checked on the island's dark
   glass too — the ground where a light/dark pair can resolve on the wrong side.
-- **Reduce Motion freezes it** — the platform used to own that call. A frozen caravan is still a
-  distinct silhouette (three dots down one corner of a rectangle), so the state is never lost.
+- **Reduce Motion freezes it** — the platform used to own that call. A frozen cell is still a
+  distinct silhouette (a lit block with one corner missing), so the state is never lost.
 
 `WorkingSpinner` survives as what it now only is: the PLATFORM's generic "this control is waiting"
 affordance (the Android device list's boot button), where matching every other spinner on the machine

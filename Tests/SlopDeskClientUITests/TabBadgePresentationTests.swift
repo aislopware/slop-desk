@@ -71,8 +71,8 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.agentReading(.needsPermission), .awaiting)
     }
 
-    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the caravan
-    /// walks one full lap per period, phase locked to the fixed epoch (so every mount is at the same
+    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the hole walks
+    /// one full lap of the cell per period, phase locked to the fixed epoch (so every mount is at the same
     /// point of the lap), linear, and the SAME instant always yields the same phase — which is what
     /// makes a re-render land mid-lap instead of snapping back to the start.
     func testSpinnerWalksOneLapPerPeriodFromTheFixedEpoch() {
@@ -105,53 +105,71 @@ final class TabBadgePresentationTests: XCTestCase {
         )
     }
 
-    /// The head dot leads and the ones behind it step DOWN — the only thing that names which way the
-    /// line is walking, since braille itself has no fade to copy.
-    func testTheCaravanHeadLeadsAndTheTailStepsDown() {
-        let dims = (0..<StatusDot.dotCount).map(AgentSpinner.dim)
-        XCTAssertEqual(dims.first, 1, "the head is full ink")
-        XCTAssertEqual(dims, dims.sorted(by: >), "every dot behind the head is dimmer than it")
-        XCTAssertGreaterThan(dims.last ?? 0, 0, "no dot in the caravan is invisible")
+    /// The mark is a FULL cell with ONE hole in it — `⣾` is `0xFF` with a single bit cleared, and
+    /// that is the whole reading. So with the hole parked on a dot, that dot is dark and every other
+    /// dot is at full ink; nothing in between, because braille has no half-lit dot to copy.
+    func testTheCellIsFullyLitExceptForOneHole() {
+        for hole in 0..<BrailleCell.dotCount {
+            let inks = (0..<BrailleCell.dotCount).map { AgentSpinner.lit($0, hole: Double(hole)) }
+            XCTAssertEqual(
+                inks[hole], StatusDot.holeFloor, accuracy: 0.0001,
+                "the hole at \(hole) must be the dark dot",
+            )
+            for index in 0..<BrailleCell.dotCount where index != hole {
+                XCTAssertEqual(
+                    inks[index], 1, accuracy: 0.0001,
+                    "dot \(index) is not the hole — a lit cell dot is FULL ink",
+                )
+            }
+        }
     }
 
-    /// The track is a RECTANGLE and the walk goes CLOCKWISE from the top-left, so a frozen mark sits
-    /// where herdr's own frame 0 lights up. Corners are pinned as VALUES: the geometry is the whole
-    /// mark, and a sign error in the arc maths draws a plausible-looking shape in the wrong place.
-    func testTheTrackWalksClockwiseFromTheTopLeft() {
-        // A square with no corner rounding — perimeter 40, one side per quarter lap.
-        let square = CGRect(origin: .zero, size: CGSize(width: 10, height: 10))
-        let corners: [(Double, CGPoint)] = [
-            (0, .zero),
-            (0.25, CGPoint(x: 10, y: 0)),
-            (0.5, CGPoint(x: 10, y: 10)),
-            (0.75, CGPoint(x: 0, y: 10)),
-        ]
-        for (fraction, expected) in corners {
-            let point = RectTrack.point(at: fraction, in: square, radius: 0)
-            XCTAssertEqual(point.x, expected.x, accuracy: 0.001, "x at \(fraction)")
-            XCTAssertEqual(point.y, expected.y, accuracy: 0.001, "y at \(fraction)")
-        }
-        // The lap closes, and a fraction outside 0..<1 wraps rather than flying off the track.
-        for (fraction, same) in [(1.0, 0.0), (1.25, 0.25), (-0.25, 0.75)] {
-            let wrapped = RectTrack.point(at: fraction, in: square, radius: 0)
-            let plain = RectTrack.point(at: same, in: square, radius: 0)
-            XCTAssertEqual(wrapped.x, plain.x, accuracy: 0.001, "\(fraction) wraps to \(same)")
-            XCTAssertEqual(wrapped.y, plain.y, accuracy: 0.001, "\(fraction) wraps to \(same)")
-        }
-        // Every point of a rounded track stays inside the track's own bounds.
-        let track = CGRect(
-            origin: .zero,
-            size: CGSize(width: StatusDot.trackWidth, height: StatusDot.trackHeight),
+    /// Between dots the darkness SLIDES rather than hops: half a step along, the two dots the hole
+    /// lies between are half-dark each. This is the one thing drawing buys over the typed frames —
+    /// and it has to hold across the wrap, or the lap would visibly stutter once per turn.
+    func testTheHoleGlidesBetweenDotsAndAcrossTheWrap() {
+        let last = BrailleCell.dotCount - 1
+        XCTAssertEqual(AgentSpinner.lit(0, hole: 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(1, hole: 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(2, hole: 0.5), 1, accuracy: 0.0001, "only the pair it sits between dims")
+        // The seam: past the last dot the hole runs back onto the first one.
+        XCTAssertEqual(AgentSpinner.lit(last, hole: Double(last) + 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AgentSpinner.lit(0, hole: Double(last) + 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(
+            AgentSpinner.lit(0, hole: Double(BrailleCell.dotCount)), StatusDot.holeFloor,
+            accuracy: 0.0001, "a whole lap lands the hole back on dot 0",
         )
-        for step in 0..<64 {
-            let point = RectTrack.point(
-                at: Double(step) / 64, in: track, radius: StatusDot.trackRadius,
-            )
-            XCTAssertTrue(
-                track.insetBy(dx: -0.001, dy: -0.001).contains(point),
-                "step \(step) left the track at \(point)",
-            )
-        }
+    }
+
+    /// The hole walks DOWN the left column then UP the right — the order `⣾⣽⣻⢿⡿⣟⣯⣷` spells out
+    /// (dots 1·2·3·7 then 8·6·5·4). Pinned as values because the walk order IS the mark: a
+    /// column-major slip draws a plausible cell whose hole jumps diagonally.
+    func testTheHoleWalksDownTheLeftColumnAndUpTheRight() {
+        let walk = BrailleCell.walk
+        XCTAssertEqual(walk.count, BrailleCell.dotCount, "every dot is visited exactly once")
+        XCTAssertEqual(walk.map(\.column), [0, 0, 0, 0, 1, 1, 1, 1])
+        XCTAssertEqual(walk.map(\.row), [0, 1, 2, 3, 3, 2, 1, 0])
+
+        // The block is CENTRED in the mark's column — it shares that column with the Ø10 resting
+        // ring, and an off-centre cell reads as a row whose mark shifted when the agent woke up.
+        let box = CGSize(width: StatusDot.footprint, height: StatusDot.footprint)
+        let points = (0..<BrailleCell.dotCount).map { BrailleCell.position(of: $0, in: box, zoom: 1) }
+        let xs = points.map(\.x)
+        let ys = points.map(\.y)
+        XCTAssertEqual(
+            ((xs.min() ?? 0) + (xs.max() ?? 0)) / 2, box.width / 2, accuracy: 0.0001,
+            "the cell is centred across",
+        )
+        XCTAssertEqual(
+            ((ys.min() ?? 0) + (ys.max() ?? 0)) / 2, box.height / 2, accuracy: 0.0001,
+            "the cell is centred down",
+        )
+        // Dots plus their own radius stay inside the footprint the rail budgets for the mark.
+        let radius = StatusDot.dotDiameter / 2
+        XCTAssertGreaterThanOrEqual((xs.min() ?? 0) - radius, 0)
+        XCTAssertGreaterThanOrEqual((ys.min() ?? 0) - radius, 0)
+        XCTAssertLessThanOrEqual((xs.max() ?? 0) + radius, box.width)
+        XCTAssertLessThanOrEqual((ys.max() ?? 0) + radius, box.height)
     }
 
     /// The collapsed group's roll-up: the header count borrows the STRONGEST attention ink among

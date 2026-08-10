@@ -21,7 +21,7 @@ import SwiftUI
 /// (``StatusPresentation/statusDot(working:badge:)``) — so no glyph column rides the rail.
 ///
 /// ⚠️ `working` is the ONE reading that is not typed: it mounts the rail's own ``AgentSpinner``, the
-/// drawn comet. It used to be a typed pulse (`· ✢ ✳ ✶ ✻ ✽` breathing out and back) and the two
+/// drawn braille cell. It used to be a typed pulse (`· ✢ ✳ ✶ ✻ ✽` breathing out and back) and the two
 /// surfaces then said the same thing two different ways — one pane could be spinning in the sidebar
 /// and blooming in the header at the same instant. There is exactly one working mark in this app now,
 /// and every mount of it turns in unison off the same wall clock.
@@ -49,9 +49,9 @@ struct StatusGlyph: View {
     @ViewBuilder private var content: some View {
         switch reading {
         case .resting: glyph("·", weight: .regular)
-        // The rail's own comet, at the rail's own size: a 16pt text box carries a Ø10 mark the same
-        // way the 14pt rail column does, and using the identical view is what keeps the two surfaces
-        // from ever drifting apart on the state a user watches longest.
+        // The rail's own cell, at the rail's own size: a 16pt text box carries a 14pt mark the same
+        // way the rail column does, and using the identical view is what keeps the two surfaces from
+        // ever drifting apart on the state a user watches longest.
         case .working: AgentSpinner(ink: tint)
         case .awaiting: glyph("?", weight: .bold)
         case .done: glyph("●", weight: .regular)

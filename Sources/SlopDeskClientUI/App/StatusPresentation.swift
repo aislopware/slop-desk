@@ -183,7 +183,7 @@ enum StatusPresentation {
         }
     }
 
-    /// The THINKING agent's mark — the drawn caravan (``AgentSpinner``), on herdr's braille spinner.
+    /// The THINKING agent's mark — the drawn braille cell (``AgentSpinner``), on herdr's spinner.
     ///
     /// **The ink is herdr's own YELLOW** (`StatusInk.warn`), user-directed 2026-08-10 after seeing
     /// both on hardware: `info` blue shipped first, on the argument that the attention ramp (amber
@@ -193,8 +193,8 @@ enum StatusPresentation {
     ///
     /// ⚠️ That puts it on the SAME hue as ``StatusInk/warn``'s other job, the waiting question. What
     /// keeps them apart is the silhouette and the motion, not the colour: a question is a still HAND,
-    /// a thinking agent is three dots WALKING. If a third yellow reading ever lands in this column,
-    /// this is the pair that will collide first.
+    /// a thinking agent is a BLOCK OF DOTS with a hole running round it. If a third yellow reading
+    /// ever lands in this column, this is the pair that will collide first.
     ///
     /// The accent was tried and rejected on the same pass (the compact glyph used to wear it): in
     /// this app the accent means SELECTION — the reason ``Slate/StatusInk/info`` exists as a separate
