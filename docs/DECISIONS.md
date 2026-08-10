@@ -7470,3 +7470,38 @@ re-anchored.
 
 Untouched: `shedLadder`, the tight form's pinned sigil cluster, the tooltip, and the accessibility
 line — the readout's LAYOUT was never what was being argued about.
+
+## The identity bed drops to 0.08 so the status runs are the loudest colour in the rail (2026-08-10, user-directed)
+
+`Slate.Opacity.bed` 0.10 → 0.08. It is the alpha behind BOTH sunken islands — a project group's
+identity bed (`ProjectTint.wash`) and the connection island's neutral (`ProjectTint.neutralBed`) — so
+one token carries the whole round.
+
+The complaint is a ranking, not a colour: a bed is coloured everywhere at once, while the status
+vocabulary (the git line's ramp, the attention marks) is coloured in a few glyphs, and at 0.10 the
+beds were spending more of the eye's colour budget than the runs standing on them. Measured on the
+composite, 0.08 takes ~21 % of the bed's a\*b\* displacement off the cream — the loudest entry
+(magenta) 14.51 → 11.39, the quietest (teal) 5.73 → 4.66 — and lifts the whole set ~1.2 L\*.
+
+What it costs, stated plainly: the register's hexes were solved for maximum minimum separation AT
+0.10 (worst pair ΔE2000 7.00), and every pairwise distance scales toward the cream with the alpha —
+the worst pair now measures ≈5.5 by the same yardstick. That is still well above the ~2.3 where two
+large flat fields stop reading as different colours at all, and the hexes are deliberately NOT
+re-solved: re-optimising would buy back exactly the separation this round decided to spend, and
+`ProjectTint.Deal` already guarantees the case the eye actually meets — two ADJACENT islands never
+share a hue.
+
+What it does not cost: `Text.tertiary` is pinned to this alpha because a tinted bed is a different
+ground, but the pin only binds upward. The alpha fell, so every bed lightened and the quiet rung
+gained margin (4.46 → 4.60 on the deepest bed). `#6C6B64` is kept as solved rather than walked back
+up — it is the cream's own colour at depth, and the ladder reads by its steps, not by its floor.
+
+Honest about the size of the win: the WCAG contrast of a status hue against its bed barely moves
+(green 1.77 → 1.82). The gain is not contrast, it is chroma budget — with the bed spending a fifth
+less colour, the saturated things left in the sidebar are the ones that mean something.
+
+The beds now have a headless render (`testRenderProjectBeds` → `project-beds.png`). They had none:
+the bed is mounted only by `NavigatorColumn` / `WorkspaceTabStrip` / `ConnectionCluster`, so every
+other opt-in render draws the rail with no bed under it and this alpha could have moved unseen.
+Verified by sampling the PNG — teal composites to `#EBF4E4` and rose to `#FEEEE5`, both exactly the
+0.08 arithmetic over `#FFFBEB`.

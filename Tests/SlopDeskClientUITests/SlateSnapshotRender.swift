@@ -324,6 +324,57 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
+    // MARK: - Opt-in render of the identity BEDS (the one surface no other render covers)
+
+    /// Renders every bed in ``Slate/ProjectTint`` — the five identity sources plus the keyless
+    /// neutral the connection island wears — on the AUTHORED cream ground, each carrying a git line
+    /// so the two things that have to stay in balance are in one frame: how much colour the bed
+    /// spends, and how far the status runs standing on it rise off it.
+    ///
+    /// It exists because the bed is mounted only by `NavigatorColumn` / `WorkspaceTabStrip` /
+    /// `ConnectionCluster`, so every other render in this file draws the rail with NO bed under it —
+    /// `Opacity.bed` could move and nothing here would show it. SAME opt-in idiom; writes
+    /// `project-beds.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderProjectBeds() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the identity beds")
+        }
+        let dirt = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 9, staged: 3,
+            modified: 4, untracked: 5, conflicted: 1, stash: 2,
+        )
+        let beds: [(String, Color)] = (0..<Slate.ProjectTint.registerCount).map {
+            ("bed \($0)", Slate.ProjectTint.register[$0].opacity(Slate.Opacity.bed))
+        } + [("neutral (connection island)", Slate.ProjectTint.neutralBed)]
+        let panel = VStack(alignment: .leading, spacing: Slate.Metric.space2) {
+            ForEach(beds, id: \.0) { name, tint in
+                SlateProjectIsland(tint: tint) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(name)
+                            .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                            .foregroundStyle(Slate.Text.secondary)
+                        SidebarSectionHeaderRow.gitDetailLine(
+                            SidebarSectionHeaderRow.gitSegments(dirt),
+                        )
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        // The quiet rung is the one this alpha is priced in — see `Text.tertiary`.
+                        Text("zsh · the quiet rung on this bed")
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.tertiary)
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: Slate.Metric.sidebarWidth)
+        .background(Slate.theme.ground) // the AUTHORED cream, not the system semantic
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 400),
+            to: dir, named: "project-beds.png",
+        )
+    }
+
     // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
     /// Renders the REAL ``ConnectionStatusIsland`` (link line: hostname leading, metric trailing —

@@ -324,10 +324,13 @@ enum Slate {
     /// The quiet rung is solved one step deeper than the plain cream needs (5.17 there, where 4.51
     /// would have done), because the sidebar's ground is no longer only the cream: a project island
     /// lays its identity hue under the rows (``Slate/ProjectTint``), and a tinted bed is a DIFFERENT
-    /// ground. `#76746D` held 4.51 on the cream but slid to 4.21 under the bed; this rung is solved
-    /// so it holds exactly 4.50 on the DEEPEST bed in the register, and the cream simply gets a
-    /// darker quiet tier for free. It is therefore pinned to ``Slate/Opacity/bed`` — re-solve it if
-    /// that alpha ever moves.
+    /// ground. `#76746D` held 4.51 on the cream but slid to 4.21 under the bed; this rung was solved
+    /// to hold exactly 4.50 on the DEEPEST bed in the register, and the cream simply gets a darker
+    /// quiet tier for free. It is therefore pinned to ``Slate/Opacity/bed`` — re-solve it if that
+    /// alpha ever RISES. It fell instead (0.10 → 0.08 on 2026-08-10), which only lightens every bed
+    /// and hands this rung margin: 4.60 on the deepest one now. The hex is kept as solved rather
+    /// than walked back up, because it is the cream's own colour at depth and the ladder reads by
+    /// its steps, not by its floor.
     ///
     /// ⚠️ The LIGHT rungs are flat hexes; the dark side is NOT a free system fallback. Two subtrees
     /// flip `colorScheme` to glass (the selected row's ``SlateCompactIsland``, the pane chrome inside
@@ -394,17 +397,28 @@ enum Slate {
     /// tokens did not govern (round 13): every `.opacity(N)` in chrome code picks a rung here, so
     /// two washes that mean the same thing can never drift apart by a few hundredths again.
     enum Opacity {
-        /// A GROUND that has to stay a ground (``ProjectTint/wash(for:)``). Below ``faint``, because
-        /// a bed that reads as a FILL stops being a ground: measured across the identity register
-        /// the island lands 1.13–1.15× off the cream, which is separation the eye resolves without
-        /// the group turning into a coloured panel. The first pass shipped 0.05 (1.06×) and read as
-        /// barely there in the running app (user-reported 2026-08-09).
+        /// A GROUND that has to stay a ground (``ProjectTint/wash(for:)``, and the connection
+        /// island's neutral bed). Below ``faint``, because a bed that reads as a FILL stops being a
+        /// ground: measured across the identity register the island lands 1.089–1.121× off the
+        /// cream, which is separation the eye resolves without the group turning into a coloured
+        /// panel.
         ///
-        /// The tint is not free and the price is paid in ``Slate/Text/tertiary``: a tinted bed is a
-        /// different ground, and every step here deepens the rung that has to stay legible on the
-        /// worst bed in the register. Raising this without re-solving that rung is how the quiet
-        /// tier silently drops under the 4.5 reading floor.
-        static let bed = 0.10
+        /// The band is narrow at both ends. The first pass shipped 0.05 (1.05–1.08×) and read as
+        /// barely there in the running app (user-reported 2026-08-09); it then sat at 0.10 until the
+        /// beds were found to be spending more colour than the STATUS runs standing on them
+        /// (user-directed 2026-08-10) — the sidebar's saturated ink is supposed to be the git line
+        /// and the marks, and a bed is the one thing here that is coloured everywhere at once.
+        /// Dropping to 0.08 takes ~21 % of the bed's a\*b\* displacement off the cream (magenta,
+        /// the loudest, 14.51 → 11.39) while staying two full steps above the rejected pass.
+        ///
+        /// The tint is not free and the price is paid twice. In ``Slate/Text/tertiary``: a tinted
+        /// bed is a different ground, and every step here deepens the rung that has to stay legible
+        /// on the worst bed in the register — raising this without re-solving that rung is how the
+        /// quiet tier silently drops under the 4.5 reading floor (lowering it, as here, only hands
+        /// that rung margin back: 4.46 → 4.60). And in ``Slate/ProjectTint/register``, whose hexes
+        /// were solved for maximum separation AT an alpha: every step down scales the whole set
+        /// toward the cream together.
+        static let bed = 0.08
         /// The faint accent wash (``State/accentMuted``'s dose).
         static let faint = 0.12
         /// The selection/latch wash (``State/selected``'s dose).
@@ -487,16 +501,24 @@ enum Slate {
     ///
     /// The register's entries are BED SOURCES, not inks: they exist only to be composited at
     /// ``Slate/Opacity/bed`` and are never drawn at strength anywhere. That matters because the
-    /// cream ground is itself strongly chromatic (L\* 98.5, C\* 8.3 at h 99.5°), so at 10 % a bed
-    /// keeps 90 % of the cream and the reachable colours form a tiny cube anchored at the cream's
-    /// own corner — each channel can only be pulled DOWN, and by at most 25/255. Inside that cube a
+    /// cream ground is itself strongly chromatic (L\* 98.5, C\* 8.3 at h 99.5°), so at 8 % a bed
+    /// keeps 92 % of the cream and the reachable colours form a tiny cube anchored at the cream's
+    /// own corner — each channel can only be pulled DOWN, and by at most 20/255. Inside that cube a
     /// "nice" mid-tone source barely moves the bed at all, which is why the previous register's
     /// nominal five hues collapsed on screen: its worst pair (brown against the neutral bucket)
     /// measured ΔE2000 **2.28**, below the threshold at which two large flat fields read as
     /// different colours at all, and blue-vs-teal only reached 5.01. Solving instead for maximum
-    /// minimum separation over that cube — same alpha, same lightness band, same hue arc — lifts the
-    /// worst pair to **7.00** and flattens the whole set into the 7.00–7.25 band, so there is no
-    /// longer one weak link. Saturated sources are simply where that optimum lives.
+    /// minimum separation over that cube — same lightness band, same hue arc — lifted the worst pair
+    /// to **7.00** and flattened the whole set into the 7.00–7.25 band, so there is no longer one
+    /// weak link. Saturated sources are simply where that optimum lives.
+    ///
+    /// ⚠️ That solve ran at ``Slate/Opacity/bed`` = 0.10. The alpha came DOWN to 0.08 on 2026-08-10
+    /// (user-directed: the beds were out-colouring the status runs standing on them), and every
+    /// pairwise distance scales toward the cream with it — the worst pair now measures ≈5.5 by the
+    /// same yardstick. That is still comfortably above the ~2.3 at which two large flat fields stop
+    /// reading as different colours, and the hexes are deliberately NOT re-solved for the new alpha:
+    /// re-optimising would buy back separation the round just decided to spend, and the ``Deal``
+    /// already guarantees the case the eye actually meets (two ADJACENT islands never share a hue).
     ///
     /// Never spend an entry of this register as an ink, a stroke or a mark. Use ``Slate/Chroma``.
     enum ProjectTint {
@@ -504,8 +526,9 @@ enum Slate {
         /// before touching a hex: these are solved values, not picked ones, and each is meaningful
         /// only after compositing at ``Slate/Opacity/bed`` over the cream ground.
         ///
-        /// Solved under four simultaneous constraints: every bed lands in L\* 92.80–94.40 (a
-        /// NARROWER spread than the register it replaces, so no project's bed reads as heavier than
+        /// Solved under four simultaneous constraints: every bed lands in a NARROW lightness band
+        /// (L\* 92.80–94.40 at the alpha it was solved at, 94.02–95.15 at today's 0.08 — narrower
+        /// than the register it replaces either way, so no project's bed reads as heavier than
         /// another's), every bed's displacement from the cream stays inside the 195°–340° arc (the
         /// status vocabulary keeps red / amber / green), every source stays a real colour (no
         /// channel above 248), and the minimum pairwise ΔE2000 across all six beds — the five here
