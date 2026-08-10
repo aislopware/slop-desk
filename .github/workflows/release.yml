@@ -26,7 +26,7 @@ on:
         type: string
         required: true
       dry-run:
-        description: "Build + sign but skip notarization, the Release and the tap bump"
+        description: "Dry run — DOES Developer-ID sign, then stops: no notarization, no Release, no tap bump"
         type: boolean
         default: true
 
@@ -47,11 +47,11 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache the built xcframework
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ThirdParty/ghostty/libghostty.xcframework
           # Everything that can change the output: the recipe, the consolidated fork delta, and
@@ -97,7 +97,7 @@ jobs:
         run: ThirdParty/ghostty/build-libghostty.sh
 
       - name: Upload the xcframework
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libghostty-xcframework
           path: ThirdParty/ghostty/libghostty.xcframework
@@ -112,7 +112,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve the version
         id: version
@@ -129,13 +129,21 @@ jobs:
           esac
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: libghostty-xcframework
           path: ThirdParty/ghostty/libghostty.xcframework
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          set -euo pipefail
+          # The macos-26 image ships `aws/tap` already tapped, and Homebrew now refuses formulae
+          # from untrusted taps — printing a 12-line trust warning on EVERY brew invocation. We
+          # install xcodegen from homebrew/core and never touch that tap, so drop it rather than
+          # granting trust we do not need (or setting HOMEBREW_NO_REQUIRE_TAP_TRUST, which brew
+          # says it will remove). `|| true`: a future image that stops shipping it must not fail.
+          brew untap aws/tap || true
+          brew install xcodegen
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -201,7 +209,7 @@ jobs:
           scripts/package-release.sh
 
       - name: Upload the release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slopdesk-${{ steps.version.outputs.version }}-arm64
           path: |
@@ -219,7 +227,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: slopdesk-${{ needs.package.outputs.version }}-arm64
           path: dist
@@ -264,9 +272,9 @@ jobs:
       # BEFORE download-artifact: the vault client resolves the project from the top-level
       # `projectId` in eas.json (docs/49), so it needs the repo in the working directory —
       # without it `env pull` exits 4 with "Project not linked" and never reaches the token.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: slopdesk-${{ needs.package.outputs.version }}-arm64
           path: dist

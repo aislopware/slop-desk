@@ -227,7 +227,7 @@ final class CLIVersionTests: XCTestCase {
     func testSummaryContainsNameAndVersion() {
         let summary = CLIVersion.versionSummary(environment: [:])
         XCTAssertTrue(summary.contains("slopdesk"))
-        XCTAssertTrue(summary.contains("0.1.0"))
+        XCTAssertTrue(summary.contains(CLIVersion.version))
     }
 
     func testSummaryContainsProtocolVersion() {
@@ -245,13 +245,13 @@ final class CLIVersionTests: XCTestCase {
         let summary = CLIVersion.versionSummary(environment: [:])
         // No build parenthetical on the head line when the env var is absent.
         let firstLine = summary.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        XCTAssertEqual(firstLine, "slopdesk 0.1.0")
+        XCTAssertEqual(firstLine, "slopdesk \(CLIVersion.version)")
     }
 
     func testEmptyBuildHashTreatedAsUnset() {
         let summary = CLIVersion.versionSummary(environment: [CLIVersion.buildHashEnvKey: ""])
         let firstLine = summary.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        XCTAssertEqual(firstLine, "slopdesk 0.1.0")
+        XCTAssertEqual(firstLine, "slopdesk \(CLIVersion.version)")
     }
 }
 
