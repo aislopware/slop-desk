@@ -195,11 +195,11 @@ final class SimulatorDeviceTests: XCTestCase {
     /// the console's alarm colour on the ordinary case (user-directed 2026-08-04).
     @MainActor
     func testOnlyAFaultIsInkedInColourAndEveryHealthyLevelIsAGrey() {
-        XCTAssertEqual(SimulatorConsoleView.tint(for: .error), Slate.Status.err)
-        XCTAssertEqual(SimulatorConsoleView.tint(for: .fault), Slate.Status.err)
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .error), Slate.StatusInk.err)
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .fault), Slate.StatusInk.err)
         for healthy in [SimulatorLogLine.Severity.info, .plain, .debug] {
             XCTAssertNotEqual(
-                SimulatorConsoleView.tint(for: healthy), Slate.Status.err,
+                SimulatorConsoleView.tint(for: healthy), Slate.StatusInk.err,
                 "\(healthy) is not a problem and must not borrow the problem colour",
             )
         }

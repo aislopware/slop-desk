@@ -157,8 +157,8 @@ final class SlateSnapshotRender: XCTestCase {
         let marks: [(String, StatusDotStyle)] = [
             ("thinking", StatusPresentation.thinkingMark),
             ("resting", StatusDotStyle(ink: Slate.Text.secondary)),
-            ("question", StatusDotStyle(ink: Slate.Status.warn, mark: .awaiting)),
-            ("agent finish", StatusDotStyle(ink: Slate.Status.ok, mark: .agentFinish)),
+            ("question", StatusDotStyle(ink: Slate.StatusInk.warn, mark: .awaiting)),
+            ("agent finish", StatusDotStyle(ink: Slate.StatusInk.ok, mark: .agentFinish)),
         ]
         let sheet = VStack(alignment: .leading, spacing: 16) {
             captioned("true size — the rail's own 14pt column") {
@@ -372,6 +372,80 @@ final class SlateSnapshotRender: XCTestCase {
         try render(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 400),
             to: dir, named: "project-beds.png",
+        )
+    }
+
+    // MARK: - Opt-in render of the status INK set on all three grounds
+
+    /// Renders ``Slate/StatusInk``'s six roles as the thing they actually are — 10pt instrument text
+    /// and a small mark — on EVERY ground the set was solved against: the plain cream, the deepest
+    /// project bed (the worst ground a rail run ever stands on), and the glass face the compact island
+    /// flips to. Each row carries ``Slate/Text/tertiary`` beside it, because the complaint that started
+    /// this was never absolute — it was that the quiet rung out-read the loud one (2.05 vs 5.16).
+    ///
+    /// The dark block is the only place the dark half of the pair can be seen headlessly: nothing else
+    /// in this file flips `colorScheme`, so that side could drift with the whole suite green.
+    /// Writes `status-ink.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderStatusInk() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the status ink set")
+        }
+        let roles: [(String, Color)] = [
+            ("ok  +staged", Slate.StatusInk.ok),
+            ("warn  !modified", Slate.StatusInk.warn),
+            ("notice  ?untracked", Slate.StatusInk.notice),
+            ("err  ~conflicted", Slate.StatusInk.err),
+            ("info  up/down", Slate.StatusInk.info),
+            ("aside  $stash", Slate.StatusInk.aside),
+        ]
+        @MainActor
+        func block(_ title: String, ground: Color, bed: Color? = nil, dark: Bool) -> some View {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                    .foregroundStyle(Slate.Text.secondary)
+                ForEach(roles, id: \.0) { name, ink in
+                    HStack(spacing: 6) {
+                        Circle().fill(ink).frame(width: 7, height: 7)
+                        Text(name)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                            .foregroundStyle(ink)
+                        Text("· quiet")
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.tertiary)
+                    }
+                }
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                // The bed is a WASH over the ground, exactly as the island composites it — the light
+                // side of the set is solved on that composite, not on either layer alone.
+                ZStack {
+                    ground
+                    if let bed { bed }
+                }
+            }
+            .environment(\.colorScheme, dark ? .dark : .light)
+        }
+        let panel = VStack(alignment: .leading, spacing: Slate.Metric.space2) {
+            block("on the cream", ground: Slate.theme.ground, dark: false)
+            block(
+                "on the deepest bed",
+                ground: Slate.theme.ground,
+                // Index 2 is the register's indigo — the darkest composite of the five.
+                bed: Slate.ProjectTint.register[2].opacity(Slate.Opacity.bed),
+                dark: false,
+            )
+            block("on the glass face", ground: Slate.Surface.terminal, dark: true)
+        }
+        .padding(8)
+        .frame(width: Slate.Metric.sidebarWidth)
+        .background(Slate.theme.ground)
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 420),
+            to: dir, named: "status-ink.png",
         )
     }
 

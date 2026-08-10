@@ -235,13 +235,16 @@ final class StatusDotTests: XCTestCase {
             XCTAssertNil(StatusPresentation.commandOutcome(badge: kind, agentFinish: false))
         }
         XCTAssertNil(StatusPresentation.commandOutcome(badge: nil, agentFinish: false))
-        // The register is the git line's (docs/DECISIONS.md round 17 → `1b289043`): the working exit
-        // spends BRIGHTNESS, not a hue, and red stays reserved for broken. Both are BOLD — at 10pt
-        // mono the brightness step alone does not carry.
+        // The slot's OWN register: the working exit spends BRIGHTNESS, not a hue, and red stays
+        // reserved for broken. (It was written as the git line's while that line was monochrome; the
+        // git readout took hues back per role on `07da1f5d` and this slot deliberately did not
+        // follow — a command has two outcomes, not seven states.) Both are BOLD — at 10pt mono the
+        // brightness step alone does not carry. The red is the INK cut, `StatusInk`, since a 10pt
+        // mono run is the case the system palette read faintest in.
         XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
-        XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.Status.err)
+        XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.StatusInk.err)
         XCTAssertNotEqual(
-            StatusPresentation.outcomeInk(.succeeded), Slate.Status.ok,
+            StatusPresentation.outcomeInk(.succeeded), Slate.StatusInk.ok,
             "green was the mark's answer; 'it worked' is the expected case and buys no hue",
         )
         XCTAssertEqual(StatusPresentation.outcomeWeight, .bold)

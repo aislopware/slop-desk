@@ -205,10 +205,10 @@ final class ConnectionClusterTests: XCTestCase {
         XCTAssertEqual(Set(inks).count, 3, "every rung is its own ink — no two states paint the same")
         for alarm in [ConnectionCluster.Alarm.quiet, .raised, .loud] {
             XCTAssertNotEqual(
-                ConnectionCluster.alarmInk(alarm), Slate.Status.warn,
+                ConnectionCluster.alarmInk(alarm), Slate.StatusInk.warn,
                 "the footer has no hue register — \(alarm) must not reach for a status colour",
             )
-            XCTAssertNotEqual(ConnectionCluster.alarmInk(alarm), Slate.Status.err)
+            XCTAssertNotEqual(ConnectionCluster.alarmInk(alarm), Slate.StatusInk.err)
         }
     }
 

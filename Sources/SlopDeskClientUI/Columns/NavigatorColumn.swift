@@ -830,15 +830,24 @@ struct SidebarSectionHeaderRow: View {
     ///
     /// Nothing here resolves to the tertiary metadata grey — painting the whole line in it is what made a
     /// conflict count read exactly like a branch name.
+    ///
+    /// The set is ``Slate/StatusInk``, NOT the system `Status` palette it first came back in. As ink on
+    /// this cream the system hues measured 2.05 (green) and 2.12 (orange) — the loudest words in the rail
+    /// drawn two and a half times fainter than the grey whose job is to be ignored, user-reported
+    /// 2026-08-10. Two of the roles below were also literally the same colour: `Status.warn` and
+    /// `Chroma.orange` are both `systemOrange`, so the four-rung ramp this doc describes rendered in
+    /// three. The replacement is solved iso-lightness on the deepest bed, which is what lets the ramp be
+    /// read as a ramp — four hues at ONE contrast, so the order comes from chromatics and never from one
+    /// run happening to shout.
     static func ink(_ role: GitInk) -> Color {
         switch role {
         case .branch: Slate.Text.secondary
-        case .divergence: Slate.Status.info
-        case .staged: Slate.Status.ok
-        case .modified: Slate.Status.warn
-        case .untracked: Slate.Chroma.orange
-        case .conflicted: Slate.Status.err
-        case .stash: Slate.Chroma.purple
+        case .divergence: Slate.StatusInk.info
+        case .staged: Slate.StatusInk.ok
+        case .modified: Slate.StatusInk.warn
+        case .untracked: Slate.StatusInk.notice
+        case .conflicted: Slate.StatusInk.err
+        case .stash: Slate.StatusInk.aside
         }
     }
 
@@ -848,13 +857,15 @@ struct SidebarSectionHeaderRow: View {
     /// leaves them thin enough that the colour is doing all the work. The BRANCH stays regular — it is
     /// the line's identity, not a status, and keeping it light is what lets the counts read as a group.
     ///
-    /// `~conflicted` goes one rung further still, to fix a ranking hue gets backwards: the palette's red
-    /// is a mid tone while its yellow is bright, so by contrast against the sidebar the ONE state that
-    /// genuinely needs a human pulls the eye LEAST of the coloured runs. That inversion cannot be fixed by
-    /// re-assigning hues without lying about what the states mean. Weight is free of the palette — and it
-    /// survives the CVD collapse the hue set has (under protanopia `+staged` and `~conflicted` land close
-    /// enough to be indistinguishable by hue alone; the sigils already carry the meaning, and the weight
-    /// step adds a second non-colour cue).
+    /// `~conflicted` goes one rung further still — and the reason is IMPORTANCE, not compensation. The
+    /// older note here claimed it was fixing a ranking hue got backwards (a mid-tone red pulling less eye
+    /// than a bright yellow); that was measured on the dark sidebar this chrome replaced, and it stopped
+    /// being true twice over — first when the ground became cream, then for good when the palette became
+    /// ``Slate/StatusInk``, which is solved ISO-LIGHTNESS, so no role can out-shout another by accident in
+    /// either direction. What remains is the plain statement that one of these seven states is the one
+    /// that stops work, said in a channel free of the palette — and it survives the CVD collapse the hue
+    /// set has (under protanopia `+staged` and `~conflicted` land close enough to be indistinguishable by
+    /// hue alone; the sigils already carry the meaning, and the weight step adds a second non-colour cue).
     static func weight(_ role: GitInk) -> Font.Weight {
         switch role {
         case .branch: .regular

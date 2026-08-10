@@ -214,7 +214,7 @@ struct AndroidConsoleView: View {
     static func tint(for severity: AndroidLogLine.Severity) -> Color {
         switch severity {
         case .fatal,
-             .error: Slate.Status.err
+             .error: Slate.StatusInk.err
         case .warning,
              .info: Slate.Text.secondary
         case .plain: Slate.Text.tertiary

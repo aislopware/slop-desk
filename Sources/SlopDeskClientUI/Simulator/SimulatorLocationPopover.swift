@@ -92,7 +92,7 @@ struct SimulatorLocationPopover: View {
                 Button("Clear") { send(nil) }
                     .buttonStyle(.plain)
                     .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Status.err)
+                    .foregroundStyle(Slate.StatusInk.err)
             } else {
                 Text("The device is using live values.")
                     .font(.system(size: Slate.Typeface.small))

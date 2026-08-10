@@ -63,8 +63,8 @@ enum StatusPresentation {
         case .none,
              .idle: Slate.Text.secondary
         case .working: Slate.State.accent
-        case .done: Slate.Status.ok
-        case .needsPermission: Slate.Status.warn
+        case .done: Slate.StatusInk.ok
+        case .needsPermission: Slate.StatusInk.warn
         }
     }
 
@@ -82,17 +82,24 @@ enum StatusPresentation {
     /// (``attentionRollupInk(_:)``), so every surface names one
     /// pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
     /// in the rail animates).
+    ///
+    /// The hues are ``Slate/StatusInk`` — the INK cut of the vocabulary, not the system `Status` set.
+    /// A ring mark 10 pt across is the thinnest thing in the rail that carries state, so it is exactly
+    /// where a hue tuned for filled controls failed worst (systemGreen measured 2.05 on this cream). The
+    /// tier also matters because this mark is drawn on BOTH grounds: the cream in an ordinary row and
+    /// the glass face inside the selected row's compact island, and each side of the pair is solved
+    /// against its own.
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
         // Awaiting input — act-now amber; red stays reserved for broken.
-        case .awaitingInput: Slate.Status.warn
+        case .awaitingInput: Slate.StatusInk.warn
         // Error — the red every terminal already means by red text.
-        case .error: Slate.Status.err
+        case .error: Slate.StatusInk.err
         // The clean finish — fresh flash and settled unread alike hold the green until the pane is
         // visited. The completed/finished split stays semantic (freshness machinery, control-backend
         // badge tokens).
         case .completed,
-             .finished: Slate.Status.ok
+             .finished: Slate.StatusInk.ok
         // Running and privilege never recolour the title: busy is the trailing ring's job
         // (``statusDot(working:badge:)``), and the privilege markers are slot text (``tabBadge(_:)``).
         case .caffeinate,
@@ -259,7 +266,7 @@ enum StatusPresentation {
     static func outcomeInk(_ outcome: CommandOutcome) -> Color {
         switch outcome {
         case .succeeded: Slate.Text.primary
-        case .failed: Slate.Status.err
+        case .failed: Slate.StatusInk.err
         }
     }
 

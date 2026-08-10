@@ -232,7 +232,7 @@ struct SimulatorConsoleView: View {
     static func tint(for severity: SimulatorLogLine.Severity) -> Color {
         switch severity {
         case .fault,
-             .error: Slate.Status.err
+             .error: Slate.StatusInk.err
         case .debug: Slate.Text.tertiary
         case .info,
              .plain: Slate.Text.secondary

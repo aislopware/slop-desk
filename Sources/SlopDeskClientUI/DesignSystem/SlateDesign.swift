@@ -461,22 +461,14 @@ enum Slate {
         // seen. Only things that genuinely FLOAT still carry one — see ``Slate/Elevation``.
     }
 
-    /// Extra DISTINGUISHABLE hues for chrome that needs more inks than the status set — the SYSTEM
-    /// palette (appearance-tuned by the OS), consistent with every other chrome colour.
-    @MainActor
-    enum Chroma {
-        #if canImport(AppKit)
-        static let orange = Color(nsColor: .systemOrange)
-        static let purple = Color(nsColor: .systemPurple)
-        static let blue = Color(nsColor: .systemBlue)
-        static let magenta = Color(nsColor: .systemPink)
-        #else
-        static let orange = Color(uiColor: .systemOrange)
-        static let purple = Color(uiColor: .systemPurple)
-        static let blue = Color(uiColor: .systemBlue)
-        static let magenta = Color(uiColor: .systemPink)
-        #endif
-    }
+    // NO `Chroma` tier. It held four extra system hues (`orange` / `purple` / `blue` / `magenta`) for
+    // "chrome that needs more inks than the status set", and only the git line ever drew from it —
+    // where `Chroma.orange` turned out to BE `Status.warn` (both `systemOrange`), rendering two rungs
+    // of that line's ramp in one identical colour, and `Chroma.purple` sat 12.6° in Lab hue from the
+    // accent the neighbouring run used. A second unstructured palette beside the status vocabulary
+    // only ever offered a way to collide with it by accident. ``StatusInk`` is now six SOLVED angles,
+    // which is the whole set that was wanted; anything genuinely outside the status vocabulary should
+    // earn its own named token rather than pick a system hue out of a drawer (2026-08-10).
 
     /// The per-project IDENTITY hue — a launch-stable colour per project, spent as the GROUND its
     /// group stands on and nowhere else (``ProjectTint/wash(for:)``, ``SlateProjectIsland``).
@@ -684,6 +676,69 @@ enum Slate {
     @MainActor
     enum Accent {
         static let deep = Slate.accentPurpleDeep
+    }
+
+    /// The status vocabulary as INK — the mirror of ``Accent/deep``, which exists because a colour
+    /// tuned for a FILL is the wrong colour for a mark or a word.
+    ///
+    /// ## Why ``Status`` could not keep doing this job
+    ///
+    /// `Status.ok`/`warn`/`err` are the system palette, and the system palette is tuned for dark UI
+    /// and for filled controls. Measured as ink on this chrome's cream (`#FFFBEB`) they land at
+    /// **2.05** (systemGreen) and **2.12** (systemOrange) — under even the 3.0 non-text floor, while
+    /// ``Text/tertiary``, the rung whose whole job is to be ignorable, measures **5.16**. The rail
+    /// was spending its loudest vocabulary on its faintest ink: a `+3` staged count was two and a
+    /// half times quieter than the `zsh` label beside it (user-reported 2026-08-10).
+    ///
+    /// Two more faults died with it. `Status.warn` and ``Chroma/orange`` are BOTH `systemOrange`, so
+    /// the git line's documented green→yellow→orange→red ramp rendered `!modified` and `?untracked`
+    /// in one identical colour — a four-rung ramp with three rungs. And `info` (the accent) sat
+    /// 12.6° from `Chroma.purple` in Lab hue, so `↑↓` and `$` were near-indistinguishable too.
+    ///
+    /// ## How this set is built
+    ///
+    /// Six hue angles, solved ISO-LIGHTNESS on each side — one L\*, maximum in-gamut chroma at that
+    /// L\* for every angle. Iso-lightness is the whole point: equal contrast BY CONSTRUCTION, so no
+    /// run can shout over another by accident and hue is left to do the only job it is good at,
+    /// which is naming WHICH state this is.
+    ///
+    /// - **Light** — solved on the DEEPEST project bed, not the bare cream, because that is the
+    ///   worst ground a git line ever stands on: L\* 37.75, every entry ≥ 6.02 there (≈6.77 on the
+    ///   plain cream). That is ``Text/secondary``'s own level (6.24 / 6.99), so a count is never
+    ///   quieter than the branch name beside it — and its hue and weight put it above.
+    /// - **Dark** — solved on the glass face `#22212C`, the ONE dark surface in this app (the
+    ///   selected row's compact island, the island chips): L\* 63.0, every entry ≥ 5.52, a clear
+    ///   step above the dark quiet rung's 4.51.
+    ///
+    /// Closest pair 32 ΔE76 on the light side, 41 on the dark — no two runs can be confused.
+    ///
+    /// ⚠️ This tier is for TEXT AND MARKS. Fills keep ``Status``: a filled amber plate wants the
+    /// vivid system orange behind black ink, and darkening it would only muddy the plate. The split
+    /// is the same one ``Accent/deep`` already makes, pointing the other way.
+    ///
+    /// ⚠️ NOT for anything inside the terminal island — `ok`/`err` there are the profile's own ANSI
+    /// pair (``Terminal/ok``, ``Terminal/err``), because a surface that ships its own palette must
+    /// answer in it.
+    ///
+    /// Re-solve BOTH sides if the cream, the deepest bed (so: ``Opacity/bed``) or the glass face
+    /// moves — each side is pinned to its own ground, and neither is a free system fallback.
+    @MainActor
+    enum StatusInk {
+        /// Clean / done / `+staged` — the ramp's far end (h 140°).
+        static let ok = Color(slateDynamicLight: 0x006817, dark: 0x00B12D)
+        /// Wants a human / awaiting input / `!modified` (h 85°).
+        static let warn = Color(slateDynamicLight: 0x705500, dark: 0xBE9200)
+        /// `?untracked` — the rung between "you changed it" and "it is broken" (h 50°). Its own
+        /// entry, not a second spelling of ``warn``: that collision is what flattened the ramp.
+        static let notice = Color(slateDynamicLight: 0x9F3600, dark: 0xFF6920)
+        /// Broken — error / `~conflicted` (h 22°).
+        static let err = Color(slateDynamicLight: 0xB40034, dark: 0xFF6471)
+        /// Bookkeeping against elsewhere — `↑↓` divergence (h 265°). BLUE now, not the accent: the
+        /// accent means selection, and a run that borrowed it read as one.
+        static let info = Color(slateDynamicLight: 0x005D91, dark: 0x00A0F4)
+        /// Parked on purpose — `$stash` (h 320°). Cool, off the warm ramp, and far enough from
+        /// ``info`` to be told apart at a glance.
+        static let aside = Color(slateDynamicLight: 0x9400BD, dark: 0xDB65FF)
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.

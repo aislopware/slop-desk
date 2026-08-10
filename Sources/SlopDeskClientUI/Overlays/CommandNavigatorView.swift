@@ -340,11 +340,11 @@ struct CommandNavigatorView: View {
         case .succeeded:
             Image(systemSymbol: .checkmark)
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Status.ok)
+                .foregroundStyle(Slate.StatusInk.ok)
         case .failed:
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Status.err)
+                .foregroundStyle(Slate.StatusInk.err)
         case .running:
             Circle()
                 .fill(Slate.Text.tertiary)

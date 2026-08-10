@@ -7505,3 +7505,68 @@ the bed is mounted only by `NavigatorColumn` / `WorkspaceTabStrip` / `Connection
 other opt-in render draws the rail with no bed under it and this alpha could have moved unseen.
 Verified by sampling the PNG — teal composites to `#EBF4E4` and rose to `#FEEEE5`, both exactly the
 0.08 arithmetic over `#FFFBEB`.
+
+## The status vocabulary gets an INK cut (`Slate.StatusInk`), and `Slate.Chroma` is deleted
+
+The bed alpha above was the second half of a question the user asked directly: what else is there,
+besides taking colour away from the ground, to make a status indicator carry? The honest answer was
+that the loudest lever had not been pulled yet — the status colours themselves were the wrong
+colours for the job they were doing.
+
+Measured as INK on this chrome's cream, the system palette lands at **2.05** (systemGreen) and
+**2.12** (systemOrange), under even the 3.0 floor for non-text, while `Text.tertiary` — the rung
+whose entire purpose is to be ignorable — measures **5.16**. The rail was drawing its loudest
+vocabulary two and a half times fainter than its quietest: a `+3` staged count read weaker than the
+`zsh` label beside it. That palette is not wrong, it is simply tuned for what Apple uses it for —
+filled controls, and a dark UI. Every place this app FILLS with it (toasts, hint plates, the drop
+overlay, the alert chip's dot) still reads perfectly, which is exactly the split `Accent.deep`
+already makes in the other direction.
+
+Two more faults fell out of the audit. `Status.warn` and `Chroma.orange` were BOTH `systemOrange`,
+so the git line's documented four-rung ramp — `+staged` → `!modified` → `?untracked` →
+`~conflicted` — rendered `!` and `?` in one identical colour; the ramp had three rungs, not four.
+And `Chroma.purple` sat 12.6° in Lab hue from the accent the neighbouring `↑↓` run used, so those
+two were near-indistinguishable too.
+
+`Slate.StatusInk` is six hue angles solved **iso-lightness** on each side: one L\*, maximum in-gamut
+chroma at that L\* for every angle. Iso-lightness is the point of the whole exercise — equal contrast
+BY CONSTRUCTION, so no role can out-shout another by accident, and hue is left doing the only thing
+it is good at, which is naming which state this is.
+
+- **Light** — solved on the DEEPEST project bed rather than the bare cream, because that is the
+  worst ground a git run ever stands on: L\* 37.75, every entry ≥ 6.02 there and ≈6.77 on the plain
+  cream, which is `Text.secondary`'s own level (6.24 / 6.99). A count is now never quieter than the
+  branch name beside it, and its hue and weight put it above.
+- **Dark** — solved on the glass face `#22212C`, the one dark surface in this app (the selected
+  row's compact island): L\* 63.0, every entry ≥ 5.52, a clear step over the dark quiet rung's 4.51.
+
+Closest pair 32 ΔE76 light / 41 dark. `notice` exists as its own role precisely so `?untracked`
+stops being a second spelling of `warn`, and `info` moved from the accent to a true blue — the
+accent means SELECTION here, and a run wearing it read as one.
+
+`Slate.Chroma` is deleted whole (`orange` / `purple` / `blue` / `magenta`). Only the git line ever
+drew from it, and a second unstructured palette sitting beside the status vocabulary offered
+nothing but a way to collide with it by accident — which is exactly what happened. Anything genuinely
+outside the status vocabulary should earn a named token rather than take a system hue out of a drawer.
+
+Two things deliberately NOT done. The mark's geometry is untouched: `StatusDot`'s 14 pt footprint
+and 10 pt ring are a transcription of otty's artwork with a magnified render pinning them, and the
+ink change already buys 3.3× (1.82 → 6.04 on the bed) — spending the area channel on top of that
+would overshoot, and area is still there if the ink alone is not enough. And the island alert chip
+keeps the system hues: its tint is a FILL, and its subtree does not flip `colorScheme`, so a
+dynamic light/dark pair would resolve its LIGHT half onto dark glass — the same trap that made
+those chips invisible on `d00d4e8c`.
+
+The weight ladder's rationale is restated rather than changed. It claimed the extra bold rung on
+`~conflicted` was correcting a ranking hue got backwards (a mid-tone red pulling less eye than a
+bright yellow) — true when measured on the dark sidebar this chrome replaced, false on the cream,
+and impossible under an iso-lightness set. The rung stays, for the reason that actually holds: one
+of the seven states is the one that stops work, said in a channel free of the palette, which also
+survives the protanopia collapse `+` and `~` have.
+
+Verified by pixel, not by argument: `testRenderStatusInk` → `status-ink.png` draws all six roles on
+all three grounds (the dark block is the only place in the suite that flips `colorScheme`, so that
+half could otherwise drift green). The render's grounds sample to `(255,251,235)`, `(241,237,236)`
+and `(34,33,44)`, all eighteen inks land exactly on the solved hexes, and the measured contrasts are
+6.75–6.81 / 6.02–6.07 / 5.52–5.55 — iso to within 0.05. `project-beds.png` confirms the git line now
+carries six distinct inks with zero pixels of any system hue left.

@@ -207,12 +207,12 @@ private struct FirstLaunchClaudeHooksStep: View {
     private var installControl: some View {
         switch state {
         case .installed:
-            Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
+            Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
         case .installedInactive:
             // Written to settings.json but the host listener is not bound — honest amber, not the green
             // check (Settings ▸ Agents carries the restart hint).
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Slate.Status.warn)
+                .foregroundStyle(Slate.StatusInk.warn)
                 .help("The host's hook socket isn't bound. Restart the host daemon, then open new panes.")
         case .notInstalled:
             Button("Install") {
@@ -289,7 +289,7 @@ private struct FirstLaunchDefaultTerminalStep: View {
                 "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
             ) {
                 if isDefault {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
+                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
                 } else {
                     Button("Set as Default Terminal") {
                         Task {
@@ -431,7 +431,7 @@ struct CLIInstallCardBody: View {
             ProgressView().controlSize(.small)
         } else if cliInstalled {
             HStack(spacing: Slate.Metric.space2) {
-                Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
+                Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
                 Button("Uninstall") { Task { await installer.uninstall() } }
                     .buttonStyle(.bordered)
             }
