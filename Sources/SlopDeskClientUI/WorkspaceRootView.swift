@@ -15,6 +15,7 @@ import Defaults
 import SFSafeSymbols
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 public struct WorkspaceRootView: View {
@@ -126,6 +127,18 @@ public struct WorkspaceRootView: View {
     /// fought.
     private var activeTabCount: Int { store.tree.activeSession?.tabs.count ?? 0 }
 
+    /// Where the workspace's focus is sitting — the pair the code panel's per-tab focus region is
+    /// resolved against on every change (see ``honourFocusRegion(from:to:)``).
+    private struct FocusLanding: Equatable {
+        var tab: TabID?
+        var pane: PaneID?
+    }
+
+    private var focusLanding: FocusLanding {
+        let tab = store.tree.activeSession?.activeTab
+        return FocusLanding(tab: tab?.id, pane: tab?.activePane)
+    }
+
     public var body: some View {
         #if os(macOS)
         // No system toolbar — the window runs `.hiddenTitleBar`; its own hover-reveal titlebar
@@ -178,6 +191,10 @@ public struct WorkspaceRootView: View {
         // persisted, so applying at launch is safe (the first application reads as a regime edge and actuates).
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
+        // THE KEYBOARD FOLLOWS THE WORKSPACE, and each tab keeps its own answer to "terminal or code
+        // panel?". One observer for both, because a tab switch changes the focused pane too and the
+        // two questions must not race each other from separate `.onChange`s.
+        .onChange(of: focusLanding) { previous, current in honourFocusRegion(from: previous, to: current) }
         // The macOS WINDOW title tracks the FOCUSED pane (user: the window stayed a static "Terminal"). With
         // `.hiddenTitleBar` this text is not drawn in a titlebar, but it IS the window's name in the Window
         // menu, Mission Control / Exposé, screenshot filenames and accessibility. `.navigationTitle` is the
@@ -239,6 +256,32 @@ public struct WorkspaceRootView: View {
     }
 
     #if os(macOS)
+    /// Put the keyboard where the workspace's new focus says it belongs.
+    ///
+    /// A TAB SWITCH hands the arriving tab its own focus region: a tab the user was last editing in
+    /// gets the code panel back, and any other tab gets its terminal — including when the panel is
+    /// holding the keyboard, which is otherwise inherited by whatever tab you switch to. The region
+    /// is per-tab because that is how it reads: leaving tab A mid-edit, working in tab B and coming
+    /// back to A should put the caret back in A's editor (user-reported 2026-08-10).
+    ///
+    /// A PANE FOCUS inside the tab already on screen (a split's new leaf, ⌘-arrow, a rail row) says
+    /// the terminal is what the user wants, and the panel must let go of the keyboard — the pane
+    /// tree gates every pane's focus on the panel's ownership, so a move made while the editor holds
+    /// it was previously swallowed whole.
+    ///
+    /// A pane TELEPORT that also crosses tabs (a palette hit, a Global Search landing) is read as the
+    /// tab switch it also is, so landing in a tab whose region is the panel lands in the panel. It is
+    /// one click to correct and the alternative — a fifth signal threaded from the store's two focus
+    /// choke points — buys a rarer case than it costs.
+    private func honourFocusRegion(from previous: FocusLanding, to current: FocusLanding) {
+        if previous.tab != current.tab {
+            let live = Set(store.tree.sessions.flatMap { $0.tabs.map(\.id) })
+            CodeSidebarWebViewPool.shared.noteActiveTabChanged(to: current.tab, liveTabs: live)
+        } else if previous.pane != current.pane {
+            CodeSidebarWebViewPool.shared.noteWorkspacePaneFocused(tab: current.tab)
+        }
+    }
+
     /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L), bound to THIS view's live state.
     /// Called on appear (the dispatcher predates `chrome`, so the closures install late). `[chrome]` captures
     /// the same `@Observable` the representable + titlebar read, so each NSEvent chord and the matching

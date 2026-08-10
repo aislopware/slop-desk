@@ -2558,8 +2558,46 @@ public final class WorkspaceStore {
         // cascades. The tab it may take with it goes onto the DOCUMENT's reopen ring, and the
         // successor is picked host-side from the shared MRU — two clients computing it from two local
         // rings pick two different tabs.
+        // WHERE THE KEYBOARD LANDS is decided BEFORE the close, from the visit ring — the tree op's own
+        // refocus is the closing pane's geometric NEIGHBOUR, which in an `A | B | C` row always hands
+        // `B`'s close to `A` however long the user had been working between `C` and `B` (user-reported
+        // 2026-08-10: "it focuses some arbitrary pane"). The pane you were just in is the one you meant.
+        let landing = paneCloseLanding(closing: target)
         guard stageClose(.closePane, WorkspaceIntentArgs.encode(pane: target)) else { return }
+        // Said as an INTENT rather than computed inside the close, so every client lands on the same
+        // pane: the ring is this keyboard's own (docs/45 — "the pane I was just in" is a fact about one
+        // client), but the FOCUS it resolves to is shared the moment it is named. Staged before the
+        // reconcile, so both patches land in one render — the geometric refocus is never on screen.
+        if let landing, tree.contains(landing),
+           tree.activeSession?.activeTab?.activePane != landing
+        {
+            stageFocus(pane: landing)
+        }
         reconcileTree()
+    }
+
+    /// The pane the keyboard should land on when `target` closes: the most recently visited pane that
+    /// SURVIVES the close, inside the closing pane's own tab. `nil` when the question does not arise —
+    /// a background pane closing (focus does not move at all), a pane whose tab goes with it (the tab
+    /// cascade picks a tab, not a pane), the last two panes (one survivor, and geometry already agrees),
+    /// or a ring with nothing live left in it (the tree op's neighbour rule stands).
+    ///
+    /// The ring's front is the pane being closed, so "most recent survivor" is simply the first entry
+    /// that is still there.
+    func paneCloseLanding(closing target: PaneID) -> PaneID? {
+        guard let (sessionID, tabID) = tree.tab(containing: target),
+              let tab = tree.sessions.first(where: { $0.id == sessionID })?
+              .tabs.first(where: { $0.id == tabID }),
+              tab.activePane == target
+        else { return nil }
+        let survivors = Set(tab.allPaneIDs()).subtracting([target])
+        guard survivors.count > 1 else { return nil }
+        return Self.mostRecentSurvivor(mru: paneVisitMRU, survivors: survivors)
+    }
+
+    /// The first id in `mru` that is still in `survivors`. Pure — pinned by `PaneCloseLandingTests`.
+    static func mostRecentSurvivor(mru: [PaneID], survivors: Set<PaneID>) -> PaneID? {
+        mru.first { survivors.contains($0) }
     }
 
     // MARK: - Detach a pane to its own window (satellite) / reattach

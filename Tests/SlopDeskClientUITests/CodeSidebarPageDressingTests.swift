@@ -172,6 +172,21 @@ final class CodeSidebarPageDressingTests: XCTestCase {
         XCTAssertTrue(script.contains("__slopdeskFocusTruth"))
     }
 
+    func testFocusTruthOutlivesTheBootTimers() {
+        let script = CodeSidebarPageDressing.focusTruthScript()
+        // The workbench re-focuses its editor long after boot (a remount, a layout change, a file
+        // opening) — each of those pulls has to be corrected, not just the ones inside the timers.
+        XCTAssertTrue(script.contains("addEventListener(\"focusin\""))
+        // And the native side can ask directly, for the pulls the page cannot see (WebKit delivers
+        // no blur to a view unparented out of first responder).
+        XCTAssertTrue(script.contains("window.\(CodeSidebarPageDressing.focusTruthSyncName) = sync"))
+        XCTAssertTrue(
+            CodeSidebarPageDressing.focusTruthSyncCall
+                .contains("window.\(CodeSidebarPageDressing.focusTruthSyncName) &&"),
+            "the call must be inert on a page that has not run the script yet",
+        )
+    }
+
     // MARK: User script
 
     func testUserScriptGuardsOnStyleElementID() {

@@ -158,13 +158,97 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         // The editor owned the keyboard in tab A; a tab round-trip (or the panel's Desktop tab /
         // a collapse) unmounted the webview. Remounting back in tab A hands the keyboard back —
         // the workbench looks exactly as it was left, so typing must land in it again.
-        XCTAssertTrue(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: "A"))
+        XCTAssertTrue(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: ["A": "/repo"], activeTab: "A", projectRoot: "/repo",
+        ))
     }
 
     func testRemountInAnotherTabNeverSteals() {
         // Another tab's pane focusing into this project remounts the same pooled webview — the
         // user just focused THAT pane; the editor must not yank the keyboard from it.
-        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: "B"))
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: ["A": "/repo"], activeTab: "B", projectRoot: "/repo",
+        ))
+    }
+
+    func testRemountOfAnotherProjectInAPanelTabNeverSteals() {
+        // The tab reads the panel, but this is not the workbench it was reading — a project swap
+        // mid-flight must not land the keyboard in a workbench the user never focused.
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: ["A": "/repo"], activeTab: "A", projectRoot: "/other",
+        ))
+    }
+
+    // MARK: Per-tab focus region
+
+    func testAGestureResignForgetsOnlyTheTabItHappenedIn() {
+        // The user clicked tab B's terminal: B reads its terminal again, and A — which the user left
+        // mid-edit — stays a panel tab. Forgetting A here is the bug this map replaced.
+        let memory = CodeSidebarFocusPolicy.memoryAfterResign(
+            ["A": "/repo", "B": "/repo"], resigningTab: "B", stillInWindow: true,
+        )
+        XCTAssertEqual(memory, ["A": "/repo"])
+    }
+
+    func testAnUnmountResignForgetsNothing() {
+        // A warm swap took the keyboard, not the user — the tab is still a panel tab and its remount
+        // hands the keyboard back.
+        let memory = CodeSidebarFocusPolicy.memoryAfterResign(
+            ["A": "/repo"], resigningTab: "A", stillInWindow: false,
+        )
+        XCTAssertEqual(memory, ["A": "/repo"])
+    }
+
+    func testSwitchingIntoAPanelTabClaimsTheEditor() {
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.tabSwitchFocus(
+                incoming: "A", memory: ["A": "/repo"], editorHoldsKeyboard: false,
+            ),
+            .claimEditor(projectRoot: "/repo"),
+        )
+    }
+
+    func testSwitchingIntoATerminalTabTakesTheKeyboardBack() {
+        // The panel does not travel between tabs: a tab that was never edited in reads its terminal.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.tabSwitchFocus(
+                incoming: "B", memory: ["A": "/repo"], editorHoldsKeyboard: true,
+            ),
+            .yieldToWorkspace,
+        )
+    }
+
+    func testAlreadyCorrectSwitchesMoveNothing() {
+        // Terminal tab, keyboard already in the workspace — and a panel tab arriving while the editor
+        // holds the keyboard, where the column's own remount is what re-points it.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.tabSwitchFocus(
+                incoming: "B", memory: [:], editorHoldsKeyboard: false,
+            ),
+            .leaveAlone,
+        )
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.tabSwitchFocus(
+                incoming: "A", memory: ["A": "/repo"], editorHoldsKeyboard: true,
+            ),
+            .leaveAlone,
+        )
+    }
+
+    func testAnUnwiredActiveTabDecidesNothing() {
+        // Headless / pre-wiring: no tab means no region to honour, and no memory to forget.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.tabSwitchFocus(
+                incoming: String?.none, memory: ["A": "/repo"], editorHoldsKeyboard: false,
+            ),
+            .leaveAlone,
+        )
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.memoryAfterResign(
+                ["A": "/repo"], resigningTab: String?.none, stillInWindow: true,
+            ),
+            ["A": "/repo"],
+        )
     }
 
     // MARK: Orphan-repair owner tracking
@@ -283,13 +367,17 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
     }
 
     func testUnclaimedOrUnwiredTabsNeverRestore() {
-        // No recorded claim, or the app never wired the active-tab provider (headless tests): the
-        // restore must stay off rather than fire on a nil == nil coincidence.
-        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: String?.none, activeTab: "A"))
-        XCTAssertFalse(
-            CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: String?.none, activeTab: String?.none),
-        )
-        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(claimedTab: "A", activeTab: String?.none))
+        // No tab ever claimed the keyboard, or the app never wired the active-tab provider (headless
+        // tests): the restore must stay off rather than fire on a nil == nil coincidence.
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: [String: String](), activeTab: "A", projectRoot: "/repo",
+        ))
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: [String: String](), activeTab: String?.none, projectRoot: "/repo",
+        ))
+        XCTAssertFalse(CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+            memory: ["A": "/repo"], activeTab: String?.none, projectRoot: "/repo",
+        ))
     }
 }
 #endif

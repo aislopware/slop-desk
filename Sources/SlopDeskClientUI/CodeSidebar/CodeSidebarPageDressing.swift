@@ -342,8 +342,14 @@ enum CodeSidebarPageDressing {
     /// is focused — but the native side refuses that focus (the webview takes the keyboard only
     /// from a click), and a page that was NEVER natively focused never receives a blur to learn
     /// otherwise: the restored editor's caret blinks alongside the focused terminal's cursor.
-    /// Re-check `document.hasFocus()` (the engine's truth — it never went true) across the boot
-    /// window and dispatch the missing blur. Synthetic EVENTS only — never `blur()` itself, which
+    /// Re-check `document.hasFocus()` (the engine's truth — it never went true) and dispatch the
+    /// missing blur: across the boot window on a timer, and then on every `focusin` for the rest of
+    /// the page's life. The boot timers alone were not enough — the workbench re-focuses its editor
+    /// long after boot (a remount, a layout change, a file opening), and each of those pulls put the
+    /// caret back beside the terminal's with the timers long expired (user-reported 2026-08-10). The
+    /// listener runs the check a beat late so a click that legitimately hands the panel the keyboard
+    /// has settled its native focus first, and it costs nothing when the page really is focused.
+    /// Synthetic EVENTS only — never `blur()` itself, which
     /// would clear `document.activeElement` and break the real focus hand-off (WebKit re-fires
     /// `focus` on the preserved element when the view actually takes the keyboard, and that is
     /// what puts the caret back).
@@ -358,10 +364,21 @@ enum CodeSidebarPageDressing {
                 if (el && el !== document.body) { el.dispatchEvent(new FocusEvent("blur")); }
                 window.dispatchEvent(new FocusEvent("blur"));
             }
+            window.\(focusTruthSyncName) = sync;
+            document.addEventListener("focusin", function () { setTimeout(sync, 60); }, true);
             [1500, 4000, 9000, 20000].forEach(function (ms) { setTimeout(sync, ms); });
         })();
         """
     }
+
+    /// The page hook ``focusTruthScript()`` publishes, so the NATIVE side can replay the blur at the
+    /// moments the page cannot see: a resign, and a remount whose keyboard stays with the terminal
+    /// (WebKit delivers no blur to a view that lost first responder by being unparented). See
+    /// ``CodeSidebarWKWebView/syncFocusTruth()``.
+    static let focusTruthSyncName = "__slopdeskSyncFocusTruth"
+
+    /// ``focusTruthSyncName`` as a call that is inert on a page which has not run the script yet.
+    static let focusTruthSyncCall = "window.\(focusTruthSyncName) && window.\(focusTruthSyncName)();"
 
     /// The webview-canvas `WKUserScript` source (document START — the first paint must already
     /// have the colour — and ALL frames: the markdown preview lives two iframes deep). Gives

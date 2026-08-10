@@ -113,21 +113,80 @@ enum CodeSidebarFocusPolicy {
         hasKeyWindow ? webViewHoldsFirstResponder : previous
     }
 
-    /// Whether a REMOUNTED webview gets the keyboard handed back. The pool's webviews are warm —
-    /// a project switch (workspace tab carrying another project), the panel's Desktop tab, or a
-    /// panel collapse unmounts the view (which forcibly resigns first responder) and a later
-    /// remount shows the workbench exactly as it was left — so when the editor owned the keyboard
-    /// at unmount, the user reads the remount as "I'm back" and types straight into it; without
-    /// the hand-back those keys land in the terminal that auto-claimed in between (user-reported
-    /// 2026-08-03: ⌘⇧P after a tab round-trip opened the APP's palette, not VS Code's). Restore
-    /// only when the remount happens in the SAME workspace tab the keyboard was claimed in — a
-    /// remount in another tab (that tab's pane focusing into this project) must not yank the
-    /// keyboard from the pane the user just focused. Gesture-driven keyboard moves never reach
-    /// this question: a terminal/overlay click resigns the webview while it is still IN a window
-    /// (the pool clears the pending restore), whereas only the swap paths resign by unparenting.
-    /// Pure — pinned by `CodeSidebarFocusPolicyTests`.
-    static func shouldRestoreOnRemount<Tab: Equatable>(claimedTab: Tab?, activeTab: Tab?) -> Bool {
-        claimedTab != nil && claimedTab == activeTab
+    /// THE PER-TAB FOCUS REGION. A workspace tab remembers which surface the keyboard was last in —
+    /// its terminal pane, or the code panel — and the answer is the tab's, not the window's. The
+    /// memory maps a tab to the project workbench that held the keyboard there; a tab absent from it
+    /// focuses its terminal, which is every tab's starting state.
+    ///
+    /// It replaces a single global "the keyboard was claimed in tab X" slot that only survived an
+    /// UNMOUNT. With both tabs on one project nothing ever unmounts, so the slot was simply
+    /// overwritten: editing in tab A's panel, switching to tab B and clicking B's terminal erased
+    /// the fact that A was a panel tab, and coming back to A landed in A's terminal (user-reported
+    /// 2026-08-10). One entry per tab is the shape the question actually has.
+    ///
+    /// Whether a REMOUNTED webview gets the keyboard handed back reads straight off it. The pool's
+    /// webviews are warm — a project switch (workspace tab carrying another project), the panel's
+    /// Desktop tab, or a panel collapse unmounts the view (which forcibly resigns first responder)
+    /// and a later remount shows the workbench exactly as it was left — so when the tab being
+    /// remounted into is a PANEL tab, the user reads the remount as "I'm back" and types straight
+    /// into it; without the hand-back those keys land in the terminal that auto-claimed in between
+    /// (user-reported 2026-08-03: ⌘⇧P after a tab round-trip opened the APP's palette, not VS
+    /// Code's). The project must match too: a remount of ANOTHER project's workbench in this tab is
+    /// not the workbench this tab was reading. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    static func shouldRestoreOnRemount<Tab: Hashable>(
+        memory: [Tab: String], activeTab: Tab?, projectRoot: String,
+    ) -> Bool {
+        guard let activeTab else { return false }
+        return memory[activeTab] == projectRoot
+    }
+
+    /// The focus-region memory after a webview resign — the ONLY path that ever forgets a tab.
+    ///
+    /// Still-in-window ⇒ the USER moved the keyboard out of the panel (a terminal click, an overlay,
+    /// the ⌥⌘R hand-back): that tab's region is the terminal again. Off-window ⇒ a warm-swap
+    /// unmount took the keyboard, which is not a decision the user made — the tab stays a panel tab
+    /// and its remount hands the keyboard back.
+    ///
+    /// `resigningTab` is the tab the resign HAPPENED in, captured synchronously at the responder
+    /// seam rather than read here: the classification runs a hop later, by which time a tab click
+    /// that moved the keyboard has already switched the active tab, and this would forget the tab
+    /// the user was ARRIVING at instead of the one they left. Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`.
+    static func memoryAfterResign<Tab: Hashable>(
+        _ memory: [Tab: String], resigningTab: Tab?, stillInWindow: Bool,
+    ) -> [Tab: String] {
+        guard stillInWindow, let resigningTab else { return memory }
+        var out = memory
+        out.removeValue(forKey: resigningTab)
+        return out
+    }
+
+    /// Where the keyboard belongs when the workspace's ACTIVE TAB changes — the switch is the moment
+    /// the per-tab region is honoured.
+    ///
+    /// A panel tab arriving with the keyboard elsewhere CLAIMS the editor; any other tab arriving
+    /// while the editor holds the keyboard YIELDS it back to the workspace, so a terminal tab never
+    /// inherits the panel focus of the tab before it. `leaveAlone` covers the two already-correct
+    /// cases, including a panel tab arriving while the editor still holds the keyboard: when that
+    /// tab reads ANOTHER project the column's own swap unmounts and remounts the workbench, and the
+    /// remount restore (``shouldRestoreOnRemount(memory:activeTab:projectRoot:)``) is what moves the
+    /// keyboard to the right workbench. Pure — pinned by `CodeSidebarFocusPolicyTests`.
+    enum TabSwitchFocus: Equatable {
+        /// The arriving tab is a panel tab — claim this project's mounted workbench.
+        case claimEditor(projectRoot: String)
+        /// The arriving tab reads its terminal — let the workspace's focused pane take the keyboard.
+        case yieldToWorkspace
+        /// The keyboard is already where the arriving tab wants it.
+        case leaveAlone
+    }
+
+    static func tabSwitchFocus<Tab: Hashable>(
+        incoming: Tab?, memory: [Tab: String], editorHoldsKeyboard: Bool,
+    ) -> TabSwitchFocus {
+        guard let incoming, let projectRoot = memory[incoming] else {
+            return editorHoldsKeyboard ? .yieldToWorkspace : .leaveAlone
+        }
+        return editorHoldsKeyboard ? .leaveAlone : .claimEditor(projectRoot: projectRoot)
     }
 
     /// What ⌥⌘R (Focus Code Panel) should do, given where the keyboard is and whether the panel is
@@ -270,20 +329,46 @@ final class CodeSidebarWKWebView: WKWebView {
     /// and unparenting this view) resigns through here — the observable flag tracks it so the
     /// workspace's focused pane re-lights the moment the keyboard actually returns. The resign's
     /// CAUSE is classified one runloop later, once the swap (if any) has finished unparenting:
-    /// off-window ⇒ a warm-swap unmount (arm the remount restore), still-in-window ⇒ a genuine
-    /// keyboard move by gesture (drop any pending restore).
+    /// off-window ⇒ a warm-swap unmount (the tab stays a panel tab), still-in-window ⇒ a genuine
+    /// keyboard move by gesture (that tab's region is the terminal again — see
+    /// ``CodeSidebarFocusPolicy/memoryAfterResign(_:resigningTab:stillInWindow:)``).
+    ///
+    /// The tab is read NOW, not in the deferred hop: a click on another tab's row moves the keyboard
+    /// on mouse-down and switches the tab after, so the hop would name the wrong tab.
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
         if resigned {
             CodeSidebarKeyboardState.shared.set(false)
+            let resigningTab = CodeSidebarWebViewPool.activeTabID()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 CodeSidebarWebViewPool.shared.classifyResign(
-                    projectRoot: projectRoot, stillInWindow: window != nil,
+                    tab: resigningTab, stillInWindow: window != nil,
                 )
+                // The page keeps rendering a caret unless it is TOLD the keyboard left (see
+                // `syncFocusTruth()`).
+                syncFocusTruth()
             }
         }
         return resigned
+    }
+
+    /// Make the PAGE agree that it does not have the keyboard.
+    ///
+    /// The workbench decides where its caret blinks from its own DOM focus, and it re-focuses the
+    /// editor on its own schedule — a remount, a layout change, an editor opening. Those pulls are
+    /// refused at the native seam (only a click hands the panel the keyboard), but refusing the
+    /// NATIVE claim does not undo the PAGE's: `document.activeElement` is the editor, VS Code has
+    /// seen its `focus` event, and it blinks a caret next to the terminal's — two live cursors, and
+    /// the keys going to the terminal (user-reported 2026-08-10). WebKit is no help here: a view
+    /// that loses first responder by being UNPARENTED never delivers the page its blur.
+    ///
+    /// So the correction is driven from this side too: replay the missing blur through the page's
+    /// own focus-truth hook, which no-ops the moment `document.hasFocus()` is honestly true. The
+    /// hook self-installs at document start (``CodeSidebarPageDressing/focusTruthScript()``); the
+    /// `&&` guard makes this inert on a page that has not run it yet.
+    func syncFocusTruth() {
+        evaluateJavaScript(CodeSidebarPageDressing.focusTruthSyncCall)
     }
 
     /// Whether `event`'s location falls inside THIS webview — same window, point within bounds.
@@ -395,11 +480,11 @@ final class CodeSidebarWebViewPool {
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
     private var keyWindowObservers: [NSObjectProtocol] = []
-    /// The workspace tab the keyboard was last CLAIMED in (a click inside a webview, or a restore).
-    private var claimedTabID: TabID?
-    /// Armed when a webview loses the keyboard to a warm-swap UNMOUNT (never to a gesture) — the
-    /// remount of this project's webview in the claimed tab hands the keyboard back.
-    private var pendingRestore: (projectRoot: String, claimedTab: TabID)?
+    /// THE PER-TAB FOCUS REGION — every workspace tab whose keyboard belongs to the code panel,
+    /// mapped to the project workbench it belongs to. A tab absent from here reads its terminal.
+    /// Written at the responder seam (claim / resign) and honoured on every tab switch and remount;
+    /// see ``CodeSidebarFocusPolicy/shouldRestoreOnRemount(memory:activeTab:projectRoot:)``.
+    private var sidebarFocusMemory: [TabID: String] = [:]
     /// The last first responder that was a real view OUTSIDE every pooled webview — the repair
     /// target when a refused page focus pull strands the keyboard on the window (see
     /// ``CodeSidebarWKWebView/becomeFirstResponder()``). Tracked from `NSWindow.didUpdate`
@@ -600,9 +685,7 @@ final class CodeSidebarWebViewPool {
     /// The roots eviction must leave alone: whatever is on screen, and whatever is owed a keyboard
     /// hand-back on remount.
     private func protectedProjectRoots() -> Set<String> {
-        var protected = Set(webViews.filter { $0.value.window != nil }.keys)
-        if let pending = pendingRestore { protected.insert(pending.projectRoot) }
-        return protected
+        Set(webViews.filter { $0.value.window != nil }.keys).union(sidebarFocusMemory.values)
     }
 
     /// Tear one project's workbench down completely. The webview is unparented by construction (a
@@ -626,47 +709,117 @@ final class CodeSidebarWebViewPool {
 
     // MARK: Keyboard restore across warm swaps
 
-    /// A webview took the keyboard (click or restore) — remember WHICH workspace tab, and drop any
-    /// pending restore (a fresh claim supersedes whatever an earlier unmount had armed).
-    func noteKeyboardClaimed(projectRoot _: String) {
-        claimedTabID = Self.activeTabID()
-        pendingRestore = nil
+    /// A webview took the keyboard (click or restore) — the tab it happened in is a PANEL tab from
+    /// now on, reading this project's workbench.
+    func noteKeyboardClaimed(projectRoot: String) {
+        guard let tab = Self.activeTabID() else { return }
+        sidebarFocusMemory[tab] = projectRoot
     }
 
     /// The one-hop-deferred verdict on a webview resign (see
-    /// ``CodeSidebarWKWebView/resignFirstResponder()``): off-window ⇒ the warm swap took the
-    /// keyboard, arm the remount restore for the claimed tab; still-in-window ⇒ the USER moved the
-    /// keyboard (terminal click, overlay, find bar) — nothing may hand it back uninvited.
-    func classifyResign(projectRoot: String, stillInWindow: Bool) {
-        if stillInWindow {
-            claimedTabID = nil
-            pendingRestore = nil
-        } else if let claimedTab = claimedTabID {
-            claimedTabID = nil
-            pendingRestore = (projectRoot, claimedTab)
-        }
+    /// ``CodeSidebarWKWebView/resignFirstResponder()``) —
+    /// ``CodeSidebarFocusPolicy/memoryAfterResign(_:resigningTab:stillInWindow:)`` decides whether
+    /// the tab stops being a panel tab.
+    func classifyResign(tab: TabID?, stillInWindow: Bool) {
+        sidebarFocusMemory = CodeSidebarFocusPolicy.memoryAfterResign(
+            sidebarFocusMemory, resigningTab: tab, stillInWindow: stillInWindow,
+        )
     }
 
-    /// A pooled webview re-entered the hierarchy. When its project's restore is armed AND the
-    /// remount happens in the tab the keyboard was claimed in
-    /// (``CodeSidebarFocusPolicy/shouldRestoreOnRemount(claimedTab:activeTab:)``), the keyboard is
-    /// handed back — deferred TWO runloop hops so it lands after the focused terminal's own
-    /// deferred one-hop claim (the transition claim scheduled by the same render), settling the
-    /// race in the editor's favor exactly once. A matching remount consumes the arm either way; a
-    /// foreign-project remount leaves it for the real return.
+    /// A pooled webview re-entered the hierarchy. When the tab being remounted into is a PANEL tab
+    /// reading THIS project (``CodeSidebarFocusPolicy/shouldRestoreOnRemount(memory:activeTab:projectRoot:)``),
+    /// the keyboard is handed back; otherwise the page is told it does not have the keyboard, because
+    /// the workbench autofocuses its editor on the remount and would blink a caret beside the
+    /// terminal's (see ``CodeSidebarWKWebView/syncFocusTruth()``).
     func noteRemount(projectRoot: String) {
         // A mount is a use — it is what keeps the project in rotation ahead of the ones the user
         // has stopped visiting.
         touch(projectRoot)
-        guard let pending = pendingRestore, pending.projectRoot == projectRoot else { return }
-        pendingRestore = nil
         guard CodeSidebarFocusPolicy.shouldRestoreOnRemount(
-            claimedTab: pending.claimedTab, activeTab: Self.activeTabID(),
-        ) else { return }
-        let webView = webViews[projectRoot] as? CodeSidebarWKWebView
+            memory: sidebarFocusMemory, activeTab: Self.activeTabID(), projectRoot: projectRoot,
+        ) else {
+            (webViews[projectRoot] as? CodeSidebarWKWebView)?.syncFocusTruth()
+            return
+        }
+        claimWhenMounted(projectRoot: projectRoot)
+    }
+
+    /// The workspace switched tabs — honour the arriving tab's focus region
+    /// (``CodeSidebarFocusPolicy/tabSwitchFocus(incoming:memory:editorHoldsKeyboard:)``).
+    ///
+    /// `liveTabs` prunes the memory of tabs that have since closed: the pool cannot see the store,
+    /// and a `TabID` nobody can reach again would otherwise sit in the map for the session's life.
+    func noteActiveTabChanged(to tab: TabID?, liveTabs: Set<TabID>) {
+        sidebarFocusMemory = sidebarFocusMemory.filter { liveTabs.contains($0.key) }
+        switch CodeSidebarFocusPolicy.tabSwitchFocus(
+            incoming: tab, memory: sidebarFocusMemory, editorHoldsKeyboard: holdsFirstResponder(),
+        ) {
+        case let .claimEditor(projectRoot):
+            claimWhenMounted(projectRoot: projectRoot)
+        case .yieldToWorkspace:
+            yieldKeyboardToWorkspace()
+        case .leaveAlone:
+            break
+        }
+    }
+
+    /// The workspace moved its focus to a PANE inside the tab already on screen (a split's new leaf,
+    /// ⌘-arrow, a rail row, a palette landing) — the tab reads its terminal again, and the keyboard
+    /// has to follow.
+    ///
+    /// Without this the move was silently swallowed whenever the panel held the keyboard: the pane
+    /// tree gates every pane's rendered focus on ``CodeSidebarKeyboardState/ownsKeyboard`` (so the
+    /// terminal never re-lights and never claims first responder), and no workspace path asks the
+    /// webview to resign. A fresh split then arrived with no keyboard, no focus corner and a hollow
+    /// cursor, and only a CLICK into it — which forces first responder the hard way — put things
+    /// right, which is what made it read as intermittent (user-reported 2026-08-10).
+    func noteWorkspacePaneFocused(tab: TabID?) {
+        if let tab { sidebarFocusMemory.removeValue(forKey: tab) }
+        guard holdsFirstResponder() else { return }
+        yieldKeyboardToWorkspace()
+    }
+
+    /// Hand the keyboard to `projectRoot`'s workbench once the pass that asked for it has mounted it
+    /// — deferred TWO runloop hops so it lands after the focused terminal's own deferred one-hop
+    /// claim (the transition claim scheduled by the same render), settling the race in the editor's
+    /// favour exactly once. Re-checked on arrival against BOTH the live memory and what is actually
+    /// on screen, so a tab switch the user has already moved on from claims nothing.
+    private func claimWhenMounted(projectRoot: String) {
         DispatchQueue.main.async {
-            DispatchQueue.main.async { [weak webView] in
-                webView?.claimKeyboardForRestore()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let pool = Self.shared
+                    guard let webView = pool.mountedWebView(),
+                          webView.projectRoot == projectRoot,
+                          CodeSidebarFocusPolicy.shouldRestoreOnRemount(
+                              memory: pool.sidebarFocusMemory,
+                              activeTab: Self.activeTabID(),
+                              projectRoot: projectRoot,
+                          )
+                    else { return }
+                    webView.claimKeyboardForRestore()
+                }
+            }
+        }
+    }
+
+    /// Give the keyboard back to the workspace: drop the ownership flag, which re-lights the active
+    /// tab's focused pane and — through the terminal's focus-gated responder claim — has it take
+    /// first responder, which is what actually resigns the webview.
+    ///
+    /// The flag leads the responder move by a hop on purpose (the pool cannot reach into the pane
+    /// tree to name a view), so it is re-checked afterwards: when nothing claimed — the tab's
+    /// focused pane is a video surface, or there is no pane at all — the editor really does still
+    /// have the keyboard and the flag must say so, or the workspace would draw a live cursor for a
+    /// pane the keys are not going to.
+    private func yieldKeyboardToWorkspace() {
+        CodeSidebarKeyboardState.shared.set(false)
+        // Long enough for the SwiftUI pass and the pane's own deferred `makeFirstResponder` — this
+        // is a repair, and being late costs nothing while being early would undo the hand-back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            MainActor.assumeIsolated {
+                guard Self.shared.holdsFirstResponder() else { return }
+                CodeSidebarKeyboardState.shared.set(true)
             }
         }
     }
