@@ -135,6 +135,24 @@ you own the leak.
    `spctl -a -vvv -t install /Applications/SlopDesk.app` should say *accepted / Notarized
    Developer ID*.
 
+## `--product`, never `--target`
+
+Under the Swift 6.3 build backend `swift build --target slopdesk` compiles the module, prints
+*Build of target: 'slopdesk' complete!* and **never links a binary** — a green build with nothing
+to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a declared product, so
+`Package.swift` exposes the three shipped executables as `.executable` products. The other
+`executableTarget`s are dev/bench tools and stay product-less on purpose.
+
+`package-release.sh` also pins `--scratch-path .build-release` rather than discovering the output
+directory, and still *searches* it for the binary instead of assuming a layout: the path differs by
+build backend (`<triple>/release` vs `Products/Release`), and a packaging script that cannot find
+its own output fails three minutes into CI instead of at the flag.
+
+`scripts/package-release.sh` names `SlopDesk.app` without ever launching it, which is the first
+counterexample to `GuiGateLaunchContractTests`'s "names it ⇒ launches it" net. It is declared in
+that file's `nonLaunchingScripts`, and a companion test re-derives the claim — add an `open` there
+and the suite fails with the verb named.
+
 ## Known-fragile: the libghostty job
 
 This is the part most likely to break, and it breaks in CI in ways it does not break locally.

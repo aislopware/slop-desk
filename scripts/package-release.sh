@@ -100,11 +100,20 @@ echo "identity=${SIGN_IDENTITY}"
 step "Building CLI (swift build -c release)"
 
 # --arch arm64 keeps this honest even if someone runs it under Rosetta or on a future
-# universal-capable toolchain: the tarball claims arm64 and must contain only arm64. The three
-# shipped executables are `.executableTarget`s with no declared product (Package.swift's
-# `products:` are all libraries), so this is `--target`, not `--product`.
+# universal-capable toolchain: the tarball claims arm64 and must contain only arm64.
+#
+# `--product`, NOT `--target`. Under the Swift 6.3 build backend `--target slopdesk` compiles the
+# module, reports "Build of target: 'slopdesk' complete!", and never links a binary — a green build
+# that produces nothing to ship. `--product` links ("Linking slopdesk"), which is why Package.swift
+# declares the three shipped executables as products.
+# --scratch-path DICTATES where SwiftPM builds instead of leaving it to the toolchain. On the CI
+# toolchain the default scratch dir was not `.build` at all: all three targets built, `.build` held
+# only checkouts/artifacts, and nothing named slopdesk existed anywhere under it. A packaging
+# script that cannot find its own output is the one failure mode worth spending a flag on.
+# `.build-release` is covered by .gitignore's `.build-*/` and survives between local runs.
+SPM_SCRATCH="${REPO_ROOT}/.build-release"
 for tool in "${CLI_TOOLS[@]}"; do
-  (cd "${REPO_ROOT}" && swift build -c release --arch arm64 --target "${tool}")
+  (cd "${REPO_ROOT}" && swift build -c release --arch arm64 --scratch-path "${SPM_SCRATCH}" --product "${tool}")
 done
 
 # Where the binaries land is NOT a constant. `.build/arm64-apple-macosx/release` is right for the
@@ -113,11 +122,12 @@ done
 # `--show-bin-path` does not report. Hardcoding the triple built fine locally and then failed at
 # the copy on CI, which is the worst place to learn it. So: treat --show-bin-path as a hint and
 # fall back to searching .build for a real Mach-O of that name under a release directory.
-CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --show-bin-path 2> /dev/null || true)"
+CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --scratch-path "${SPM_SCRATCH}" --show-bin-path 2> /dev/null || true)"
 
-# Search roots, widest last: the scratch dir is not guaranteed to be .build at all — a toolchain
-# that defaults to the Xcode build service can land products in DerivedData.
-SEARCH_ROOTS=("${REPO_ROOT}/.build" "${HOME}/Library/Developer/Xcode/DerivedData")
+# Search roots, widest last. Even inside a pinned scratch dir the layout differs by build backend
+# (`<triple>/release` for llbuild, `Products/Release` for Swift Build), so the path is still found,
+# never assumed.
+SEARCH_ROOTS=("${SPM_SCRATCH}" "${REPO_ROOT}/.build" "${HOME}/Library/Developer/Xcode/DerivedData")
 
 locate_tool() {
   local tool="$1" cand root
@@ -153,8 +163,10 @@ dump_build_layout() {
       echo "  (does not exist)" >&2
       continue
     }
-    find "${root}" -maxdepth 4 -type d 2> /dev/null | head -40 >&2
-    find "${root}" -type f -name '*slopdesk*' 2> /dev/null | head -40 >&2
+    # awk, not head: `find | head` closes the pipe early and pipefail turns the diagnostic itself
+    # into the fatal error, which is how the first dump managed to hide the second half of itself.
+    find "${root}" -maxdepth 4 -type d 2> /dev/null | awk 'NR <= 40' >&2
+    find "${root}" -type f -name '*slopdesk*' 2> /dev/null | awk 'NR <= 40' >&2
   done
 }
 

@@ -35,6 +35,23 @@ final class GuiGateLaunchContractTests: XCTestCase {
         "com.slopdesk.client.macos", // PRODUCT_BUNDLE_IDENTIFIER, Apps/ClientApp-macOS/project.yml
     ]
 
+    /// Scripts that NAME the app and never bring it up.
+    ///
+    /// The net below reads "names it" as "launches it somehow", which held for as long as `scripts/`
+    /// was only GUI gates. `package-release.sh` is the first counterexample: the bundle is its
+    /// OUTPUT — xcodegen builds it, PlistBuddy stamps it, codesign signs it, hdiutil ships it — and
+    /// isolating a launch that does not exist is not a thing to demand.
+    ///
+    /// This is a declaration, not a hole. ``testDeclaredNonLaunchersReallyCannotLaunch`` re-derives
+    /// the claim from the file, so the day one of these grows a launch it fails THERE, with the
+    /// verb named, rather than quietly opting out of all seventeen contracts.
+    private static let nonLaunchingScripts: Set<String> = [
+        "scripts/package-release.sh", // build → sign → notarize → dmg (docs/49)
+    ]
+
+    /// Every way a script could START the app, in the spellings the net is blind to.
+    private static let launchVerbs = ["open ", "osascript", "launchctl", "Contents/MacOS/SlopDesk"]
+
     /// Every `scripts/*.sh`. Both walks and the fail-closed net read the one directory.
     private func allScripts() throws -> [String] {
         let scripts = try FileManager.default
@@ -325,6 +342,7 @@ final class GuiGateLaunchContractTests: XCTestCase {
         for script in try allScripts() {
             let code = try codeBody(of: script)
             guard let named = Self.appNames.first(where: code.contains) else { continue }
+            if Self.nonLaunchingScripts.contains(script) { continue }
             XCTAssertTrue(
                 discovered.contains(script),
                 "\(script) names the macOS app (`\(named)`) and neither walk over scripts/ can see how "
@@ -334,6 +352,31 @@ final class GuiGateLaunchContractTests: XCTestCase {
                     + "bundle binary through a path `appBinaryTokens` can resolve, or make the launch one "
                     + "`openLaunchLines` can read.",
             )
+        }
+    }
+
+    /// The exemption above, re-derived from the file instead of taken on trust.
+    ///
+    /// RED the moment `package-release.sh` grows an `open "${STAGE}/SlopDesk.app"` — a plausible
+    /// "let's smoke-test what we just signed" line — which is exactly the launch the net would have
+    /// caught before the script was declared non-launching.
+    func testDeclaredNonLaunchersReallyCannotLaunch() throws {
+        let scripts = try Set(allScripts())
+        for script in Self.nonLaunchingScripts.sorted() {
+            XCTAssertTrue(
+                scripts.contains(script),
+                "\(script) is declared non-launching but no longer exists under scripts/ — delete the "
+                    + "declaration, or the next script to take that name inherits a silent exemption.",
+            )
+            for line in try codeLines(of: script) {
+                for verb in Self.launchVerbs {
+                    XCTAssertFalse(
+                        line.contains(verb),
+                        "\(script) is declared non-launching, yet this line can start the app (`\(verb)`): "
+                            + line.trimmingCharacters(in: .whitespaces),
+                    )
+                }
+            }
         }
     }
 
