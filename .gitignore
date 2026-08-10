@@ -54,6 +54,10 @@ ThirdParty/ghostty/GhosttyKit.xcframework/
 ThirdParty/ghostty/*.xcframework*
 .work/
 
+# Release artifacts built by scripts/package-release.sh (dmg / tarball / SHA256SUMS).
+# They live on the GitHub Release, never in git.
+dist/
+
 # ui-shell reference demo videos (kept on disk for reference, too large for git)
 docs/ui-shell/screenshots/*.mp4
 docs/ui-shell/screenshots/*.mov

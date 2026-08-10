@@ -42,6 +42,14 @@ let package = Package(
         .library(name: "SlopDeskVideoClient", targets: ["SlopDeskVideoClient"]),
         // PATH 4 (dedicated drag-drop file-transfer channel).
         .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
+        // The three SHIPPED executables (scripts/package-release.sh, docs/49). Products, not just
+        // targets, because `swift build --target <exe>` under the Swift 6.3 build backend compiles
+        // the module and never links a binary — the release tarball needs `--product`, which only
+        // exists for a declared product. Every other executableTarget below is a dev/bench tool and
+        // stays product-less on purpose: `swift build` still builds them, `--product` won't ship them.
+        .executable(name: "slopdesk", targets: ["slopdesk"]),
+        .executable(name: "slopdesk-hostd", targets: ["slopdesk-hostd"]),
+        .executable(name: "slopdesk-ctl", targets: ["slopdesk-ctl"]),
     ],
     // External UI deps — attach ONLY to `SlopDeskClientUI` so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
