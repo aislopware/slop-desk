@@ -1086,6 +1086,14 @@ public final class WorkspaceStore {
     /// session. Matches ``WorkspaceTopology/focusMRUCap`` doubled, because panes outnumber tabs.
     public static let paneVisitMRUCap = 32
 
+    /// WHAT THE LAST LOCAL NAVIGATION NAMED — a tab, or a pane. See ``FocusIntent`` (and the whole
+    /// rule in `WorkspaceStore+FocusLanding.swift`); the stored halves live here because
+    /// `@Observable` synthesises on them.
+    /// `internal(set)` (not `private(set)`) so the recorder in `WorkspaceStore+FocusLanding.swift`
+    /// can write it — same reason ``retainedSessionIDs`` is; still not publicly settable.
+    public internal(set) var lastFocusIntent: FocusIntent?
+    var focusIntentSeq: UInt64 = 0
+
     /// Fronts `id` in the visit ring. Dead ids are not pruned here — ``PaneSwitcher/candidates(active:mru:ordered:)``
     /// intersects with the live pane set on every open, so a pane that closes simply stops being offered.
     func notePaneVisit(_ id: PaneID) {
@@ -2576,30 +2584,6 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
-    /// The pane the keyboard should land on when `target` closes: the most recently visited pane that
-    /// SURVIVES the close, inside the closing pane's own tab. `nil` when the question does not arise —
-    /// a background pane closing (focus does not move at all), a pane whose tab goes with it (the tab
-    /// cascade picks a tab, not a pane), the last two panes (one survivor, and geometry already agrees),
-    /// or a ring with nothing live left in it (the tree op's neighbour rule stands).
-    ///
-    /// The ring's front is the pane being closed, so "most recent survivor" is simply the first entry
-    /// that is still there.
-    func paneCloseLanding(closing target: PaneID) -> PaneID? {
-        guard let (sessionID, tabID) = tree.tab(containing: target),
-              let tab = tree.sessions.first(where: { $0.id == sessionID })?
-              .tabs.first(where: { $0.id == tabID }),
-              tab.activePane == target
-        else { return nil }
-        let survivors = Set(tab.allPaneIDs()).subtracting([target])
-        guard survivors.count > 1 else { return nil }
-        return Self.mostRecentSurvivor(mru: paneVisitMRU, survivors: survivors)
-    }
-
-    /// The first id in `mru` that is still in `survivors`. Pure — pinned by `PaneCloseLandingTests`.
-    static func mostRecentSurvivor(mru: [PaneID], survivors: Set<PaneID>) -> PaneID? {
-        mru.first { survivors.contains($0) }
-    }
-
     // MARK: - Detach a pane to its own window (satellite) / reattach
 
     /// Every detached (own-window) pane in session order then detach order — the satellite-window
@@ -3616,6 +3600,16 @@ public final class WorkspaceStore {
             focusCoordinator.focus(focused)
         }
         if acknowledgingFocus {
+            // THE VISIT RING records every pane this user ARRIVES at, not only the ones a navigation
+            // NAMED. The two `stageFocus` choke points cannot see the rest: a split's new leaf, a
+            // close's landing, a reopened tab's pane. Left out, the ring had a hole exactly where the
+            // working set is — split a pane, work in it, focus a sibling, close it, and the landing was
+            // resolved against a ring that had never heard of the pane the user had just been living in
+            // (found by `PaneCloseLandingTests` 2026-08-10; ⌃⇥ had the same hole). `acknowledgingFocus`
+            // is what keeps this THIS device's arrivals: a focus another client published is not a visit.
+            if let focused = tree.activeSession?.activeTab?.activePane, focused != paneVisitMRU.first {
+                notePaneVisit(focused)
+            }
             // A pane that just gained focus (selectTab / selectSession / focusPaneTree all route here) is
             // being watched — clear its pending command-completion badge.
             clearActiveLeafCompletionBadge()

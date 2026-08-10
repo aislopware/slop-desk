@@ -127,16 +127,18 @@ public struct WorkspaceRootView: View {
     /// fought.
     private var activeTabCount: Int { store.tree.activeSession?.tabs.count ?? 0 }
 
-    /// Where the workspace's focus is sitting — the pair the code panel's per-tab focus region is
-    /// resolved against on every change (see ``honourFocusRegion(from:to:)``).
+    /// Where the workspace's focus is sitting, and what asked for it — the triple the code panel's
+    /// per-tab focus region is resolved against on every change (see ``honourFocusRegion(from:to:)``).
+    /// The intent rides along because a tab switch and a cross-tab pane jump land identically.
     private struct FocusLanding: Equatable {
         var tab: TabID?
         var pane: PaneID?
+        var intent: WorkspaceStore.FocusIntent?
     }
 
     private var focusLanding: FocusLanding {
         let tab = store.tree.activeSession?.activeTab
-        return FocusLanding(tab: tab?.id, pane: tab?.activePane)
+        return FocusLanding(tab: tab?.id, pane: tab?.activePane, intent: store.lastFocusIntent)
     }
 
     public var body: some View {
@@ -269,16 +271,26 @@ public struct WorkspaceRootView: View {
     /// tree gates every pane's focus on the panel's ownership, so a move made while the editor holds
     /// it was previously swallowed whole.
     ///
-    /// A pane TELEPORT that also crosses tabs (a palette hit, a Global Search landing) is read as the
-    /// tab switch it also is, so landing in a tab whose region is the panel lands in the panel. It is
-    /// one click to correct and the alternative — a fifth signal threaded from the store's two focus
-    /// choke points — buys a rarer case than it costs.
+    /// A pane TELEPORT that also crosses tabs (a palette hit, a Global Search landing) is a PANE
+    /// landing, not a tab switch, even though it changes the active tab as well — the two are told
+    /// apart by ``WorkspaceStore/FocusIntent``, which the store's two focus choke points record and
+    /// nothing else does. A focus move that passes through neither (a split's new leaf, a close's
+    /// landing, another client's focus arriving in the document) carries no fresh intent and is read
+    /// off the shape of the change instead.
     private func honourFocusRegion(from previous: FocusLanding, to current: FocusLanding) {
-        if previous.tab != current.tab {
+        switch CodeSidebarFocusPolicy.landingAction(
+            intentNamedPane: current.intent?.kind == .pane,
+            intentIsFresh: previous.intent?.seq != current.intent?.seq,
+            tabChanged: previous.tab != current.tab,
+            paneChanged: previous.pane != current.pane,
+        ) {
+        case .honourTabRegion:
             let live = Set(store.tree.sessions.flatMap { $0.tabs.map(\.id) })
             CodeSidebarWebViewPool.shared.noteActiveTabChanged(to: current.tab, liveTabs: live)
-        } else if previous.pane != current.pane {
+        case .yieldToPane:
             CodeSidebarWebViewPool.shared.noteWorkspacePaneFocused(tab: current.tab)
+        case .none:
+            break
         }
     }
 

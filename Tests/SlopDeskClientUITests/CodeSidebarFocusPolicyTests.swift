@@ -235,6 +235,68 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         )
     }
 
+    // MARK: Which question a focus change is asking
+
+    func testACrossTabPaneJumpLandsOnThePaneItNamed() {
+        // A palette hit / Global Search landing changes the active TAB too, and the arriving tab may
+        // be one the user was last editing in — the named pane still wins, or the jump would put the
+        // caret somewhere the user did not aim.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: true, intentIsFresh: true, tabChanged: true, paneChanged: true,
+            ),
+            .yieldToPane,
+        )
+    }
+
+    func testAPlainTabSwitchHonoursTheArrivingTabsRegion() {
+        // The tab's own activePane changes with it — the shape is identical to a jump, and only the
+        // intent tells them apart.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: false, intentIsFresh: true, tabChanged: true, paneChanged: true,
+            ),
+            .honourTabRegion,
+        )
+    }
+
+    func testAMoveThroughNoChokePointIsReadOffTheChange() {
+        // A split's new leaf, a close's landing, another client's focus arriving in the document:
+        // the sequence stands still while the landing moves.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: false, intentIsFresh: false, tabChanged: false, paneChanged: true,
+            ),
+            .yieldToPane,
+        )
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: false, intentIsFresh: false, tabChanged: true, paneChanged: true,
+            ),
+            .honourTabRegion,
+        )
+    }
+
+    func testAStaleIntentNeverSpeaksForANewLanding() {
+        // The last recorded intent named a pane, but this change did not come from it — reading the
+        // stale kind would yield the keyboard on every subsequent tab switch.
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: true, intentIsFresh: false, tabChanged: true, paneChanged: true,
+            ),
+            .honourTabRegion,
+        )
+    }
+
+    func testNothingMovingAsksNothing() {
+        XCTAssertEqual(
+            CodeSidebarFocusPolicy.landingAction(
+                intentNamedPane: false, intentIsFresh: true, tabChanged: false, paneChanged: false,
+            ),
+            CodeSidebarFocusPolicy.FocusLandingAction.none,
+        )
+    }
+
     func testAnUnwiredActiveTabDecidesNothing() {
         // Headless / pre-wiring: no tab means no region to honour, and no memory to forget.
         XCTAssertEqual(

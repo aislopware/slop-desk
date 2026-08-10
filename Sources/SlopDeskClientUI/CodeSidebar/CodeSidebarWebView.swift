@@ -189,6 +189,35 @@ enum CodeSidebarFocusPolicy {
         return editorHoldsKeyboard ? .leaveAlone : .claimEditor(projectRoot: projectRoot)
     }
 
+    /// WHICH QUESTION A FOCUS CHANGE IS ASKING. The workspace's focus moved; the shell has to decide
+    /// whether the arriving TAB's remembered region applies, or whether a PANE was named and the
+    /// keyboard owes it.
+    ///
+    /// The landing alone cannot answer it — switching tabs moves the focused pane too, so a tab
+    /// switch and a cross-tab pane jump look identical in `(tab, pane)`. What separates them is
+    /// ``WorkspaceStore/FocusIntent``: a FRESH intent naming a pane means the user aimed at that
+    /// pane, wherever it lives, and the panel must let go even when the arriving tab is one they
+    /// were last editing in. Everything else falls back to the shape of the change, which is what
+    /// covers the moves that pass through no choke point at all: a split's new leaf, a close's
+    /// landing, another client's focus arriving in the document. Pure — pinned by
+    /// `CodeSidebarFocusPolicyTests`.
+    enum FocusLandingAction: Equatable {
+        /// Hand the arriving tab its own region (terminal or panel).
+        case honourTabRegion
+        /// A pane was named — the panel gives the keyboard back.
+        case yieldToPane
+        /// Nothing moved that the keyboard cares about.
+        case none
+    }
+
+    static func landingAction(
+        intentNamedPane: Bool, intentIsFresh: Bool, tabChanged: Bool, paneChanged: Bool,
+    ) -> FocusLandingAction {
+        if intentIsFresh, intentNamedPane { return .yieldToPane }
+        if tabChanged { return .honourTabRegion }
+        return paneChanged ? .yieldToPane : .none
+    }
+
     /// What ⌥⌘R (Focus Code Panel) should do, given where the keyboard is and whether the panel is
     /// even on screen. One chord, both directions — the editor is otherwise reachable ONLY by
     /// clicking it, because every other focus claim is refused by design (see

@@ -106,10 +106,16 @@ extension WorkspaceStore {
         {
             notePaneVisit(landing)
         }
+        // The kind is recorded HERE, at the choke point, because only here is it known — see
+        // ``WorkspaceStore/FocusIntent``. A refused stage records nothing.
         guard devicePreferences.followSessionFocus else {
-            return setDeviceFocus(DeviceFocus(tab: tab, pane: nil))
+            let staged = setDeviceFocus(DeviceFocus(tab: tab, pane: nil))
+            if staged { noteFocusIntent(.tab) }
+            return staged
         }
-        return stage(.focusTab, WorkspaceIntentArgs.encode(tab: tab))
+        let staged = stage(.focusTab, WorkspaceIntentArgs.encode(tab: tab))
+        if staged { noteFocusIntent(.tab) }
+        return staged
     }
 
     /// Publishes a PANE focus the way this device is configured to. The unfollowing path resolves the
@@ -121,8 +127,12 @@ extension WorkspaceStore {
         notePaneVisit(pane)
         guard devicePreferences.followSessionFocus else {
             guard let (_, tab) = tree.tab(containing: pane) else { return false }
-            return setDeviceFocus(DeviceFocus(tab: tab, pane: pane))
+            let staged = setDeviceFocus(DeviceFocus(tab: tab, pane: pane))
+            if staged { noteFocusIntent(.pane) }
+            return staged
         }
-        return stage(.focusPane, WorkspaceIntentArgs.encode(pane: pane))
+        let staged = stage(.focusPane, WorkspaceIntentArgs.encode(pane: pane))
+        if staged { noteFocusIntent(.pane) }
+        return staged
     }
 }
