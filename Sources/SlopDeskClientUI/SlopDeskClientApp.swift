@@ -926,8 +926,10 @@ public struct SlopDeskClientApp: App {
             let sourcePaneFocused = store.isSourcePaneFocused(byIDString: paneIDKey)
             #if os(macOS)
             // The herdr-style sound cues (Submarine on a finish, Glass on awaiting-input), gated by the
-            // pure ``AgentSoundPolicy``: awaiting-input plays even for the focused pane; a finish only
-            // for a background one. System sounds via `NSSound(named:)` — nothing bundled.
+            // pure ``AgentSoundPolicy`` — which does NOT gate on focus: the TOAST is suppressed for a
+            // focused pane (a card over the event you are watching is spam), but the cue still rings,
+            // because a focused pane is routinely one in a background window or on another display.
+            // System sounds via `NSSound(named:)` — nothing bundled.
             if let sound = AgentSoundPolicy.sound(
                 needsInput: needsInput,
                 sourcePaneFocused: sourcePaneFocused,

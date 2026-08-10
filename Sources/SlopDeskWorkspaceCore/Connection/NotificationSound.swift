@@ -37,20 +37,30 @@ public enum AgentSound: String, Sendable {
 }
 
 /// The PURE decision for the **Code Agent sound** cues, riding the same `onAgentAttention` edge as the
-/// toast/banner. The two events gate differently on purpose: awaiting-input plays even while the source
-/// pane is focused (the agent is standing still until the user acts — being "on screen" is no guarantee
-/// of being noticed), while task-complete stays silent for a watched pane (the finished turn is right
-/// there; only a background finish earns a cue).
+/// toast/banner.
+///
+/// **The sound is NOT focus-gated — the toast is** (user-directed 2026-08-10). The two surfaces answer
+/// different questions and the split is the point: a card is a PANE SPEAKING FROM OFF-SCREEN, so it is
+/// suppressed for the pane you are looking at (the finished turn is right there on screen and a card
+/// over it would be spam), but the CUE is what tells you an edge happened at all, and "the pane is
+/// focused" is not evidence anyone was looking at it. A focused pane is routinely the one left running
+/// in a background window, or on a second display, or behind the browser the user switched to while the
+/// turn ran. Task-complete used to stay silent for a focused pane, which is exactly the case where the
+/// user is most likely waiting for the ring and least likely to be watching the glyph.
+///
+/// Both events therefore gate on their own toggle ALONE. `sourcePaneFocused` is kept in the signature
+/// and deliberately unused: the parameter documents that focus reaches this decision and is REFUSED by
+/// it, so a later reader cannot mistake the absence of the input for an oversight.
 public enum AgentSoundPolicy {
     public static func sound(
         needsInput: Bool,
-        sourcePaneFocused: Bool,
+        sourcePaneFocused _: Bool,
         soundTaskComplete: Bool,
         soundAwaitInput: Bool,
     ) -> AgentSound? {
         if needsInput {
             return soundAwaitInput ? .awaitInput : nil
         }
-        return soundTaskComplete && !sourcePaneFocused ? .taskComplete : nil
+        return soundTaskComplete ? .taskComplete : nil
     }
 }

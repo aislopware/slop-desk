@@ -30,9 +30,10 @@ final class BellSoundPolicyTests: XCTestCase {
     }
 }
 
-/// The PURE Code Agent sound decisions (the herdr done/request cue semantics): awaiting-input plays
-/// even for the focused pane (the agent stands still until the user acts); a task-complete plays only
-/// for a BACKGROUND pane (a watched finish is on screen already). Each cue rides its own toggle.
+/// The PURE Code Agent sound decisions (the herdr done/request cue semantics): NEITHER cue is
+/// focus-gated (user-directed 2026-08-10 — the TOAST is the focus-gated surface; a focused pane is
+/// routinely one in a background window, so silence there is the wrong default). Each cue rides its
+/// own toggle and nothing else.
 final class AgentSoundPolicyTests: XCTestCase {
     /// Awaiting-input ignores focus — it plays for a focused pane too, gated only by its toggle.
     func testAwaitInputPlaysRegardlessOfFocus() {
@@ -55,30 +56,26 @@ final class AgentSoundPolicyTests: XCTestCase {
         }
     }
 
-    /// Task-complete plays only for a BACKGROUND pane, gated by its toggle; the awaiting-input
-    /// toggle has no say over it.
-    func testTaskCompletePlaysOnlyUnfocused() {
-        XCTAssertEqual(
-            AgentSoundPolicy.sound(
-                needsInput: false, sourcePaneFocused: false,
-                soundTaskComplete: true, soundAwaitInput: false,
-            ),
-            .taskComplete,
-        )
-        XCTAssertNil(
-            AgentSoundPolicy.sound(
-                needsInput: false, sourcePaneFocused: true,
-                soundTaskComplete: true, soundAwaitInput: true,
-            ),
-            "a watched finish is already on screen — no cue",
-        )
-        XCTAssertNil(
-            AgentSoundPolicy.sound(
-                needsInput: false, sourcePaneFocused: false,
-                soundTaskComplete: false, soundAwaitInput: true,
-            ),
-            "the task-complete toggle alone silences the done cue",
-        )
+    /// Task-complete ignores focus too, gated by its toggle; the awaiting-input toggle has no say
+    /// over it. Revert-to-confirm-fail: the focused case returned `nil` before 2026-08-10.
+    func testTaskCompletePlaysRegardlessOfFocus() {
+        for focused in [true, false] {
+            XCTAssertEqual(
+                AgentSoundPolicy.sound(
+                    needsInput: false, sourcePaneFocused: focused,
+                    soundTaskComplete: true, soundAwaitInput: false,
+                ),
+                .taskComplete,
+                "a finish rings whether or not the pane is focused (focused=\(focused))",
+            )
+            XCTAssertNil(
+                AgentSoundPolicy.sound(
+                    needsInput: false, sourcePaneFocused: focused,
+                    soundTaskComplete: false, soundAwaitInput: true,
+                ),
+                "the task-complete toggle alone silences the done cue",
+            )
+        }
     }
 
     /// The rawValues ARE the `NSSound(named:)` system-sound names — the actuation contract.

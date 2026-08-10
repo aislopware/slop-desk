@@ -734,7 +734,7 @@ private struct ShellSettingsTab: View {
             glyphToggle(
                 .speakerWave2,
                 "Sound When Task Completes",
-                "Play a sound when a coding agent finishes in an unfocused pane.",
+                "Play a sound when a coding agent finishes a turn.",
                 isOn: $agentSoundTaskComplete,
             )
             glyphToggle(

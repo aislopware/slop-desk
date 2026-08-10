@@ -169,8 +169,8 @@ public enum SettingsKey {
     public static let agentNotifyTaskComplete = "notifications.agentTaskComplete"
     /// "Code Agent — Notify When Awaiting Input" — agent needs approval / input (default ON; Claude-only).
     public static let agentNotifyAwaitInput = "notifications.agentAwaitInput"
-    /// "Code Agent — Sound When Task Completes" — Submarine on a background finish (default ON; macOS-only).
-    /// Read by ``AgentSoundPolicy``.
+    /// "Code Agent — Sound When Task Completes" — Submarine on a finished turn, focused pane included
+    /// (default ON; macOS-only). Read by ``AgentSoundPolicy``.
     public static let agentSoundTaskComplete = "notifications.agentSoundTaskComplete"
     /// "Code Agent — Sound When Awaiting Input" — Glass when the agent blocks on input, even for the
     /// focused pane (default ON; macOS-only). Read by ``AgentSoundPolicy``.
