@@ -1,0 +1,296 @@
+# Release pipeline: tag → signed + notarized arm64 artifacts → GitHub Release → Homebrew tap.
+#
+# ⚠ THIS REPO IS PUBLIC — every line this workflow prints is public. The one step that touches
+# signing material masks each value with `::add-mask::` BEFORE anything can echo it, and never
+# crosses a step boundary with a secret in `$GITHUB_ENV`. Keep it that way.
+#
+# WHY the credentials come from better-update and not GitHub secrets: the Developer ID identity
+# belongs to WEEBUILD VIET NAM and is shared with other products; it lives once in the
+# better-update E2E vault (org `weebuild`) and every pipeline pulls it from there. The ONLY
+# GitHub secret is BETTER_UPDATE_ROBOT — the robot token that unlocks the vault. Setup and the
+# full variable list: docs/49-release-pipeline.md.
+#
+# ARM64 ONLY. libghostty ships a macos-arm64 slice and nothing else, and the apps deploy against
+# macOS 26 (no Intel Mac runs it). There is deliberately no x86_64 matrix leg.
+name: Release
+
+run-name: "Release ${{ inputs.version || github.ref_name }}${{ inputs.dry-run && ' (dry run)' || '' }}"
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Marketing version to build, no leading v (e.g. 0.1.0)
+        type: string
+        required: true
+      dry-run:
+        description: "Build + sign but skip notarization, the Release and the tap bump"
+        type: boolean
+        default: true
+
+# One release at a time. Never cancel an in-flight notarization — Apple bills the submission
+# either way and a cancelled staple leaves a signed-but-unstapled artifact behind.
+concurrency: release
+
+permissions: {}
+
+jobs:
+  # ── libghostty ────────────────────────────────────────────────────────────────────────────
+  # Split out and cached because it is the slow, fragile half: a pinned Zig 0.15.2 toolchain,
+  # a ghostty fork clone, a Metal shader compile, and a `zig build` that is EXPECTED to exit
+  # non-zero (build-libghostty.sh harvests the intermediate libtool archives itself — see
+  # caveat #3 in its header). It only reruns when the recipe or the pinned delta changes.
+  libghostty:
+    name: libghostty.xcframework
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the built xcframework
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ThirdParty/ghostty/libghostty.xcframework
+          # Everything that can change the output: the recipe, the consolidated fork delta, and
+          # the pins recorded in the README. Bump nothing by hand — edit those files instead.
+          key: libghostty-${{ runner.os }}-arm64-${{ hashFiles('ThirdParty/ghostty/build-libghostty.sh', 'ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch', 'ThirdParty/ghostty/README.md') }}
+
+      # build-libghostty.sh needs an OLD macOS SDK (<= 15.x) for its xcrun shim: Zig 0.15.2
+      # cannot link the macOS 26 SDK (caveat #1). The runner image keeps older SDKs inside the
+      # older Xcode bundles, so find one instead of assuming the CLT path the script defaults to.
+      - name: Locate a <= 15.x macOS SDK for the xcrun shim
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sdk="$(find /Library/Developer/CommandLineTools/SDKs /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs \
+                   -maxdepth 1 -name 'MacOSX1[45]*.sdk' 2>/dev/null | sort -V | tail -1)"
+          if [ -z "${sdk}" ]; then
+            echo "::error::No MacOSX14/15 SDK on this runner — the Zig 0.15.2 link wall (build-libghostty.sh caveat #1) cannot be worked around. Pin an older Xcode with maxim-lobanov/setup-xcode, or vendor the xcframework."
+            exit 1
+          fi
+          echo "Using SDK shim: ${sdk}"
+          echo "MACOS_SDK_SHIM_PATH=${sdk}" >> "${GITHUB_ENV}"
+
+      - name: Install the Metal toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        # The fork compiles Ghostty.metallib; without this the libtool step never runs and the
+        # harvest finds nothing (caveat #2). Already present on some images — hence `|| true`
+        # is NOT used: a real failure here must fail the job, not surface 40 minutes later.
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build libghostty.xcframework
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ThirdParty/ghostty/build-libghostty.sh
+
+      - name: Upload the xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: libghostty-xcframework
+          path: ThirdParty/ghostty/libghostty.xcframework
+          retention-days: 1
+
+  # ── build + sign + notarize ───────────────────────────────────────────────────────────────
+  package:
+    name: Build, sign, notarize
+    needs: libghostty
+    runs-on: macos-26
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          case "${version}" in
+            v*) echo "::error::version must not carry a leading v: ${version}"; exit 1 ;;
+            "") echo "::error::empty version"; exit 1 ;;
+          esac
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-xcframework
+          path: ThirdParty/ghostty/libghostty.xcframework
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # ONE step for everything that touches signing material: pull → mask → source → sign.
+      # Nothing secret crosses a step boundary, so nothing can leak through $GITHUB_ENV or a
+      # later step's `set -x`.
+      - name: Build, sign and notarize
+        env:
+          BETTER_UPDATE_ROBOT: ${{ secrets.BETTER_UPDATE_ROBOT }}
+          SLOPDESK_VERSION: ${{ steps.version.outputs.version }}
+          SLOPDESK_BUILD_NUMBER: ${{ github.run_number }}
+          SLOPDESK_SKIP_NOTARIZE: ${{ inputs.dry-run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          bun add -g @better-update/cli@latest
+          vault="${RUNNER_TEMP}/vault.sh"
+          better-update env pull --environment production --stdout > "${vault}"
+
+          # Mask FIRST. `env pull --stdout` emits `export KEY='value'` lines; a value that
+          # reaches the log before its mask is registered is public forever.
+          while IFS= read -r line; do
+            case "${line}" in export\ *) ;; *) continue ;; esac
+            value="${line#*=}"
+            value="${value#\'}"
+            value="${value%\'}"
+            [ -n "${value}" ] && echo "::add-mask::${value}"
+          done < "${vault}"
+
+          # shellcheck disable=SC1090
+          . "${vault}"
+          rm -f "${vault}"
+
+          # A throwaway keychain, unlocked for this job only. The runner is ephemeral, but a
+          # default-keychain swap would still outlive the step on a self-hosted box.
+          keychain="${RUNNER_TEMP}/slopdesk-build.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "::add-mask::${keychain_password}"
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 7200 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          # PREPEND to the search list rather than replacing it: `security create-keychain` does
+          # not add the keychain, and `-s "${keychain}"` alone would evict the login keychain the
+          # Xcode toolchain still reads from.
+          existing="$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "${keychain}" ${existing}
+
+          p12="${RUNNER_TEMP}/developer-id.p12"
+          printf '%s' "${APPLE_CERTIFICATE_P12_BASE64}" | base64 --decode > "${p12}"
+          security import "${p12}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "${p12}"
+          # Without this, codesign blocks on a UI prompt that no runner can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${keychain_password}" "${keychain}" > /dev/null
+
+          scripts/package-release.sh
+
+      - name: Upload the release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: slopdesk-${{ steps.version.outputs.version }}-arm64
+          path: |
+            dist/*.dmg
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          retention-days: 7
+
+  # ── publish ───────────────────────────────────────────────────────────────────────────────
+  publish:
+    name: GitHub Release
+    needs: package
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: slopdesk-${{ needs.package.outputs.version }}-arm64
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'NOTES'
+          Apple silicon only (arm64), macOS 26+. Signed by WEEBUILD VIET NAM COMPANY LIMITED
+          and notarized by Apple.
+
+          ```
+          brew install aislopware/tap/slopdesk         # slopdesk, slopdesk-hostd, slopdesk-ctl
+          brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
+          ```
+
+          The host app needs Screen Recording and Accessibility (System Settings → Privacy);
+          both grants are keyed to the code signature, so they survive an in-place upgrade.
+          NOTES
+
+          # Re-running a release (a re-tag, a retried job) must not fail on an existing release.
+          if gh release view "v${VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            gh release upload "v${VERSION}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "v${VERSION}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "SlopDesk ${VERSION}" \
+              --notes-file notes.md \
+              dist/*
+          fi
+
+  # ── Homebrew tap ──────────────────────────────────────────────────────────────────────────
+  tap:
+    name: Bump aislopware/homebrew-tap
+    needs: [package, publish]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: slopdesk-${{ needs.package.outputs.version }}-arm64
+          path: dist
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Pull the tap token from the vault and push the bump
+        env:
+          BETTER_UPDATE_ROBOT: ${{ secrets.BETTER_UPDATE_ROBOT }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          bun add -g @better-update/cli@latest
+
+          # Same pull-mask-source shape as the package job. `env get` renders a table for a
+          # human; only `env pull --stdout` emits machine-readable `export KEY='value'` lines.
+          vault="${RUNNER_TEMP}/vault.sh"
+          better-update env pull --environment production --stdout > "${vault}"
+          while IFS= read -r line; do
+            case "${line}" in export\ *) ;; *) continue ;; esac
+            value="${line#*=}"
+            value="${value#\'}"
+            value="${value%\'}"
+            [ -n "${value}" ] && echo "::add-mask::${value}"
+          done < "${vault}"
+          # shellcheck disable=SC1090
+          . "${vault}"
+          rm -f "${vault}"
+          token="${HOMEBREW_TAP_TOKEN:?HOMEBREW_TAP_TOKEN is not in the better-update vault}"
+
+          dmg_sha="$(awk '/\.dmg$/ {print $1}' dist/SHA256SUMS)"
+          cli_sha="$(awk '/\.tar\.gz$/ {print $1}' dist/SHA256SUMS)"
+
+          git clone --depth 1 "https://x-access-token:${token}@github.com/aislopware/homebrew-tap.git" tap
+          cd tap
+          sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${cli_sha}\"/" Formula/slopdesk.rb
+          sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${dmg_sha}\"/" Casks/slopdesk.rb
+          git config user.name "slopdesk-release"
+          git config user.email "release@slopdesk.invalid"
+          git commit -am "slopdesk ${VERSION}"
+          git push
