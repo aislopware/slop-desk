@@ -56,7 +56,7 @@ jobs:
           path: ThirdParty/ghostty/libghostty.xcframework
           # Everything that can change the output: the recipe, the consolidated fork delta, and
           # the pins recorded in the README. Bump nothing by hand — edit those files instead.
-          key: libghostty-${{ runner.os }}-arm64-${{ hashFiles('ThirdParty/ghostty/build-libghostty.sh', 'ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch', 'ThirdParty/ghostty/README.md') }}
+          key: libghostty-${{ runner.os }}-universal-${{ hashFiles('ThirdParty/ghostty/build-libghostty.sh', 'ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch', 'ThirdParty/ghostty/README.md') }}
 
       # build-libghostty.sh needs an OLD macOS SDK (<= 15.x) for its xcrun shim: Zig 0.15.2
       # cannot link the macOS 26 SDK (caveat #1). The runner image keeps older SDKs inside the
@@ -81,8 +81,19 @@ jobs:
         # is NOT used: a real failure here must fail the job, not surface 40 minutes later.
         run: xcodebuild -downloadComponent MetalToolchain
 
+      # XCFRAMEWORK_TARGET=universal, not the default `native`, even though this release ships
+      # macOS arm64 only. The native path assembles its macOS slice from libghostty-fat.a plus the
+      # Zig root and nothing else; the universal path additionally re-adds the standalone
+      # dependency archives (sentry, libmacos, freetype, oniguruma…) that the fork's per-slice
+      # libtool merge drops. A native slice therefore links the CLI fine and then fails the app
+      # link with hundreds of undefined _sentry_*/_zig_os_log_with_type symbols — which is exactly
+      # what CI did. `universal` is also the artifact the dev host has validated (README, "Build
+      # outcome"). The extra iOS slices cost build time and are otherwise inert here; no iOS SDK
+      # constraint applies (caveat #4).
       - name: Build libghostty.xcframework
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          XCFRAMEWORK_TARGET: universal
         run: ThirdParty/ghostty/build-libghostty.sh
 
       - name: Upload the xcframework
