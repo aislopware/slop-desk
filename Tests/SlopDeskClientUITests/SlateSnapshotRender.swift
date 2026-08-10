@@ -172,7 +172,9 @@ final class SlateSnapshotRender: XCTestCase {
         ]
         let phases: [Double] = (0..<8).map { Double($0) / 8 }
         let sheet = VStack(alignment: .leading, spacing: 16) {
-            captioned("one lap, flattened — true size, then 4× (\(Int(StatusDot.lapPeriod * 1000))ms/lap)") {
+            let low = Int(StatusDot.lapPeriodRange.lowerBound * 1000)
+            let high = Int(StatusDot.lapPeriodRange.upperBound * 1000)
+            captioned("one lap, flattened — true size, then 4× (each mount rolls \(low)–\(high)ms/lap)") {
                 VStack(alignment: .leading, spacing: 8) {
                     self.strip(phases, ink: Slate.StatusInk.warn, zoom: 1, spacing: 10)
                     self.strip(phases, ink: Slate.StatusInk.warn, zoom: 4, spacing: 8)

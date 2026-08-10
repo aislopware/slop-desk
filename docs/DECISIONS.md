@@ -7643,8 +7643,19 @@ instruction to take herdr's spinner but REDRAW it rather than type it.
 one twice. `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` is three LIT dots walking the perimeter of an otherwise empty cell; the set
 the user was pointing at is `⣾⣽⣻⢿⡿⣟⣯⣷`, which is the INVERSE — every frame is `0xFF` with exactly
 one bit cleared, so the cell is fully lit and a single dark HOLE steps round it. Decoded bit by bit
-the hole runs dots 1·2·3·7 then 8·6·5·4: down the left column, up the right, anticlockwise, one lap
-per eight frames (`8 × 8/60` = 1.067 s, transcribed rather than picked).
+the hole runs dots 1·2·3·7 then 8·6·5·4 — down the left column, up the right, anticlockwise — one lap
+per eight frames (`8 × 8/60` ≈ 1.07 s).
+
+**⚠️ Both of those transcribed facts were then overruled on hardware, and both corrections point the
+same way: a spinner is judged by EYE, not derived from a bitmask.** The direction is REVERSED — the
+hole now runs down the RIGHT column and up the LEFT, clockwise, the way every other spinner on the
+machine turns; a mark running against that reads as wrong before it reads as anything. And the tempo
+is SLOWER: `8 × 8/60` is herdr's loop rate, not a design decision, and at mark size it read as a
+hurry. ⚠️ **The lap time is currently an EXPERIMENT** — each mounted mark rolls its own from
+`StatusDot.lapPeriodRange` (1.3–2.6 s) so a spread can be judged at once, with `lapPeriod` (1.8 s) as
+the settled middle that every still, every test and every frozen mark uses. That roll is the ONE
+thing that broke the marks' unison; collapsing the range to a single value once a tempo is chosen is
+a one-line change, and the phase still comes off the wall clock either way.
 
 **⚠️ TWO cuts were rejected on sight, both from the wrong set.** The first read the frames as an ARC
 ON A CIRCLE (at six samples they are geometrically close) and drew a comet on the resting ring's own
@@ -7683,13 +7694,15 @@ variation-selector trap dies with the frames it guarded (it still applies to the
 
 Three properties are load-bearing, all pinned:
 - **Phase comes off the WALL CLOCK from a fixed epoch**, not from an animation started at mount — so
-  every working row in the rail walks in step and a re-render lands the hole mid-lap.
+  a re-render lands the hole mid-lap rather than snapping it back to the start (⚠️ rows walked in
+  STEP as well until the per-mount tempo roll above).
   `AgentSpinner.phase(at:)` is pure and static; `TabBadgePresentationTests` pins linearity, exact lap
   closure, and non-negative wrap before the epoch. `AgentSpinner.lit(_:hole:)` and `BrailleCell` are
   pure too, and pinned as VALUES — exactly one dark dot at a time with every other at FULL ink, a
   half-step hole splitting evenly across the pair it lies between (including across the seam, or the
-  lap would visibly stutter once per turn), the walk order down-left-then-up-right, and the block
-  centred in the footprint with its dots' own radius inside it.
+  lap would visibly stutter once per turn), the walk order down-RIGHT-then-up-LEFT (a sign slip there
+  silently restores the rejected direction), a tempo range that straddles the settled period and
+  stays positive at both ends, and the block centred in the footprint with its dots' radius inside it.
 - **Pure SwiftUI**, so `ImageRenderer` can rasterize it — the platform indicator could not be
   rendered at all, which meant the one mark that moved was the one mark no test could look at.
   `SlateSnapshotRender` now lays one lap out flat as a phase-pinned filmstrip (`pinnedPhase`) at the

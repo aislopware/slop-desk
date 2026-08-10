@@ -71,10 +71,10 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.agentReading(.needsPermission), .awaiting)
     }
 
-    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the hole walks
-    /// one full lap of the cell per period, phase locked to the fixed epoch (so every mount is at the same
-    /// point of the lap), linear, and the SAME instant always yields the same phase — which is what
-    /// makes a re-render land mid-lap instead of snapping back to the start.
+    /// The agent spinner's cadence, pinned headlessly off the pure phase function: the hole walks one
+    /// full lap of the cell per period, phase locked to the fixed epoch (so a mark's lap is a function
+    /// of the CLOCK, not of when it was mounted), linear, and the SAME instant always yields the same
+    /// phase — which is what makes a re-render land mid-lap instead of snapping back to the start.
     func testSpinnerWalksOneLapPerPeriodFromTheFixedEpoch() {
         let period = StatusDot.lapPeriod
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
@@ -103,6 +103,32 @@ final class TabBadgePresentationTests: XCTestCase {
             AgentSpinner.phase(at: mid), AgentSpinner.phase(at: mid),
             "same instant ⇒ same phase — a re-mount can't restart the walk",
         )
+    }
+
+    /// The per-mount tempo roll (⚠️ an experiment — see `StatusDot.lapPeriodRange`): the range has to
+    /// be a real spread around the settled middle, and BOTH ends have to keep the lap a lap — a
+    /// non-positive period would divide the phase by zero, and the guard returning 0 would leave a
+    /// working row frozen on dot 0 while claiming to be alive.
+    func testTheTempoRangeStraddlesTheSettledPeriodAndStaysPositive() {
+        let range = StatusDot.lapPeriodRange
+        XCTAssertGreaterThan(range.lowerBound, 0, "a zero-or-negative lap would freeze the mark")
+        XCTAssertTrue(
+            range.contains(StatusDot.lapPeriod),
+            "the still/frozen/pinned period must be inside the range the live marks roll from",
+        )
+        XCTAssertGreaterThan(
+            range.upperBound, range.lowerBound,
+            "a collapsed range is the old single tempo — the roll would be a no-op",
+        )
+        for period in [range.lowerBound, StatusDot.lapPeriod, range.upperBound] {
+            let epoch = Date(timeIntervalSinceReferenceDate: 0)
+            XCTAssertEqual(
+                AgentSpinner.phase(at: epoch.addingTimeInterval(period / 2), period: period), 0.5,
+                accuracy: 0.0001, "a \(period)s lap is half done at \(period / 2)s",
+            )
+        }
+        // The guard, not the crash: a degenerate period parks the phase instead of dividing by zero.
+        XCTAssertEqual(AgentSpinner.phase(at: Date(timeIntervalSinceReferenceDate: 3), period: 0), 0)
     }
 
     /// The mark is a FULL cell with ONE hole in it — `⣾` is `0xFF` with a single bit cleared, and
@@ -141,13 +167,15 @@ final class TabBadgePresentationTests: XCTestCase {
         )
     }
 
-    /// The hole walks DOWN the left column then UP the right — the order `⣾⣽⣻⢿⡿⣟⣯⣷` spells out
-    /// (dots 1·2·3·7 then 8·6·5·4). Pinned as values because the walk order IS the mark: a
-    /// column-major slip draws a plausible cell whose hole jumps diagonally.
-    func testTheHoleWalksDownTheLeftColumnAndUpTheRight() {
+    /// The hole walks DOWN the right column then UP the left — CLOCKWISE. ⚠️ That is the REVERSE of
+    /// what decoding `⣾⣽⣻⢿⡿⣟⣯⣷` gives (dots 1·2·3·7 then 8·6·5·4), which shipped first and was
+    /// reversed on hardware: which way a spinner turns is judged by eye, not derived from a bitmask.
+    /// Pinned as values because the walk order IS the mark — a column-major slip draws a plausible
+    /// cell whose hole jumps diagonally, and a sign slip silently restores the rejected direction.
+    func testTheHoleWalksDownTheRightColumnAndUpTheLeft() {
         let walk = BrailleCell.walk
         XCTAssertEqual(walk.count, BrailleCell.dotCount, "every dot is visited exactly once")
-        XCTAssertEqual(walk.map(\.column), [0, 0, 0, 0, 1, 1, 1, 1])
+        XCTAssertEqual(walk.map(\.column), [1, 1, 1, 1, 0, 0, 0, 0])
         XCTAssertEqual(walk.map(\.row), [0, 1, 2, 3, 3, 2, 1, 0])
 
         // The block is CENTRED in the mark's column — it shares that column with the Ø10 resting

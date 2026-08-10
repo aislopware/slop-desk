@@ -92,10 +92,19 @@ enum StatusDot {
     static let dotPitchY: CGFloat = 3.4
     /// What the hole is dimmed TO. Zero — braille has no half-lit dot, and the gap has to be a gap.
     static let holeFloor: Double = 0
-    /// Seconds per lap — herdr's own tempo, transcribed rather than picked: it advances one braille
-    /// frame every 8 ticks of a 60 Hz loop, and this set's eight frames are exactly one trip around
-    /// the cell. So `8 × 8 / 60`. The mark says "alive", not "hurry".
-    static let lapPeriod: Double = 8 * 8 / 60
+    /// Seconds per lap. herdr's own tempo is `8 × 8 / 60` ≈ 1.07 s (one braille frame per 8 ticks of
+    /// a 60 Hz loop, eight frames to the lap) — transcribed first, then rejected on hardware for
+    /// reading as a HURRY. This is the settled middle of the range, and the value every still, every
+    /// test and every frozen mark uses.
+    static let lapPeriod: Double = 1.8
+    /// ⚠️ EXPERIMENT, user-requested 2026-08-10: each mounted mark rolls its OWN lap time inside this
+    /// range instead of every mark sharing one. The point is to watch a spread of tempos on hardware
+    /// and pick, so the range is deliberately wide enough to feel at both ends.
+    ///
+    /// This is the one thing that breaks the marks' unison — see ``AgentSpinner``, which still takes
+    /// its PHASE off the wall clock, so a re-render lands mid-lap at whatever tempo that mount rolled.
+    /// Collapsing this back to a single value is a one-line change once a tempo is chosen.
+    static let lapPeriodRange: ClosedRange<Double> = 1.3...2.6
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -181,9 +190,11 @@ struct DashedRing: Shape {
 /// The THINKING mark — herdr's spinner, DRAWN.
 ///
 /// The frames are `⣾⣽⣻⢿⡿⣟⣯⣷`: a braille cell with every one of its eight dots lit and exactly one
-/// switched OFF, the dark one stepping round the cell — down the left column, up the right — one lap
-/// per eight frames. So the mark is a small upright BLOCK OF DOTS, and the thing that moves is the
-/// GAP in it. herdr advances a frame every 8 ticks of a 60 Hz loop, which is the tempo kept here.
+/// switched OFF, the dark one stepping round the cell, one lap per eight frames. So the mark is a
+/// small upright BLOCK OF DOTS, and the thing that moves is the GAP in it. It turns CLOCKWISE, which
+/// is the reverse of what the bitmask says — see ``BrailleCell/walk``. herdr's own tempo (a frame per
+/// 8 ticks of a 60 Hz loop, ≈1.07 s/lap) shipped first and read as a hurry; see
+/// ``StatusDot/lapPeriodRange``.
 ///
 /// Drawn, the one lie in the original goes away: the hole no longer teleports between eight discrete
 /// dots, it GLIDES. Each dot's ink is a function of how far the hole currently is from it, so with
@@ -199,9 +210,10 @@ struct DashedRing: Shape {
 /// Three properties are load-bearing:
 ///
 ///  * **The phase comes off the WALL CLOCK, from a fixed epoch** — not from an animation started at
-///    mount. Every working row in the rail therefore shows the hole in the same place, and a
-///    re-render (a title changing, a row scrolling back into view) lands it mid-lap instead of
-///    snapping it back to the start. This is the rule the typed pulse has followed since MERIDIAN.
+///    mount. A re-render (a title changing, a row scrolling back into view) therefore lands the hole
+///    mid-lap instead of snapping it back to the start. This is the rule the typed pulse has followed
+///    since MERIDIAN. ⚠️ Rows no longer turn in UNISON, which they did until the per-mount tempo roll
+///    (``StatusDot/lapPeriodRange``) — that is the experiment's one real cost.
 ///  * **It is PURE SwiftUI**, so `ImageRenderer` can rasterize it. The platform indicator could not
 ///    be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to photograph the
 ///    mark sheet), which meant the one mark that moved was also the one mark no test could look at.
@@ -221,6 +233,13 @@ struct AgentSpinner: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// This mount's own lap time, rolled once from ``StatusDot/lapPeriodRange`` and held for as long
+    /// as the view keeps its identity — see that range's note: an EXPERIMENT, so a spread of tempos
+    /// can be judged on hardware at once. `@State` rather than a computed roll because a fresh number
+    /// on every re-render would make the hole jump, which is the exact defect the wall-clock phase
+    /// exists to prevent.
+    @State private var period = Double.random(in: StatusDot.lapPeriodRange)
+
     var body: some View {
         cell
             .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
@@ -235,7 +254,7 @@ struct AgentSpinner: View {
             // `.animation` schedules at the display's own refresh rate, so the hole slides at
             // 60/120 Hz rather than stepping — and the phase stays a pure function of the date.
             TimelineView(.animation) { timeline in
-                dots(phase: Self.phase(at: timeline.date))
+                dots(phase: Self.phase(at: timeline.date, period: period))
             }
         }
     }
@@ -269,19 +288,23 @@ struct AgentSpinner: View {
     }
 
     /// The hole's position in its lap, as a fraction of the cell, for one wall-clock instant. Pure +
-    /// static so the cadence is unit-pinned headlessly: one lap per ``StatusDot/lapPeriod``, phase
-    /// locked to the reference epoch (so every mount agrees), and never negative for dates before it.
-    static func phase(at date: Date) -> Double {
-        let period = StatusDot.lapPeriod
+    /// static so the cadence is unit-pinned headlessly: one lap per `period`, phase locked to the
+    /// reference epoch (so a mark's lap is a function of the CLOCK, not of when it was mounted — a
+    /// re-render lands mid-lap), and never negative for dates before that epoch.
+    static func phase(at date: Date, period: Double = StatusDot.lapPeriod) -> Double {
         guard period > 0 else { return 0 }
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
         return phase < 0 ? phase + 1 : phase
     }
 }
 
-/// The braille cell's eight dots, IN THE ORDER THE HOLE VISITS THEM — down the left column, then up
-/// the right. That order is not a choice: it is the one `⣾⣽⣻⢿⡿⣟⣯⣷` spells out, decoded bit by bit
-/// (dots 1·2·3·7 then 8·6·5·4), and it makes the lap run anticlockwise.
+/// The braille cell's eight dots, IN THE ORDER THE HOLE VISITS THEM — down the RIGHT column, then up
+/// the LEFT, which is CLOCKWISE.
+///
+/// ⚠️ Decoding `⣾⣽⣻⢿⡿⣟⣯⣷` bit by bit gives the opposite (dots 1·2·3·7 then 8·6·5·4 — down the left,
+/// up the right, anticlockwise) and that is what shipped first. Reversed on hardware, user-directed:
+/// the way a spinner TURNS is judged by eye, not derived from a bitmask, and a mark that runs against
+/// the direction every other spinner on the machine turns reads as wrong before it reads as anything.
 ///
 /// A pure function rather than a laid-out stack, because the positions ARE the mark: as values they
 /// are unit-pinnable — the walk really does go down one side and up the other, and the block really
@@ -289,11 +312,12 @@ struct AgentSpinner: View {
 enum BrailleCell {
     static let dotCount = StatusDot.cellColumns * StatusDot.cellRows
 
-    /// `(column, row)` for each step of the lap. Left column top-to-bottom, right column
+    /// `(column, row)` for each step of the lap. Right column top-to-bottom, left column
     /// bottom-to-top.
     static let walk: [(column: Int, row: Int)] = {
         let rows = StatusDot.cellRows
-        return (0..<rows).map { (column: 0, row: $0) } + (0..<rows).map { (column: 1, row: rows - 1 - $0) }
+        let right = StatusDot.cellColumns - 1
+        return (0..<rows).map { (column: right, row: $0) } + (0..<rows).map { (column: 0, row: rows - 1 - $0) }
     }()
 
     /// Where the `index`-th step of the lap sits, centred in a box of `size`.
