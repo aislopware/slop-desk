@@ -107,24 +107,49 @@ for tool in "${CLI_TOOLS[@]}"; do
   (cd "${REPO_ROOT}" && swift build -c release --arch arm64 --target "${tool}")
 done
 
-# ASK SwiftPM where it put them. The triple-named directory (.build/arm64-apple-macosx/release
-# on one host) is not stable across toolchains — hardcoding it built fine and then failed at the
-# copy, which is the worst place to learn it. `--show-bin-path` builds nothing.
-CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --show-bin-path)"
-[[ -d "${CLI_BIN}" ]] || die "swift build --show-bin-path returned no directory: ${CLI_BIN}"
+# Where the binaries land is NOT a constant. `.build/arm64-apple-macosx/release` is right for the
+# llbuild backend; the newer Swift Build backend (the toolchain that logs "Build of target: 'x'
+# complete!" instead of "Build complete!") writes to a Products/Release directory that
+# `--show-bin-path` does not report. Hardcoding the triple built fine locally and then failed at
+# the copy on CI, which is the worst place to learn it. So: treat --show-bin-path as a hint and
+# fall back to searching .build for a real Mach-O of that name under a release directory.
+CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --show-bin-path 2> /dev/null || true)"
+
+locate_tool() {
+  local tool="$1" cand matches
+  if [[ -n "${CLI_BIN}" && -f "${CLI_BIN}/${tool}" && -x "${CLI_BIN}/${tool}" ]]; then
+    printf '%s\n' "${CLI_BIN}/${tool}"
+    return 0
+  fi
+  matches="$(find "${REPO_ROOT}/.build" -type f -perm -111 -name "${tool}" 2> /dev/null || true)"
+  [[ -n "${matches}" ]] || return 1
+  while IFS= read -r cand; do
+    # Only a release path. A stale debug build of the same name must never reach the tarball.
+    case "${cand}" in
+      */[Rr]elease/*) ;;
+      *) continue ;;
+    esac
+    file -b "${cand}" | grep -q 'Mach-O' || continue
+    printf '%s\n' "${cand}"
+    return 0
+  done <<< "${matches}"
+  return 1
+}
 
 CLI_STAGE="${STAGE}/slopdesk-cli-${VERSION}-arm64"
 mkdir -p "${CLI_STAGE}"
 for tool in "${CLI_TOOLS[@]}"; do
-  built="${CLI_BIN}/${tool}"
-  [[ -x "${built}" ]] || die "swift build did not produce ${built}"
+  built="$(locate_tool "${tool}")" ||
+    die "swift build reported success but no release ${tool} Mach-O exists under ${REPO_ROOT}/.build
+  (--show-bin-path said: ${CLI_BIN:-<nothing>})"
+  echo "  ${tool} <- ${built}"
   cp "${built}" "${CLI_STAGE}/${tool}"
 done
 
 # `slopdesk version` reads a SOURCE constant (Sources/SlopDeskCLICore/CLIVersion.swift), not the
 # tag — so a release cut without bumping it ships a binary that lies about its own version. Ask
 # the built binary rather than grepping the source: this is the string users will actually see.
-declared="$("${CLI_BIN}/slopdesk" version | head -1 | awk '{print $2}')"
+declared="$("${CLI_STAGE}/slopdesk" version | head -1 | awk '{print $2}')"
 [[ "${declared}" == "${VERSION}" ]] ||
   die "version drift: \`slopdesk version\` says ${declared}, this release is ${VERSION}.
   Bump Sources/SlopDeskCLICore/CLIVersion.swift (and the MARKETING_VERSION in both
