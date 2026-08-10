@@ -124,7 +124,11 @@ hook: ## Build the Rust hook relay (rust/slopdesk-hook)
 hook-test: ## cargo test for the hook relay
 	cd rust && cargo test
 
-test: ## swift test --parallel + green-tree cache (same gate the pre-push hook runs)
+# `hook-test` runs FIRST and unconditionally. `swift build`/`swift test` never compile the Rust
+# crate, so a Swift-only gate is blind to it; and pre-push-test.sh's green-tree cache keys on the
+# Swift inputs alone (Package.swift Sources Tests Apps golden), so a rust/ change would hit the
+# cache and skip everything. Warm cargo costs ~0.07s and fails before the ~60s Swift run.
+test: hook-test ## cargo test (relay) + swift test --parallel with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 test-touched: ## Fast inner loop: incremental build + only the test targets the change set reaches
