@@ -19,8 +19,9 @@
 // ⚠️ A COMMAND's outcome has no mark here at all (round 24). It used to take otty's two — the plain
 // disc for a clean exit, the alert triangle for a failure — and the row printed a symbol where the
 // slot beside it was going empty anyway. A command's exit is a fact about a NAME (`make` passed,
-// `make` failed), so it reads as that name in the trailing slot instead, on the git line's register:
-// bright + bold for the exit that worked, red for the one that didn't. One less glyph vocabulary to
+// `make` failed), so it reads as that name in the trailing slot instead, in the slot's own register
+// (``StatusPresentation/outcomeInk(_:)``): bright + bold for the exit that worked, red for the one
+// that didn't. One less glyph vocabulary to
 // learn, and the row now says WHAT finished rather than only that something did.
 //
 // ONE state moves — the spinner — and everything settled holds absolutely still (round 19's lesson

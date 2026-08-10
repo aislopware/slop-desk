@@ -34,9 +34,10 @@
 // does not). Its ink comes from an absolute threshold for the same reason.
 //
 // State lives in the WORDS and their WEIGHT, on ONE ink axis (``Alarm``): a healthy readout rests in
-// the tertiary metadata grey, and a reading in trouble climbs the same brightness ladder the rail's
-// git line uses — secondary + semibold when it is worth knowing, primary + bold when it is worth
-// acting on. No hue at all. An instrument that lights up in a different colour per fault asks the eye
+// the tertiary metadata grey, and a reading in trouble climbs a pure brightness ladder — secondary +
+// semibold when it is worth knowing, primary + bold when it is worth acting on. No hue at all (the
+// rail's git line does keep a hue per role, but its sigils name the state first; a footer of NUMBERS
+// has nothing to hang a palette on). An instrument that lights up in a different colour per fault asks the eye
 // to learn a palette before it can read a number; a run that simply gets BRIGHTER and HEAVIER than
 // its neighbours says "this one" in the only vocabulary a footer of digits has. Only three readings
 // can climb (a degrading link on the PING digits, kernel memory pressure on the MEM digits, a filling

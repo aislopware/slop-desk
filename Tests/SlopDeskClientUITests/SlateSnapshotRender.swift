@@ -293,6 +293,13 @@ final class SlateSnapshotRender: XCTestCase {
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
+            // The ⌘-HELD state: the digit takes the whole trailing cluster. Rendered here because it
+            // is the one row state that never appears at rest — and the digit shares the TITLE's rung,
+            // which only a render will catch drifting.
+            SlateTabRow(
+                title: "web", active: false, shortcutHint: 4, processLabel: "node",
+                onSelect: {}, onClose: {},
+            )
             // Collapsed with the store's rows threaded in: one hides a needs-permission pane, so
             // the count wears the amber roll-up ink.
             SidebarSectionHeaderRow(

@@ -9,7 +9,7 @@
 // — one column where the HUE names the state (muted = a code agent at rest, green = its turn ended,
 // amber = a question waits) and only the thinking spinner moves. A COMMAND's outcome is the trailing
 // SLOT's own text: the command's NAME, bold on the primary ink when it exited clean and bold on red
-// when it did not, which is the git line's register rather than a glyph vocabulary of its own. A
+// when it did not — two answers, not a glyph vocabulary of its own. A
 // plain shell — busy or not — mounts nothing. The title NEVER
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
@@ -198,7 +198,9 @@ struct SlateTabRow: View {
             // spoken by the menu and cheat sheet; the title keeps its own label + value).
             if let shortcutHint {
                 Text("\(shortcutHint)")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .semibold))
+                    // The TITLE's rung (it stands in for the row, not for the 10pt metadata it
+                    // covers), so a held ⌘ never resizes the line it lands on.
+                    .font(Slate.Typeface.instrument(Slate.Typeface.base, weight: .semibold))
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityHidden(true)
                     .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
@@ -244,8 +246,8 @@ struct SlateTabRow: View {
                     } else if let commandReceipt {
                         // The command's OUTCOME, in the same instrument mono the resting label
                         // uses — the register steps up, the voice does not change: bold on the
-                        // primary ink for a clean exit, bold on red for a failure (the git
-                        // line's own two answers).
+                        // primary ink for a clean exit, bold on red for a failure — the slot's own
+                        // two answers (``StatusPresentation/outcomeInk(_:)``).
                         Text(commandReceipt.name)
                             .font(Slate.Typeface.instrument(
                                 Slate.Typeface.small, weight: StatusPresentation.outcomeWeight,

@@ -7428,3 +7428,45 @@ WHAT STAYS, and why each is not the ladder:
 The pane's side padding goes back to the 8pt grid (`Slate.Metric.paneGutter` deleted). It was widened
 to 12 in `e9af5786` for one reason — a rail worth aiming a pointer at — and with the rail gone the
 gutter carries nothing, so the terminal takes back the ~1 column per side it was paying.
+
+## The rail's row titles drop a rung, and the git line's hues come back (2026-08-10, user-directed)
+
+Two user-directed corrections to the sidebar, one commit.
+
+**The pane title was one rung too loud.** It sat at `Typeface.body` (13) — the OVERLAY family's
+reading size — which put it a full step above the `footnote` (11) project header that names the group
+it belongs to, and a step above `base` (12), the app's own default UI label size, for a string that is
+a label. It moves to `base`; the inline rename field follows so opening the field never resizes the
+text. Nothing else in the rail may now out-rank it, which took three more sites: the ⌘-held digit hint
+(it stands in for the ROW, not for the 10pt metadata it covers), the empty-list label, and the "New
+Tab" drop slot. Row geometry is untouched — `heightTabRow` is `heightRow`, never derived from the type
+size. The `footnote` token's doc-comment claim of "tab titles" was wrong even before this and is
+corrected.
+
+The rail's ladder is now: **row title 12 · project header 11 semibold · git line / process label /
+badge 10 mono.** The overlay family (palette, ⌃⇥ switcher, open-quickly, command navigator) keeps 15
+over 13 — a summoned card is a READING surface and the rail is a LABEL surface, and that is the line
+between the two scales.
+
+**The git line goes back to a hue per role**, reversing `1b289043` (round 17's palette had been folded
+to two registers on 2026-07-30). The reversal is the user's call and the reason is that the constraint
+that motivated the fold — the rail held monochrome — no longer applies. Restored exactly:
+`+staged` green → `!modified` yellow → `?untracked` orange → `~conflicted` red is a RAMP ("how far
+this work is from being committed"), running in the same left-to-right order the sigils already
+appear; `↑↓` divergence takes the accent and `$` stash the system purple, both cool, both off the warm
+sweep because neither is a worktree state; the branch keeps the secondary ink because it is identity,
+not a count. The weight ladder returns with it — counts semibold, `~conflicted` bold — because the
+palette ranks the states backwards by contrast (a mid-tone red under a bright yellow) and weight is
+the channel that is free of the palette, and of the protanopia collapse between `+` and `~`.
+
+The hues cannot collide with what they stand on: `ProjectTint`'s beds are solved to the 195°–340° arc
+precisely so red / amber / green stay the status vocabulary's alone.
+
+Three neighbours had documented themselves as borrowing "the git line's two-register answer" — the
+command-outcome ink, the status-mark note, the connection footer's alarm ladder. Their BEHAVIOUR is
+unchanged and correct on its own terms (a command has two outcomes; a footer of numbers has no sigil
+to hang a palette on); only the prose that pointed at a register the git line no longer has was
+re-anchored.
+
+Untouched: `shedLadder`, the tight form's pinned sigil cluster, the tooltip, and the accessibility
+line — the readout's LAYOUT was never what was being argued about.

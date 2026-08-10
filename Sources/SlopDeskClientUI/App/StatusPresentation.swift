@@ -246,9 +246,11 @@ enum StatusPresentation {
         RailRowsBuilder.commandOutcome(badge: badge, agentFinish: agentFinish)
     }
 
-    /// The INK a command's outcome reads in — the git line's own two-register answer
-    /// (``NavigatorColumn`` `GitInk`, round 17→`1b289043`): a fact that needs you is BRIGHT, and the
-    /// only hue left in the readout is the red that means broken.
+    /// The INK a command's outcome reads in — TWO answers, brightness plus one hue: a fact that needs
+    /// you is BRIGHT, and the only colour spent here is the red that means broken. (This is the slot's
+    /// OWN register. It was written as the git line's while that line was monochrome; the git readout
+    /// went back to a hue per role on `07da1f5d` and this one deliberately did not follow — a command
+    /// has two outcomes, not seven states.)
     ///
     /// A clean exit takes the primary text ink — one full step above the tertiary metadata grey the
     /// resting slot rests on, which is the whole signal: this row DID something. Green was tried in
@@ -261,9 +263,9 @@ enum StatusPresentation {
         }
     }
 
-    /// The WEIGHT a command's outcome reads at — bold, both outcomes, exactly as the git line sets
-    /// its counts. At the 10pt instrument size a regular weight leaves the brightness step alone
-    /// carrying the signal, and it isn't enough.
+    /// The WEIGHT a command's outcome reads at — bold, both outcomes, for the reason the git line
+    /// weights its counts: at the 10pt instrument size a regular weight leaves the brightness step
+    /// alone carrying the signal, and it isn't enough.
     static let outcomeWeight: Font.Weight = .bold
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers, drawn as

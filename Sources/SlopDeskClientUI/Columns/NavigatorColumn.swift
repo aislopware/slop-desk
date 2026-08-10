@@ -372,7 +372,8 @@ struct NavigatorColumn: View {
 
     private func emptyLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: Slate.Typeface.body))
+            // The rail's own rung — this line stands exactly where the row titles would.
+            .font(.system(size: Slate.Typeface.base))
             .foregroundStyle(Slate.Text.secondary)
             .padding(.horizontal, Slate.Metric.tabRowInset) // the rows' text rail
             .padding(.vertical, 6)
@@ -1299,7 +1300,8 @@ private struct NewTabDropSlot: View {
                 Image(systemSymbol: .plusSquareOnSquare)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                 Text("New Tab")
-                    .font(.system(size: Slate.Typeface.body, weight: .medium))
+                    // A row-shaped affordance inside the list, so it reads on the ROWS' rung.
+                    .font(.system(size: Slate.Typeface.base, weight: .medium))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
