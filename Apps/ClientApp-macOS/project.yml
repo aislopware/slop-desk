@@ -53,8 +53,13 @@ targets:
       # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
       # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS
       # slices (see scripts/enable-ios-renderer.sh); this macOS target links the macOS slice.
+      # embed: false — the xcframework wraps a STATIC archive (macos-arm64.a, 198 MB). The
+      # symbols are in the executable once the link is done; embedding additionally COPIES the
+      # .a into Contents/Frameworks, where it is dead weight and unsignable — codesign walks the
+      # bundle and fails the whole app with `code object is not signed at all` on that member,
+      # which is how the release pipeline first noticed. A dylib would need embed: true.
       - framework: ../../ThirdParty/ghostty/libghostty.xcframework
-        embed: true
+        embed: false
     info:
       path: Info.plist
       properties:
