@@ -51,7 +51,7 @@ check-commit-msg: the subject is not a conventional commit.
         \`!\` or a "BREAKING CHANGE:" trailer marks a breaking change.
 
   e.g.  fix(release): staple the ticket to each .app before it enters the image
-        feat(rail)!: the pane id is a UUID, not an index
+        feat(rail)!: key the pane id on a UUID instead of an index
 
 Why: cliff.toml reads the type to place this commit in CHANGELOG.md, and
 \`git cliff --bumped-version\` reads it to compute the next version. A subject
@@ -60,9 +60,72 @@ EOF
   exit 1
 fi
 
-# 72 is where GitHub starts ellipsing a subject in the commit list, and the changelog
-# renders one bullet per subject — a truncated bullet is a bullet that says less than it
-# cost. A warning, not a failure: an accurate long subject beats a short vague one.
+# ── Style ────────────────────────────────────────────────────────────────────────────
+# Everything below governs the TEXT after the colon. It is enforced because that text is
+# published: `changelog-section.sh` slices these subjects out of CHANGELOG.md and the
+# GitHub Release body is one bullet per subject, verbatim. A subject written to be read
+# inside the repo becomes a release note read by someone who has never seen the repo.
+#
+# The rule is: say what the change DOES, in the imperative, to a reader who was not here.
+text="${subject#*: }"
+first="${text%% *}"
+
+style_error() {
+  cat >&2 << EOF
+check-commit-msg: the subject is a conventional commit, but not a plain one.
+
+  got:   ${subject}
+  issue: $1
+  want:  $2
+
+The release body is one bullet per subject, verbatim (scripts/changelog-section.sh).
+Detail that does not fit belongs in the commit BODY, which the changelog never reads.
+EOF
+  exit 1
+}
+
+# A subject opening on an article is a sentence ABOUT the code rather than an instruction
+# to it — "the plate stops sliding between projects" describes a scene, and the reader of a
+# release note has to reverse-engineer what changed and whether it affects them.
+case "${first}" in
+  [Tt]he | [Aa] | [Aa]n)
+    style_error "opens with the article \"${first}\" — that is a description, not a change" \
+      "start with a verb: what does this commit DO? (\"stop the plate sliding between projects\")"
+    ;;
+  *) ;;
+esac
+
+# Imperative mood, the same one `git revert`/`git merge` write for you. Third person is the
+# most common slip and is mechanically clear; a gerund is checked separately below because
+# real imperatives end in -ing too ("bring", "string").
+case "${first}" in
+  [Aa]dds | [Bb]umps | [Cc]hanges | [Dd]rops | [Ff]ixes | [Kk]eeps | [Mm]akes | [Mm]oves | \
+    [Rr]emoves | [Rr]enames | [Ss]tops | [Uu]pdates | [Uu]ses | [Aa]dded | [Ff]ixed | \
+    [Cc]hanged | [Rr]emoved | [Uu]pdated)
+    style_error "\"${first}\" is not the imperative" \
+      "write it as an instruction: \"add\", \"fix\", \"drop\", \"rename\""
+    ;;
+  *) ;;
+esac
+
+# A subject is a title. The period buys nothing and the changelog renders it mid-bullet.
+case "${text}" in
+  *.)
+    style_error "ends in a full stop" "drop the trailing period"
+    ;;
+  *) ;;
+esac
+
+# 72 is where GitHub ellipses a subject in the commit list AND where the rendered changelog
+# bullet stops being scannable. Hard, not a warning: the fix is always available — move the
+# detail into the body, which is where the argument for a change belongs anyway.
 if [[ "${#subject}" -gt 72 ]]; then
-  echo "check-commit-msg: subject is ${#subject} chars; GitHub ellipses past 72." >&2
+  style_error "the subject is ${#subject} chars; GitHub ellipses past 72" \
+    "cut it to 72 and move the rest into the commit body"
+fi
+
+# Gerunds are usually a slipped mood ("Adding X" for "Add X"), but "bring"/"ping"/"string"
+# are imperatives that end the same way — so this one advises rather than blocks.
+if [[ "${first}" =~ ing$ ]] && [[ ! "${first}" =~ ^([Bb]ring|[Pp]ing|[Ss]tring|[Rr]ing|[Ss]ing)$ ]]; then
+  echo "check-commit-msg: \"${first}\" reads as a gerund; the imperative is usually shorter and clearer." >&2
 fi

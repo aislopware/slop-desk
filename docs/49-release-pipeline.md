@@ -211,6 +211,37 @@ This is the same bargain `better-update` strikes with commitlint on lefthook, mi
 dependency — the rule is a regex, and every hook in this repo is `language: system` so there is no
 environment to provision.
 
+### The subject is published text
+
+The grammar is only half of it. `changelog-section.sh` slices these subjects out of `CHANGELOG.md`
+and the GitHub Release body is **one bullet per subject, verbatim** — so a subject written to be
+read inside the repo becomes a release note read by someone who has never seen it. The rule is:
+**say what the change does, in the imperative, to a reader who was not here.**
+
+The hook enforces what a regex honestly can:
+
+| Rejected | Because | Instead |
+|---|---|---|
+| opens with `the` / `a` / `an` | a sentence *about* the code, not a change to it — the reader has to reverse-engineer what moved and whether it affects them | open with a verb |
+| `adds`, `fixes`, `stopped`, `updated`, … | third person or past tense | the imperative `git revert` and `git merge` already write for you |
+| a trailing full stop | a subject is a title | drop it |
+| longer than 72 chars | GitHub ellipses it, and the rendered bullet stops being scannable | move the detail to the **body**, which the changelog never reads |
+
+A gerund opening (`Adding …`) warns rather than blocks: `bring`, `ping` and `string` are
+imperatives that end the same way.
+
+```
+✗ fix(rail): the plate stops sliding between projects — it ignites in the one it lands in
+✓ fix(rail): stop the selection plate sliding between projects
+
+✗ fix(ui): a border that matches its own fill stops passing for a border
+✓ fix(ui): give the chip rim a colour distinct from its fill
+```
+
+**Not retroactive, and the change of habit is large**: measured against the 162 non-merge commits
+before the rule landed, 149 of them (91%) would be rejected — 117 for the opening article, 31 for
+length. History keeps its style; `cliff.toml` renders it as-is. Only new commits are held here.
+
 `cliff.toml` skips almost nothing, which is deliberate: git-cliff drops a release whose commits
 all got skipped, **header and all**. v0.2.1 carried one `ci` commit and one `chore(release)`
 commit, and hiding both would have deleted the release from the file entirely — then
