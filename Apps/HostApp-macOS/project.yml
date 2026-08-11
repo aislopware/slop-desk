@@ -50,7 +50,7 @@ targets:
         # Agent / menu-bar app: no Dock icon, no default window — the UI is the status item.
         LSUIElement: true
         NSHighResolutionCapable: true
-        CFBundleShortVersionString: "0.2.1"
+        CFBundleShortVersionString: "0.2.2"
         CFBundleVersion: "1"
     entitlements:
       path: HostApp-macOS.entitlements
@@ -73,7 +73,7 @@ targets:
         # produce SlopDeskHost.swiftmodule"). Pin a DISTINCT module name so the bundle stays
         # SlopDeskHost.app while the app code compiles as module `SlopDeskHostApp`.
         PRODUCT_MODULE_NAME: SlopDeskHostApp
-        MARKETING_VERSION: "0.2.1"
+        MARKETING_VERSION: "0.2.2"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: SlopDesk
