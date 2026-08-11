@@ -140,6 +140,22 @@ golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
 	bash scripts/golden-check.sh
 
 # ---------------------------------------------------------------------------- #
+.PHONY: changelog release release-preview
+# The release metadata, generated from the commit log rather than hand-maintained. The commit TYPE
+# decides both the CHANGELOG.md section a change lands in and whether the version moves a minor or
+# a patch, which is why `scripts/check-commit-msg.sh` gates the subject at commit-msg time.
+changelog: ## Regenerate CHANGELOG.md from the commit log (git-cliff)
+	git-cliff --output CHANGELOG.md
+
+release-preview: ## Print the version and release notes the next cut would produce; write nothing
+	bash scripts/cut-release.sh --dry-run
+
+# Commits and tags LOCALLY; pushing the tag is the separate keystroke that starts the signing
+# pipeline. `make release VERSION=0.3.0` forces a version instead of computing it.
+release: ## Cut a release: version + CHANGELOG.md + the six version sites + commit + tag
+	bash scripts/cut-release.sh $(VERSION)
+
+# ---------------------------------------------------------------------------- #
 .PHONY: provision provision-check
 # The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
 # ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and
@@ -156,7 +172,7 @@ provision-check: ## Report which pinned deps are present; download nothing
 # product: a formula drifting a minor version changes a lint message, it does not put the panel on
 # a workbench three releases old. The deps that DO decide product behaviour are in `provision`.
 install-tools: hooks ## Install all required tools (brew) and the git hooks
-	brew install swiftlint swiftformat shellcheck shfmt ruff prek
+	brew install swiftlint swiftformat shellcheck shfmt ruff prek git-cliff xcodegen
 
 hooks: ## Install the prek git hooks (pre-commit + pre-push)
 	prek install

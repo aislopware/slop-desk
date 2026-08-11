@@ -1,0 +1,117 @@
+# git-cliff — CHANGELOG.md from the commit log, and the next version number from the
+# same source. This is the Swift-repo equivalent of what `better-update` gets from
+# lerna-lite (`version --conventional-commits`, `changelogPreset: conventionalcommits`):
+# one convention on commit subjects, read twice — once to decide feat/fix/breaking →
+# minor/patch/major, once to render the notes the GitHub Release ships.
+#
+# lerna is a package versioner: it bumps the `version` field of a package.json. There is
+# no package.json here and six places carry the version instead, so the bump lives in
+# `scripts/bump-version.sh` and this file is left with the two jobs lerna would have
+# delegated to conventional-changelog anyway.
+#
+#   git cliff --bumped-version        # next semver, computed from commits since the last tag
+#   git cliff --output CHANGELOG.md   # rewrite the whole changelog
+#   scripts/cut-release.sh            # both, plus the bump, the commit and the tag
+#
+# `scripts/changelog-section.sh <version>` slices one release out of the rendered file;
+# the publish job posts that slice as the GitHub Release body.
+
+[changelog]
+header = """
+# Changelog
+
+Generated from the commit log by [git-cliff](https://git-cliff.org). Sections come from
+the conventional-commit type, so what lands here is decided when a commit is written, not
+when a release is cut.
+"""
+
+# The macros are defined FIRST, not after the release body. A `{%- macro` at the end trims
+# the whitespace in front of it, which eats the body's trailing newline and glues the last
+# bullet of one release onto the next release's `##` heading. `trim = false` for the same
+# reason: it strips that newline too. Whitespace here is load-bearing, so it is spelled out
+# rather than left to a global switch.
+#
+# `previous.version` is set on every release but the first, which is what distinguishes a
+# release header carrying a compare link from the one that has nothing to compare against.
+body = """
+{%- macro commit_url(id) -%}
+{{ remote.link | default(value="https://github.com/aislopware/slop-desk") }}/commit/{{ id }}
+{%- endmacro -%}
+{%- macro compare_url(previous, version) -%}
+{% set repo = remote.link | default(value="https://github.com/aislopware/slop-desk") -%}
+{% if previous.version -%}
+{{ repo }}/compare/{{ previous.version }}...{{ version }}
+{%- else -%}
+{{ repo }}/releases/tag/{{ version }}
+{%- endif -%}
+{%- endmacro -%}
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}]({{ self::compare_url(previous=previous, version=version) }}) — {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## Unreleased
+{% endif %}
+{%- for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | upper_first }} ([`{{ commit.id | truncate(length=7, end="") }}`]({{ self::commit_url(id=commit.id) }}))
+{%- endfor %}
+{% endfor %}
+"""
+
+footer = ""
+trim = false
+
+[git]
+conventional_commits = true
+
+# An unconventional subject is DROPPED, not rendered raw. The commit-msg hook
+# (`conventional-pre-commit`) means new ones cannot appear; history from before the hook
+# has a handful, and a changelog is not the place to surface them.
+filter_unconventional = true
+filter_commits = true
+
+split_commits = false
+protect_breaking_commits = true
+
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
+
+commit_preprocessors = [
+  # Strip a trailing "(#123)" that a squash-merge appends — the rendered line already
+  # carries its own commit link, and two links to the same change read as two changes.
+  { pattern = ' \(#[0-9]+\)$', replace = "" },
+]
+
+# Order IS the rendered order: git-cliff sorts groups by the numeric prefix, which the
+# template strips back off. The catch-all at the end means a type nobody planned for
+# lands in "Other changes" rather than vanishing.
+#
+# ALMOST NOTHING IS SKIPPED, and that is deliberate. git-cliff drops a release that ends
+# up with zero commits — header and all — so a `skip` on the housekeeping types deletes
+# whole releases from the file: v0.2.1 carried one `ci` commit and one `chore(release)`
+# commit, and hiding both made the release itself disappear. `changelog-section.sh` would
+# then fail on a version that genuinely shipped. Ordering carries the emphasis instead:
+# what a reader installed for is at the top, the plumbing is underneath.
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^[Mm]erge (branch|remote-tracking|pull request)", skip = true },
+
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^refactor", group = "<!-- 3 -->Refactoring" },
+  { message = "^revert", group = "<!-- 4 -->Reverts" },
+  { message = "^docs", group = "<!-- 5 -->Documentation" },
+  { message = "^test", group = "<!-- 6 -->Tests" },
+  { message = "^(build|ci|chore|style)", group = "<!-- 7 -->Tooling" },
+
+  { message = ".*", group = "<!-- 8 -->Other changes" },
+]
+
+[bump]
+# feat → minor, fix/perf/refactor → patch, `!` or BREAKING CHANGE → major, and below 1.0
+# a breaking change is a minor. These are git-cliff's defaults, pinned here so a default
+# that shifts upstream cannot silently re-number a release.
+features_always_bump_minor = true
+breaking_always_bump_major = false

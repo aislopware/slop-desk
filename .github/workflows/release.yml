@@ -129,6 +129,12 @@ jobs:
           esac
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      # Fail in seconds rather than after a ~20-minute signed, notarized build. The publish
+      # job needs this section to exist; discovering that at the END of the pipeline means
+      # a tag that burned a notarization round trip and still cannot be released.
+      - name: Check the changelog has a section for this version
+        run: scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
+
       - uses: actions/download-artifact@v8
         with:
           name: libghostty-xcframework
@@ -227,6 +233,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Checked out for ONE file: CHANGELOG.md, which carries the notes this job posts.
+      # It must come before download-artifact — checkout cleans the workspace it lands in.
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           name: slopdesk-${{ needs.package.outputs.version }}-arm64
@@ -239,32 +249,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The commit list since the previous release. This is the ONLY part of a release
-          # note that differs between versions — without it the body is boilerplate that
-          # says nothing about the release it is attached to.
+          # The notes are the CHANGELOG.md section for this version — generated from the
+          # commit log by git-cliff when the release was cut (`scripts/cut-release.sh`),
+          # so they cannot drift from what shipped. This is the only part of the body that
+          # differs between versions; without it a reader learns the same nothing from
+          # v0.2.1 and v0.2.2.
           #
-          # NOT `releases/generate-notes`: that endpoint lists MERGED PULL REQUESTS, and this
-          # repo commits straight to main, so it would render an empty "What's Changed" over
-          # a compare link. The compare API reports the commits themselves either way.
-          previous="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 --json tagName \
-            --jq "[.[].tagName | select(. != \"v${VERSION}\")] | first // empty")"
-
-          : > changelog.md
-          if [[ -n "${previous}" ]]; then
-            {
-              echo "## Changes since ${previous}"
-              echo
-              # Merge commits carry no subject of their own — drop them (parents > 1).
-              gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${previous}...v${VERSION}" \
-                --jq '.commits[] | select(.parents | length == 1)
-                      | "- \(.commit.message | split("\n")[0]) (`\(.sha[0:7])`)"'
-              echo
-              echo "**Full changelog**: <${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous}...v${VERSION}>"
-            } > changelog.md
-          fi
+          # A missing section FAILS the job. The alternative is publishing the boilerplate
+          # under a version that silently has no notes, which is the bug being fixed here.
+          #
+          # Assembled in RUNNER_TEMP, not in the checkout. A scratch `changelog.md` beside
+          # the repo's `CHANGELOG.md` is one case-insensitive filesystem away from the
+          # redirect truncating the file this job exists to read — it does exactly that on
+          # macOS, and `runs-on` is one line of config.
+          body="${RUNNER_TEMP}/release-body.md"
+          notes="${RUNNER_TEMP}/release-notes.md"
+          scripts/changelog-section.sh "${VERSION}" > "${body}"
 
           {
-            cat changelog.md
+            # The slice starts at `### Features` — the `##` heading it sat under in
+            # CHANGELOG.md carried the version and the date, which the Release page
+            # already shows above the body.
+            echo "## What changed"
+            echo
+            cat "${body}"
             cat <<'NOTES'
 
           ## Install
@@ -292,18 +300,18 @@ jobs:
           NOTES
             cat dist/SHA256SUMS
             printf '```\n'
-          } > notes.md
+          } > "${notes}"
 
           # Re-running a release (a re-tag, a retried job) must not fail on an existing
           # release — and must REFRESH the notes, not leave the first attempt's body behind.
           if gh release view "v${VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
-            gh release edit "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --notes-file notes.md
+            gh release edit "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}"
             gh release upload "v${VERSION}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
           else
             gh release create "v${VERSION}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "SlopDesk ${VERSION}" \
-              --notes-file notes.md \
+              --notes-file "${notes}" \
               dist/*
           fi
 

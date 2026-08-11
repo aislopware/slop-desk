@@ -17,7 +17,7 @@
 # Skip once:              git commit --no-verify   /   git push --no-verify
 
 minimum_pre_commit_version: "3.5.0"
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
 fail_fast: false
 
@@ -133,6 +133,20 @@ repos:
         entry: ruff check --force-exclude
         language: system
         files: '\.py$'
+
+      # ===================== COMMIT MESSAGE (commit-msg) =====================
+      # The commit subject is an INPUT to the release, not prose: `cliff.toml` reads the
+      # type to place the commit in CHANGELOG.md, and `git cliff --bumped-version` reads it
+      # to compute the next version. Enforcing it here is what lets both be generated
+      # instead of hand-maintained. `always_run` and NO `files:` regex: the commit-msg
+      # stage hands the hook the message FILE rather than the staged paths, so a `files:`
+      # pattern would match nothing and quietly skip every commit.
+      - id: commit-msg-conventional
+        name: conventional commit subject
+        entry: bash scripts/check-commit-msg.sh
+        language: system
+        stages: [commit-msg]
+        always_run: true
 
       # ===================== UNIT TESTS (pre-push only) ======================
       # Slow → kept off the per-commit path. The script adds two speedups on top of the

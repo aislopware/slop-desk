@@ -142,34 +142,94 @@ you own the leak.
 
 ## Cutting a release
 
-1. Bump the version in **five** places — `grep -rn '<old version>' Sources Apps` before you tag:
+```
+make release-preview     # the version and the notes the next cut would produce; writes nothing
+make release             # version + CHANGELOG.md + all six version sites + commit + tag
+git push origin main && git push origin vx.y.z
+```
 
-   | File | Key | Why it is separate |
-   |---|---|---|
-   | `Sources/SlopDeskCLICore/CLIVersion.swift` | `version` | what `slopdesk version` prints |
-   | `Apps/ClientApp-macOS/project.yml` | `MARKETING_VERSION` **and** `info.properties.CFBundleShortVersionString` | `GENERATE_INFOPLIST_FILE: NO`, so the literal in `info.properties` is what lands in Info.plist — `MARKETING_VERSION` does **not** reach it |
-   | `Apps/HostApp-macOS/project.yml` | same two | same reason |
-   | `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
+`scripts/cut-release.sh` is the whole procedure, and it exists because the manual version of it
+had six steps that were each individually easy to forget. It refuses to run off `main` or on a
+dirty tree, then:
 
-   Then run `xcodegen generate` for both specs and **commit the regenerated
-   `Apps/*/Info.plist`**. Those two files are build output that is nevertheless committed, so they
-   go stale silently: at v0.2.1 both still read `0.1.0`, and every local `xcodebuild` produced an
-   app claiming that version. Releases were unaffected only because `stamp_and_sign_app` rewrites
-   `CFBundleShortVersionString` with PlistBuddy before signing — that stamp is the reason nobody
-   noticed for two releases, not evidence the tree is right.
+1. **Decides the version** with `git cliff --bumped-version`, which reads the conventional-commit
+   types since the last tag: a `feat` moves the minor, a `fix`/`perf`/`refactor` moves the patch,
+   a `!` or a `BREAKING CHANGE:` trailer moves the major (below 1.0, the minor). Pass a version
+   argument — `make release VERSION=0.3.0` — to override it.
+2. **Renders `CHANGELOG.md`** from the same commit log (`cliff.toml`), with the pending commits
+   filed under the version about to be tagged rather than left under *Unreleased*.
+3. **Writes the version into all six sites** via `scripts/bump-version.sh`, which greps every one
+   of them back afterwards and fails on a substitution that silently did nothing.
+4. **Commits and tags** — `chore(release): vx.y.z`, the one subject `cliff.toml` skips, so the
+   release commit never appears in the next release's notes.
 
-   `package-release.sh` asks the built **CLI binary** for its version and **refuses to package** on
-   drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
-   reads `HostEnvironment.buildVersion`, so those two can ship stale with a fully green pipeline.
-   `Apps/ClientApp-iOS/*.yml` carry their own `0.1.0` and are deliberately left alone: no iOS
-   release pipeline exists (see "Deliberately not done").
-2. `make check` (lint + build + test + golden).
-3. Dry run: Actions → Release → `workflow_dispatch`, version `x.y.z`, **dry-run checked**. Builds
-   and signs, skips notarization, the Release and the tap bump. Artifacts land on the run.
-4. `git tag vx.y.z && git push origin vx.y.z` — the tag push runs the real thing.
-5. Verify: `brew update && brew install --cask aislopware/tap/slopdesk`, then
-   `spctl -a -vvv -t install /Applications/SlopDesk.app` should say *accepted / Notarized
-   Developer ID*.
+It does **not** push. The tag push is what starts the signing pipeline, so it stays a separate
+keystroke. Then run `make check` and dry-run the workflow (Actions → Release →
+`workflow_dispatch`, version `x.y.z`, **dry-run checked**) if the change touched packaging;
+finally verify the published artifact:
+
+```
+brew update && brew install --cask aislopware/tap/slopdesk
+spctl -a -vvv -t install /Applications/SlopDesk.app     # accepted / Notarized Developer ID
+```
+
+### The six version sites
+
+`bump-version.sh` owns these; the table is here because the gates cannot see most of them.
+
+| File | Key | Why it is separate |
+|---|---|---|
+| `Sources/SlopDeskCLICore/CLIVersion.swift` | `version` | what `slopdesk version` prints |
+| `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
+| `Apps/ClientApp-macOS/project.yml` | `MARKETING_VERSION` **and** `info.properties.CFBundleShortVersionString` | `GENERATE_INFOPLIST_FILE: NO`, so the literal in `info.properties` is what lands in Info.plist — `MARKETING_VERSION` does **not** reach it |
+| `Apps/HostApp-macOS/project.yml` | same two | same reason |
+| `Apps/ClientApp-macOS/Info.plist`, `Apps/HostApp-macOS/Info.plist` | `CFBundleShortVersionString` | xcodegen output that is nevertheless committed, so a clean checkout builds without running xcodegen first — which is exactly why it goes stale silently |
+
+`package-release.sh` asks the built **CLI binary** for its version and **refuses to package** on
+drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
+reads `HostEnvironment.buildVersion`. At v0.2.1 both plists still read `0.1.0` and every local
+`xcodebuild` produced an app claiming that version; releases were unaffected only because
+`stamp_and_sign_app` rewrites `CFBundleShortVersionString` with PlistBuddy before signing. That
+stamp is why nobody noticed for two releases, not evidence the tree was right.
+
+`Apps/ClientApp-iOS/*.yml` carry their own `0.1.0` and are deliberately left alone: no iOS release
+pipeline exists (see "Deliberately not done").
+
+## Commit subjects are release input
+
+The commit TYPE is read twice by the release: once to decide the version, once to decide which
+section of `CHANGELOG.md` the change lands in. A subject outside the conventional-commit grammar
+contributes to neither — silently. So it is gated at commit time by
+`scripts/check-commit-msg.sh`, wired as a `commit-msg` hook in `.pre-commit-config.yaml`:
+
+```
+<type>[(scope)][!]: <subject>
+type: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test
+```
+
+This is the same bargain `better-update` strikes with commitlint on lefthook, minus the Node
+dependency — the rule is a regex, and every hook in this repo is `language: system` so there is no
+environment to provision.
+
+`cliff.toml` skips almost nothing, which is deliberate: git-cliff drops a release whose commits
+all got skipped, **header and all**. v0.2.1 carried one `ci` commit and one `chore(release)`
+commit, and hiding both would have deleted the release from the file entirely — then
+`changelog-section.sh 0.2.1` fails on a version that genuinely shipped. Emphasis comes from
+ordering instead: features and fixes on top, tooling underneath.
+
+### Where the release notes come from
+
+`scripts/changelog-section.sh <version>` slices one release out of `CHANGELOG.md`. The publish job
+posts that slice, and **fails when the section is missing** rather than falling back to prose. A
+second copy of the same check runs in the `package` job right after the version resolves, so a tag
+with no notes fails in seconds instead of after a ~20-minute signed, notarized build.
+
+Before this, the body was nine fixed lines naming an architecture and two brew commands, byte-identical
+in every release — `v0.2.1` and `v0.2.2` taught a reader exactly the same nothing.
+
+The assembly writes to `$RUNNER_TEMP`, not the checkout. A scratch `changelog.md` beside the repo's
+`CHANGELOG.md` is one case-insensitive filesystem away from the redirect truncating the file the job
+exists to read; it does precisely that on macOS, and `runs-on` is one line of config.
 
 ## `--product`, never `--target`
 
