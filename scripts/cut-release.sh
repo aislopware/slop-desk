@@ -68,7 +68,7 @@ git rev-parse -q --verify "refs/tags/v${VERSION}" > /dev/null &&
 step "Rendering CHANGELOG.md"
 # `--tag` tells git-cliff to render the unreleased commits UNDER the version about to be
 # tagged, rather than leaving them in an "Unreleased" section the release could not slice.
-git-cliff --tag "v${VERSION}" --output CHANGELOG.md
+scripts/render-changelog.sh --tag "v${VERSION}"
 notes="$(scripts/changelog-section.sh "${VERSION}")" ||
   die "the rendered changelog has no ${VERSION} section"
 

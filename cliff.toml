@@ -61,6 +61,13 @@ body = """
 footer = ""
 trim = false
 
+# NO `postprocessors` here to tidy the trailing blank line at end-of-file. They run per
+# RELEASE, not over the finished document: `{ pattern = '\n+$', replace = "\n" }` strips the
+# separator from every release body and glues each `## [x.y.z]` heading onto the previous
+# release's last bullet, while leaving the actual end-of-file untouched. The trailing
+# newline is normalised by `scripts/render-changelog.sh`, which is the only thing that may
+# write this file.
+
 [git]
 conventional_commits = true
 

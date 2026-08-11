@@ -51,7 +51,9 @@ section="$(awk -v want="## [${VERSION}]" '
   }
 ' "${CHANGELOG}")"
 
-if [[ -z "${section//[[:space:]]/}" ]]; then
+# A regex match rather than `${section//[[:space:]]/}`: bash's global substitution is
+# quadratic in the string length, and a release section grows with the release.
+if [[ ! "${section}" =~ [^[:space:]] ]]; then
   echo "changelog-section: CHANGELOG.md has no entry for ${VERSION}." >&2
   echo "  Regenerate it:  git cliff --output CHANGELOG.md" >&2
   echo "  Or cut properly: scripts/cut-release.sh" >&2

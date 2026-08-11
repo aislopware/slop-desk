@@ -6,9 +6,18 @@ when a release is cut.
 
 ## Unreleased
 
+### Features
+
+- The changelog and the version come from the commit log ([`b52e517`](https://github.com/aislopware/slop-desk/commit/b52e51754dbc98a961cfbd7c67399b7d23d96a0c))
+
 ### Bug fixes
 
 - The release body says what shipped, not what the installer is ([`659b736`](https://github.com/aislopware/slop-desk/commit/659b736b7088415371920987e7226ef7400b942b))
+- Cut the release body down to what changed ([`7419863`](https://github.com/aislopware/slop-desk/commit/74198635441772777aa8e0cfd642027763f527b0))
+
+### Documentation
+
+- Hold new commit subjects to the imperative ([`49974d2`](https://github.com/aislopware/slop-desk/commit/49974d24120e669023debe0e272586b5ed793d3d))
 
 ## [0.2.2](https://github.com/aislopware/slop-desk/compare/v0.2.1...v0.2.2) — 2026-08-11
 
@@ -219,5 +228,3 @@ when a release is cut.
 - FOUNDRY replaces MERIDIAN with the Foundry Ember theme, because 89 surfaces on three rungs and one accent could no longer tell a fleet apart ([`cd0aeba`](https://github.com/aislopware/slop-desk/commit/cd0aebaab129191b4b05c5947a8413ac24aea9ff))
 - Record the Settings verdict — it stays in system semantics, asked and confirmed ([`efa8bce`](https://github.com/aislopware/slop-desk/commit/efa8bce041276a0b42a89234df5b585b9d5384df))
 - Record the two traps the first wiring run hit ([`1c06541`](https://github.com/aislopware/slop-desk/commit/1c0654130d574acd5e2ac39cc8a65f7c489d239d))
-
-

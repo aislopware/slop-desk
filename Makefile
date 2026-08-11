@@ -145,7 +145,7 @@ golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
 # decides both the CHANGELOG.md section a change lands in and whether the version moves a minor or
 # a patch, which is why `scripts/check-commit-msg.sh` gates the subject at commit-msg time.
 changelog: ## Regenerate CHANGELOG.md from the commit log (git-cliff)
-	git-cliff --output CHANGELOG.md
+	bash scripts/render-changelog.sh
 
 release-preview: ## Print the version and release notes the next cut would produce; write nothing
 	bash scripts/cut-release.sh --dry-run
