@@ -4,7 +4,7 @@ Generated from the commit log by [git-cliff](https://git-cliff.org). Sections co
 the conventional-commit type, so what lands here is decided when a commit is written, not
 when a release is cut.
 
-## Unreleased
+## [0.3.0](https://github.com/aislopware/slop-desk/compare/v0.2.2...v0.3.0) — 2026-08-11
 
 ### Features
 
@@ -14,6 +14,7 @@ when a release is cut.
 
 - The release body says what shipped, not what the installer is ([`659b736`](https://github.com/aislopware/slop-desk/commit/659b736b7088415371920987e7226ef7400b942b))
 - Cut the release body down to what changed ([`7419863`](https://github.com/aislopware/slop-desk/commit/74198635441772777aa8e0cfd642027763f527b0))
+- Route every changelog write through one renderer ([`cc6feb3`](https://github.com/aislopware/slop-desk/commit/cc6feb35abacaafee1cd38f4cec65a468fe6434e))
 
 ### Documentation
 

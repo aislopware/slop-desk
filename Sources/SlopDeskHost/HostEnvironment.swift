@@ -24,7 +24,7 @@ public enum HostEnvironment {
 
     /// The build/marketing version advertised via `TERM_PROGRAM_VERSION`. Kept in step with the app
     /// target's `MARKETING_VERSION` (`Apps/ClientApp-macOS/project.yml`) and `CLIVersion.version`.
-    public static let buildVersion = "0.2.2"
+    public static let buildVersion = "0.3.0"
 
     /// A curated child environment: inherit a safe allowlist from the parent and layer
     /// the terminal defaults on top. We deliberately do **not** forward the parent's
