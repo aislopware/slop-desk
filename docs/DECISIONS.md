@@ -7839,18 +7839,18 @@ sits at either end.
   which frames it was drawn on, so two panes showing one agent would drift apart and a scrolled-away
   row would come back holding a stale position. Analytic integration is what keeps the wall clock
   load-bearing, which is the property this mark has had since it was drawn.
-- **`StatusDot.tempoSwells` — three swells (13.1 s / 5.9 s / 2.7 s), shares 0.5 / 0.3 / 0.2.** The
-  shares summing to EXACTLY 1 is the safety argument: the speed touches the slow end and turns back,
-  so the mark can dwell but can never stall or reverse (a spinner that runs backwards reads as a bug,
-  not as a pause). ⚠️ The periods are in non-integer ratios on purpose — swells that divide each other
-  resynchronise, and a rhythm you can count is the mechanism being designed away. It covers ~93% of
-  the band inside 30 s, so the wander is legible without being watched for.
+- **`StatusDot.tempoWanders` — three swells, shares summing to EXACTLY 1.** That sum is the safety
+  argument: the speed touches the slow end and turns back, so the mark can dwell but can never stall
+  or reverse (a spinner that runs backwards reads as a bug, not as a pause). ⚠️ The periods are in
+  non-integer ratios on purpose — swells that divide each other resynchronise, and a rhythm you can
+  count is the mechanism being designed away. *(Retuned by the third cut below; it shipped as
+  13.1 / 5.9 / 2.7 s at 0.5 / 0.3 / 0.2.)*
 - **The wander is symmetric in RATE, not in period** — speed is laps per second and the period is its
   reciprocal, so an even-looking swing in seconds-per-lap would spend far longer crawling than
-  hurrying. The consequence is the one real change to how FAST the mark looks: the mean lap is now the
-  harmonic middle of the two ends (≈1.51 s) rather than the 1.8 s that shipped as the single settled
-  tempo. `StatusDot.lapPeriod` is that middle, derived — it is still what every still, every test and
-  every frozen mark is drawn at.
+  hurrying. The consequence is the one real change to how FAST the mark looks: the mean lap is the
+  harmonic middle of the two ends rather than the 1.8 s that shipped as the single settled tempo.
+  `StatusDot.lapPeriod` is that middle, derived — it is still what every still, every test and every
+  frozen mark is drawn at.
 - **Each mount still rolls ONE number, but it is an OFFSET into the shared wander, not a tempo**
   (`StatusDot.tempoSeedSpan`). Every mark now has the same average speed and the same law; without the
   offset a whole rail would hurry and dwell in lockstep, which reads as the application hitching
@@ -7863,6 +7863,48 @@ sits at either end.
   the phase is still pure in the clock and non-negative before the epoch. `SlateSnapshotRender` gains
   a second filmstrip sampled at EQUAL wall-clock steps (250 ms) beside the per-lap one: read as
   SPACING, not shape — even steps there would mean the wander has been flattened back to a constant.
+
+**⚠️ The wander is SQUARED and the slow end widens to 3.2 s (2026-08-11, user-directed, third cut).**
+*"The speed is random now, but the difference is not noticeable — how do I make it clearly read as
+sometimes fast, sometimes slow?"*
+The second cut was true and illegible, and the two are not the same claim. Measured before touching
+anything, the shipped wander said why on both counts:
+
+| | shipped | now |
+| --- | --- | --- |
+| lap p25 / p50 / p75 | 1.33 / 1.51 / 1.76 s | 1.31 / 1.60 / 2.04 s |
+| time spent near an end (\|wander\| > ⅔) | 13% | 23% |
+| contrast visible inside any 4 s (median) | 1.47× | 2.12× |
+| median handover, slow end → quick end | 5.97 s | 1.75 s |
+
+- **The handover was the real defect, not the band.** 2.44× is a wide band; the mark never showed it.
+  A sum of sines is bell-distributed, so it sat in the middle almost always — but the killer is that
+  the 13.1 s fundamental took ~6 s to cross, and the eye RENORMALISES a ramp that slow into "the
+  current speed". Speed perception needs a transition short enough to catch or two states held long
+  enough to compare, and a six-second glide is neither: the mark was never seen to change, only to be.
+- **Squaring, without leaving the sine basis.** The long swell is spent on its ODD HARMONICS —
+  `sin θ + sin 3θ/3 + sin 5θ/5` at periods P, P/3, P/5 (`TempoWander.squared`). Every term is still a
+  plain sine, so `phase(at:seed:)` stays the closed-form integral that makes the wall clock
+  load-bearing; nothing about `rate`/`phase` changed. ⚠️ `tanh`-style soft clipping would shape it
+  better and has no closed-form integral — that is why this route and not that one.
+- **The safety proof survives verbatim, one level up.** That partial sum peaks at EXACTLY 14/15 (at
+  θ = 5π/6 the terms read ½, ⅓, ¹⁄₁₀), so a squared swell's fundamental is scaled by 15/14 and the
+  swell still tops out at its declared share. `tempoWanders` = 0.56 (squared, 7.9 s) + 0.31 (4.3 s) +
+  0.13 (1.9 s) = 1.00 exactly. ⚠️ The FLATTENED `tempoSwells` shares sum to 1.36 and prove nothing —
+  the bound is read off the declared swells, and the test says so.
+- **`slowestLapPeriod` 2.6 → 3.2.** The 2.6 judged the day before was the floor for a tempo the mark
+  might sit at INDEFINITELY; a shaped wander only dwells there a second or two, which is a different
+  question. Shaping alone got 1.47× → 1.85×; this end takes it to 2.12×. The quick end stays herdr's
+  own 1.067 s. The mean lap moves 1.51 → 1.60 s — nearly free, because the mean is taken in rate.
+- **What it cost, stated because it is the thing the non-integer periods exist to prevent:** the flips
+  are MORE REGULAR — the gap between direction changes spanned 0.6–7.3 s (p10–p90) and now spans
+  1.5–4.4 s. The two shorter swells carry 44% of the swing, up from a 0.5 dominant, precisely to keep
+  the crossings off a grid. Squaring buys legibility partly out of the irregularity budget; cut those
+  swells further to sharpen the handover and the mark reads as a metronome.
+- Pinned by `testTheWanderIsSeenToChangeSpeedAndNotJustToHaveOne`: ≥55% of the time away from the
+  middle third, and a median handover under 2.6 s. ⚠️ This is the assertion that fails first if anyone
+  flattens the squared swell back to a plain sine because the maths is simpler — covering the band,
+  which the old one did to 99%, is exactly the guarantee that turned out not to be worth anything.
 
 **⚠️ TWO cuts were rejected on sight, both from the wrong set.** The first read the frames as an ARC
 ON A CIRCLE (at six samples they are geometrically close) and drew a comet on the resting ring's own

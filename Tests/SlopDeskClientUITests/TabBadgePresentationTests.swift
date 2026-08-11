@@ -72,15 +72,44 @@ final class TabBadgePresentationTests: XCTestCase {
     }
 
     /// The tempo WANDERS, and it stays inside the band it wanders through. ⚠️ This is the invariant
-    /// the whole cadence rests on: the swells' shares sum to exactly one, so the speed reaches the
-    /// slow end and turns back from it. Push the shares past one (a fourth swell added without
-    /// re-dividing them, a share nudged for feel) and the rate goes through zero — the mark would
-    /// STALL mid-lap and then run BACKWARDS, which reads as a bug rather than as a pause.
+    /// the whole cadence rests on: the DECLARED swells' shares sum to exactly one, so the speed
+    /// reaches the slow end and turns back from it. Push the shares past one (a fourth swell added
+    /// without re-dividing them, a share nudged for feel) and the rate goes through zero — the mark
+    /// would STALL mid-lap and then run BACKWARDS, which reads as a bug rather than as a pause.
+    ///
+    /// ⚠️ The bound is read off ``StatusDot/tempoWanders``, not the sine terms it expands to: a
+    /// SQUARED swell spends its share across three harmonics that peak TOGETHER, so its terms add up
+    /// past its share (to `15/14` of it) while the swell itself still tops out at exactly the share.
+    /// Summing the flattened terms would therefore read 1.36 and prove nothing. The peak is pinned
+    /// here too, because that scaling is the only reason the declared sum is still a bound at all.
     func testTheTempoStaysInsideItsBandAndNeverStalls() {
         XCTAssertEqual(
-            StatusDot.tempoSwells.map(\.share).reduce(0, +), 1, accuracy: 0.0001,
+            StatusDot.tempoWanders.map(\.share).reduce(0, +), 1, accuracy: 0.0001,
             "the shares ARE the bound — anything over 1 reverses the spinner at the slow end",
         )
+        let squared = StatusDot.squaredSwellHarmonics.map { harmonic in
+            sin(2 * .pi * Double(harmonic) * 5 / 12) / Double(harmonic)
+        }
+        XCTAssertEqual(
+            squared.reduce(0, +), StatusDot.squaredSwellPeak, accuracy: 0.0001,
+            "a squared swell is normalised by its peak — 14/15, reached at 5π/6",
+        )
+        for wander in StatusDot.tempoWanders {
+            var peak = 0.0
+            for step in 0..<2000 {
+                let time = Double(step) / 2000 * wander.period
+                var value = 0.0
+                for swell in wander.swells {
+                    let turn = time / swell.period + swell.turn
+                    value += swell.share * sin(2 * Double.pi * turn)
+                }
+                peak = Swift.max(peak, abs(value))
+            }
+            XCTAssertLessThanOrEqual(
+                peak, wander.share + 0.0005,
+                "a swell that overshoots its declared share spends swing the bound never granted it",
+            )
+        }
         let epoch = Date(timeIntervalSinceReferenceDate: 0)
         for step in 0..<12000 {
             let rate = AgentSpinner.rate(at: epoch.addingTimeInterval(Double(step) / 20))
@@ -116,6 +145,59 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(
             total / Double(samples), StatusDot.midRate, accuracy: 0.01,
             "the long-run tempo is the MIDDLE of the band, not one of its ends",
+        )
+    }
+
+    /// The wander must be SEEN to change, which covering the band does not by itself guarantee — the
+    /// three-plain-sine version covered 99% of it and still read as one speed. Two separate things
+    /// were wrong and each gets an assertion here.
+    ///
+    /// ⚠️ FIRST, WHERE the tempo spends its time. A sum of sines is bell-distributed: the shipped one
+    /// sat inside the middle third of its band half the time and near an end only 13% of it, so the
+    /// spread existed in the extremes and nowhere a watcher was looking. Squaring the long swell is
+    /// what buys the ends — it measures 63%/23% now, and the floor below is well under that so the
+    /// two shorter swells can still be tuned for irregularity.
+    ///
+    /// ⚠️ SECOND, and this was the real defect: HOW LONG the handover takes. The 13.1 s fundamental
+    /// crossed the band in a median of 5.97 s, and the eye renormalises a ramp that slow into "the
+    /// current speed" — the mark was never observed to change, only to be. Speed perception needs
+    /// either a transition short enough to catch or two states held long enough to compare, and a
+    /// six-second glide is neither. It is 1.75 s now. This is the assertion that would fail first if
+    /// anyone flattened the squared swell back to a plain sine "because the maths is simpler".
+    func testTheWanderIsSeenToChangeSpeedAndNotJustToHaveOne() {
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        let step = 1.0 / 20
+        let samples = 36000
+        var swing = [Double]()
+        swing.reserveCapacity(samples)
+        for index in 0..<samples {
+            let rate = AgentSpinner.rate(at: epoch.addingTimeInterval(Double(index) * step))
+            swing.append((rate - StatusDot.midRate) / StatusDot.rateSwing)
+        }
+
+        let awayFromTheMiddle = swing.filter { abs($0) > 1.0 / 3 }.count
+        XCTAssertGreaterThan(
+            Double(awayFromTheMiddle) / Double(samples), 0.55,
+            "the tempo has to LIVE near the ends — a bell-shaped wander is a constant tempo with noise",
+        )
+
+        // Each handover is timed from the LAST instant below the slow threshold, so a swell that
+        // dithers on its way up is charged only for the crossing it actually completes.
+        var handovers = [Double]()
+        var departed: Int?
+        for (index, value) in swing.enumerated() {
+            if value < -0.6 {
+                departed = index
+            } else if value > 0.6, let from = departed {
+                handovers.append(Double(index - from) * step)
+                departed = nil
+            }
+        }
+        XCTAssertGreaterThan(handovers.count, 20, "1800s must contain plenty of crossings to judge")
+        let median = handovers.sorted()[handovers.count / 2]
+        XCTAssertLessThan(
+            median, 2.6,
+            "a handover the eye can catch — past ~3s it renormalises the ramp as the current speed",
         )
     }
 
