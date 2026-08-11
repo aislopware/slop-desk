@@ -301,6 +301,10 @@ enum StatusPresentation {
     /// no longer changes as it finishes, so the ink is not the completion signal and cannot be read
     /// as one. Green was tried in the mark and is not worth a colour here; "it worked" is the
     /// expected outcome, and spending a hue on the expected leaves nothing to spend on the exception.
+    ///
+    /// ⚠️ Round 26 (user-directed) changed WHAT this inks for a clean exit: the succeeded receipt no
+    /// longer prints a name, so this is the TICK's ink now — the primary, inherited whole from the
+    /// word it replaced. The failed answer is unchanged, because a failure still prints its name.
     static func outcomeInk(_ outcome: CommandOutcome) -> Color {
         switch outcome {
         case .succeeded: Slate.Text.primary
@@ -308,21 +312,30 @@ enum StatusPresentation {
         }
     }
 
-    /// The SYMBOL a command's outcome sets after its name — a bare `checkmark` for a clean exit,
-    /// NOTHING for a failure.
+    /// The SYMBOL a command's outcome takes in the trailing slot — a bare `checkmark` for a clean
+    /// exit, NOTHING for a failure. Non-`nil` here means the slot prints the GLYPH ALONE; `nil` means
+    /// it prints the NAME alone. One rule, two readings, and never both at once.
     ///
-    /// ⚠️ Round 25 (user-directed) puts a glyph back on a command's exit, sixteen rounds after round
+    /// ⚠️ Round 25 (user-directed) put a glyph back on a command's exit, sixteen rounds after round
     /// 24 pulled the outcome marks. What makes it a different proposal from the disc round 24 killed:
-    /// that one lived in the MARK COLUMN, competing with the agent's own alphabet and saying only
-    /// "something happened"; this one is punctuation ON the receipt, inside the slot, closing a name
-    /// that is already printed. The mark column stays the agent's — ``mark(for:agentFinish:)`` is
-    /// still `nil` for every command tier, and `testEveryBadgeHasExactlyOneVoice` still holds,
-    /// because the receipt (name + tick) is ONE voice however many marks it is drawn with.
+    /// that one lived in the MARK COLUMN, competing with the agent's own alphabet; this one is in the
+    /// SLOT, which is the command's own voice. The mark column stays the agent's —
+    /// ``mark(for:agentFinish:)`` is still `nil` for every command tier, and
+    /// `testEveryBadgeHasExactlyOneVoice` still holds.
     ///
-    /// A failure gets none on purpose. Red is already the exception's whole budget, and a cross
-    /// beside a red word is the same news twice — the very fault that cost the disc its place. The
-    /// asymmetry is the point: the tick exists because a SUCCESS has nothing else left to say it
-    /// (the ink and the weight are now shared with the running state), and a failure has red.
+    /// ⚠️ Round 26 (user-directed) dropped the NAME from the clean exit, so the tick stopped being
+    /// punctuation on a printed word and became the whole receipt. A finished pane is the one the
+    /// reader is done with, and a slot that keeps naming it spends a 10pt column restating history
+    /// the tooltip already holds; "it worked" fits in a glyph, and the row goes quiet the moment the
+    /// work is over. The tick takes the register the word left behind — the primary ink
+    /// (``outcomeInk(_:)``) at ``StatusDot/receiptCheckSize`` — so the slot does not also get fainter
+    /// as it gets shorter.
+    ///
+    /// A failure still gets no glyph, and still prints its NAME. Red is already the exception's whole
+    /// budget, and a cross beside a red word is the same news twice — the very fault that cost the
+    /// disc its place. The asymmetry is now the round's point rather than a detail of it: a clean
+    /// exit is a fact you only have to acknowledge, a broken one is a fact you have to ACT on, and
+    /// the one you have to act on is the one that keeps its name.
     static func outcomeSymbol(_ outcome: CommandOutcome) -> SFSymbol? {
         switch outcome {
         case .succeeded: .checkmark

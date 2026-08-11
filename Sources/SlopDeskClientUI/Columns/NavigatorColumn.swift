@@ -1264,11 +1264,22 @@ private struct IOSSidebarLiveRow: View {
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
             } else if let receipt {
-                // The macOS receipt, glyph included (round 25): the name in the register it wore
-                // while running, closed by the small grey tick on a clean exit — a failure says it
-                // in red and takes no mark. Same tight gap, so the tick reads as the name's own
-                // punctuation rather than a second trailing item.
-                HStack(spacing: 3) {
+                // The macOS receipt exactly (round 26): ONE answer, never two — the bare tick alone
+                // for a clean exit, the name alone in red for a failure. Both in the outcome's own
+                // ink (``StatusPresentation/outcomeInk(_:)``), so the shorter slot is not a fainter
+                // one.
+                if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
+                    Image(systemSymbol: tick)
+                        .font(.system(
+                            size: StatusDot.receiptCheckSize,
+                            weight: StatusDot.receiptCheckWeight,
+                        ))
+                        .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
+                        // The MARK's column box, as on macOS — a bare glyph is only as wide as
+                        // itself, so flush-right it misses the centre line every mark stands on.
+                        .frame(width: StatusDot.footprint, height: StatusDot.footprint)
+                        .accessibilityHidden(true)
+                } else {
                     Text(receipt.name)
                         .font(Slate.Typeface.instrument(
                             Slate.Typeface.small, weight: StatusPresentation.slotNameWeight,
@@ -1276,15 +1287,6 @@ private struct IOSSidebarLiveRow: View {
                         .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
                         .lineLimit(1)
                         .fixedSize()
-                    if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
-                        Image(systemSymbol: tick)
-                            .font(.system(
-                                size: StatusDot.receiptCheckSize,
-                                weight: StatusDot.receiptCheckWeight,
-                            ))
-                            .foregroundStyle(Slate.Text.tertiary)
-                            .accessibilityHidden(true)
-                    }
                 }
             }
             // The same trailing status mark as the macOS row (the T3 Code port) — rightmost, so

@@ -21,16 +21,20 @@
 // ⚠️ A COMMAND's outcome has no mark here at all (round 24, and still true). It used to take otty's
 // two — the plain disc for a clean exit, the alert triangle for a failure — and the row printed a
 // symbol where the slot beside it was going empty anyway. A command's exit is a fact about a NAME
-// (`make` passed, `make` failed), so it reads as that name in the trailing SLOT instead, one less
-// glyph vocabulary to learn, and the row now says WHAT finished rather than only that something did.
+// (`make` passed, `make` failed), so it reads in the trailing SLOT instead — one less glyph
+// vocabulary here to learn, whatever the slot chooses to print.
 //
 // ⚠️ Round 25 (user-directed) moved the line WITHIN that slot. The command's name is bold on the
 // primary ink from the moment it starts running, not only once it exits, so weight and brightness no
 // longer mean "finished" — which left a clean exit with nothing to say itself. It gets a bare
-// `checkmark` (``StatusPresentation/outcomeSymbol(_:)``) at ``receiptCheckSize``, on the tertiary
-// grey, set after the name like punctuation. That is the SAME WORD as `completed` above, three steps
-// quieter: no circle, four points smaller, no hue. A failure still takes none — red is that one's
-// whole statement, and a cross beside a red word is what cost the triangle its place.
+// `checkmark` (``StatusPresentation/outcomeSymbol(_:)``) at ``receiptCheckSize``.
+//
+// ⚠️ Round 26 (user-directed) then took the NAME off that clean exit, so the tick is not punctuation
+// on a word any more — it IS the receipt, alone in the slot, and it inherits the word's rung and
+// primary ink. That is still the SAME WORD as `completed` above, two steps quieter: no circle, three
+// points smaller. A failure still takes no glyph and still prints its NAME in red — red is that
+// one's whole statement, a cross beside a red word is what cost the triangle its place, and the
+// broken run is the one that has to stay nameable at a glance.
 //
 // ONE state moves — the spinner — and everything settled holds absolutely still (round 19's lesson
 // survives: a settled rail must not twitch).
@@ -82,18 +86,21 @@ enum StatusDot {
     /// (``TabBadgeView``) is the one left that uses it.
     static let badgeSymbolSize: CGFloat = 11
     /// The point size of the RECEIPT's completion check — the bare `checkmark` a cleanly-exited
-    /// command sets after its name in the trailing slot (``StatusPresentation/outcomeSymbol(_:)``).
+    /// command takes in the trailing slot (``StatusPresentation/outcomeSymbol(_:)``).
     ///
-    /// ⚠️ NINE, and the gap to ``finishSymbolSize`` is the whole design: this is the same WORD the
-    /// agent's finish says, said quietly. Three things separate them at once — the circle is gone
-    /// (no plate, no fill, just the tick), the ink is the tertiary metadata grey instead of green,
-    /// and it is four points smaller. Any one of those alone would read as the agent's check gone
-    /// faulty; all three read as a different, smaller speaker. It sits a point UNDER the 10pt name
-    /// it follows for the same reason a receipt's tick is smaller than the line it closes.
-    static let receiptCheckSize: CGFloat = 9
-    /// The weight that check is stroked at. `.semibold`: a 9pt tick on a tertiary ink goes to smudge
-    /// at `.regular` (the same floor ``symbolWeight`` exists for), and the name beside it is bold —
-    /// a hairline tick after a bold word reads as a rendering artefact rather than a mark.
+    /// ⚠️ The gap to ``finishSymbolSize`` is the whole design: this is the same WORD the agent's
+    /// finish says, said quietly. Two things separate them at once — the circle is gone (no plate,
+    /// no fill, just the tick) and it is three points smaller. Either alone would read as the
+    /// agent's check gone faulty; both read as a different, smaller speaker.
+    ///
+    /// ⚠️ Round 26 (user-directed) moved it from 9 to the slot's own metadata rung. At 9 it was
+    /// punctuation sized a point under the 10pt NAME it followed; that name is gone, the tick is the
+    /// whole receipt now, and a mark standing where a word stood takes the word's rung — otherwise
+    /// dropping the name would have quietly made the finished row harder to see rather than calmer.
+    static let receiptCheckSize: CGFloat = Slate.Typeface.small
+    /// The weight that check is stroked at. `.semibold`: a 10pt tick goes to smudge at `.regular`
+    /// (the same floor ``symbolWeight`` exists for), and it stands in for a BOLD word — a hairline
+    /// mark where the rail printed a bold name reads as a rendering artefact rather than a verdict.
     static let receiptCheckWeight: Font.Weight = .semibold
     /// otty renders every badge at `NSFontWeightMedium`. Not `.regular`: at 11pt a regular-weight
     /// symbol goes thin enough on a muted ink to read as smudge rather than mark.
@@ -195,7 +202,7 @@ enum StatusDot {
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
 /// for. See this file's header for what each one is allowed to say. Every case here is an AGENT's:
-/// a command's outcome speaks in the trailing slot as text (``CommandReceipt``), not as a mark.
+/// a command's outcome speaks in the trailing slot (``CommandReceipt``), not in this column.
 enum StatusMark: Equatable {
     /// The agent is generating RIGHT NOW — otty's spinner. The only thing on this rail that moves.
     case working

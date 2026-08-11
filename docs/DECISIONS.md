@@ -3309,7 +3309,78 @@ otty pictograms did not:
 - ⚠️ **Pinned as the ONLY shape distinction the column carries**, with the rounds-19–20 history cited at
   the pin, so "while we are at it, the error could be a triangle" has to argue with the ledger first.
 
+### Round 26 — a clean exit is the TICK ALONE; the name stays only where it is needed (2026-08-10)
+
+*"xoá bỏ tên command đi, khi command exit success thì bên phải chỉ hiện indicator là symbol tick
+thôi."* Round 25 left the succeeded slot printing two things — `swift ✓` — and the user cut it to one.
+The trailing slot now reads `swift` (running) → `✓` (exit 0) → `make` in red (exit ≠ 0): the receipt
+is a SINGLE item in every state, and which item it is says which outcome it was.
+
+- ✅ **A finished-clean pane is one the reader is done with, and its slot should stop talking about
+  it.** Round 24's argument for the word ("the reader's next question is *what*") is a question about
+  a run you still have business with — a FAILURE. For exit 0 the honest answer is "nothing further":
+  the row already carried that name for the whole run, the tooltip still holds the full command line,
+  and a 10pt column spent restating history it can read at a glance is the slot's scarcest space
+  going to its least urgent news.
+- ⚠️⚠️ **The tick INHERITS the word's register — it does not get the punctuation register it had.**
+  Round 25 set it at 9pt on the tertiary grey precisely because a bold primary name stood beside it;
+  with the name gone, keeping that would have made "cleanly finished" quieter than "still running",
+  which is the opposite of the round. So `StatusDot.receiptCheckSize` goes 9 → `Slate.Typeface.small`
+  and the ink becomes `outcomeInk(.succeeded)`, the same primary the name read in.
+  `testTheSucceededReceiptIsTheTickAloneAndTheFailedOneIsItsName` pins both, and the check against
+  the agent's own finish (`checkmark.circle.fill`, 13pt, green) still has two steps of clearance:
+  no plate, three points smaller.
+- ⚠️⚠️ **The ASYMMETRY is now the round's whole shape, not a detail of it.** A clean exit is a fact
+  you acknowledge and leave; a failure is a fact you have to act on, so it keeps its name and the red
+  (and still takes no cross — a cross beside a red word is the same news twice, the fault that cost
+  round 23's triangle its place). `StatusPresentation.outcomeSymbol(_:)` IS the switch both views
+  branch on: non-`nil` ⇒ glyph alone, `nil` ⇒ name alone. One function, so the two platforms cannot
+  drift into printing both.
+- ✅ **`testEveryBadgeHasExactlyOneVoice` is untouched and still true.** The mark column stays the
+  agent's — `mark(for:agentFinish:)` is still `nil` for every command tier — and the receipt is now
+  literally one item, so the "one voice" claim needs no caveat about how many glyphs it is drawn with.
+- ✅ **Both platforms, one reading.** The iOS row (`NavigatorColumn`) branches on the same
+  `outcomeSymbol` and drops its `HStack(spacing: 3)`; `SlateTabRow.receiptTickGap` is deleted rather
+  than left at 3 for nothing to sit either side of.
+- ⚠️ **The resolver is NOT touched.** `RailRowsBuilder.commandReceipt` still refuses a receipt it
+  cannot name (`testANamelessOutcomeMountsNothing`), even though a succeeded receipt no longer prints
+  that name. The fallback chain makes this near-unreachable in practice — a pane with no OSC-133
+  block still has a foreground process — and relaxing it would put a bare tick on rows whose exit
+  nothing in the client can actually attribute.
+- ⚠️ **Cost, accepted:** the slot's width now CHANGES at a clean exit (a word's width → a glyph's), a
+  bigger jump than round 25's tick-width shift. It buys a settled rail that is shorter, and the
+  reserve (`slotMinWidth` 28) means the row's right edge does not move.
+- ✅ **Judged by rendering.** `testRenderTabRowBadges` keeps both receipts, so the lone tick and the
+  red word are read at true size against the agent's green filled check four rows up.
+
+**Follow-up — the hover `×` and the tick join the mark's centre line (2026-08-11).** *"cái symbol X
+(close pane) khi hover vào pane bị lệch sang trái so với các indicator."* Measured off the render at
+2× (slot trailing edge = 201pt), the trailing column held THREE different centre lines: the marks at
+194.0 (a 14pt `StatusDot.footprint` box), the round-26 tick at 196.25 (a bare glyph is only as wide
+as itself, so flush-right puts its centre further right), and the `×` at 192.0 (an 18pt box
+trailing-aligned centres 2pt further LEFT than a 14pt one).
+
+- ⚠️⚠️ **A wider box, trailing-aligned, is a box whose CENTRE moves left — that is the whole bug.**
+  The resting cluster and `closeButton` share one `ZStack(alignment: .trailing)`, so only equal
+  widths give equal centres. Both are `StatusDot.footprint` now, and anything else added to this
+  column must take that box or it will land off the line in exactly the same way.
+- ⚠️ **The `×`'s 18pt HIT target survives, spent LEADING** (`SlateTabRow.closeTargetSide`, leading +
+  vertical padding around a `footprint` plate). Spending it trailing would push the box past the
+  slot's edge and undo the alignment it is paying for.
+- ✅ **The tick took the same box, one day old.** Round 26 drew it flush-right like the word it
+  replaced, but it is a MARK-shaped thing and belongs on the marks' line. Box, not ownership:
+  `mark(for:agentFinish:)` is still `nil` for every command tier, so `testEveryBadgeHasExactlyOneVoice`
+  is untouched.
+- ✅ **Verified by pixel, not by eye.** After: `×` 194.75, tick 195.25, check 194.5, hand 194.75,
+  spinner 195.25 — all inside one point, which is the natural side-bearing scatter of the SF Symbols
+  themselves. Text runs (a failed command's name, `zsh`) deliberately stay FLUSH RIGHT: a word is a
+  run, not a mark, and centring it in a glyph box would indent the one thing that has to read as text.
+
 ### Round 25 — the command name is bold ALL ALONG, and a tick closes it (2026-08-10)
+
+⚠️ **Superseded in part by round 26**: the succeeded receipt below (`make ✓`) is now the tick alone,
+at the slot's own 10pt rung on the primary ink rather than 9pt on the tertiary grey. Everything about
+the RUNNING label, the failure, and the causal chain that forced a symbol into existence stands.
 
 The user split round 24's single treatment in two: the command NAME goes bold from the moment it
 starts running, not only once it exits — and because that spends the weight step early, a clean exit

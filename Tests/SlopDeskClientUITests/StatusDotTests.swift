@@ -188,8 +188,8 @@ final class StatusDotTests: XCTestCase {
     /// ⚠️ A badge has exactly ONE voice. Every kind resolves to a MARK or to a slot RECEIPT, and
     /// never to both — the mark column is the agent's, so a command's exit that also mounted a mark
     /// there would be the same news twice in two dialects. (Round 25's tick does not touch this: it
-    /// is drawn inside the receipt, closing a name the receipt already prints, so the slot is still
-    /// one voice however many glyphs that voice uses.)
+    /// is drawn inside the receipt, in the slot, not in the mark column — and since round 26 the
+    /// receipt is a single item either way, a tick OR a name.)
     @MainActor
     func testEveryBadgeHasExactlyOneVoice() {
         let everyKind: [TabBadgeKind] = [
@@ -255,7 +255,8 @@ final class StatusDotTests: XCTestCase {
     /// command already reads bold on the primary ink, so the succeeded receipt is byte-for-byte the
     /// same register — this is the pin that says so, and the reason ``outcomeSymbol`` has to exist:
     /// if these two ever diverge again, the tick has become decoration on a signal that is already
-    /// being sent, and the round is undone.
+    /// being sent, and the round is undone. Since round 26 the succeeded receipt is the TICK, and
+    /// this ink is what the tick reads in — the register is still inherited, not re-picked.
     @MainActor
     func testAFinishDoesNotRestyleTheCommandName() {
         XCTAssertEqual(
@@ -284,9 +285,13 @@ final class StatusDotTests: XCTestCase {
     /// is kept quieter than the agent's own finish.
     ///
     /// ⚠️ Round 25 puts a glyph back on a command's outcome, which round 24 removed. The thing that
-    /// makes it a different proposal is the distance from `checkmark.circle.fill`: no plate, four
-    /// points smaller, grey rather than green. Any ONE of those collapsing turns the receipt's tick
-    /// into the agent's check gone faulty, so all three are pinned.
+    /// makes it a different proposal is the distance from `checkmark.circle.fill`: no plate, smaller.
+    /// Either of those collapsing turns the receipt's tick into the agent's check gone faulty, so
+    /// both are pinned.
+    ///
+    /// ⚠️ Round 26 (user-directed) made this symbol the WHOLE succeeded receipt — the name came off,
+    /// so `nil`/non-`nil` here is now the slot's own either/or (glyph alone, or name alone), which
+    /// ``testTheSucceededReceiptIsTheTickAloneAndTheFailedOneIsItsName`` pins from the other side.
     @MainActor
     func testTheCleanExitTickStaysQuieterThanTheAgentsCheck() {
         XCTAssertEqual(StatusPresentation.outcomeSymbol(.succeeded), .checkmark)
@@ -304,8 +309,37 @@ final class StatusDotTests: XCTestCase {
             StatusDot.receiptCheckSize, agentCheck?.size ?? 0,
             "a command's exit must not carry as much ink as the agent's turn ending",
         )
-        // And a point under the 10pt name it closes — punctuation, not a peer.
-        XCTAssertLessThan(StatusDot.receiptCheckSize, Slate.Typeface.small)
+        // ⚠️ The slot's OWN rung, not a point under it: the tick stands where the 10pt name stood,
+        // and a receipt that lost its word must not also lose a step of size for it (round 26).
+        XCTAssertEqual(StatusDot.receiptCheckSize, Slate.Typeface.small)
+    }
+
+    /// ⚠️ Round 26 (user-directed), the round's whole shape: a clean exit is the TICK ALONE, a
+    /// failure is the NAME ALONE. The two answers are exclusive by construction —
+    /// ``StatusPresentation/outcomeSymbol(_:)`` is the switch the views branch on, so a symbol
+    /// existing means the name is not drawn and a symbol missing means it is.
+    ///
+    /// The asymmetry is the design, not an oversight: a clean exit is a fact you acknowledge and
+    /// leave, and a finished pane whose slot keeps naming it spends a column on history the tooltip
+    /// already holds. A failure is a fact you have to act on, so it stays nameable at a glance.
+    @MainActor
+    func testTheSucceededReceiptIsTheTickAloneAndTheFailedOneIsItsName() {
+        XCTAssertNotNil(
+            StatusPresentation.outcomeSymbol(.succeeded),
+            "a clean exit draws its glyph and NOTHING else — no name beside it",
+        )
+        XCTAssertNil(
+            StatusPresentation.outcomeSymbol(.failed),
+            "a failure draws its NAME and no glyph — the red is the whole statement",
+        )
+        // The tick inherits the register the word left: the outcome's own ink, primary, NOT the
+        // tertiary metadata grey it wore while a bold name stood beside it. A shorter slot must not
+        // be a fainter one.
+        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
+        XCTAssertNotEqual(
+            StatusPresentation.outcomeInk(.succeeded), Slate.Text.tertiary,
+            "the grey was punctuation ink; alone in the slot the tick reads at the name's rung",
+        )
     }
 
     /// A waiting question raises otty's HAND — the one state on this rail that is asking a person

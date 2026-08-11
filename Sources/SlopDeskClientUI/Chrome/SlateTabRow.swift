@@ -9,8 +9,9 @@
 // — one column where the HUE names the state (muted = a code agent at rest, green = its turn ended,
 // amber = a question waits) and only the thinking spinner moves. A COMMAND lives entirely in the
 // trailing SLOT: its NAME, bold on the primary ink FROM THE MOMENT IT STARTS (round 25) — the row
-// does not restyle the word at the finish line — closed by a small grey tick when it exits clean,
-// turned red when it does not. The bare login shell that pane returns to stays on the quiet tertiary
+// does not restyle the word at the finish line — and then, at the exit, the slot goes down to ONE
+// answer (round 26): a bare tick for a clean exit, the name in red for a failure. The bare login
+// shell that pane returns to stays on the quiet tertiary
 // metadata grey; it is the answer to "what is this pane running" for a pane running nothing. A
 // plain shell — busy or not — mounts nothing. The title spends the WEIGHT step on every state that
 // waits on you (a step above the active card's, so an unread row reads "bold + a coloured ring" the
@@ -68,10 +69,10 @@ struct SlateTabRow: View {
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
-    /// A finished COMMAND's receipt — the command's name in the outcome's ink, closed by a small
-    /// grey tick when it exited clean (``receiptSlot(_:)``); the trailing MARK column stays the
-    /// agent's either way (see ``StatusDot``). Outranks the resting process label, which by then
-    /// names the shell the command exited back into.
+    /// A finished COMMAND's receipt — a bare tick when it exited clean, its NAME in red when it did
+    /// not (``receiptSlot(_:)``); the trailing MARK column stays the agent's either way (see
+    /// ``StatusDot``). Outranks the resting process label, which by then names the shell the command
+    /// exited back into.
     var commandReceipt: RailRowsBuilder.CommandReceipt?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
@@ -111,10 +112,9 @@ struct SlateTabRow: View {
     /// the slot, and the hover `×` always has a landing zone even on a bare row.
     private static let slotMinWidth: CGFloat = 28
     private static let slotHeight: CGFloat = 18
-    /// The air between a receipt's command name and its completion tick. HALF the trailing group's
-    /// own 6: the tick is that name's punctuation, and at the group's spacing it detaches and reads
-    /// as a second, separate item sharing the slot.
-    private static let receiptTickGap: CGFloat = 3
+    /// The close `×`'s HIT target — otty's 18, kept after the plate shrank to the mark's column box
+    /// (``closeButton``). The extra reach is spent leading and vertically, never trailing.
+    private static let closeTargetSide: CGFloat = 18
 
     /// The SELECTED tab is a COMPACT ISLAND — the chip is stamped out of the terminal island's own
     /// material (user-directed 2026-08-08), so on a dark profile the active row inverts to a dark
@@ -263,10 +263,9 @@ struct SlateTabRow: View {
                     if let badge, StatusPresentation.tabBadge(badge) != nil {
                         TabBadgeView(kind: badge)
                     } else if let commandReceipt {
-                        // The command's RECEIPT: the same name, weight and ink the row already
-                        // carried while the command ran — a finish does not restyle the word. What
-                        // it adds is the tick (``StatusPresentation/outcomeSymbol(_:)``), and for a
-                        // failure the red (``StatusPresentation/outcomeInk(_:)``).
+                        // The command's RECEIPT — one answer, not two (round 26): the bare tick
+                        // (``StatusPresentation/outcomeSymbol(_:)``) for a clean exit, or the name
+                        // in red (``StatusPresentation/outcomeInk(_:)``) for a failure.
                         receiptSlot(commandReceipt)
                     } else if let processLabel {
                         // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads in
@@ -299,16 +298,38 @@ struct SlateTabRow: View {
         .frame(height: Self.slotHeight)
     }
 
-    /// A finished command's receipt: the name it already wore while running, plus the outcome's
-    /// punctuation — a small grey tick for a clean exit, nothing for a failure (the red on the name
-    /// is that one's whole statement).
+    /// A finished command's receipt — ONE of two things, never both
+    /// (``StatusPresentation/outcomeSymbol(_:)`` is the switch): a bare tick for a clean exit, the
+    /// command's NAME in red for a failure.
     ///
-    /// ⚠️ The tick rides INSIDE the label group, not in the trailing mark column: that column is the
-    /// agent's alphabet (``StatusDot``), and this is a receipt closing its own line. The gap is
-    /// tighter than the group's own 6 so the tick reads as attached to the word rather than as a
-    /// second item in the slot.
+    /// ⚠️ Round 26 (user-directed) took the NAME off the clean exit, which had carried it since round
+    /// 24. A pane that finished cleanly is one the reader is done with, and naming it spends the
+    /// slot's whole 10pt column restating what the tooltip already holds; the failure keeps its name
+    /// because that is the one still asking for something. Whichever it draws, the receipt rides
+    /// INSIDE the label group and never in the trailing mark column — that column is the agent's
+    /// alphabet (``StatusDot``).
+    @ViewBuilder
     private func receiptSlot(_ receipt: RailRowsBuilder.CommandReceipt) -> some View {
-        HStack(spacing: Self.receiptTickGap) {
+        if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
+            Image(systemSymbol: tick)
+                .font(.system(
+                    size: StatusDot.receiptCheckSize, weight: StatusDot.receiptCheckWeight,
+                ))
+                // The OUTCOME's own ink — the primary the name used to read in, inherited whole:
+                // the slot got shorter, and it must not also get fainter. Green stays the agent's.
+                .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
+                // ⚠️ The MARK's column box, so the tick stands on the same centre line as every ring,
+                // check and spinner — and as the hover `×` that replaces it. Flush-right it sat two
+                // points RIGHT of that line, because a bare glyph is only as wide as itself while a
+                // mark is centred in a 14pt box (user-directed 2026-08-11). Box, not ownership: the
+                // mark RESOLVER is still nil for every command tier.
+                .frame(width: StatusDot.footprint, height: StatusDot.footprint)
+                // The row title's accessibility value already speaks the outcome ("Finished"); a
+                // second announcement here would read the same exit twice.
+                .accessibilityHidden(true)
+        } else {
+            // A FAILURE, in the same weight and mono the command wore while it ran — only the ink
+            // changes, and the red is the whole statement (no cross: the same news twice).
             Text(receipt.name)
                 .font(Slate.Typeface.instrument(
                     Slate.Typeface.small, weight: StatusPresentation.slotNameWeight,
@@ -316,18 +337,6 @@ struct SlateTabRow: View {
                 .foregroundStyle(StatusPresentation.outcomeInk(receipt.outcome))
                 .lineLimit(1)
                 .fixedSize()
-            if let tick = StatusPresentation.outcomeSymbol(receipt.outcome) {
-                Image(systemSymbol: tick)
-                    .font(.system(
-                        size: StatusDot.receiptCheckSize, weight: StatusDot.receiptCheckWeight,
-                    ))
-                    // The metadata grey, NOT the name's ink: the tick states the fact, the name
-                    // stays the thing being read. Green belongs to the agent's own finish.
-                    .foregroundStyle(Slate.Text.tertiary)
-                    // The row title's accessibility value already speaks the outcome; a second
-                    // announcement here would read the same exit twice.
-                    .accessibilityHidden(true)
-            }
         }
     }
 
@@ -376,16 +385,28 @@ struct SlateTabRow: View {
         #endif
     }
 
+    /// The hover close `×`, drawn ON the indicator column it replaces.
+    ///
+    /// ⚠️ The plate is ``StatusDot/footprint``, NOT the 18 it used to be (user-directed 2026-08-11).
+    /// Both this and the resting cluster are trailing-aligned in one `ZStack`, so a wider box means a
+    /// box whose CENTRE sits further left: at 18 against the mark's 14 the `×` hung two points left
+    /// of every ring, check and spinner, and the swap read as the row shifting rather than as one
+    /// column changing what it holds. Sharing the mark's box is what puts them on one centre line.
+    ///
+    /// The old 18pt HIT target survives, spent LEADING (`closeTargetSide`): growing it trailing would
+    /// push the box past the slot's edge and undo the very alignment this is for.
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.Text.icon)
-                .frame(width: 18, height: 18)
+                .frame(width: StatusDot.footprint, height: StatusDot.footprint)
                 .background(
                     closeHover ? Slate.State.selected : .clear,
                     in: .rect(cornerRadius: Slate.Metric.radiusSmall),
                 )
+                .padding(.leading, Self.closeTargetSide - StatusDot.footprint)
+                .padding(.vertical, (Self.closeTargetSide - StatusDot.footprint) / 2)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
