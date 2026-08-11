@@ -255,8 +255,19 @@ posts that slice, and **fails when the section is missing** rather than falling 
 second copy of the same check runs in the `package` job right after the version resolves, so a tag
 with no notes fails in seconds instead of after a ~20-minute signed, notarized build.
 
-Before this, the body was nine fixed lines naming an architecture and two brew commands, byte-identical
-in every release — `v0.2.1` and `v0.2.2` taught a reader exactly the same nothing.
+**The slice is the whole body.** Install, Requirements, Signing and a Checksums block used to sit
+underneath it — four sections byte-identical in every release, so repetition from the second one
+onward, and each already has a home that stays current on its own:
+
+| Was in the body | Lives in |
+|---|---|
+| Install, Requirements | `README.md` |
+| Signing | this document |
+| Checksums | the `SHA256SUMS` asset attached to the release |
+
+A release note answers one question — what changed — and a section that does not answer it pushes
+the part that does off the first screen. Before any of this, the body was **only** those fixed
+lines: `v0.2.1` and `v0.2.2` taught a reader exactly the same nothing.
 
 The assembly writes to `$RUNNER_TEMP`, not the checkout. A scratch `changelog.md` beside the repo's
 `CHANGELOG.md` is one case-insensitive filesystem away from the redirect truncating the file the job

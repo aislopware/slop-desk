@@ -262,45 +262,19 @@ jobs:
           # the repo's `CHANGELOG.md` is one case-insensitive filesystem away from the
           # redirect truncating the file this job exists to read — it does exactly that on
           # macOS, and `runs-on` is one line of config.
-          body="${RUNNER_TEMP}/release-body.md"
+          # THE BODY IS THE CHANGELOG SLICE AND NOTHING ELSE. It used to carry Install,
+          # Requirements, Signing and a Checksums block underneath — four sections that were
+          # byte-identical in every release, so they were pure repetition the moment there was
+          # a second one, and each already has a home that stays current on its own:
+          #
+          #   Install / Requirements  → README.md
+          #   Signing                 → docs/49-release-pipeline.md
+          #   Checksums               → the SHA256SUMS asset attached to this release
+          #
+          # A release note answers one question — what changed — and the sections that do not
+          # answer it push the part that does off the first screen.
           notes="${RUNNER_TEMP}/release-notes.md"
-          scripts/changelog-section.sh "${VERSION}" > "${body}"
-
-          {
-            # The slice starts at `### Features` — the `##` heading it sat under in
-            # CHANGELOG.md carried the version and the date, which the Release page
-            # already shows above the body.
-            echo "## What changed"
-            echo
-            cat "${body}"
-            cat <<'NOTES'
-
-          ## Install
-
-          ```sh
-          brew install aislopware/tap/slopdesk         # slopdesk, slopdesk-hostd, slopdesk-ctl
-          brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
-          ```
-
-          ## Requirements
-
-          - Apple silicon (arm64), macOS 26 or later
-          - Host app: Screen Recording + Accessibility (System Settings → Privacy & Security)
-
-          ## Signing
-
-          - Developer ID: `WEEBUILD VIET NAM COMPANY LIMITED (AJ4R8GWM7A)`
-          - Hardened runtime, secure timestamp
-          - Notarized by Apple; ticket stapled to the DMG and to each `.app` inside it
-          - TCC grants key off the team OU, not the certificate serial — they survive a cert rotation
-
-          ## Checksums (SHA-256)
-
-          ```
-          NOTES
-            cat dist/SHA256SUMS
-            printf '```\n'
-          } > "${notes}"
+          scripts/changelog-section.sh "${VERSION}" > "${notes}"
 
           # Re-running a release (a re-tag, a retried job) must not fail on an existing
           # release — and must REFRESH the notes, not leave the first attempt's body behind.
