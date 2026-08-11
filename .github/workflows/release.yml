@@ -238,21 +238,66 @@ jobs:
           VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
-          cat > notes.md <<'NOTES'
-          Apple silicon only (arm64), macOS 26+. Signed by WEEBUILD VIET NAM COMPANY LIMITED
-          and notarized by Apple.
 
-          ```
+          # The commit list since the previous release. This is the ONLY part of a release
+          # note that differs between versions — without it the body is boilerplate that
+          # says nothing about the release it is attached to.
+          #
+          # NOT `releases/generate-notes`: that endpoint lists MERGED PULL REQUESTS, and this
+          # repo commits straight to main, so it would render an empty "What's Changed" over
+          # a compare link. The compare API reports the commits themselves either way.
+          previous="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 --json tagName \
+            --jq "[.[].tagName | select(. != \"v${VERSION}\")] | first // empty")"
+
+          : > changelog.md
+          if [[ -n "${previous}" ]]; then
+            {
+              echo "## Changes since ${previous}"
+              echo
+              # Merge commits carry no subject of their own — drop them (parents > 1).
+              gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${previous}...v${VERSION}" \
+                --jq '.commits[] | select(.parents | length == 1)
+                      | "- \(.commit.message | split("\n")[0]) (`\(.sha[0:7])`)"'
+              echo
+              echo "**Full changelog**: <${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous}...v${VERSION}>"
+            } > changelog.md
+          fi
+
+          {
+            cat changelog.md
+            cat <<'NOTES'
+
+          ## Install
+
+          ```sh
           brew install aislopware/tap/slopdesk         # slopdesk, slopdesk-hostd, slopdesk-ctl
           brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
           ```
 
-          The host app needs Screen Recording and Accessibility (System Settings → Privacy);
-          both grants are keyed to the code signature, so they survive an in-place upgrade.
-          NOTES
+          ## Requirements
 
-          # Re-running a release (a re-tag, a retried job) must not fail on an existing release.
+          - Apple silicon (arm64), macOS 26 or later
+          - Host app: Screen Recording + Accessibility (System Settings → Privacy & Security)
+
+          ## Signing
+
+          - Developer ID: `WEEBUILD VIET NAM COMPANY LIMITED (AJ4R8GWM7A)`
+          - Hardened runtime, secure timestamp
+          - Notarized by Apple; ticket stapled to the DMG and to each `.app` inside it
+          - TCC grants key off the team OU, not the certificate serial — they survive a cert rotation
+
+          ## Checksums (SHA-256)
+
+          ```
+          NOTES
+            cat dist/SHA256SUMS
+            printf '```\n'
+          } > notes.md
+
+          # Re-running a release (a re-tag, a retried job) must not fail on an existing
+          # release — and must REFRESH the notes, not leave the first attempt's body behind.
           if gh release view "v${VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            gh release edit "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --notes-file notes.md
             gh release upload "v${VERSION}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
           else
             gh release create "v${VERSION}" \
