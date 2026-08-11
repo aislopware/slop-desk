@@ -39,9 +39,21 @@ than emitting a half-broken slice.
 
 ## The vault (better-update, org `weebuild`)
 
-better-update has **no macOS platform** — its build/submit pipeline is `ios | android`
-(`apps/cli/src/lib/build-profile.ts`). It is used here purely as the end-to-end-encrypted
-credential vault, which is platform-agnostic. Do not try to `better-update build` this repo.
+better-update cannot **build** this repo — its build/submit pipeline is `ios | android`
+(`apps/cli/src/lib/build-profile.ts`), so do not try `better-update build` here. It is used purely
+as the end-to-end-encrypted credential vault, which is platform-agnostic.
+
+It *can* sign and notarize macOS, though — `better-update macos sign|notarize` (CLI ≥ 0.73.1)
+does Developer-ID signing with hardened runtime, notarizes, and staples. We do **not** use it, for
+one concrete reason: it reads the certificate from the *credentials* store, and the only way to
+get a Developer ID in there is `credentials generate distribution-certificate --type developer-id`,
+which **issues a new certificate** — `credentials upload` is still `--platform=<ios|android>` with
+no developer-id type, so the existing `.p12` cannot be imported. Our identity lives in `env` and
+`package-release.sh` drives `codesign`/`notarytool` directly, which is proven and costs no second
+certificate. Revisit only if `upload` learns to take a Developer ID.
+
+(A related correction: the *credentials* store is not iOS/Android-only, as an earlier version of
+this doc implied. `generate` reaches macOS; `upload` and `configure` do not.)
 
 SlopDesk is linked as a **non-Expo** project, so `better-update init` writes the project id to a
 top-level `projectId` in `eas.json` at the repo root (not `app.json` — there is no Expo config
@@ -132,6 +144,13 @@ you own the leak.
    | `Apps/HostApp-macOS/project.yml` | same two | same reason |
    | `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
 
+   Then run `xcodegen generate` for both specs and **commit the regenerated
+   `Apps/*/Info.plist`**. Those two files are build output that is nevertheless committed, so they
+   go stale silently: at v0.2.1 both still read `0.1.0`, and every local `xcodebuild` produced an
+   app claiming that version. Releases were unaffected only because `stamp_and_sign_app` rewrites
+   `CFBundleShortVersionString` with PlistBuddy before signing — that stamp is the reason nobody
+   noticed for two releases, not evidence the tree is right.
+
    `package-release.sh` asks the built **CLI binary** for its version and **refuses to package** on
    drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
    reads `HostEnvironment.buildVersion`, so those two can ship stale with a fully green pipeline.
@@ -172,11 +191,17 @@ and the suite fails with the verb named.
   the working directory. Fixed in the workflow (checkout first, ahead of `download-artifact`, so
   nothing wipes `dist/`), but the v0.1.0 tap commit was made **by hand** from the published
   `SHA256SUMS`. The next release is the first real exercise of that job.
-- **Only the DMG is stapled, not the apps inside it.** A cask copies `SlopDesk.app` out of the
-  image, so the installed app has no ticket of its own and Gatekeeper resolves it online. That is
-  fine on a networked machine and fails a first launch offline. Fixing it means notarizing a zip
-  of the two bundles first, stapling each, and only then building + notarizing the DMG — one extra
-  submission round per release. Not done.
+- **Only the DMG was stapled, not the apps inside it.** A cask copies `SlopDesk.app` out of the
+  image, so the installed app had no ticket of its own and Gatekeeper resolved it online — fine on
+  a networked machine, a failed first launch offline. Verified on the shipped v0.2.1 DMG:
+  `stapler validate SlopDesk.app` → *does not have a ticket stapled to it*.
+
+  **Fixed in §3b of `package-release.sh`** (from v0.2.2): both bundles are zipped and notarized in
+  one submission, each is stapled, and only then is the image built from the stapled originals.
+  Ordering is the whole trick — the bundle inside the DMG is a *copy*, so a staple after
+  `hdiutil create` reaches nothing. Moving that block below the image step leaves the pipeline
+  green and silently ships unticketed apps again, so §3b validates each staple and `die`s on a
+  miss rather than trusting the exit code. Cost: one extra notarization round per release.
 
 ## Known-fragile: the libghostty job
 

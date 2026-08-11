@@ -254,6 +254,57 @@ stamp_and_sign_app "SlopDeskHost.app" "${REPO_ROOT}/Apps/HostApp-macOS/HostApp-m
 # Restore the committed placeholder spec so a CI checkout (and a developer's tree) stays clean.
 (cd "${REPO_ROOT}" && git checkout -- Apps/ClientApp-macOS/project.yml)
 
+notarize() {
+  local artifact="${1}"
+  if [[ -n "${SLOPDESK_NOTARY_PROFILE:-}" ]]; then
+    xcrun notarytool submit "${artifact}" \
+      --keychain-profile "${SLOPDESK_NOTARY_PROFILE}" --wait
+  else
+    xcrun notarytool submit "${artifact}" \
+      --apple-id "${APPLE_ID}" --team-id "${APPLE_TEAM_ID}" \
+      --password "${APPLE_APP_SPECIFIC_PASSWORD}" --wait
+  fi
+}
+
+# ── 3b. Notarize + staple the app bundles, BEFORE they enter the image ──────────────────────
+# WHY this round exists, and why it must run here: the cask copies SlopDesk.app OUT of the DMG,
+# so a ticket stapled only to the image never reaches the app the user actually launches, and
+# Gatekeeper has to resolve it online — which fails on a first launch with no network. A ticket
+# can only be stapled to a bundle, and the bundle inside the image is a COPY, so the staple has
+# to land before `cp -R … "${DMG_ROOT}"` below. Moving this after the DMG step silently restores
+# the old behaviour: the run stays green and the shipped app carries no ticket.
+#
+# Notarization is per-artifact, not per-file, so both bundles ride in ONE zip and one submission;
+# the DMG still needs its own round afterwards (Apple has no way to derive an image's ticket from
+# its contents). That is the "one extra submission per release" this buys.
+if [[ "${SKIP_NOTARIZE}" == "1" ]]; then
+  echo "SLOPDESK_SKIP_NOTARIZE=1 — app bundles are signed but NOT notarized or stapled."
+else
+  step "Notarizing the app bundles"
+  APPS_ZIP="${WORK}/slopdesk-apps-${VERSION}-arm64.zip"
+  rm -f "${APPS_ZIP}"
+  # `--keepParent` takes ONE source, so stage a directory holding both bundles and archive its
+  # CONTENTS (no --keepParent): the zip then has both .app bundles at its root. notarytool walks
+  # the archive for bundles, so it notarizes both in one submission. `--sequesterRsrc` is Apple's
+  # documented flag for notarization zips — it keeps resource forks from corrupting the upload.
+  APPS_DIR="${WORK}/apps"
+  rm -rf "${APPS_DIR}"
+  mkdir -p "${APPS_DIR}"
+  cp -R "${STAGE}/SlopDesk.app" "${STAGE}/SlopDeskHost.app" "${APPS_DIR}/"
+  ditto -c -k --sequesterRsrc "${APPS_DIR}" "${APPS_ZIP}"
+  notarize "${APPS_ZIP}"
+
+  # Staple the ORIGINALS in STAGE — those are what the DMG is built from. Validating here rather
+  # than trusting the staple's exit code: a ticket that did not attach must fail the release, not
+  # ship an app that looks fine until someone launches it offline.
+  step "Stapling the app bundles"
+  for app in "SlopDesk.app" "SlopDeskHost.app"; do
+    xcrun stapler staple "${STAGE}/${app}"
+    xcrun stapler validate "${STAGE}/${app}" ||
+      die "no ticket stapled to ${app} — the image would ship an app that fails first launch offline"
+  done
+fi
+
 # ── 4. Package ──────────────────────────────────────────────────────────────────────────────
 step "Building the DMG"
 
@@ -272,19 +323,9 @@ step "Building the CLI tarball"
 rm -f "${CLI_TARBALL}"
 tar -czf "${CLI_TARBALL}" -C "${STAGE}" "slopdesk-cli-${VERSION}-arm64"
 
-# ── 5. Notarize ─────────────────────────────────────────────────────────────────────────────
-notarize() {
-  local artifact="${1}"
-  if [[ -n "${SLOPDESK_NOTARY_PROFILE:-}" ]]; then
-    xcrun notarytool submit "${artifact}" \
-      --keychain-profile "${SLOPDESK_NOTARY_PROFILE}" --wait
-  else
-    xcrun notarytool submit "${artifact}" \
-      --apple-id "${APPLE_ID}" --team-id "${APPLE_TEAM_ID}" \
-      --password "${APPLE_APP_SPECIFIC_PASSWORD}" --wait
-  fi
-}
-
+# ── 5. Notarize the containers ──────────────────────────────────────────────────────────────
+# The app bundles were notarized + stapled in 3b, before the image was built. This round covers
+# the two containers, which carry no ticket of their own yet. `notarize()` is defined above 3b.
 if [[ "${SKIP_NOTARIZE}" == "1" ]]; then
   echo "SLOPDESK_SKIP_NOTARIZE=1 — artifacts are signed but NOT notarized (dry run only)."
 else
