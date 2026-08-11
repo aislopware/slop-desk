@@ -57,7 +57,15 @@ public struct AgentHookHandler: Sendable {
     /// Pure + total: any byte sequence is tolerated. Never traps, never force-unwraps.
     public mutating func handle(bytes: Data, at now: TimeInterval) -> WireMessage? {
         guard let payload = HookParser.parse(bytes) else { return nil } // validate-then-drop
-        let (event, kindByte) = Self.mapToHookEvent(payload)
+        let (mapped, kindByte) = Self.mapToHookEvent(payload)
+        // Attribute it before folding. `session_id` rides the hook ENVELOPE, so the payload cases
+        // that model a call (a tool block, a notification) never carry it — and those are exactly
+        // the events a nested `claude -p` would otherwise use to drive this pane.
+        let event = mapped.attributed(to: HookParser.sessionID(bytes))
+        // ⚠️ The machine drops a foreign session silently, but emitting on the way out would still
+        // ship the DROPPED record's `kind` byte — a wire frame announcing a block class change that
+        // never happened. Ask before folding, exactly as `ClaudePaneDetector` does.
+        guard machine.accepts(event) else { return nil }
         machine.reduce(.hook(event), at: now)
         return statusEmissionIfChanged(kindByte: kindByte)
     }
@@ -71,6 +79,20 @@ public struct AgentHookHandler: Sendable {
 
     /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
     public var status: ClaudeStatus { machine.status }
+
+    /// The ledger key for an elicitation pair.
+    ///
+    /// ⚠️ Falls back to the SERVER name when the payload names no `elicitation_id`. An id-less
+    /// ledger entry is swept by any unrelated call's `PostToolUse` (that is the documented rule for
+    /// an entry that names nothing), so a nil id would hand the pane back as "working" while the
+    /// MCP prompt was still on screen — and the mirror case, an id-less `ElicitationResult`, would
+    /// wipe somebody else's id-less block. The server name is stable across the pair and unique
+    /// enough in practice: one server does not stack two elicitations on one human.
+    static func elicitationKey(id: String?, server: String?) -> String? {
+        if let id, !id.isEmpty { return id }
+        guard let server, !server.isEmpty else { return nil }
+        return "elicitation:\(server)"
+    }
 
     // MARK: - HookPayload → ClaudeHookEvent (the W10 adapter)
 
@@ -92,18 +114,26 @@ public struct AgentHookHandler: Sendable {
             // (the t3code/herdr special case). The answer resolves it via the tool's PostToolUse
             // (→ working), like any answered prompt.
             if use.name == "AskUserQuestion" {
+                // The call's OWN id rides along: it is what the matching `PostToolUse` resolves,
+                // and it is what keeps a sibling call in the same batch from resolving it instead
+                // (the machine's block ledger).
                 return (
-                    .notification(kind: .waitingForInput, label: questionLabel(use)),
+                    .notification(kind: .waitingForInput, label: questionLabel(use), toolUseID: use.stableID),
                     notificationKindByte(.waitingForInput),
                 )
             }
-            return (.preToolUse(sessionID: nil, tool: use.name), 0)
+            return (.preToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
 
         case let .permissionRequest(use):
             // The structured permission dialog — the same authoritative block as a
-            // Notification(permission_prompt); the gated tool names the label.
+            // Notification(permission_prompt); the gated tool names the label. The id is the
+            // GATED call's, so the `PreToolUse` that follows an approval resolves exactly it.
             return (
-                .notification(kind: .permission, label: "Permission needed: \(use.name)"),
+                .notification(
+                    kind: .permission,
+                    label: "Permission needed: \(use.name)",
+                    toolUseID: use.stableID,
+                ),
                 notificationKindByte(.permission),
             )
 
@@ -113,7 +143,47 @@ public struct AgentHookHandler: Sendable {
             return (.stop(sessionID: info.sessionID, label: info.lastAssistantMessage), 0)
 
         case let .postToolUse(use, _):
-            return (.postToolUse(sessionID: nil, tool: use.name), 0)
+            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
+
+        case let .postToolUseFailure(use, isInterrupt):
+            // ⚠️ An INTERRUPT is not a failed call, it is a FINISHED TURN. Claude Code emits no
+            // `Stop` when the human presses Esc, so mapping this to "a tool ended, carry on
+            // working" pinned the pane `working` with the spinner up until the watchdog corrected
+            // it — into a false "turn finished" ten seconds after the person cancelled it.
+            if isInterrupt { return (.interrupted(), 0) }
+            // Otherwise: a call that ended badly ended all the same. Claude Code sends this INSTEAD
+            // of `PostToolUse`, with the same `tool_use_id`, so it is what resolves that call's
+            // ledger entry — without it a failed `AskUserQuestion` leaves a hand raised over a
+            // dialog that is gone, and `.ask` entries survive every later `PreToolUse` by design.
+            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
+
+        case let .elicitation(id, server, message):
+            // An MCP server asking the human is the same authoritative block a permission dialog
+            // is. The `elicitation_id` seats in the ledger's call slot (a different id namespace,
+            // the same job: this block is resolved by ITS OWN answer, not by a sibling's).
+            let text = message ?? server.map { "\($0) needs input" }
+            return (
+                .notification(
+                    kind: .waitingForInput,
+                    label: text,
+                    toolUseID: Self.elicitationKey(id: id, server: server),
+                ),
+                notificationKindByte(.waitingForInput),
+            )
+
+        case let .elicitationResult(id, server):
+            // Answered or dismissed — either way that dialog is gone.
+            return (
+                .postToolUse(
+                    sessionID: nil, tool: nil, toolUseID: Self.elicitationKey(id: id, server: server),
+                ),
+                0,
+            )
+
+        case let .permissionDenied(use):
+            // "No" ends the gated call and the turn goes on: the same resolution a result gives,
+            // announced rather than inferred from the next tool starting.
+            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
 
         case let .notification(info):
             let kind = mapNotificationKind(info.kind)

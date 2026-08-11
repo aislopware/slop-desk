@@ -8062,3 +8062,264 @@ two the pair is half dark each, which is the mirror of how the two-dot hole park
 ⚠️ The mark is a TRANSCRIPTION again: every parked frame is one `⣾⣽⣻⢿⡿⣟⣯⣷` actually draws (`0xFF`
 with exactly one bit cleared), so `SlateSnapshotRender`'s eight-phase filmstrip can once more be read
 straight against that set — which is what it always claimed to be for.
+
+## The detector stops reading half-painted frames (2026-08-11, user-reported)
+
+**Report.** With an `AskUserQuestion` on screen, Tab-switching between the questions walked the pane's
+mark `idle → blocked → idle → blocked`, one lap per press. Same *shape* as the three false edges of
+2026-08-10 (the hover, the arrow keys, the `/compact` finish) and a completely different cause: those
+were ours, invented with a feature; this one is the screen engine reading a grid the program had
+explicitly told it not to read yet.
+
+**Evidence, not inference.** A real session was recovered from the scrollback JOURNAL
+(`~/Library/Application Support/SlopDesk/scrollback/<uuid>.scrollback` — raw PTY bytes, so every frame
+Claude Code painted is still there) and replayed through the actual `PaneScreenScanner` +
+`ClaudePaneDetector`. 54 KB, 344 synchronized-update frames, 14 Tab repaints. Sweeping the PTY chunk
+size from 256 B to 8 KiB: **7 blocked → idle → blocked laps** at the worst size, **0** after the fix.
+
+**The chain.**
+1. Claude Code wraps every repaint in a synchronized update (`CSI ? 2026 h … CSI ? 2026 l`) and
+   ERASES each line (`CSI K`) before rewriting it. Mode 2026 is the program saying *this grid is
+   inconsistent until I close the frame*.
+2. `PaneScreenScanner` fed `TerminalScreenModel` whatever the PTY read loop had handed over and read
+   the grid immediately. `TerminalScreenModel` does not implement 2026 at all, and
+   `SyncUpdateFrameCollapser` — which does understand it — is wired only into the scrollback REPLAY
+   transform, never the detection path. So a chunk boundary inside a repaint = a torn read.
+3. Torn, the dialog has no footer, so `live_blocked_form` (980, region `after_last_horizontal_rule`)
+   stops matching.
+4. ⚠️ The next rule down is `live_prompt_box` (950) — and it MATCHES a dialog. The dialog's focused
+   option renders `❯ 1. …`, satisfying `^\s*❯`, while every needle that would veto it
+   (`enter to select`, `esc to cancel`, `tab/arrow keys`) sits BELOW the last horizontal rule, i.e.
+   OUTSIDE `prompt_box_body`. Verdict: `idle` + **`visible_idle`**.
+5. `visible_idle` is the one screen verdict strong enough to clear even an authoritative HOOK block
+   (`ClaudeStatusMachine.applyScreen`, past the 1 s paint grace). So a single bad read unblocked a
+   pane that a `PreToolUse(AskUserQuestion)` hook had blocked.
+6. And `needsPermission → idle` is herdr's hook-less COMPLETION edge — `AttentionEdge.isCompletion`
+   AND `MuxChannelSession.isCompletionTransition`. So every lap did not merely churn the mark: it
+   **minted a finished turn**, bumping `_completionEpoch` for every attached client, badge and sound
+   included. Announcing something nobody did, again, by a new route.
+
+**Fix, two guards, neither of them herdr's.**
+
+- **Never read a grid the program has not finished painting.** `AgentSyncFrameTracker` is a
+  byte-at-a-time DECSET/DECRST 2026 parser — byte-at-a-time because an opener SPLIT across two PTY
+  reads is exactly the case that tears the grid, and a whole-buffer scanner is blind to it. String
+  bodies are skipped opaquely (an OSC title spelling `?2026h` opens nothing), `ESC c` closes,
+  parameters are bounded. `PaneScreenScanner` feeds it precisely what it feeds the model, and while a
+  frame is open it publishes NOTHING and rechecks at 100 ms. Deferring is free: the model is
+  cumulative, so the next scan sees a whole frame, and the last verdict stands meanwhile — a repaint
+  changes what is on screen, not what the agent is doing. Bounded by `syncFrameHoldCap` (1 s) so a
+  program that dies mid-paint defers detection rather than freezing it. The frame-granularity sibling
+  of `awaitingRepaintAfterRebuild`.
+- **Leaving a block takes three reads.** `AgentDetectionHold.shouldHoldBlockedToIdle` mirrors the
+  ported working→idle hold with its OWN counters (upstream's stays byte-identical). ⚠️ Deliberately
+  STRICTER than its sibling: a VISIBLE idle does not bypass it, because the visible idle is the false
+  verdict. Costs ≤ ~300 ms on a genuine unblock, and the one unblock with no other announcement — an
+  Esc-cancelled dialog — never comes through here at all (`PaneInputClassifier.containsCancelKeystroke`
+  → `ClaudeSignal.userInput` is instant).
+
+**Deliberately NOT fixed: the manifest.** `live_prompt_box` claiming a modal is a genuine modelling
+error and a `not` guard on `^\s*❯\s+\d+\.` would kill it — but the bundled manifests are a 1:1 herdr
+port whose `matched_rule` / `visible_idle` / `not_count` are diffed against upstream by
+`scripts/herdr-differential.py`, so the edit buys defence-in-depth at the cost of the parity harness.
+Unreachable behind both guards; recorded here so the next person finds the reasoning rather than the
+rule. **↯ SUPERSEDED the same day** — the user released parity and the rule was fixed properly, with
+a cross-region gate rather than the `^\s*❯\s+\d+\.` guard sketched here (that one alone would veto a
+human typing `1. foo`). See "herdr parity stops being the ceiling" below.
+
+## Two tiers: the agent's word outranks our reading of its screen (2026-08-11, user-directed)
+
+**Report.** "Không chỉ blocked status, mà cần nghĩ lại toàn bộ architecture … để kết hợp giữa hook
+và tty parse để làm sao cho tốt nhất." The morning's fix stopped the detector reading half-painted
+frames; this is the round that stopped the question being decidable by a screen read at all.
+
+The full contract now lives in **`docs/50-agent-detection-architecture.md`** — read that before
+touching detection. What follows is why it looks like that.
+
+**The category error.** The machine had a precedence list, which answers *who wins a collision*. It
+never answered *should this signal be in the argument*. The screen engine is a heuristic reading of
+pixels an agent drew FOR A HUMAN — a good one, a verified herdr port, but herdr has no hook feed, so
+for herdr every heuristic must be load-bearing. Ours does not have to be. `PreToolUse
+(AskUserQuestion)` is not evidence about the pane's state; it IS the pane's state. Ranking a rule
+ladder above it was the mistake, and both the morning's flap and the false finished turns were
+downstream of it.
+
+**Tiers, keyed on the FEED and never on the agent's name.** Tier 1 is the agent describing itself;
+tier 2 is us inferring from what it drew. Under coverage tier 2 may corroborate and nothing else.
+⚠️ The load-bearing detail is what confers coverage: the Claude hook socket, AND the ctl `report`
+verb — which any process in any pane can call. So a codex / gemini / bespoke wrapper that reports
+its own state is first-class on the same code path, with no per-agent branch anywhere in the
+machine. Keying this on `AgentKind` would have made "support another agent" a code change; keying
+it on the feed makes it a one-line wrapper.
+
+**Coverage is not a recency window.** A pane blocked on a question for ten minutes emits no traffic,
+and that silence is the block working as intended. Timing out on it would have reinstated the same
+bug at a ten-minute period. Coverage runs from a session's first authoritative event to its end.
+
+**The watchdog, asymmetric.** Hooks are best-effort, so the screen keeps a stopwatch on UNBROKEN
+disagreement — one agreeing read resets it, which is precisely why a repaint (blocked, blocked,
+torn, blocked) can never accumulate. 3 s to RAISE an unannounced block (a human waiting is the
+expensive failure), 10 s to release one. Nothing correct waits on that 10 s: every legitimate way
+out of a block — answered, approved, denied, finished, Esc-cancelled, exited — announces itself on
+tier 1 in the same millisecond. The window exists only for the case where the feed itself stopped
+being true, and what it produces is marked as a correction, not an event.
+
+**A block is a LEDGER, not a flag.** Claude Code emits tool calls in BATCHES. An assistant turn
+carrying `[AskUserQuestion, Bash]` fires both `PreToolUse` hooks, and Bash's result then cleared the
+block — handing the pane back to a human who was still being asked something, and minting a finished
+turn on the way out. Entries are keyed by `tool_use_id`; a question is resolved only by its OWN
+`PostToolUse`. A permission entry keeps the looser rule (any `PreToolUse` clears it — a permission
+dialog is modal, and that is what covers a DENIED permission, the one resolution Claude Code
+announces with no hook of its own).
+
+⚠️ `HookParser` mints a UUID when `tool_use_id` is absent — a DIFFERENT one per event. Carried
+through as identity it would make a call unresolvable forever, so `ToolUseBlock` now records
+`idIsFromPayload` and the adapter passes `stableID`; nil degrades to the id-less rule.
+
+**Two bugs found while building it, neither reported.** A mid-block hook that was not itself a block
+— a sibling call's `PostToolUse`, an `auth_success` — overwrote the standing block's wire `kind`,
+shipping a type-27 that said the block had changed class when nothing had changed; with the ledger
+holding panes blocked through exactly that traffic it would have become the common case
+(`ClaudePaneDetector.blockKind`). And the host's `_completionEpoch` never consulted the quiet byte
+the client already honoured, so every `/compact` and every dismissed dialog still minted an unread
+finish for every attached client.
+
+**Esc is now quiet.** Dismissing a dialog is not a finished turn — but `needsPermission → idle` is
+the hook-less completion shape, so pressing Esc rang a banner, a sound and an unread badge at the
+person who had just pressed it, about a pane they were looking at. Third member of the quiet family
+after the `/compact` boundary and the watchdog correction.
+
+**Kept deliberately.** The 1 s paint grace and the blocked→idle confirmation hold stay, unreachable
+under coverage — a hook-free pane has no tier 1, and for that pane they ARE the protection. The
+`live_prompt_box` manifest gap stayed unfixed for one more round, for herdr parity — see the next
+entry, where that constraint was lifted.
+
+## herdr parity stops being the ceiling — cross-region gates (2026-08-11, user-directed)
+
+✅ **Decided.** "không cần parity với herdr nữa, cứ làm thế nào ngon hơn herdr là được." The screen
+engine has been a 1:1 port since it landed, and twice today a real bug was left standing because
+fixing the rule would cost the differential harness. That trade is now off.
+
+**The bug the port carried.** `live_prompt_box` has five `not` needles naming a modal dialog's
+footer — `enter to select`, `esc to cancel`, `tab/arrow keys`, … — and **not one of them can ever
+match**. A `not` gate is evaluated against the rule's own region, which here is `prompt_box_body`;
+a dialog's footer sits below the LAST horizontal rule, outside that region by construction. So the
+veto never saw what it was written to stop, while the dialog's focused option `❯ 1. …` satisfied
+the rule's `^\s*❯` caret. An `AskUserQuestion` on screen therefore read as an idle prompt box with
+`visible_idle` — the strongest idle the engine can produce — for a pane blocked on a human. Dead
+code that looked like a safeguard is worse than no safeguard.
+
+**The fix is a capability, not a patch.** A nested gate may now carry its own `region`
+(`AgentManifest.Gate.region` → `CompiledGate.region` → `ManifestRuleEngine.matches`), overriding
+the rule's for that gate alone. herdr has no syntax for this. `live_prompt_box`'s veto now reads
+`after_last_horizontal_rule` — exactly `live_blocked_form`'s region — so the two rules became
+strict complements: if a live form footer is on screen, the prompt box cannot fire, whatever the
+caret above it looks like.
+
+**Two vetoes, because they fail in different places.** The cross-region one covers a WHOLE dialog.
+A TORN one has no footer in any region — the repaint erases before it rewrites — so a second veto
+reads the option LIST, which survives because it is what the caret sits in: `❯ 1. …` **with** a
+sibling `  2. …`. Requiring the sibling is what keeps a human typing `1. foo` at a real prompt from
+being vetoed, and even then the cost is only `visible_idle`.
+
+**The harness now names its exceptions.** `scripts/herdr-differential.py` grew `DIVERGED_LABELS`,
+today `{"claude"}`: excluded as a target, still seeding the corpus, with the reason written above
+the set. The other eighteen agents stay pinned — 10 301 cases, PARITY OK. A parity harness whose
+exclusions are undocumented is worth nothing, so adding a label needs a reason there and a test
+pinning what the divergence buys (`ManifestCrossRegionGateTests`).
+
+**What this changes about the tiers.** Nothing — the two-tier machine already made the torn read
+unreachable for a hook-covered pane. This fixes the pane that has no hooks at all, where the screen
+IS the answer. Defence in depth means each layer being right on its own, not one layer covering for
+another's known-wrong verdict. → [50 §9]
+
+## A pane belongs to one session, and a call can end without a result (2026-08-11, audit)
+
+✅ **Decided.** Two more holes found by auditing the hook feed against the SHIPPED CLI (2.1.227)
+rather than against our own model of it. Both were reachable, both were proved with a failing test
+before anything was changed.
+
+**1. The relay routes by an ENVIRONMENT VARIABLE.** `SLOPDESK_PANE_ID` is inherited by every
+descendant of the pane's shell, so a `claude -p …` — from a script, a Makefile, or the pane agent's
+own Bash tool — posts its whole hook set to the pane that spawned it. With no gate its
+`SessionStart` cleared the pane agent's block, its `Stop` minted a finished turn for a turn that
+never finished, its `SessionEnd` blanked the pane and armed the post-exit lockout, and its prompt
+re-titled the session. The pane's real agent was waiting on a human throughout.
+
+Fixed with ownership: the first id-carrying event claims the pane, a foreign session is dropped
+whole, an unattributed event always applies and never claims. `session_id` rides the hook envelope
+rather than the tool, so `HookParser.sessionID(_:)` reads it off the raw body and
+`ClaudeHookEvent.attributed(to:)` stamps it in before the fold — the payload cases that model a
+CALL never carried it, and those are exactly the events a nested run would have used.
+
+**Safe for `/clear` and `/resume` for one verified reason:** `clearConversation` AWAITS the
+`SessionEnd` hook (`reason: "clear"`) before doing anything else; `/resume` does the same. A
+replacement says goodbye because it had the pane; a nested run never does, because it never had it.
+Released, besides that, by presence absence and by the dissent watchdog — the watchdog is what
+recovers a pane whose agent died without a `SessionEnd` and was replaced inside one presence poll.
+NOT released on a timer: a nested run can hold the terminal for minutes while the owner is silent
+(its `PostToolUse` cannot arrive until the nested claude exits), so any useful window is also short
+enough to hand the pane to the process this exists to ignore.
+
+**2. `PostToolUseFailure` is emitted INSTEAD of `PostToolUse`.** It is invoked from the tool loop's
+`catch` and carries the same `tool_use_id`. We neither installed nor parsed it. Because an `.ask`
+ledger entry is deliberately immune to any OTHER call's `PreToolUse`, a failed or interrupted
+`AskUserQuestion` had nothing that could resolve it: the hand stayed up over a vanished dialog for
+the rest of the turn. `PermissionDenied` was the same shape of miss, one degree less severe — the
+next `PreToolUse` did clear the block on the reasoning that a permission dialog is modal, which is
+an inference standing in for an announcement that exists. Both are now in
+`AgentInstaller.installedEvents` and both map to the same "this call is over" resolution.
+
+**3. `Elicitation` / `ElicitationResult`** — an MCP server asking the human — were reachable only
+by classifying a `Notification` message as `elicitation_dialog`. Same block, same ledger, now
+keyed on `elicitation_id`: a different id namespace doing the same job.
+
+**The lesson worth keeping.** A hook we do not register cannot be a signal, and a hook we register
+but do not parse is a silent drop — so the two lists are now diffed against the CLI's own emitters,
+not against memory. Auditing that way is what found both of these. → [50 §5, §5b]
+
+## The escape hatch has to be reachable, and a guard has to re-arm (2026-08-11, review)
+
+✅ **Decided.** A max-effort review of the two rounds above found fifteen defects, all fixed here.
+Four are worth recording because each is a CLASS of mistake the rest of this log can be read
+against.
+
+**1. A unit test that bypasses the pipeline proves nothing.** The sustained-dissent watchdog — the
+only way a pane recovers when the hook feed dies — could never mature in production. It advanced on
+folded detections, but `AgentDetectionHold.shouldPublish` only publishes a CHANGED verdict and its
+one heartbeat requires `visibleBlocker` on both sides, so a steady dissent is folded EXACTLY ONCE.
+Its test passed because it drove `reduce(.screen(…))` directly. The stopwatch is now anchored on the
+first dissenting fold and re-checked from `reduce`, on every tick and every signal. Two related
+edges: `apply()` used to clear the dissent on EVERY hook (so the watchdog could never mature while a
+turn was still emitting hooks — precisely when a stale ledger entry pins a pane), and the watchdog
+revoked coverage BEFORE checking whether the matured verdict could land (so a plain idle against a
+hook block left the pane stale AND unclaimed, free for the next nested run to take).
+
+**2. A level is not an edge.** `syncFrameHoldCap` bounds how long an open synchronized frame may
+suppress publishing — but it was anchored on the first scan that saw ANY frame open, and
+`isFrameOpen` is a level. A pane repainting continuously opens a NEW well-formed frame every few
+milliseconds, so one second of ordinary Tab-holding retired the tear guard permanently and every
+scan after it read a torn grid: the exact bug the tracker was written to prevent, reintroduced by
+its own safety valve. The tracker now exposes `frameGeneration` and the cap re-arms per frame.
+(Same file, same class of miss: ESC inside a CSI dropped to ground and ate the ESC, so the sequence
+after a re-sync was parsed as text. ESC is an anywhere-transition.)
+
+**3. A modal inference is still an inference.** `resolveLedger` dropped every `.permission` entry on
+any `PreToolUse`, reasoning that a permission dialog is modal. A batch breaks it: `[Read(a),
+Bash(gated)]` raises the prompt on `Bash`, and `Read`'s own `PreToolUse` then lowers the hand while
+the human is still looking at the dialog. That is the failure the ledger EXISTS to fix, left open in
+one direction because the fix arrived one direction at a time. Every kind resolves by identity now;
+the denial the sweep stood in for is announced by `PermissionDenied`, which round 2 installed.
+
+**4. An interrupt is not a failed call.** `PostToolUseFailure` carries `is_interrupt`, and Claude
+Code emits no `Stop` for a user interrupt. Read as an ordinary failure it left the pane `working`
+with the spinner up until the watchdog corrected it — ten seconds later, into a "turn finished"
+banner for a turn the human had just cancelled. It is a QUIET idle.
+
+**Two guards were widened rather than patched.** `AgentInstaller.isInstalled` now means ALL of
+`installedEvents`, not any — a settings file from an older build would otherwise report green
+forever while the events added since went unregistered. And `scripts/herdr-differential.py` scopes
+divergence to the RULE (`DIVERGED_RULES`) rather than the agent: excluding the whole `claude` label
+had silently dropped the guard on five rules nothing else pins. Back under test at 10 663 cases,
+PARITY OK. A gate `region` also became an engine-3 key, since an engine that ignores it drops a
+VETO — the quietest way for a rule to fire on the screen it was written to skip. → [50 §4, §5, §5b, §7]

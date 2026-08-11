@@ -21,6 +21,9 @@ public final class CompiledAgentManifest: @unchecked Sendable {
         let contains: [String]
         let regex: [NSRegularExpression]
         let lineRegex: [NSRegularExpression]
+        /// ⚠️ OURS, not herdr's: when set, this gate and everything under it evaluate against THIS
+        /// region instead of the rule's. `nil` = inherit. See ``AgentManifest/Gate/region``.
+        let region: ManifestRegion?
     }
 
     /// Compiles a VALIDATED manifest. Throws only if a regex fails to compile — validation
@@ -37,13 +40,21 @@ public final class CompiledAgentManifest: @unchecked Sendable {
     }
 
     private static func compile(_ gate: AgentManifest.Gate) throws -> CompiledGate {
-        try CompiledGate(
+        let region = try gate.region.map { spec -> ManifestRegion in
+            let trimmed = spec.trimmingCharacters(in: .whitespaces)
+            guard let parsed = ManifestRegion.parse(trimmed) else {
+                throw AgentManifest.ValidationError(message: "invalid gate region '\(trimmed)'")
+            }
+            return parsed
+        }
+        return try CompiledGate(
             all: gate.all.map(compile),
             any: gate.any.map(compile),
             not: gate.not.map(compile),
             contains: gate.contains.map { $0.lowercased() },
             regex: gate.regex.map { try NSRegularExpression(pattern: $0) },
             lineRegex: gate.lineRegex.map { try NSRegularExpression(pattern: $0) },
+            region: region,
         )
     }
 
@@ -55,7 +66,7 @@ public final class CompiledAgentManifest: @unchecked Sendable {
         var winner: CompiledRule?
         for compiled in rules {
             let text = compiled.region.resolve(input)
-            guard Self.matches(compiled.gate, text: text) else { continue }
+            guard Self.matches(compiled.gate, text: text, input: input) else { continue }
             if let current = winner, current.rule.priority >= compiled.rule.priority { continue }
             winner = compiled
         }
@@ -74,7 +85,10 @@ public final class CompiledAgentManifest: @unchecked Sendable {
     /// herdr `compiled_gate_matches`: contains (ALL, case-folded) → regex (ALL, whole region)
     /// → line_regex (ALL patterns, each with ≥1 matching line) → all (ALL) → any (≥1 unless
     /// empty) → not (ANY match vetoes).
-    static func matches(_ gate: CompiledGate, text: String) -> Bool {
+    /// `input` is threaded so a gate carrying its own ``CompiledGate/region`` can re-resolve —
+    /// the one thing this engine does that upstream's cannot.
+    static func matches(_ gate: CompiledGate, text inherited: String, input: AgentDetectionInput) -> Bool {
+        let text = gate.region.map { $0.resolve(input) } ?? inherited
         let lower = text.lowercased()
         for needle in gate.contains where !lower.contains(needle) { return false }
         for pattern in gate.regex where !isMatch(pattern, text) { return false }
@@ -84,9 +98,11 @@ public final class CompiledAgentManifest: @unchecked Sendable {
                 guard lines.contains(where: { isMatch(pattern, $0) }) else { return false }
             }
         }
-        for nested in gate.all where !matches(nested, text: text) { return false }
-        if !gate.any.isEmpty, !gate.any.contains(where: { matches($0, text: text) }) { return false }
-        for nested in gate.not where matches(nested, text: text) { return false }
+        for nested in gate.all where !matches(nested, text: text, input: input) { return false }
+        if !gate.any.isEmpty, !gate.any.contains(where: { matches($0, text: text, input: input) }) {
+            return false
+        }
+        for nested in gate.not where matches(nested, text: text, input: input) { return false }
         return true
     }
 

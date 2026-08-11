@@ -45,7 +45,17 @@ public enum AgentInstaller {
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        // A tool that FAILS or is interrupted emits this INSTEAD of `PostToolUse`, with the same
+        // `tool_use_id` — the only thing that can resolve that call's block-ledger entry.
+        "PostToolUseFailure",
         "PermissionRequest",
+        // …and its "no" answer. The next `PreToolUse` would clear the block too (a permission
+        // dialog is modal), but that is an inference standing in for an announcement.
+        "PermissionDenied",
+        // MCP structured input: the same block a permission dialog is, with its own id namespace.
+        // Otherwise caught only by text-classifying a `Notification` as `elicitation_dialog`.
+        "Elicitation",
+        "ElicitationResult",
         "Notification",
         "Stop",
         "StopFailure",
@@ -251,22 +261,28 @@ public enum AgentInstaller {
         return try writeSettings(stripped, to: settingsPath, fileManager: fileManager)
     }
 
-    /// PURE read of the install marker: true iff `settingsPath` carries at least one of OUR
-    /// hook entries (matched by ``hookMarker`` via ``entryIsOurs(_:)``). Reads the settings tolerantly
-    /// (a missing / unreadable / corrupt / hook-less file → empty root → `false`, never a trap), scans
-    /// every event's entry array, and stops on the first marker hit. Backs the host's
-    /// `agentHookStatus` verb, which returns this as a 1-byte flag.
+    /// PURE read of the install marker: true iff `settingsPath` carries one of OUR hook entries
+    /// (matched by ``hookMarker`` via ``entryIsOurs(_:)``) for EVERY event in ``installedEvents``.
+    /// Reads the settings tolerantly (a missing / unreadable / corrupt / hook-less file → empty root
+    /// → `false`, never a trap). Backs the host's `agentHookStatus` verb, which returns this as a
+    /// 1-byte flag.
+    ///
+    /// ⚠️ ALL, not ANY. A settings file written by an older build carries the events THAT build
+    /// knew; answering "installed" for it leaves the new ones — `PostToolUseFailure`,
+    /// `PermissionDenied`, `Elicitation`/`ElicitationResult` — permanently unregistered, and the
+    /// Settings row that would offer the fix reads as already done. Under-reporting is the safe
+    /// direction: ``merge(into:command:)`` is idempotent, so re-installing over a complete install
+    /// is a no-op, while the reverse is a silently degraded pane forever.
     public static func isInstalled(
         settingsPath: String,
         fileManager: FileManager = .default,
     ) -> Bool {
         let root = readSettings(settingsPath, fileManager: fileManager)
         guard case let .object(obj) = root, case let .object(hooks)? = obj["hooks"] else { return false }
-        for (_, value) in hooks {
-            guard case let .array(entries) = value else { continue }
-            if entries.contains(where: entryIsOurs) { return true }
+        return installedEvents.allSatisfy { event in
+            guard case let .array(entries)? = hooks[event] else { return false }
+            return entries.contains(where: entryIsOurs)
         }
-        return false
     }
 
     /// Reads + decodes `settings.json`, returning an empty object root on a missing / unreadable

@@ -132,11 +132,26 @@ public struct ToolUseBlock: Sendable, Equatable {
     /// can render the full input; `TodoWrite`/`TaskCreate` payloads are parsed from it).
     public var input: JSONValue
 
-    public init(id: String, name: String, input: JSONValue) {
+    /// TRUE when ``id`` came from the payload's `tool_use_id` and therefore MATCHES across the
+    /// `PreToolUse` / `PostToolUse` pair; FALSE when the producer omitted it and ``HookParser``
+    /// minted a fresh UUID so the inspector's tool cards still have a key.
+    ///
+    /// ⚠️ Load-bearing for the status machine's BLOCK LEDGER: a synthesised id is a DIFFERENT
+    /// string on the pre and the post hook, so treating it as real would leave a question's ledger
+    /// entry unresolvable — a raised hand nothing could lower. Consumers that need identity across
+    /// two events must read this and fall back to id-less handling; consumers that just need a
+    /// dictionary key (the card pairing) can ignore it.
+    public var idIsFromPayload: Bool
+
+    public init(id: String, name: String, input: JSONValue, idIsFromPayload: Bool = true) {
         self.id = id
         self.name = name
         self.input = input
+        self.idIsFromPayload = idIsFromPayload
     }
+
+    /// The id to key cross-event identity by — ``id`` when the payload supplied it, else `nil`.
+    public var stableID: String? { idIsFromPayload ? id : nil }
 }
 
 /// A user `{type:tool_result, tool_use_id, content, is_error}` content block.

@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskInspector
 import XCTest
 @testable import SlopDeskHost
 
@@ -88,6 +89,39 @@ final class AgentInstallerStatusTests: XCTestCase {
         // Valid settings with NO hooks key at all → false.
         try Data(#"{"theme":"dark"}"#.utf8).write(to: URL(fileURLWithPath: settings))
         XCTAssertFalse(AgentInstaller.isInstalled(settingsPath: settings))
+    }
+
+    /// ⚠️ A settings file written by an OLDER build carries the events that build knew. Reporting
+    /// it "installed" leaves every event added since permanently unregistered — and the Settings
+    /// row that would fix it reads as already done. Under-reporting is the safe direction: the
+    /// merge is idempotent, so re-installing over a complete install costs nothing.
+    func testAStaleInstallMissingOneEventReadsAsNotInstalled() throws {
+        let (dir, settings, hook) = makePaths()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let relay = try stageRelay(in: dir)
+        _ = try AgentInstaller.install(settingsPath: settings, hookPath: hook, binarySource: relay)
+        XCTAssertTrue(AgentInstaller.isInstalled(settingsPath: settings))
+
+        // Drop exactly one event's entries, the way an install predating it would look.
+        for dropped in ["PostToolUseFailure", "Elicitation", "PreCompact"] {
+            let url = URL(fileURLWithPath: settings)
+            let root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+            guard case let .object(obj) = root, case var .object(hooks)? = obj["hooks"] else {
+                XCTFail("settings lost its hooks map")
+                return
+            }
+            var patched = obj
+            hooks[dropped] = nil
+            patched["hooks"] = .object(hooks)
+            try JSONEncoder().encode(JSONValue.object(patched)).write(to: url)
+            XCTAssertFalse(
+                AgentInstaller.isInstalled(settingsPath: settings),
+                "missing \(dropped) is an INCOMPLETE install, not an install",
+            )
+            // …and re-running the install repairs it, without duplicating anything.
+            _ = try AgentInstaller.install(settingsPath: settings, hookPath: hook, binarySource: relay)
+            XCTAssertTrue(AgentInstaller.isInstalled(settingsPath: settings), "repaired by re-install")
+        }
     }
 
     // MARK: - verb-13 flag payload

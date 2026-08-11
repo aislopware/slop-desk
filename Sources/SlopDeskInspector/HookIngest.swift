@@ -42,6 +42,29 @@ public enum HookPayload: Sendable, Equatable {
     /// block, this one just cannot be missed by message-text heuristics.
     case permissionRequest(ToolUseBlock)
 
+    /// `PostToolUseFailure` → a tool call ENDED badly (error, or an interrupt). Claude Code emits
+    /// this INSTEAD of `PostToolUse`, carrying the same `tool_use_id` — so without it a failed
+    /// call's ledger entry has nothing to resolve it, and a failed `AskUserQuestion` leaves a hand
+    /// raised over a dialog that is no longer on screen for the rest of the turn.
+    case postToolUseFailure(ToolUseBlock, isInterrupt: Bool)
+
+    /// `Elicitation` → an MCP server is asking the human for structured input (→ *blocked*).
+    /// Carries `mcp_server_name` + `message` + `elicitation_id`; ``ElicitationResult`` closes it
+    /// with the same id. The STRUCTURED form of what we otherwise only catch by classifying a
+    /// `Notification` message as `elicitation_dialog` — same class of block, announced instead of
+    /// inferred, and with an id the ledger can pair.
+    case elicitation(id: String?, server: String?, message: String?)
+
+    /// `ElicitationResult` → the human answered (or dismissed) an ``elicitation``. Resolves that
+    /// id's block; the turn goes on.
+    case elicitationResult(id: String?, server: String?)
+
+    /// `PermissionDenied` → the human said no to a gated call (`tool_use_id` + `reason`). The
+    /// dialog is gone and the turn continues, so this RESOLVES the block. Without it the denial is
+    /// only INFERRED — from the next `PreToolUse`, on the reasoning that a permission dialog is
+    /// modal — which is true but is an inference where an announcement exists.
+    case permissionDenied(ToolUseBlock)
+
     /// `StopFailure` → the turn terminated on an API error (→ *done*, the error text as the
     /// label). Without it a mid-turn API death leaves the pane stuck *working* until presence
     /// absence finally wins. `StopInfo.lastAssistantMessage` carries the `error_message`.
@@ -141,6 +164,18 @@ public enum HookParser {
             ?? root["agentTranscriptPath"]?.stringValue
     }
 
+    /// The `session_id` on ANY hook body, independent of which payload case it parses as.
+    ///
+    /// Claude Code stamps it on every event, but only some of them carry it into ``HookPayload``
+    /// (a `ToolUseBlock` / `NotificationInfo` models the CALL, not the session). The host needs it
+    /// on all of them to tell its own pane agent apart from a nested `claude -p` that inherited
+    /// `SLOPDESK_PANE_ID` — see `ClaudeStatusMachine.ownerSessionID`. Tolerant like everything
+    /// here: an unparseable body, or one without the field, yields `nil`.
+    public static func sessionID(_ data: Data) -> String? {
+        guard let root = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
+        return root["session_id"]?.stringValue ?? root["sessionId"]?.stringValue
+    }
+
     public static func parse(_ data: Data) -> HookPayload? {
         guard let root = try? JSONDecoder().decode(JSONValue.self, from: data),
               case let .object(obj) = root
@@ -167,11 +202,12 @@ public enum HookParser {
             guard let name = obj["tool_name"]?.stringValue ?? obj["toolName"]?.stringValue else {
                 return nil
             }
-            let id = obj["tool_use_id"]?.stringValue
-                ?? obj["toolUseId"]?.stringValue
-                ?? UUID().uuidString
+            let payloadID = obj["tool_use_id"]?.stringValue ?? obj["toolUseId"]?.stringValue
+            let id = payloadID ?? UUID().uuidString
             let input = obj["tool_input"] ?? obj["toolInput"] ?? .object([:])
-            let use = ToolUseBlock(id: id, name: name, input: input)
+            let use = ToolUseBlock(
+                id: id, name: name, input: input, idIsFromPayload: payloadID != nil,
+            )
 
             var result: ToolResultBlock?
             if let rawResult = obj["tool_result"] ?? obj["toolResult"] {
@@ -212,6 +248,31 @@ public enum HookParser {
             // name (a PreToolUse without one is malformed → drop).
             guard let use = toolUseBlock(from: obj) else { return nil }
             return .preToolUse(use)
+
+        case "Elicitation":
+            return .elicitation(
+                id: obj["elicitation_id"]?.stringValue ?? obj["elicitationId"]?.stringValue,
+                server: obj["mcp_server_name"]?.stringValue ?? obj["mcpServerName"]?.stringValue,
+                message: obj["message"]?.stringValue,
+            )
+
+        case "ElicitationResult":
+            return .elicitationResult(
+                id: obj["elicitation_id"]?.stringValue ?? obj["elicitationId"]?.stringValue,
+                server: obj["mcp_server_name"]?.stringValue ?? obj["mcpServerName"]?.stringValue,
+            )
+
+        case "PostToolUseFailure":
+            // Same shape as PostToolUse plus `error`/`is_interrupt`. `is_interrupt` is NOT a
+            // detail: Claude Code emits no `Stop` when the human interrupts, so this flag is the
+            // only announcement that the turn is over.
+            guard let use = toolUseBlock(from: obj) else { return nil }
+            let interrupt = obj["is_interrupt"]?.boolValue ?? obj["isInterrupt"]?.boolValue ?? false
+            return .postToolUseFailure(use, isInterrupt: interrupt)
+
+        case "PermissionDenied":
+            guard let use = toolUseBlock(from: obj) else { return nil }
+            return .permissionDenied(use)
 
         case "PermissionRequest":
             // A permission dialog is up for this tool call — the structured blocked signal.
@@ -270,11 +331,14 @@ public enum HookParser {
         guard let name = obj["tool_name"]?.stringValue ?? obj["toolName"]?.stringValue else {
             return nil
         }
-        let id = obj["tool_use_id"]?.stringValue
-            ?? obj["toolUseId"]?.stringValue
-            ?? UUID().uuidString
+        let payloadID = obj["tool_use_id"]?.stringValue ?? obj["toolUseId"]?.stringValue
         let input = obj["tool_input"] ?? obj["toolInput"] ?? .object([:])
-        return ToolUseBlock(id: id, name: name, input: input)
+        return ToolUseBlock(
+            id: payloadID ?? UUID().uuidString,
+            name: name,
+            input: input,
+            idIsFromPayload: payloadID != nil,
+        )
     }
 
     /// Counts the entries of a `background_tasks`-shaped value. Anything that is not an array —

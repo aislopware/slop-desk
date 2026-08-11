@@ -38,6 +38,27 @@ struct PaneScreenScanner {
     /// resize changes what is on screen, not what the agent is doing.
     private var awaitingRepaintAfterRebuild = false
 
+    /// Tracks whether the bytes fed so far end inside an OPEN synchronized update — see
+    /// ``AgentSyncFrameTracker`` for why a mid-frame grid must never be reported.
+    private var syncFrames = AgentSyncFrameTracker()
+
+    /// The scan time at which the currently-open synchronized frame was first OBSERVED open
+    /// (`nil` when no frame is open). Anchors ``syncFrameHoldCap``.
+    private var syncFrameOpenSince: TimeInterval?
+
+    /// ``AgentSyncFrameTracker/frameGeneration`` of the frame ``syncFrameOpenSince`` anchors.
+    /// ⚠️ The cap is per FRAME, and a busy TUI opens a new one every few milliseconds — anchoring
+    /// on "a frame was open last time too" would let one second of ordinary repainting retire the
+    /// hold permanently, and every scan after that reads a torn grid. Held together they say what
+    /// is meant: THIS frame has been open too long.
+    private var syncFrameAnchorGeneration: UInt64?
+
+    /// Ceiling on how long an open synchronized frame may suppress publishing. A frame is one
+    /// repaint — milliseconds — so any frame still open a second later is a program that died
+    /// mid-paint or a stream that lost its closer, and detection must not be frozen by it.
+    /// (Terminal emulators bound the mode the same way, for the same reason.)
+    static let syncFrameHoldCap: TimeInterval = 1.0
+
     struct Input {
         /// PTY output bytes accumulated since the last scan (empty when quiet).
         var pending: Data
@@ -81,6 +102,10 @@ struct PaneScreenScanner {
             fresh.feed(replay)
             model = fresh
             tracker.observe(replay)
+            // The frame parser is positional: a rebuild replays a DIFFERENT stream into a new
+            // grid, so its old position describes bytes the model no longer holds.
+            syncFrames.reset()
+            syncFrames.observe(replay)
             // A reconstruction is not an observation — hold publishing until the program repaints
             // onto it (see `awaitingRepaintAfterRebuild`). The hold goes with it: a pending
             // working→idle confirmation was counting reads of a grid that no longer exists.
@@ -93,6 +118,18 @@ struct PaneScreenScanner {
         if !input.pending.isEmpty {
             model?.feed(input.pending)
             tracker.observe(input.pending)
+            syncFrames.observe(input.pending)
+        }
+        // Anchor the open frame the first scan that sees THIS frame open; drop the anchor when it
+        // closes, and re-arm when the generation moves (a different frame is a fresh deadline).
+        if syncFrames.isFrameOpen {
+            if syncFrameOpenSince == nil || syncFrameAnchorGeneration != syncFrames.frameGeneration {
+                syncFrameOpenSince = input.now
+                syncFrameAnchorGeneration = syncFrames.frameGeneration
+            }
+        } else {
+            syncFrameOpenSince = nil
+            syncFrameAnchorGeneration = nil
         }
         let seqUnchanged = input.contentSeq == lastScanSeq
         lastScanSeq = input.contentSeq
@@ -117,6 +154,15 @@ struct PaneScreenScanner {
         // The rebuilt grid is a guess until the program repaints onto it — read it, never report it.
         if awaitingRepaintAfterRebuild {
             return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
+        }
+        // Mid-repaint the grid is HALF a frame: the program said so with mode 2026, and it erases
+        // lines before it rewrites them. Wait for the closer rather than read a screen that shows
+        // a dialog with its footer missing (``AgentSyncFrameTracker``). Recheck fast — the frame
+        // closes in milliseconds — and never wait past the cap.
+        if syncFrames.isFrameOpen, let since = syncFrameOpenSince,
+           Double.minimum(input.now - since, Self.syncFrameHoldCap) < Self.syncFrameHoldCap
+        {
+            return Output(publish: nil, nextInterval: AgentDetectionHold.pendingIdleRecheck)
         }
 
         let screen = model?.snapshot().detectionText ?? ""

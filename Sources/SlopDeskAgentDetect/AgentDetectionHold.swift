@@ -22,10 +22,15 @@ public struct AgentDetectionHold: Sendable, Equatable {
     private var pendingIdleStartedAt: TimeInterval?
     private var confirmations = 0
 
+    /// Pending BLOCKED→idle confirmation state — the same shape, its own counters, so the
+    /// herdr-ported working→idle hold above stays byte-identical to upstream.
+    private var pendingUnblockStartedAt: TimeInterval?
+    private var unblockConfirmations = 0
+
     public init() {}
 
-    /// True while a working→idle hold is pending (callers tighten the recheck cadence).
-    public var isHoldingIdle: Bool { pendingIdleStartedAt != nil }
+    /// True while EITHER idle hold is pending (callers tighten the recheck cadence).
+    public var isHoldingIdle: Bool { pendingIdleStartedAt != nil || pendingUnblockStartedAt != nil }
 
     /// herdr `should_hold_working_to_idle`: engages only on working → PLAIN idle (a VISIBLE
     /// idle — real prompt chrome — bypasses the hold); 3 consecutive confirmations release,
@@ -60,9 +65,63 @@ public struct AgentDetectionHold: Sendable, Equatable {
         return true
     }
 
+    /// The BLOCKED→idle sibling — **ours, not herdr's**, and deliberately stricter than the
+    /// working→idle hold above.
+    ///
+    /// A pane leaving a block is the single most consequential screen edge there is: it clears the
+    /// mark, it is herdr's hook-less COMPLETION edge (`AttentionEdge.isCompletion` /
+    /// `MuxChannelSession.isCompletionTransition`), so it mints an unread finish across every
+    /// client, and it can override an authoritative hook block. One bad read must not buy all of
+    /// that. Requiring the same 3 confirmations (or the 700 ms cap) costs at most ~300 ms on a
+    /// genuine unblock — and the ONE unblock that has no other announcement, an Esc-cancelled
+    /// dialog, already has an instant path of its own (`PaneInputClassifier.containsCancelKeystroke`
+    /// → `ClaudeSignal.userInput`), which does not come through here at all.
+    ///
+    /// ⚠️ Unlike ``shouldHoldWorkingToIdle(previous:next:agentChanged:processExited:now:)``, a
+    /// VISIBLE idle does NOT bypass this hold. The visible idle is exactly the false verdict being
+    /// guarded against: with the dialog's footer momentarily erased mid-repaint, the highest rule
+    /// still matching is `live_prompt_box` — the dialog's own option list carries the `❯` pointer,
+    /// and the footer needles that would veto it sit BELOW the last horizontal rule, outside
+    /// `prompt_box_body`. So it reports `idle` + `visible_idle`, the one shape strong enough to
+    /// clear a hook block (user-reported 2026-08-11, `AskUserQuestion` Tab flap).
+    public mutating func shouldHoldBlockedToIdle(
+        previous: AgentScreenDetection,
+        next: AgentScreenDetection,
+        agentChanged: Bool,
+        processExited: Bool,
+        now: TimeInterval,
+    ) -> Bool {
+        let transitioning = previous.state == .blocked && next.state == .idle
+            && !agentChanged && !processExited
+        guard transitioning else {
+            clearUnblock()
+            return false
+        }
+        guard let startedAt = pendingUnblockStartedAt else {
+            pendingUnblockStartedAt = now
+            unblockConfirmations = 0
+            return true
+        }
+        if now - startedAt >= Self.pendingIdleCap {
+            clearUnblock()
+            return false
+        }
+        unblockConfirmations += 1
+        if unblockConfirmations >= Self.pendingIdleConfirmations {
+            clearUnblock()
+            return false
+        }
+        return true
+    }
+
     private mutating func clear() {
         pendingIdleStartedAt = nil
         confirmations = 0
+    }
+
+    private mutating func clearUnblock() {
+        pendingUnblockStartedAt = nil
+        unblockConfirmations = 0
     }
 
     /// herdr `stable_visible_signal_refresh_due`: a steady visible blocker re-publishes
@@ -104,15 +163,24 @@ public struct AgentDetectionHold: Sendable, Equatable {
         lastRefresh: TimeInterval?,
         now: TimeInterval,
     ) -> Bool {
-        if shouldHoldWorkingToIdle(
+        // Both holds are consulted on EVERY decision (never short-circuited): each clears its own
+        // pending state when its transition does not apply, so a pane that walks
+        // working → idle → blocked → idle leaves no stale counter behind.
+        let holdingWorking = shouldHoldWorkingToIdle(
             previous: previous,
             next: next,
             agentChanged: agentChanged,
             processExited: processExited,
             now: now,
-        ) {
-            return false
-        }
+        )
+        let holdingUnblock = shouldHoldBlockedToIdle(
+            previous: previous,
+            next: next,
+            agentChanged: agentChanged,
+            processExited: processExited,
+            now: now,
+        )
+        if holdingWorking || holdingUnblock { return false }
         let refreshDue = Self.stableVisibleSignalRefreshDue(
             previous: previous,
             next: next,

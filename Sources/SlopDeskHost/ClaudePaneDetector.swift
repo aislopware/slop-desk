@@ -149,6 +149,16 @@ public struct ClaudePaneDetector: Sendable {
     /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
     public var status: ClaudeStatus { machine.status }
 
+    /// TRUE while the CURRENT status is one the host has qualified as BOOKKEEPING — the wire `kind`
+    /// byte already carries this to the client (``AgentStatusKind/quiet``), and the host reads it
+    /// too, so ``MuxChannelSession``'s completion epoch does not count a correction as a turn.
+    public var isQuietTransition: Bool { machine.isQuiet }
+
+    /// TRUE while this pane's agent is announcing its own edges through the hook feed — the screen
+    /// engine is corroboration rather than authority (see ``ClaudeStatusMachine``). Surfaced for the
+    /// ctl/diagnostic surfaces.
+    public var hasAuthoritativeFeed: Bool { machine.hasAuthoritativeFeed }
+
     /// The `(state, kind, label)` triple the type-27 stream currently stands at — the CURRENT VALUE
     /// behind the edge, `nil` before the first emission. The workspace document publishes this so a
     /// client that missed the edge still learns the pane's agent state.
@@ -249,6 +259,15 @@ public struct ClaudePaneDetector: Sendable {
     public mutating func hook(bytes: Data, at now: TimeInterval) -> Emission {
         var emission = Emission()
         guard let payload = HookParser.parse(bytes) else { return emission } // validate-then-drop
+        let (mapped, kindByte) = AgentHookHandler.mapToHookEvent(payload)
+        // ⚠️ WHOSE hook is this? The relay routes by `SLOPDESK_PANE_ID`, an environment variable
+        // every descendant of the pane's shell inherits — so a `claude -p …` run from a script or
+        // from the pane agent's own Bash tool posts its whole hook set HERE. Attribute the record
+        // (`session_id` rides the envelope, so the mapped event may not carry it) and drop it
+        // whole if it names a different live session: not the status, not the liveness anchor,
+        // and not the session TITLE, which a nested prompt would otherwise rewrite.
+        let event = mapped.attributed(to: HookParser.sessionID(bytes))
+        guard machine.accepts(event) else { return emission }
         // The INTENT fold (wire type 36) reads the payload BEFORE the status mapping strips the
         // prompt: each titleable prompt re-titles the session, SessionEnd clears.
         switch payload {
@@ -260,7 +279,6 @@ public struct ClaudePaneDetector: Sendable {
         default:
             break
         }
-        let (event, kindByte) = AgentHookHandler.mapToHookEvent(payload)
         // A REAL hook is the same precedence-2 authoritative signal as a ctl report, so it stamps
         // the SAME stickiness anchor — otherwise the ~1 Hz foreground poll terminates a hook-set
         // status within a second whenever claude runs under a wrapper (node/npx/mise) whose basename
@@ -280,9 +298,22 @@ public struct ClaudePaneDetector: Sendable {
         }
         machine.reduce(.hook(event), at: now)
         hookAuthority = machine.status != .none // SessionEnd terminates → authority is gone with it
-        // Track the live block class: a Notification carries its kind; any transition that leaves the
-        // blocked state forgets it (so a later tick/presence type-27 reports kind 0, not a stale class).
-        lastNotificationKind = (machine.status == .needsPermission) ? kindByte : 0
+        // Track the live block class: a BLOCKING notification carries its kind; any transition that
+        // leaves the blocked state forgets it (so a later tick/presence type-27 reports kind 0, not
+        // a stale class).
+        //
+        // ⚠️ A hook that is not itself a block must LEAVE a standing block's class alone. It used to
+        // overwrite unconditionally, so any mid-block traffic — a sibling call's `PostToolUse`, an
+        // informational `auth_success` — rewrote a live `waitingForInput` (kind 2) to kind 0 and
+        // shipped a type-27 saying the block had changed class when nothing about it had changed.
+        // With the block ledger holding the pane blocked through exactly that traffic, that stopped
+        // being a rarity and became the common case.
+        lastNotificationKind = Self.blockKind(
+            standing: lastNotificationKind,
+            ledger: machine.standingBlockKind,
+            event: kindByte,
+            blocked: machine.status == .needsPermission,
+        )
         emission.status = statusEmissionIfChanged()
         emission.intent = intentEmissionIfChanged()
         emission.title = titleEmissionIfAgentGone()
@@ -553,6 +584,22 @@ public struct ClaudePaneDetector: Sendable {
     private var statusKindByte: UInt8 {
         if machine.isQuiet { return AgentStatusKind.quiet.rawValue }
         return lastNotificationKind
+    }
+
+    /// The `kind` byte a fold should leave standing: `0` when the pane is not blocked, the EVENT's
+    /// class when the event is itself a blocking notification (`1 permission` / `2 waitingForInput`),
+    /// and otherwise the class already standing — mid-block traffic describes the turn, not the
+    /// block. Pure + total (any byte tolerated).
+    /// ⚠️ `ledger` outranks `standing` because blocks STACK. With `[AskUserQuestion, Bash(gated)]`
+    /// the approval dialog is raised second and, once approved, its `PreToolUse` arrives with event
+    /// byte 0 — leaving the standing byte naming a block that is already gone, so every client drew
+    /// "Permission needed" over an unanswered question for as long as it stood. The machine knows
+    /// which entries survive; this is that answer.
+    static func blockKind(standing: UInt8, ledger: UInt8, event: UInt8, blocked: Bool) -> UInt8 {
+        guard blocked else { return 0 }
+        if ledger != 0 { return ledger }
+        if event == 1 || event == 2 { return event }
+        return standing
     }
 
     /// Returns a type-27 `claudeStatus` message iff the machine's `(state, kind, label)` triple changed

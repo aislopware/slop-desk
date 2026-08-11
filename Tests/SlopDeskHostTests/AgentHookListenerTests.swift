@@ -90,6 +90,26 @@ final class AgentHookListenerTests: XCTestCase {
 
     // MARK: validate-then-drop on malformed / unknown bytes
 
+    /// A record naming a DIFFERENT session is dropped by the machine — and must not be announced
+    /// on the way out either. `handle` used to fold-then-emit unconditionally, so a nested
+    /// `claude -p`'s `PermissionRequest` shipped a type-27 saying the pane's block had changed
+    /// class while the machine had not moved at all.
+    func testAForeignSessionsRecordIsNotAnnouncedEither() {
+        var h = AgentHookHandler()
+        _ = h.handle(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"outer"}"#), at: 0)
+        let body = #"{"hook_event_name":"Notification","session_id":"outer","#
+            + #""message":"Claude needs your permission to use Bash"}"#
+        _ = h.handle(bytes: json(body), at: 1)
+        XCTAssertEqual(h.status, .needsPermission)
+
+        let nested = h.handle(
+            bytes: json(#"{"hook_event_name":"PermissionRequest","session_id":"inner","tool_name":"Read"}"#),
+            at: 2,
+        )
+        XCTAssertEqual(h.status, .needsPermission, "the machine did not move…")
+        XCTAssertNil(nested, "…so nothing goes on the wire saying it did")
+    }
+
     func testMalformedBytesAreDropped() {
         var h = AgentHookHandler()
         let msg = h.handle(bytes: json("not json at all {{{"), at: 0)

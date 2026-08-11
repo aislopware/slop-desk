@@ -59,7 +59,7 @@ public extension CompiledAgentManifest {
 
         for compiled in rules {
             let text = compiled.region.resolve(input)
-            let matched = Self.matches(compiled.gate, text: text)
+            let matched = Self.matches(compiled.gate, text: text, input: input)
             let rule = compiled.rule
             evaluated.append(AgentDetectionExplain.EvaluatedRule(
                 id: rule.id,

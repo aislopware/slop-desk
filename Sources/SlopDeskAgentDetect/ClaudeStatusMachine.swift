@@ -21,6 +21,30 @@ import Foundation
 ///    ignored; `.working`/`.needsPermission` apply ONLY when an authoritative hook block
 ///    is not already in effect.
 ///
+/// **Two tiers, and what decides which one is in force (2026-08-11).** Precedence alone says
+/// which signal wins a collision; it does not say whether a weak signal should be in the argument
+/// at all. Once a pane is HOOK-COVERED — ``hasAuthoritativeFeed``, set by the first parsed hook of a
+/// session and dropped only when the session ends — the agent is TELLING us its state on every
+/// edge, and the screen engine is a heuristic reading of pixels the agent draws for a human. So
+/// the screen stops being a peer:
+///
+/// - **Tier 1 (authoritative)** — hooks, the ctl `report` verb, presence ABSENCE, and a CANCEL
+///   keystroke. These change the status, immediately, always.
+/// - **Tier 2 (inferred)** — the screen engine, the OSC title, the presence floor. Under coverage
+///   the screen may only CORROBORATE; it cannot move the status.
+///
+/// …with one escape hatch, because hooks are best-effort (the relay can die, a record can be lost,
+/// the host can restart mid-session): ``screenDissentSince`` times how long the screen has
+/// contradicted the authoritative status WITHOUT INTERRUPTION. Past the window the pane drops
+/// coverage and the screen applies. Asymmetric on purpose — ``screenDissentToRaise`` is short
+/// (a human waiting on an unannounced dialog is the expensive failure) and
+/// ``screenDissentToRelease`` is long (a premature release flaps the mark AND mints a false
+/// finished turn, which is the failure that was actually reported). Any hook restores coverage and
+/// resets the clock instantly.
+///
+/// This is where SlopDesk diverges from herdr on purpose: herdr has no hook feed, so its screen
+/// engine IS its authority and every heuristic has to be load-bearing. Ours is a backstop.
+///
 /// **Post-exit lockout.** Precedence alone is not enough for teardown, because the terminating
 /// signal ARRIVES EARLY: `sessionEnd` is posted while claude is still the PTY foreground, so for
 /// a second or so every rung-3/4 signal still describes a live agent and lifts the floor straight
@@ -111,6 +135,42 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// poll or two. The absence path arms nothing: `processPresent(false)` is already ground truth.
     public static let postExitFloorLockout: TimeInterval = 3.0
 
+    /// The OUTSTANDING human-blocking tool calls, in arrival order — the BLOCK LEDGER.
+    ///
+    /// A hook block used to be one flag, so "the pane is blocked" and "this specific call is
+    /// waiting on a human" were the same fact, and ANY `PostToolUse` cleared it. Claude Code emits
+    /// tool calls in BATCHES: an assistant turn carrying `[AskUserQuestion, Bash]` fires both
+    /// `PreToolUse` hooks, and the `Bash` result then landed while the question was still on screen
+    /// and un-answered — clearing the block, marking the turn finished, and handing the pane back to
+    /// a human who was still being asked something. Same for a permission dialog raised on one call
+    /// of a batch while a sibling call runs to completion.
+    ///
+    /// Keyed by `tool_use_id`, a resolution names the call it resolves and nothing else. Entries
+    /// with NO id (a free-standing `agent_needs_input` / a ctl `report blocked`) name no call, so
+    /// they keep the old any-tool-clears-it rule — there is no better handle, and the alternative is
+    /// a hand nothing can lower.
+    private var blockLedger: [BlockEntry]
+
+    /// One outstanding human-blocking call.
+    struct BlockEntry: Sendable, Equatable {
+        /// The blocking call's `tool_use_id`, or `nil` for a notification that names no call.
+        var toolUseID: String?
+        var kind: BlockKind
+    }
+
+    /// What KIND of thing is waiting on the human — the two differ in what may resolve them.
+    enum BlockKind: Sendable, Equatable {
+        /// A permission dialog (`PermissionRequest` / `permission_prompt`). Strictly MODAL: nothing
+        /// else can START while it is up, so any `PreToolUse` proves it is gone — which is what
+        /// covers a DENIED permission, the one resolution Claude Code announces with no hook of
+        /// its own.
+        case permission
+        /// Claude asking the human a question (`AskUserQuestion`, `elicitation_dialog`). Resolved
+        /// ONLY by its own `PostToolUse`, a turn boundary, or a cancel key — a sibling call in the
+        /// same batch finishing says nothing about whether the human has answered.
+        case ask
+    }
+
     /// The provenance of an active `.needsPermission` block — what gates whether a conservative
     /// manifest verdict is allowed to clear it (review #5).
     private enum BlockSource: Equatable {
@@ -122,6 +182,83 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         /// `.working`/`.idle` MAY clear it (the manifest is the only authority in play).
         case manifest
     }
+
+    /// TRUE once an AUTHORITATIVE event has been folded for the live session — the agent in this
+    /// pane is announcing its own edges, so the screen engine drops to corroboration (see the type's
+    /// doc-comment).
+    ///
+    /// "Authoritative" is deliberately not "Claude hook". Two feeds reach ``apply(_:at:)`` and both
+    /// earn coverage: the Claude Code hook socket, and the ctl `report` verb — which ANY agent or
+    /// orchestrator in a pane can call (`slopdesk ctl report blocked "…"`). So a codex / gemini /
+    /// bespoke wrapper that reports its own state gets exactly the tier-1 treatment Claude gets,
+    /// screen demotion and watchdog included, with no per-agent code. That is the whole point of
+    /// keying this on the FEED rather than on the agent's name.
+    ///
+    /// Deliberately NOT a recency window: a pane blocked on a question for ten minutes emits no
+    /// traffic at all, and that silence is the block working exactly as intended, not evidence the
+    /// feed has died. Only a session ENDING (`SessionEnd`, or presence absence) drops it — plus the
+    /// dissent watchdog, which is the "the feed died anyway" path.
+    private var authoritativeCovered: Bool
+
+    /// The session id that OWNS this pane, or `nil` while the pane is unclaimed.
+    ///
+    /// ⚠️ The hook relay routes by `SLOPDESK_PANE_ID`, an ENVIRONMENT VARIABLE — so every
+    /// descendant of the pane's shell inherits it. A `claude -p …` run from a script, a Makefile,
+    /// or the pane agent's own Bash tool is a SEPARATE claude with its own session id, posting the
+    /// full hook set to the pane that spawned it. Ungated, its `SessionStart` cleared the pane
+    /// agent's block, its `Stop` minted a finished turn for a turn that never finished, and its
+    /// `SessionEnd` blanked the pane and armed the post-exit lockout — all while the pane's real
+    /// agent was still waiting on a human.
+    ///
+    /// So: first id-carrying event claims the pane; events naming a DIFFERENT session are dropped
+    /// whole (validate-then-drop — they do not even corroborate presence, since they prove only
+    /// that some claude exists somewhere in the process tree). Events carrying NO session id
+    /// (tool calls, notifications, every ctl `report`) always apply and never claim, so an
+    /// unattributed feed behaves exactly as it did before this existed.
+    ///
+    /// Released by the owner's own `SessionEnd`, by presence absence, and by the dissent watchdog
+    /// — that last one is what recovers a pane whose agent died WITHOUT a `SessionEnd` (a crash, a
+    /// `kill -9`) and was restarted inside one presence poll: the screen contradicts the dead
+    /// session's last word, the watchdog revokes coverage, and the next hook claims a free pane.
+    ///
+    /// Deliberately NOT released on a timer. A nested run can hold the terminal for minutes while
+    /// the owner says nothing — its `PostToolUse` cannot arrive until the nested claude exits — so
+    /// any silence window short enough to be useful is also short enough to hand the pane to the
+    /// very process this exists to ignore.
+    private var ownerSessionID: String?
+
+    /// When the screen engine STARTED contradicting the authoritative status without interruption,
+    /// or `nil` when it currently agrees. Reset by agreement, by a change in WHAT the screen claims
+    /// (``screenDissent``), and by every status transition — so only a steady, unchanging
+    /// disagreement accumulates.
+    private var screenDissentSince: TimeInterval?
+
+    /// The screen VERDICT currently being dissented with — a different claim is a different
+    /// argument and restarts the clock.
+    ///
+    /// The whole detection is kept, not just its ``AgentScreenState``, because the watchdog is
+    /// resolved on a CLOCK rather than on the next fold (see ``resolveScreenDissentIfDue(at:)``):
+    /// when the window elapses there may be no incoming detection to apply, so this is the one
+    /// that gets applied. `visibleIdle` is load-bearing there — a plain idle cannot lower a hook
+    /// block.
+    private var screenDissent: AgentScreenDetection?
+
+    /// How long the screen must claim BLOCKED, uninterrupted, before it may raise a block over a
+    /// hook feed that never announced one. Short: the cost of being slow here is a human sitting in
+    /// front of an unannounced dialog. Long enough that the ~300 ms scan must agree ~10 times
+    /// running, so no single stale or torn read can reach it.
+    public static let screenDissentToRaise: TimeInterval = 3.0
+
+    /// How long the screen must contradict the authoritative status in the OTHER direction —
+    /// wanting the pane out of a block, or off `working` — before it wins. Deliberately long:
+    /// releasing early is the failure that was actually reported (the mark flaps AND `needsPermission
+    /// → idle` mints a finished turn across every client), and every LEGITIMATE release announces
+    /// itself on tier 1 already — an answered question fires `PostToolUse`, an approved permission
+    /// fires `PreToolUse`, a finished turn fires `Stop`, and an Esc-cancel — the one resolution with
+    /// no hook at all — arrives as ``ClaudeSignal/userInput`` in the same millisecond the key is
+    /// pressed. Nothing correct is waiting on this window; it exists for the case where the hook
+    /// feed itself has stopped being true.
+    public static let screenDissentToRelease: TimeInterval = 10.0
 
     /// Cap for `label` — keeps the chip bounded regardless of a hostile/huge hook body.
     public static let maxLabel = 120
@@ -138,6 +275,37 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         exitLockoutUntil = nil
         compactionPending = false
         isQuiet = false
+        blockLedger = []
+        authoritativeCovered = false
+        ownerSessionID = nil
+        screenDissentSince = nil
+        screenDissent = nil
+    }
+
+    // MARK: - Published tier state
+
+    /// TRUE while the pane's agent is announcing its own edges (a Claude hook feed, or any agent
+    /// calling the ctl `report` verb) — the screen engine is then corroboration, not authority.
+    /// Published for the ctl/diagnostic surfaces so "why did this pane not react" is answerable
+    /// without re-deriving the rule.
+    public var hasAuthoritativeFeed: Bool { authoritativeCovered }
+
+    /// How many human-blocking calls are outstanding (the block ledger's depth). `0` whenever the
+    /// pane is not hook-blocked.
+    public var outstandingBlockCount: Int { blockLedger.count }
+
+    /// The wire `kind` byte of the block the pane is ACTUALLY sitting on, or `0` when it is not
+    /// hook-blocked (a screen-raised block carries no call identity, so it states no class).
+    ///
+    /// The MOST RECENT entry, because blocks stack modally: `[AskUserQuestion, PermissionRequest]`
+    /// puts the approval dialog on top, and when that one resolves the question underneath is what
+    /// the human is now looking at. Tracking the last byte SEEN instead reported the resolved
+    /// block's class for as long as the surviving one stood.
+    public var standingBlockKind: UInt8 {
+        guard status == .needsPermission, let kind = blockLedger.last?.kind else { return 0 }
+        return kind == .permission
+            ? AgentStatusKind.permission.rawValue
+            : AgentStatusKind.waitingForInput.rawValue
     }
 
     /// Fold one signal at absolute time `now`, returning the new status.
@@ -175,9 +343,19 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             // turn, and never cuts the done decay. (Only a cancel reaches here: a dialog resolved
             // any other way re-promotes through its own hook, and demoting on plain navigation keys
             // manufactured a blocked→idle→blocked flap that re-rang the cue — see `ClaudeSignal`.)
-            if status == .needsPermission { enter(.idle, label: nil) }
+            if status == .needsPermission {
+                enter(.idle, label: nil)
+                // ⚠️ QUIET. Dismissing a dialog is not a finished turn — but `needsPermission →
+                // idle` is precisely the hook-less COMPLETION edge, so this transition used to mint
+                // an unread badge, a banner and a sound for a pane the human had just pressed Esc
+                // in, one they were by definition looking at. Nothing to announce: they did it.
+                isQuiet = true
+            }
         }
 
+        // Both time-driven paths run on EVERY signal, ticks included — neither may wait for a
+        // fold that the publish gate upstream may never deliver.
+        resolveScreenDissentIfDue(at: now)
         decayIfDue(now: now)
         return status
     }
@@ -185,6 +363,14 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     // MARK: - Hook events (authoritative)
 
     private mutating func apply(_ event: ClaudeHookEvent, at now: TimeInterval) {
+        // Whose pane is this? A nested `claude -p` inherits `SLOPDESK_PANE_ID` and posts the whole
+        // hook set here; ignoring it is the difference between the pane showing its agent's block
+        // and the pane going blank. See ``ownerSessionID``.
+        guard claimOrVerifyOwner(of: event) else { return }
+        // This is the agent describing ITSELF — a Claude hook, or any agent's ctl `report`. From
+        // here the pane is authoritatively covered and the screen engine is a backstop. Set BEFORE
+        // the switch so no branch can forget; `sessionEnd` clears it again through `terminate`.
+        authoritativeCovered = true
         // The compaction marker is spent or dropped by the FIRST hook after it — `preCompact` arms
         // it below, every other event disarms it here (before the switch, so no branch can forget),
         // and `.stop` reads the armed copy taken on this line. See ``compactionPending``.
@@ -204,22 +390,34 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         case .userPromptSubmit:
             enter(.working, label: nil)
 
-        case .preToolUse:
-            // A tool starting resolves a just-answered permission prompt → working. The raw
-            // tool name is not useful chip text (the meaningful label is the Stop message), so
-            // working transitions CLEAR the label.
-            enter(.working, label: nil)
+        case let .preToolUse(_, _, toolUseID):
+            // A tool STARTING resolves its own permission prompt (approved → it runs) and proves
+            // every other permission dialog is gone, because a permission dialog is modal. It says
+            // nothing about a sibling QUESTION in the same batch — that keeps its ledger entry, and
+            // the pane stays blocked until the human actually answers.
+            resolveLedger(call: toolUseID)
+            if blockLedger.isEmpty {
+                // The raw tool name is not useful chip text (the meaningful label is the Stop
+                // message), so working transitions CLEAR the label.
+                enter(.working, label: nil)
+            }
 
-        case .postToolUse:
-            // A tool result is mid-turn → keep working (don't fall back to idle/done here).
-            enter(.working, label: nil)
+        case let .postToolUse(_, _, toolUseID):
+            // A tool result is mid-turn → keep working (don't fall back to idle/done here) — but
+            // only once nothing is still waiting on the human.
+            resolveLedger(call: toolUseID)
+            if blockLedger.isEmpty { enter(.working, label: nil) }
 
-        case let .notification(kind, label):
+        case let .notification(kind, label, toolUseID, _):
             switch kind {
             case .permission,
                  .waitingForInput:
                 // An authoritative HOOK block — a conservative manifest verdict must NOT clear it.
-                enterBlocked(label: label, source: .hook, at: now)
+                let entry = BlockEntry(
+                    toolUseID: toolUseID,
+                    kind: kind == .permission ? .permission : .ask,
+                )
+                enterBlocked(label: label, source: .hook, entry: entry, at: now)
             case .other:
                 // Informational (auth_success / elicitation_complete) — no status change,
                 // but it does corroborate presence (lift the floor off `.none`). Corroboration
@@ -247,12 +445,102 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             // A subagent stopping does not change the parent pane's coarse status.
             break
 
+        case .interrupted:
+            // The human stopped the turn. There is no `Stop` for this, so without it the pane's
+            // last authoritative word stayed `working` — spinner up, forever, until the watchdog
+            // eventually corrected it into a FALSE "turn finished" ten seconds later. Quiet for the
+            // same reason an Esc-cancelled dialog is: they did it, and they were watching.
+            enter(.idle, label: nil)
+            isQuiet = true
+
         case .sessionEnd:
             // The one signal that ARRIVES EARLY: claude posts it and then keeps running for
             // another second while it tears down. Arm the veto so nothing weak walks the pane
             // back out of `.none` across that gap.
             terminate(armLockout: true, at: now)
         }
+        // ⚠️ A hook does NOT blindly reset the stopwatch. The clock measures how long the screen
+        // has contradicted the AUTHORITATIVE STATUS, and a hook that leaves that contradiction
+        // standing has not answered it. Blindly clearing here meant a turn still emitting hooks
+        // held the watchdog at zero forever — which is exactly the situation a stale `.ask` ledger
+        // entry creates, so the one case that needed the escape hatch was the one that disabled it.
+        reconcileScreenDissent()
+    }
+
+    /// Drops the stopwatch iff the screen's remembered claim is no longer a contradiction.
+    private mutating func reconcileScreenDissent() {
+        guard let dissent = screenDissent else { return }
+        if screenAgrees(with: dissent) { clearScreenDissent() }
+    }
+
+    /// The session id an event names, or `nil` when it names none. Tool calls and notifications
+    /// carry no session in the adapter, and no ctl `report` ever does.
+    private static func sessionID(of event: ClaudeHookEvent) -> String? {
+        switch event {
+        case let .sessionStart(id),
+             let .userPromptSubmit(id),
+             let .sessionEnd(id),
+             let .interrupted(id),
+             let .preCompact(id):
+            id
+        case let .preToolUse(id, _, _),
+             let .postToolUse(id, _, _):
+            id
+        case let .stop(id, _):
+            id
+        case let .notification(_, _, _, id):
+            id
+        case .subagentStop:
+            nil
+        }
+    }
+
+    /// TRUE when `event` belongs to this pane: it names no session, it names the owner, or the
+    /// pane is unclaimed. Pure — ask before folding when a CALLER has side effects of its own to
+    /// suppress (``ClaudePaneDetector`` stamps a liveness anchor and re-titles the session from a
+    /// prompt; neither should happen for a nested run's traffic).
+    public func accepts(_ event: ClaudeHookEvent) -> Bool {
+        guard let id = Self.sessionID(of: event), !id.isEmpty else { return true }
+        guard let owner = ownerSessionID else { return true }
+        if owner == id { return true }
+        // The one handover: a new session starting on a pane whose turn is over — see
+        // ``claimOrVerifyOwner(of:)``. This predicate must answer exactly what the fold will do, or
+        // a caller gating on it drops an event the machine would have taken.
+        if case .sessionStart = event, turnIsOver { return true }
+        return false
+    }
+
+    /// ``accepts(_:)``, plus the claim: an id-carrying event on an unclaimed pane takes ownership,
+    /// and a foreign `SessionStart` on a pane whose turn is OVER takes it over.
+    ///
+    /// ⚠️ The handover is what recovers a pane whose agent died without a `SessionEnd` (a crash,
+    /// a `kill -9`). Presence would eventually free it, but ``ClaudePaneDetector`` suppresses a
+    /// terminating absence for 30 s — 600 s behind a wrapper basename — so a human who simply
+    /// re-runs `claude` in the same pane lands inside that window, and every hook of the new
+    /// session names a session the pane has never heard of and is dropped WHOLE: no status, no
+    /// finished turn, no title.
+    ///
+    /// It is gated on the pane being at rest because that is what a nested `claude -p` can never
+    /// be: it is spawned BY a tool call, so the parent is `working` or blocked at that instant, by
+    /// construction. A crash-restart is the opposite — nothing of the old session is in flight.
+    /// (Mid-turn is left to the dissent watchdog, which frees ownership on its own; being briefly
+    /// stale is recoverable, whereas following a nested run's `SessionEnd` blanks the pane.)
+    private mutating func claimOrVerifyOwner(of event: ClaudeHookEvent) -> Bool {
+        guard let id = Self.sessionID(of: event), !id.isEmpty else { return accepts(event) }
+        if ownerSessionID == nil {
+            ownerSessionID = id
+            return true
+        }
+        if ownerSessionID == id { return true }
+        guard case .sessionStart = event, turnIsOver else { return false }
+        ownerSessionID = id
+        return true
+    }
+
+    /// TRUE when nothing of the current session is in flight — the states a pane rests in between
+    /// turns. (`.done` is a finished turn still inside its decay window; it is over all the same.)
+    private var turnIsOver: Bool {
+        status == .idle || status == .done || status == .none
     }
 
     // MARK: - OSC title (Claude Code's own busy/rest telltale)
@@ -267,7 +555,14 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// - any other claude-naming title stays the presence floor it always was.
     private mutating func applyTitle(_ title: String, at now: TimeInterval) {
         if Self.titleShowsSpinner(title) {
-            if status != .none, blockSource != .hook { enter(.working, label: nil) }
+            // ⚠️ Never out of `.done` while a hook feed is live. The title arrives on the PTY read
+            // loop and the `Stop` on its own AF_UNIX queue, so a turn's trailing spinner repaint
+            // routinely lands AFTER the `Stop` that ended it — promoting there erased the finished
+            // state and its label, and the `✳` a moment later took `.working → .idle`, minting a
+            // SECOND completion for the one turn. Under coverage the promotion buys nothing anyway:
+            // `UserPromptSubmit`/`PreToolUse` announce a real turn starting.
+            let stale = authoritativeCovered && status == .done
+            if status != .none, blockSource != .hook, !stale { enter(.working, label: nil) }
             return
         }
         if Self.titleShowsRest(title) {
@@ -311,7 +606,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             // Only the manifest's strongest, conservative signal (a known approval UI). Tagged as a
             // MANIFEST block (NOT hook) so a later manifest verdict can clear it (review #5: the old
             // shared `hookBlocked` flag made a manifest-set block permanent).
-            enterBlocked(label: label, source: .manifest, at: now)
+            enterBlocked(label: label, source: .manifest, entry: nil, at: now)
         case .working:
             // A coarse "working" guess must NOT clear an authoritative HOOK block, but MAY clear a
             // manifest-sourced one (the manifest is the only authority then).
@@ -342,24 +637,128 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         // The scan runs every 300 ms off a grid claude has not finished vacating — inside the
         // post-exit lockout its verdicts describe an agent that already said goodbye.
         if floorLocked(at: now) { return }
+        guard detection.state != .unknown else {
+            clearScreenDissent()
+            return
+        }
+
+        guard authoritativeCovered else {
+            // No authoritative feed for this pane — the screen IS the authority (herdr's world).
+            applyScreenVerdict(detection, correcting: false, at: now)
+            return
+        }
+        // Tier 2 under coverage: corroborate, and otherwise keep a stopwatch on the disagreement.
+        if screenAgrees(with: detection) {
+            clearScreenDissent()
+            return
+        }
+        // A different claim is a different argument: it re-anchors the clock.
+        if screenDissent?.state != detection.state { armScreenDissent(detection, at: now) }
+        screenDissent = detection // same claim, freshest evidence (visibleIdle can firm up)
+        resolveScreenDissentIfDue(at: now)
+    }
+
+    /// The watchdog proper, run on the CLOCK rather than on the next fold.
+    ///
+    /// ⚠️ It cannot be driven by incoming detections. `AgentDetectionHold.shouldPublish` only
+    /// publishes a CHANGED verdict, and its one heartbeat (`stableVisibleSignalRefreshDue`)
+    /// requires `visibleBlocker` on both sides — so a steady idle/working dissent is folded
+    /// EXACTLY ONCE and a fold-driven window can never elapse. Anchoring on the first dissenting
+    /// fold and re-checking from ``reduce`` (every tick, every signal) is what makes the escape
+    /// hatch reachable at all; before this it was unreachable in the live pipeline while passing
+    /// its unit test, which drove `reduce(.screen(…))` directly.
+    private mutating func resolveScreenDissentIfDue(at now: TimeInterval) {
+        guard authoritativeCovered, let detection = screenDissent, let since = screenDissentSince
+        else {
+            return
+        }
+        let window = detection.state == .blocked
+            ? Self.screenDissentToRaise
+            : Self.screenDissentToRelease
+        // Ordered comparison (NaN-faithful) — never a bare `<` ternary.
+        guard now - since >= window else { return }
+        // ⚠️ Try the verdict FIRST. A matured dissent whose verdict cannot apply — a PLAIN idle
+        // against a hook block, say — used to revoke coverage and ownership anyway and then change
+        // nothing, leaving the pane stale AND unclaimed, so the next `claude -p` could take it.
+        // Authority is handed over only when the screen actually says something that lands.
+        guard applyScreenVerdict(detection, correcting: true, at: now) else { return }
+        // Uninterrupted contradiction past the window, and the screen had a usable verdict: the
+        // hook feed has stopped describing this pane (relay dead, host restarted mid-session, a
+        // record lost). Hand authority back — the move itself is already marked a CORRECTION.
+        authoritativeCovered = false
+        // …and free the pane. If the feed died because the AGENT did (a crash posts no
+        // `SessionEnd`), the replacement's session id differs and would otherwise be ignored
+        // forever — this is the only path that recovers that pane.
+        ownerSessionID = nil
+        clearScreenDissent()
+    }
+
+    private mutating func armScreenDissent(_ detection: AgentScreenDetection, at now: TimeInterval) {
+        screenDissent = detection
+        screenDissentSince = now
+    }
+
+    /// The screen engine's verdict applied as authority (no hook coverage, or the watchdog just
+    /// took it back). `correcting` marks the move as bookkeeping rather than something that
+    /// happened — see ``isQuiet``.
+    /// Returns TRUE when the verdict actually LANDED — the watchdog reads this to decide whether
+    /// handing authority over is justified (a verdict that cannot apply must not cost the pane its
+    /// coverage and its session-ownership gate for nothing).
+    @discardableResult
+    private mutating func applyScreenVerdict(
+        _ detection: AgentScreenDetection, correcting: Bool, at now: TimeInterval,
+    ) -> Bool {
         switch detection.state {
         case .unknown:
-            break
+            return false
         case .blocked:
-            if status == .needsPermission { break } // agreement — keep the richer provenance
-            enterBlocked(label: nil, source: .manifest, at: now)
+            if status == .needsPermission { return false } // agreement — keep the richer provenance
+            enterBlocked(label: nil, source: .manifest, entry: nil, at: now)
+            return true
         case .working:
-            if blockSource == .hook, !hookBlockOverridable(at: now) { break }
+            if blockSource == .hook, !hookBlockOverridable(at: now) { return false }
+            if status == .working { return false }
             enter(.working, label: nil)
+            return true
         case .idle:
-            if status == .done { break } // the done decay outlives a merely-idle screen
+            if status == .done { return false } // the done decay outlives a merely-idle screen
             if blockSource == .hook {
-                guard detection.visibleIdle, hookBlockOverridable(at: now) else { break }
+                guard detection.visibleIdle, hookBlockOverridable(at: now) else { return false }
                 enter(.idle, label: nil)
-            } else if status != .idle {
-                enter(.idle, label: nil)
+                // A hook said blocked and the screen disagreed for long enough to win. That is the
+                // detector correcting ITSELF — never a turn the human should be told finished.
+                isQuiet = true
+                return true
             }
+            guard status != .idle else { return false }
+            let wasBlocked = correcting && status == .needsPermission
+            enter(.idle, label: nil)
+            if wasBlocked { isQuiet = true }
+            return true
         }
+    }
+
+    /// Whether the screen's verdict is consistent with the authoritative status. Coarse on purpose —
+    /// the two vocabularies do not line up exactly (the screen has no `done`, and `.none` means the
+    /// tier-1 signals have not placed an agent yet), and only a CONTRADICTION should start a clock.
+    private func screenAgrees(with detection: AgentScreenDetection) -> Bool {
+        switch detection.state {
+        case .unknown:
+            true
+        case .blocked:
+            status == .needsPermission
+        case .working:
+            status == .working
+        case .idle:
+            // `.done` is a finished turn resting at its prompt — the screen sees exactly that and is
+            // agreeing, not arguing. `.none` is nobody's claim to contradict.
+            status == .idle || status == .done || status == .none
+        }
+    }
+
+    private mutating func clearScreenDissent() {
+        screenDissentSince = nil
+        screenDissent = nil
     }
 
     /// True once the current block is old enough for the screen to have painted its dialog —
@@ -392,26 +791,58 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         exitLockoutUntil = nil
     }
 
-    private mutating func enterBlocked(label: String?, source: BlockSource, at now: TimeInterval) {
+    private mutating func enterBlocked(
+        label: String?, source: BlockSource, entry: BlockEntry?, at now: TimeInterval,
+    ) {
         clearExitLockout()
+        clearScreenDissent()
         isQuiet = false
         // A re-assertion of a standing block keeps the ORIGINAL entry time — the override grace
         // measures how long the dialog has been up, not how recently a hook repeated itself.
         if status != .needsPermission { blockedSince = now }
+        // A screen/manifest block carries no call identity, so it never touches the ledger: the
+        // provenance flag alone governs it, exactly as before. Only hook blocks are itemised.
+        if let entry, !blockLedger.contains(entry) { blockLedger.append(entry) }
         blockSource = source
         doneSince = nil
         status = .needsPermission
         if let label { self.label = Self.clampLabel(label) }
     }
 
+    // MARK: - The block ledger
+
+    /// Resolves the ledger for one tool call — STARTING (its permission was granted, so it runs) or
+    /// FINISHED, which are the same fact for a block: that call is no longer waiting on a human.
+    /// Takes its own entry, plus the id-less ones — those name no call, so this is the only handle
+    /// they will ever have.
+    ///
+    /// ⚠️ A STARTING call used to drop every `.permission` entry regardless of id, on the reasoning
+    /// that a permission dialog is modal so anything starting proves none is up. That reasoning is
+    /// false for a BATCH: `[Read(a), Bash(gated)]` raises the dialog on `Bash` and then `Read`'s own
+    /// `PreToolUse` fires while the human is still looking at it — the same failure the ledger was
+    /// built to fix, left open in this one direction. The denial it stood in for is announced
+    /// properly now (`PermissionDenied`, `AgentInstaller.installedEvents`), so a permission entry
+    /// resolves by identity like every other kind, and a hand nothing answers still comes down on
+    /// Esc, on `Stop`, and on the sustained-dissent watchdog.
+    private mutating func resolveLedger(call id: String?) {
+        blockLedger.removeAll { entry in
+            if entry.toolUseID == nil { return true }
+            return entry.toolUseID == id
+        }
+    }
+
     /// Enter a non-blocked status. `at` non-nil marks the done-decay anchor.
     private mutating func enter(_ next: ClaudeStatus, label newLabel: String?, at now: TimeInterval? = nil) {
         clearExitLockout()
+        clearScreenDissent()
         // Cleared HERE (the one funnel for every non-blocked transition) and re-set by the single
         // caller that means it — so a quiet mark can never survive into a status it did not qualify.
         isQuiet = false
         blockSource = .none
         blockedSince = nil
+        // Leaving the blocked state at all retires every outstanding call: a turn boundary (Stop,
+        // a new prompt, SessionStart) means nothing from the old turn is still being asked.
+        blockLedger.removeAll()
         status = next
         label = newLabel.map(Self.clampLabel)
         if next == .done {
@@ -434,6 +865,13 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         // two sessions, and a stale one would swallow the next session's first genuine finish.
         compactionPending = false
         isQuiet = false
+        blockLedger.removeAll()
+        // Coverage belongs to a SESSION. The next session earns its own on its first hook — and
+        // until then this pane is back to screen-and-presence detection, which is the correct
+        // reading of "we have not heard from an agent here".
+        authoritativeCovered = false
+        ownerSessionID = nil
+        clearScreenDissent()
         if armLockout { exitLockoutUntil = now + Self.postExitFloorLockout }
     }
 

@@ -32,6 +32,19 @@ public struct AgentManifest: Sendable, Equatable {
         public var regex: [String]
         public var lineRegex: [String]
 
+        /// ⚠️ OURS, not herdr's (2026-08-11). A nested gate may name its OWN region, and then it
+        /// (and everything under it) is evaluated against THAT text instead of the rule's.
+        ///
+        /// Upstream evaluates every gate against one region, which makes "…and no modal dialog is
+        /// on screen" INEXPRESSIBLE: a dialog's footer sits below the last horizontal rule, and the
+        /// prompt box's body sits above it, so the rule that must not fire and the evidence that
+        /// would stop it are in different regions by construction. `live_prompt_box` therefore
+        /// carried five `not` needles that could never match anything, and a dialog whose footer had
+        /// been erased mid-repaint read as an idle prompt box — the 2026-08-11 flap.
+        ///
+        /// `nil` = inherit (herdr's behaviour, and what every ported rule still does).
+        public var region: String?
+
         public init(
             all: [Self] = [],
             any: [Self] = [],
@@ -39,6 +52,7 @@ public struct AgentManifest: Sendable, Equatable {
             contains: [String] = [],
             regex: [String] = [],
             lineRegex: [String] = [],
+            region: String? = nil,
         ) {
             self.all = all
             self.any = any
@@ -46,6 +60,7 @@ public struct AgentManifest: Sendable, Equatable {
             self.contains = contains
             self.regex = regex
             self.lineRegex = lineRegex
+            self.region = region
         }
     }
 
@@ -61,6 +76,11 @@ public struct AgentManifest: Sendable, Equatable {
     public static let engineVersion: UInt32 = 3
     /// `top_non_empty_lines` requires a manifest declaring at least this engine version.
     public static let topNonEmptyLinesEngineVersion: UInt32 = 3
+
+    /// A gate naming its OWN region (``Gate/region``) is engine 3 as well — engine 2 silently
+    /// ignores the key, and silently ignoring a VETO is how a rule fires on a screen it was
+    /// written to skip. A manifest that uses it must say so.
+    public static let gateRegionEngineVersion: UInt32 = 3
 
     // MARK: Parse
 
@@ -151,7 +171,11 @@ public struct AgentManifest: Sendable, Equatable {
             visibleBlocker: decodeBool(table["visible_blocker"]),
             visibleWorking: decodeBool(table["visible_working"]),
             skipStateUpdate: decodeBool(table["skip_state_update"]),
-            gate: decodeGate(table),
+            // ⚠️ `allowRegion: false`: the rule's `region` key belongs to the RULE. Reading it
+            // again here would stamp the root gate with an "override" identical to what it already
+            // inherits — harmless in outcome, but it re-resolves the region text on every gate
+            // evaluation and quietly makes every rule look like it uses the cross-region feature.
+            gate: decodeGate(table, allowRegion: false),
         )
     }
 
@@ -161,8 +185,9 @@ public struct AgentManifest: Sendable, Equatable {
         return b
     }
 
-    /// The matcher-field keys are identical at the rule level and every nested gate level.
-    private static func decodeGate(_ table: [String: TOMLValue]) throws -> Gate {
+    /// The matcher-field keys are identical at the rule level and every nested gate level; only
+    /// `region` differs in meaning, so the rule caller opts out of it (`allowRegion: false`).
+    private static func decodeGate(_ table: [String: TOMLValue], allowRegion: Bool = true) throws -> Gate {
         try Gate(
             all: decodeGateList(table["all"]),
             any: decodeGateList(table["any"]),
@@ -170,7 +195,14 @@ public struct AgentManifest: Sendable, Equatable {
             contains: decodeStringList(table["contains"]),
             regex: decodeStringList(table["regex"]),
             lineRegex: decodeStringList(table["line_regex"]),
+            region: allowRegion ? decodeGateRegion(table["region"]) : nil,
         )
+    }
+
+    private static func decodeGateRegion(_ value: TOMLValue?) throws -> String? {
+        guard let value else { return nil }
+        guard let spec = value.stringValue else { throw ValidationError(message: "invalid gate region") }
+        return spec
     }
 
     private static func decodeGateList(_ value: TOMLValue?) throws -> [Gate] {
@@ -178,7 +210,7 @@ public struct AgentManifest: Sendable, Equatable {
         guard let items = value.arrayValue else { throw ValidationError(message: "expected gate array") }
         return try items.map { item -> Gate in
             guard let table = item.tableValue else { throw ValidationError(message: "expected gate table") }
-            let known: Set = ["all", "any", "not", "contains", "regex", "line_regex"]
+            let known: Set = ["all", "any", "not", "contains", "regex", "line_regex", "region"]
             if let unknown = table.keys.first(where: { !known.contains($0) }) {
                 throw ValidationError(message: "unknown gate field '\(unknown)'")
             }
@@ -241,7 +273,13 @@ public struct AgentManifest: Sendable, Equatable {
             guard Self.gateHasPositiveMatcher(rule.gate) else {
                 throw ValidationError(message: "rule '\(rule.id)' must contain a positive matcher")
             }
-            try Self.validateGate(rule.gate, depth: 0, totalGates: &totalGates, totalMatchers: &totalMatchers)
+            try Self.validateGate(
+                rule.gate,
+                depth: 0,
+                minEngine: minEngineVersion,
+                totalGates: &totalGates,
+                totalMatchers: &totalMatchers,
+            )
         }
     }
 
@@ -254,13 +292,33 @@ public struct AgentManifest: Sendable, Equatable {
         gateHasPositiveMatcher(gate) || !gate.not.isEmpty
     }
 
+    /// A gate that names its OWN region must name a real one — same strictness as a rule's, so a
+    /// typo rejects the whole manifest rather than silently inheriting and quietly under-matching —
+    /// and the manifest must declare an engine that HONOURS the key.
+    private static func validateGateRegion(_ gate: Gate, minEngine: UInt32?) throws {
+        guard let spec = gate.region?.trimmingCharacters(in: .whitespaces) else { return }
+        guard ManifestRegion.parse(spec) != nil else {
+            throw ValidationError(message: "invalid gate region '\(spec)'")
+        }
+        if let minEngine, minEngine < gateRegionEngineVersion {
+            throw ValidationError(message: "gate region requires min_engine_version >= 3")
+        }
+        if spec.hasPrefix("top_non_empty_lines("),
+           let minEngine, minEngine < topNonEmptyLinesEngineVersion
+        {
+            throw ValidationError(message: "top_non_empty_lines requires min_engine_version >= 3")
+        }
+    }
+
     private static func validateGate(
         _ gate: Gate,
         depth: Int,
+        minEngine: UInt32?,
         totalGates: inout Int,
         totalMatchers: inout Int,
     ) throws {
         guard depth <= maxGateDepth else { throw ValidationError(message: "gate nesting too deep") }
+        try validateGateRegion(gate, minEngine: minEngine)
         totalGates += 1
         guard totalGates <= maxTotalGates else { throw ValidationError(message: "too many gates") }
         let matcherCount = gate.contains.count + gate.regex.count + gate.lineRegex.count
@@ -283,13 +341,25 @@ public struct AgentManifest: Sendable, Equatable {
             guard gateHasPositiveMatcher(nested) else {
                 throw ValidationError(message: "nested gate must contain a positive matcher")
             }
-            try validateGate(nested, depth: depth + 1, totalGates: &totalGates, totalMatchers: &totalMatchers)
+            try validateGate(
+                nested,
+                depth: depth + 1,
+                minEngine: minEngine,
+                totalGates: &totalGates,
+                totalMatchers: &totalMatchers,
+            )
         }
         for nested in gate.not {
             guard gateHasAnyMatcher(nested) else {
                 throw ValidationError(message: "not-gate must contain a matcher")
             }
-            try validateNotGate(nested, depth: depth + 1, totalGates: &totalGates, totalMatchers: &totalMatchers)
+            try validateNotGate(
+                nested,
+                depth: depth + 1,
+                minEngine: minEngine,
+                totalGates: &totalGates,
+                totalMatchers: &totalMatchers,
+            )
         }
     }
 
@@ -298,10 +368,12 @@ public struct AgentManifest: Sendable, Equatable {
     private static func validateNotGate(
         _ gate: Gate,
         depth: Int,
+        minEngine: UInt32?,
         totalGates: inout Int,
         totalMatchers: inout Int,
     ) throws {
         guard depth <= maxGateDepth else { throw ValidationError(message: "gate nesting too deep") }
+        try validateGateRegion(gate, minEngine: minEngine)
         totalGates += 1
         guard totalGates <= maxTotalGates else { throw ValidationError(message: "too many gates") }
         let matcherCount = gate.contains.count + gate.regex.count + gate.lineRegex.count
@@ -324,13 +396,25 @@ public struct AgentManifest: Sendable, Equatable {
             guard gateHasPositiveMatcher(nested) else {
                 throw ValidationError(message: "nested gate must contain a positive matcher")
             }
-            try validateGate(nested, depth: depth + 1, totalGates: &totalGates, totalMatchers: &totalMatchers)
+            try validateGate(
+                nested,
+                depth: depth + 1,
+                minEngine: minEngine,
+                totalGates: &totalGates,
+                totalMatchers: &totalMatchers,
+            )
         }
         for nested in gate.not {
             guard gateHasAnyMatcher(nested) else {
                 throw ValidationError(message: "not-gate must contain a matcher")
             }
-            try validateNotGate(nested, depth: depth + 1, totalGates: &totalGates, totalMatchers: &totalMatchers)
+            try validateNotGate(
+                nested,
+                depth: depth + 1,
+                minEngine: minEngine,
+                totalGates: &totalGates,
+                totalMatchers: &totalMatchers,
+            )
         }
     }
 }

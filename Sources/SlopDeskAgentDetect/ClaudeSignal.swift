@@ -17,16 +17,29 @@ public enum ClaudeHookEvent: Sendable, Equatable {
     case userPromptSubmit(sessionID: String?)
     /// A tool is about to run → working (and clears a just-resolved permission block).
     /// `tool` is the tool name (e.g. `Bash`) — carried for diagnostics/labels; the coarse
-    /// status only needs that a tool is starting.
-    case preToolUse(sessionID: String?, tool: String?)
+    /// status only needs that a tool is starting. `toolUseID` is the call's identity, which is
+    /// what lets the machine's BLOCK LEDGER resolve exactly the call that was blocking rather
+    /// than "whatever was outstanding" (see ``ClaudeStatusMachine``).
+    case preToolUse(sessionID: String?, tool: String?, toolUseID: String? = nil)
     /// A tool finished → still working until the turn's Stop (a tool result is mid-turn).
-    case postToolUse(sessionID: String?, tool: String?)
+    /// `toolUseID` identifies WHICH call finished — a parallel tool's result must not resolve
+    /// the `AskUserQuestion` the human is still staring at.
+    case postToolUse(sessionID: String?, tool: String?, toolUseID: String? = nil)
     /// An async notification — `permission_prompt` / waiting-for-input → BLOCKED.
-    case notification(kind: NotificationKind, label: String?)
+    ///
+    /// `toolUseID` is present when the block belongs to a specific tool call (a
+    /// `PermissionRequest`, or the `AskUserQuestion` `PreToolUse` the W10 adapter routes here) and
+    /// `nil` for the free-standing notifications (`agent_needs_input`, `elicitation_dialog`) that
+    /// name no call. The ledger treats the two differently — see ``ClaudeStatusMachine``.
+    case notification(kind: NotificationKind, label: String?, toolUseID: String? = nil, sessionID: String? = nil)
     /// The turn ended → done (then idle after a timeout). `label` = last assistant message.
     case stop(sessionID: String?, label: String? = nil)
     /// A subagent stopped — does not change the parent pane's coarse status (kept for completeness).
     case subagentStop(agentID: String?)
+    /// The turn was INTERRUPTED by the human (`PostToolUseFailure` with `is_interrupt`). Claude
+    /// Code emits no `Stop` for this, so it is the only announcement the turn is over — and it is
+    /// QUIET, exactly like an Esc-cancelled dialog: the person who ended it was looking at it.
+    case interrupted(sessionID: String? = nil)
     /// The session ended → claude is gone (none).
     case sessionEnd(sessionID: String?)
     /// A transcript COMPACTION is starting (`/compact`, or the automatic mid-turn one). Carries no
@@ -37,6 +50,37 @@ public enum ClaudeHookEvent: Sendable, Equatable {
     /// 2026-08-10); any real turn activity in between (a tool, a new prompt) disarms it, so an
     /// AUTO-compaction mid-turn still ends on a genuine `.done`.
     case preCompact(sessionID: String?)
+
+    /// Returns this event with `id` filled into every session slot it left empty.
+    ///
+    /// The W10 adapter maps a typed ``HookPayload``, and the payload cases that model a CALL
+    /// (`ToolUseBlock`, `NotificationInfo`) carry no session — Claude Code stamps `session_id` on
+    /// the envelope, not on the tool. The host reads it off the raw body (`HookParser.sessionID`)
+    /// and stamps it here, so every authoritative event arrives attributed and
+    /// `ClaudeStatusMachine` can tell its own pane agent from a nested `claude -p`. Only nil slots
+    /// are filled: an id the payload itself named always wins.
+    public func attributed(to id: String?) -> Self {
+        guard let id, !id.isEmpty else { return self }
+        switch self {
+        case let .sessionStart(existing): return .sessionStart(sessionID: existing ?? id)
+        case let .userPromptSubmit(existing): return .userPromptSubmit(sessionID: existing ?? id)
+        case let .sessionEnd(existing): return .sessionEnd(sessionID: existing ?? id)
+        case let .interrupted(existing): return .interrupted(sessionID: existing ?? id)
+        case let .preCompact(existing): return .preCompact(sessionID: existing ?? id)
+        case let .preToolUse(existing, tool, useID):
+            return .preToolUse(sessionID: existing ?? id, tool: tool, toolUseID: useID)
+        case let .postToolUse(existing, tool, useID):
+            return .postToolUse(sessionID: existing ?? id, tool: tool, toolUseID: useID)
+        case let .stop(existing, label):
+            return .stop(sessionID: existing ?? id, label: label)
+        case let .notification(kind, label, useID, existing):
+            return .notification(kind: kind, label: label, toolUseID: useID, sessionID: existing ?? id)
+        case .subagentStop:
+            // A subagent belongs to whichever session owns it and changes no status — nothing to
+            // attribute, and attributing it would let a nested run's subagent claim a free pane.
+            return self
+        }
+    }
 
     /// The semantic class of a `Notification` hook (matcher field, docs/41 §2.6).
     public enum NotificationKind: Sendable, Equatable {

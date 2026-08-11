@@ -61,6 +61,14 @@ public enum JSONValue: Sendable, Equatable, Codable {
         return nil
     }
 
+    /// TRUE/FALSE for a JSON boolean; `nil` for anything else — including the string `"true"`,
+    /// which a producer that stringifies its payload would send (tolerated by the callers' `??`
+    /// defaults rather than guessed at here).
+    public var boolValue: Bool? {
+        if case let .bool(value) = self { return value }
+        return nil
+    }
+
     public var arrayValue: [Self]? {
         if case let .array(value) = self { return value }
         return nil

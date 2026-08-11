@@ -841,14 +841,24 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Invokes ``onAgentStatusChanged`` (if set) with `status`. Called from the detector-folding
     /// sites AFTER `agentDetectLock` is released, only on a real status transition.
-    private func notifyAgentStatusChanged(_ status: ClaudeStatus) {
+    /// `quiet` = the detector has qualified this transition as BOOKKEEPING (the wire `kind` byte's
+    /// ``AgentStatusKind/quiet``): a `/compact` boundary, an Esc-cancelled dialog, or the screen
+    /// watchdog correcting a hook block it outlasted. The status still moves — dots, rollups, the
+    /// document — but it must NOT count as a finished turn. Without this veto every one of those
+    /// lands on `working|needsPermission → idle`, the hook-less completion shape, and mints an
+    /// unread badge for every attached client over something nobody did. The CLIENT already vetoes
+    /// on the same byte (``WorkspaceStore/setAgentStatus``); this is the host-side half, which is
+    /// what the multi-client unread latch actually reads.
+    private func notifyAgentStatusChanged(_ status: ClaudeStatus, quiet: Bool) {
         // A finished turn is a TRANSITION, counted here — at the ONE place every detector fold
         // funnels a real transition through — which is why the count cannot be double-bumped by two
         // feeds observing the same edge.
         completionLock.lock()
         let previous = _lastCompletionStatus
         _lastCompletionStatus = status
-        if Self.isCompletionTransition(previous: previous, next: status) { _completionEpoch &+= 1 }
+        if !quiet, Self.isCompletionTransition(previous: previous, next: status) {
+            _completionEpoch &+= 1
+        }
         completionLock.unlock()
         onAgentStatusChanged?(status)
     }
@@ -1440,10 +1450,12 @@ final class MuxChannelSession: @unchecked Sendable {
     private func foldScreenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) {
         agentDetectLock.lock()
         let emission = agentDetector.screenDetection(detection, at: now)
-        let newStatus = emission.status != nil ? agentDetector.status : nil
+        let newStatus = emission.status != nil
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(emission)
-        if let newStatus { notifyAgentStatusChanged(newStatus) }
+        if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
 
     /// Marks the resident screen grid stale (resize / any geometry change): the pending buffer
@@ -1490,11 +1502,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // A status transition (from EITHER fold) → notify the cross-pane supervision observer.
         // Both folds share the one machine, so the final `status` is the post-fold value.
         let statusChanged = (tickEmission.status != nil || sampleEmission.status != nil)
-        let newStatus = statusChanged ? agentDetector.status : nil
+        let newStatus = statusChanged
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(tickEmission)
         publishAgentEmission(sampleEmission)
-        if let newStatus { notifyAgentStatusChanged(newStatus) }
+        if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
 
     /// Ships one detector emission: enqueues its control messages and, when it carries a TITLE
@@ -1523,10 +1537,12 @@ final class MuxChannelSession: @unchecked Sendable {
     private func foldTitleSample(title: String, at now: TimeInterval) {
         agentDetectLock.lock()
         let emission = agentDetector.title(title, at: now)
-        let newStatus = emission.status != nil ? agentDetector.status : nil
+        let newStatus = emission.status != nil
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(emission)
-        if let newStatus { notifyAgentStatusChanged(newStatus) }
+        if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
 
     /// Folds one client→PTY input chunk through the detector — the Esc-cancel unblock edge (a
@@ -1538,10 +1554,12 @@ final class MuxChannelSession: @unchecked Sendable {
         guard agentDetectEnabled else { return }
         agentDetectLock.lock()
         let emission = agentDetector.userInput(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
-        let newStatus = emission.status != nil ? agentDetector.status : nil
+        let newStatus = emission.status != nil
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(emission)
-        if let newStatus { notifyAgentStatusChanged(newStatus) }
+        if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
 
     /// Probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
@@ -2841,10 +2859,12 @@ final class MuxChannelSession: @unchecked Sendable {
     func ingestAgentHookRecord(_ bytes: Data) {
         agentDetectLock.lock()
         let emission = agentDetector.hook(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
-        let changed = emission.status != nil ? agentDetector.status : nil
+        let changed = emission.status != nil
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(emission)
-        if let changed { notifyAgentStatusChanged(changed) }
+        if let changed { notifyAgentStatusChanged(changed.0, quiet: changed.1) }
     }
 
     /// Folds an AGENT SELF-REPORT (the `report` ctl verb) into the ONE ``ClaudePaneDetector``
@@ -2857,10 +2877,12 @@ final class MuxChannelSession: @unchecked Sendable {
         let emission = agentDetector.report(
             state: state, message: message, at: ProcessInfo.processInfo.systemUptime,
         )
-        let changed = emission.status != nil ? agentDetector.status : nil
+        let changed = emission.status != nil
+            ? (agentDetector.status, agentDetector.isQuietTransition)
+            : nil
         agentDetectLock.unlock()
         publishAgentEmission(emission)
-        if let changed { notifyAgentStatusChanged(changed) }
+        if let changed { notifyAgentStatusChanged(changed.0, quiet: changed.1) }
     }
 
     // MARK: - Agent-control surface (public primitives used by AgentControlListener)

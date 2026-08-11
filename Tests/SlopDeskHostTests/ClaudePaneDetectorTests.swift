@@ -214,7 +214,11 @@ final class ClaudePaneDetectorTests: XCTestCase {
             return
         }
         XCTAssertEqual(state, 1, "idle urgency")
-        XCTAssertEqual(kind, 0, "the stale notification kind dies with the block")
+        // ⚠️ QUIET, not 0 (2026-08-11). The stale notification kind does die with the block — but
+        // `needsPermission → idle` is the hook-less COMPLETION shape, so an un-qualified frame here
+        // announced a finished turn (badge, banner, sound) to the very person who had just pressed
+        // Esc. The kind byte is how the host says "display this, do not announce it".
+        XCTAssertEqual(kind, AgentStatusKind.quiet.rawValue, "a dismissal is bookkeeping, not a finish")
         XCTAssertEqual(label, "", "the blocking question dies with the block")
     }
 
@@ -616,15 +620,23 @@ final class ClaudePaneDetectorTests: XCTestCase {
 
     /// A prompt from a NEW session id re-derives the intent from scratch (a fresh `claude` run /
     /// `/clear` mints a new session) — the row re-titles to the new task.
+    ///
+    /// ⚠️ The `SessionEnd` is not decoration. A pane belongs to one session at a time (see
+    /// `ClaudeStatusMachine.ownerSessionID`), and this is exactly how `/clear` behaves: in
+    /// Claude Code 2.1.227 `clearConversation` **awaits** the `SessionEnd` hook (reason `clear`)
+    /// before doing anything else, and `/resume` does the same with reason `resume`. So the old
+    /// session always retires the pane before the new one speaks — which is precisely what
+    /// separates a replacement from a nested `claude -p` that just starts talking.
     func testIntentRederivesOnNewSession() {
         var d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
             at: 0,
         )
+        _ = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1","reason":"clear"}"#), at: 1)
         let next = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s2","prompt":"write docs"}"#),
-            at: 1,
+            at: 2,
         )
         XCTAssertEqual(next.intent, .agentSessionIntent("write docs"))
     }

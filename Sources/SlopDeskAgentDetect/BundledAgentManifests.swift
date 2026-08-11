@@ -49,9 +49,11 @@ enum BundledAgentManifests {
 
     static let claudeTOML = #"""
     id = "claude"
-    version = "2026.07.13.1"
-    min_engine_version = 2
-    updated_at = "2026-07-13T00:00:00Z"
+    version = "2026.08.11.1"
+    # 3, not 2: the cross-region gate vetoes below are an engine-3 key, and an engine that ignored
+    # them would drop every veto and read a repainting dialog as an idle prompt.
+    min_engine_version = 3
+    updated_at = "2026-08-11T00:00:00Z"
     aliases = ["claude-code"]
 
     [[rules]]
@@ -124,6 +126,38 @@ enum BundledAgentManifests {
       { contains = ["tab/arrow keys"] },
       { contains = ["arrow keys to navigate"] },
       { contains = ["↑/↓ to navigate"] },
+      # ⚠️ DIVERGES FROM herdr (2026-08-11) — and this is the entry that matters.
+      #
+      # The five needles above are DEAD. They are evaluated against this rule's own region, and a
+      # modal dialog's footer sits BELOW the last horizontal rule — outside `prompt_box_body` by
+      # construction. So they never saw the thing they were written to veto, while the dialog's
+      # focused option (`❯ 1. …`) satisfied the `^\s*❯` caret above. One torn mid-repaint read of an
+      # `AskUserQuestion` therefore reported an IDLE PROMPT BOX with `visible_idle` — the strongest
+      # idle verdict the engine can produce — for a pane blocked on a human.
+      #
+      # This one looks where the evidence actually is. `after_last_horizontal_rule` is exactly
+      # `live_blocked_form`'s region, so the two rules are now strict complements: if a live form
+      # footer is on screen, this rule cannot fire, whatever the caret above it looks like.
+      { region = "after_last_horizontal_rule", any = [
+        { contains = ["enter to select"] },
+        { contains = ["esc to cancel"] },
+        { contains = ["tab/arrow keys"] },
+        { contains = ["arrow keys to navigate"] },
+        { contains = ["arrows to navigate"] },
+        { contains = ["↑/↓ to navigate"] },
+        { contains = ["↑↓ to navigate"] },
+      ] },
+      # …and the same veto read off the OPTION LIST rather than the footer, because a repaint
+      # ERASES lines before it rewrites them: mid-frame the footer is gone from every region, and
+      # the cross-region needle above has nothing left to find. The list survives, because it is
+      # what the caret is sitting in. `❯ 1. …` accompanied by a SIBLING `  2. …` is a menu, not
+      # somebody's typing — requiring the sibling is what keeps a human who types "1. foo" at a
+      # real prompt from being vetoed (and even then the cost is only losing `visible_idle`: the
+      # `✳` title rule still reports the pane idle).
+      { all = [
+        { line_regex = ['^\s*❯\s+\d+\.\s'] },
+        { line_regex = ['^\s{2,}\d+\.\s'] },
+      ] },
     ]
 
     [[rules]]
@@ -177,6 +211,12 @@ enum BundledAgentManifests {
     state = "blocked"
     priority = 300
     region = "whole_recent"
+    # ⚠️ DIVERGES FROM herdr (2026-08-11): upstream omits `visible_blocker` here, alone among the
+    # blocked rules. That made a pane blocked through THIS rule carry a different visibility than a
+    # pane blocked through any other, so alternating between them flipped `visible_blocker` and
+    # published a type-27 saying something had changed when only the matching rule had. It also cost
+    # the 800 ms stable-blocker refresh. A blocker the human can see is a visible blocker.
+    visible_blocker = true
     any = [
       { contains = ["do you want to"], any = [{ contains = ["yes"] }, { contains = ["❯"] }] },
       { contains = ["would you like to"], any = [{ contains = ["yes"] }, { contains = ["❯"] }] },
