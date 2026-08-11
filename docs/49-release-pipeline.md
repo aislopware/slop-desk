@@ -43,17 +43,24 @@ better-update cannot **build** this repo — its build/submit pipeline is `ios |
 (`apps/cli/src/lib/build-profile.ts`), so do not try `better-update build` here. It is used purely
 as the end-to-end-encrypted credential vault, which is platform-agnostic.
 
-It *can* sign and notarize macOS, though — `better-update macos sign|notarize` (CLI ≥ 0.73.1)
-does Developer-ID signing with hardened runtime, notarizes, and staples. We do **not** use it, for
-one concrete reason: it reads the certificate from the *credentials* store, and the only way to
-get a Developer ID in there is `credentials generate distribution-certificate --type developer-id`,
-which **issues a new certificate** — `credentials upload` is still `--platform=<ios|android>` with
-no developer-id type, so the existing `.p12` cannot be imported. Our identity lives in `env` and
-`package-release.sh` drives `codesign`/`notarytool` directly, which is proven and costs no second
-certificate. Revisit only if `upload` learns to take a Developer ID.
+It *can* sign and notarize macOS — `better-update macos sign|notarize` (CLI ≥ 0.73.1) does
+Developer-ID signing with hardened runtime, notarizes, and staples. We still keep the identity in
+`env` and drive `codesign`/`notarytool` from `package-release.sh`. **Both routes into the
+credentials store were tried on 2026-08-11 and both are closed** — do not spend the afternoon
+again:
 
-(A related correction: the *credentials* store is not iOS/Android-only, as an earlier version of
-this doc implied. `generate` reaches macOS; `upload` and `configure` do not.)
+| Attempt | Result |
+|---|---|
+| `credentials generate distribution-certificate --type developer-id` | Apple **403** — *"This operation can only be performed by the Account Holder."* The org's only ASC key (`mrke4e5m`, `39X58XWA75`) is `APP_MANAGER`. |
+| `credentials upload --platform macos …` | Rejected at argument parsing — `--platform` is `<ios\|android>`, full stop. |
+| `credentials upload --platform ios --type distribution-certificate` with the real Developer ID `.p12` | Upload *succeeds*, and the record is then useless: `credentials view` → *"Unsupported credential type: undefined"*, and `macos sign` still reports **no Developer ID certificate stored**. It filters on platform, not on certificate content. Deleted again. |
+
+So the store has no macOS ingest path at 0.73.1: `generate` is the only door and Apple guards it.
+Note there is nothing to *migrate* anyway — the Developer ID on App Store Connect (`YR8L23ZCAV`,
+serial `3FF0DE8B…`) is byte-for-byte the identity already in `env` and in the login keychain;
+`generate` would mint a *second* certificate, not move this one. Revisit only when `upload` accepts
+a Developer ID, or when an Account-Holder ASC key exists and a second certificate is actually
+wanted.
 
 SlopDesk is linked as a **non-Expo** project, so `better-update init` writes the project id to a
 top-level `projectId` in `eas.json` at the repo root (not `app.json` — there is no Expo config
