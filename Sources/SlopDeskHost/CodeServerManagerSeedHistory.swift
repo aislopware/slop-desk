@@ -1650,7 +1650,9 @@ extension CodeServerManager {
             "files.autoSave": "onFocusChange"
         }
         """,
-        // v32 — ONE COLOUR ONE STROKE, before Monaco was moved off the DOM renderer.
+        // v33 — the one day Monaco was told to draw on the GPU. `experimentalGpuAcceleration: "on"`
+        // made every file in this panel unopenable (WebKit has no `device-pixel-content-box`), so
+        // v34 is v32's text again and only THIS form retires. A host still on it upgrades out.
         """
         {
             "chat.disableAIFeatures": true,
@@ -1747,6 +1749,7 @@ extension CodeServerManager {
             "editor.guides.bracketPairs": "active",
             "editor.stickyScroll.enabled": true,
             "editor.renderWhitespace": "trailing",
+            "editor.experimentalGpuAcceleration": "on",
             "workbench.tree.renderIndentGuides": "always",
             "workbench.tree.indent": 16,
             "files.autoSave": "onFocusChange"

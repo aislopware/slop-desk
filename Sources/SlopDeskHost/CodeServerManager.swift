@@ -512,23 +512,26 @@ final class CodeServerManager: @unchecked Sendable {
     /// outright when rendered here: the workbench sizes that element in px and tells Monaco those
     /// numbers, so shrinking it in CSS desynchronises the two. With one colour there is nothing to
     /// gap ANYWAY; the edge is the whole island.
-    /// THE EDITOR DRAWS ITSELF ON THE GPU (v33, user-directed 2026-08-10):
-    /// `editor.experimentalGpuAcceleration: "on"` moves Monaco's view layers off the DOM and onto a
-    /// WebGPU canvas. It is a REGISTERED editor option — `Vp(46, "experimentalGpuAcceleration",
-    /// "off", ["off", "on"])` in the 4.131 bundle — so it carries none of the v7 unknown-key trap
-    /// that `chat.commandCenter.enabled` and `window.customTitleBarVisibility` did.
-    /// It is seeded because the panel can actually TAKE that path, which was not obvious and was
-    /// measured rather than assumed: a standalone `WKWebView` probe on this macOS returned
-    /// `navigator.gpu` present, `requestAdapter()` → `requestDevice()` both succeeding on the Apple
-    /// GPU, and a live `getContext("webgpu")` (`maxTextureDimension2D` 8192). Had the device request
-    /// failed the cost would still be bounded — the workbench raises a warning notification whose
-    /// action writes the key back to `"off"` — but a seed that lands on a silent fallback is a seed
-    /// nobody can reason about.
-    /// ⚠️ This changes what is DRAWN, not how keys ARRIVE. The sibling input-path option
-    /// `editor.editContext` defaults on but is `included`-gated on the `EditContext` DOM API, and
-    /// the same probe found `window.EditContext` UNDEFINED — WebKit does not ship it, so Monaco
-    /// keeps the legacy hidden-textarea path in this panel no matter what is seeded here. Typing
-    /// latency lives there and in the mesh round trip; do not expect this key to move it.
+    /// ⚠️⚠️ THE EDITOR MAY NOT DRAW ITSELF ON THE GPU HERE — `editor.experimentalGpuAcceleration`
+    /// STAYS UNSEEDED (v33 shipped it `"on"`, v34 takes it back out, reported 2026-08-11):
+    /// with the key on, EVERY file the panel opens fails — the workbench raises `Unable to open
+    /// '<name>'` and logs `Could not observe device pixel dimensions`. WebGPU was never the
+    /// problem. Monaco's GPU view context sizes its canvas through
+    /// `observer.observe(canvas, { box: ["device-pixel-content-box"] })` and rethrows any failure
+    /// as that error, and a `WKWebView` probe on this macOS answers: `ResizeObserver` present,
+    /// `box: "content-box"` fine, `"device-pixel-content-box"` → `TypeError`, and
+    /// `devicePixelContentBoxSize` ABSENT from `ResizeObserverEntry.prototype`. The throw travels
+    /// out of the editor's construction, so the failure is not a silent fallback to the DOM
+    /// renderer — it is no editor at all. The v33 probe measured `navigator.gpu`,
+    /// `requestAdapter()`, `requestDevice()` and a live `getContext("webgpu")` and all four passed;
+    /// none of them is the gate. The second half of that entry is unchanged and still true: this
+    /// key would have changed what is DRAWN, not how keys ARRIVE — the sibling input-path option
+    /// `editor.editContext` defaults on but is `included`-gated on the `EditContext` DOM API, which
+    /// the same probe finds UNDEFINED, so Monaco keeps the legacy hidden-textarea path in this
+    /// panel no matter what is seeded. Typing latency lives there and in the mesh round trip.
+    /// Shimming `ResizeObserver` in the page dressing to fake the missing box is NOT the move: it
+    /// would have to synthesise the very device-pixel numbers the canvas is sized by, to reach a
+    /// renderer upstream ships as experimental and tests in Chromium.
     /// Every key here is USER-scope-overridable in the workbench
     /// (user settings land in this same file and win on conflict-free keys the user later edits —
     /// see the pristine-upgrade rule in ``seedUserSettings(at:)``).
@@ -628,7 +631,6 @@ final class CodeServerManager: @unchecked Sendable {
         "editor.guides.bracketPairs": "active",
         "editor.stickyScroll.enabled": true,
         "editor.renderWhitespace": "trailing",
-        "editor.experimentalGpuAcceleration": "on",
         "workbench.tree.renderIndentGuides": "always",
         "workbench.tree.indent": 16,
         "files.autoSave": "onFocusChange"

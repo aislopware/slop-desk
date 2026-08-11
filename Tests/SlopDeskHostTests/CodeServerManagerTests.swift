@@ -815,16 +815,17 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(min, 38, "below the workbench's own floor")
     }
 
-    func testSeededEditorDrawsOnTheGpuAndClaimsNothingAboutTheInputPath() {
-        // The option is an ENUM in the bundle — `["off", "on"]` — so a boolean or a line-count
-        // number here reads as set while the editor silently keeps the DOM renderer.
-        XCTAssertEqual(seedValue("editor.experimentalGpuAcceleration") as? String, "on")
-        XCTAssertNil(
-            seedValue("editor.experimentalGpuAcceleration") as? Bool,
-            "the enum takes \"on\"/\"off\", never a boolean",
-        )
+    func testSeededEditorNeverAsksForTheGpuRendererOrTheEditContextInputPath() {
+        // Both keys are REGISTERED in the 4.131 bundle — the reason they stay unseeded is the DOM,
+        // not the schema. The GPU view context sizes its canvas through
+        // `observe(canvas, { box: ["device-pixel-content-box"] })`, and a WKWebView probe answers
+        // `TypeError` to that box (with `devicePixelContentBoxSize` absent from the entry
+        // prototype). The workbench rethrows it out of the editor's construction, so `"on"` is not
+        // a fallback to the DOM renderer — it is `Unable to open '<file>'` for every file. v33
+        // shipped it on for one day; it lives on only in ``obsoleteSeeds`` so those hosts recover.
+        XCTAssertNil(seedValue("editor.experimentalGpuAcceleration"))
         // Its sibling rides the `EditContext` DOM API, which WebKit does not ship — measured
-        // `undefined` in a WKWebView probe. Seeding it would claim an input path this panel can
+        // `undefined` in the same probe. Seeding it would claim an input path this panel can
         // never take; the fallback is Monaco's hidden textarea either way.
         XCTAssertNil(seedValue("editor.editContext"))
     }
