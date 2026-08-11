@@ -199,6 +199,45 @@ The shadow is the one token that had to grow: `State.overlayShadow` (0.30) is tw
 because a panel over the dark island is separated by tone while a paper card is the ground's own
 cream lifted off the ground, and nothing but the cast tells them apart at the card's edges.
 
+**The family gained a one-line member: the notice CAPSULE** (`SlatePaperCapsule` — `COPIED`, `TAB
+CLOSED`, `JUMPED`, `REPLY SENT`), and it arrived by the same arithmetic that made the family paper in
+the first place. Those chips were drawn ON the glass and were reported as ugly and sunken (2026-08-11):
+plate **1.63 : 1** against the face, rim **1.49** against its own plate, label **2.19** — under even
+the 3.0 floor for non-text. It is not fixable there. The whole on-glass band, face `#22212C` to comment
+ink `#7970A9`, is **3.56 : 1 wide in total**, and a chip needs three separable steps inside it, so
+every arrangement spends one to buy another. That is the wall the GROUND already hit — the dark half
+of the axis cannot separate — and the answer is the same one: paper. Plate 15.32, rim 9.57, label 6.99,
+detail 20.25.
+
+Two consequences worth stating, because both are the kind that get undone by accident:
+
+- **The paper and the VOICE are one decision.** The family speaks the system's neutral semantics in
+  sentence case, so the caps-mono register stayed behind with the glass it belongs to: `COPIED · 1,204
+  CHARS` → `Copied · 1,204 characters`. Hierarchy is size and weight in one voice — the old chip asked
+  COLOUR to carry the whole distinction, which is how a 2.19 label read as designed rather than broken.
+- **The scheme follows the PLATE, not the ancestor.** The capsule is the one paper surface mounted
+  INSIDE the island, so it flips back to `Slate.chromeColorScheme`; without it the semantic ink resolves
+  for the dark well and draws white on cream. This is the SELECTED TAB's flip in the other direction —
+  one rule, both ways — and it is not a third appearance: still two polarities, still one `NSApp` pin.
+
+The durable member of the stack (`ConnectionAlertChip`) keeps the glass palette and takes the capsule's
+shape: **one silhouette, two materials, and the line between them is DURATION.** A notice arrives and
+leaves; an alarm lives there, and a cream plate glowing over the terminal for minutes is glare a 1.5 s
+capsule is too brief to cause.
+
+**A chord inside a notice is a KEY, not two words in bold** (`NoticeKeycap`). `Tab closed · ⇧⌘T reopens`
+set the whole answer in one semibold run, which read as emphasis rather than as something to press. The
+cap takes the hero rung and both text runs go quiet — the label frames it, the trailing verb only says
+what pressing does — so a notice carrying a cap also **drops the `·`**: a keycap is already a boundary
+object, and the dot earns its place only where there is none (`Copied · 100 lines`). It shares
+`SlateKeycap`'s face and plate and NOT its height: that cap is `heightControl` tall for a palette list
+row and inflates the capsule by a third.
+
+⚠️ **Both members clip to their own shape, and that is a rendering fix, not polish.** `strokeBorder` on a
+shape whose corner radius reaches half its height leaves a stray vertical tick just outside each
+horizontal extreme. Verify a rim change at NATIVE scale — the 3× snapshot is an interpolation and hides
+it — and never drop the `.clipShape`.
+
 ### Geometry
 
 Window 16, moat **8 on all four sides**, island **16**, compact island (selected tab) **10**.
@@ -455,7 +494,12 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
   symbols. `SlateKeycap` is the system face on purpose.
 - DON'T add appearance pins beyond the ONE `SlateAppearancePin` app-level pin (no per-window, no
   per-control except the workbench webviews); DON'T let OS-appearance semantics leak into the
-  glass (use the forced glass scheme).
+  glass (use the forced glass scheme). DO flip a subtree's colour SCHEME to match the plate it stands
+  on — into the glass for a compact island, back to `chromeColorScheme` for the paper notice capsule
+  inside the island. Those are the app's two polarities, not new appearances.
+- DON'T set a transient notice on the glass. The on-glass band is 3.56 : 1 end to end and cannot hold
+  a plate, a rim and a label at once — the notice family is paper (`slatePaperCapsule`), in sentence
+  case, with hierarchy by size and weight rather than by ink.
 - **Selection is a COMPACT ISLAND** (user-directed 2026-08-08) — the selected TAB, in the sidebar
   list and on the panel strip alike, is stamped out of the island's own material: island fill +
   divider hairline at `{rounded.compact-island}`, with the row's colour scheme flipped to the glass

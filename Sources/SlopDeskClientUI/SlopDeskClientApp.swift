@@ -988,7 +988,7 @@ public struct SlopDeskClientApp: App {
         // visible affordance at the moment it matters. The store fires this only when a REOPENABLE tab
         // just landed on the LIFO, so the chip never promises an undo it can't deliver.
         store.onTabCloseRecorded = { [weak overlay] in
-            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+            overlay?.noteNotice(label: "Tab closed", keycap: "⇧⌘T", detail: "reopens")
         }
         // A teleport jump (⌘⇧U walk, palette / Open Quickly, a Global Search hit, a notification /
         // connection-alert click) swaps the whole viewport in one frame. The store fires this ONLY when
@@ -996,7 +996,7 @@ public struct SlopDeskClientApp: App {
         // SECURITY: the breadcrumb embeds OSC/PTY-settable titles → mask at the display site.
         store.onCrossTabJump = { [weak overlay] breadcrumb in
             overlay?.noteNotice(
-                label: "JUMPED", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
+                label: "Jumped", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
             )
         }
         // The workspace belongs to the host (docs/45 §7.2), so with the document out of reach every
@@ -1004,7 +1004,7 @@ public struct SlopDeskClientApp: App {
         // the last layout it knows and looks entirely normal. Saying so is the difference between a
         // host that is unreachable and a UI that ignored the gesture.
         store.onLayoutChangeUnavailable = { [weak overlay] in
-            overlay?.noteNotice(label: "WORKSPACE OFFLINE", detail: "LAYOUT IS HOST-OWNED")
+            overlay?.noteNotice(label: "Workspace offline", detail: "Layout is host-owned")
         }
     }
 

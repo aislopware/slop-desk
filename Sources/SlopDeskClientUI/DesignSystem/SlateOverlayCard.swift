@@ -130,11 +130,83 @@ struct SlatePaperCard: ViewModifier {
     }
 }
 
+/// The floating family's ONE-LINE member: the transient notice CAPSULE that stands at the island's foot
+/// (`COPIED`, `TAB CLOSED`, `JUMPED`, `REPLY SENT`). Same paper, same rim, same neutral ink as
+/// ``SlatePaperCard`` — a capsule instead of a card because it carries exactly one line and nothing else.
+///
+/// ⚠️ IT IS PAPER, AND THAT IS ARITHMETIC RATHER THAN TASTE. These chips used to be drawn ON the glass
+/// (``InstrumentChipShell``, the profile's own `raised`/`rim`/`ink2`) and were reported as ugly and sunken
+/// (2026-08-11). Measured, the plate stood at **1.63 : 1** against the glass face, its rim at **1.49 : 1**
+/// against its own plate, and the LABEL — the word saying what just happened — at **2.19 : 1**, under even
+/// the 3.0 floor for non-text. The 2026-08-10 rim fix had only ever touched the border.
+///
+/// It could not be fixed where it stood. The whole on-glass band, from the face `#22212C` to the comment
+/// ink `#7970A9`, is **3.56 : 1 wide in total**, and a chip needs three separable steps inside it (plate,
+/// rim, label): lifting the plate to 2.95 drops the ink on it to 5.06 and leaves the rim at 1.22. Every
+/// arrangement of that band spends one step to buy another.
+///
+/// This is the SAME arithmetic ONE ISLAND already resolved once, at the whole-app scale — "any darker frame
+/// is arithmetically stuck: `#22212C` against pure black is 1.32 : 1, so the whole dark half of the axis
+/// cannot separate at all" (`DESIGN.md`), which is why the ground is Alucard's cream. The notice meets that
+/// wall one level down and takes the same way out. On paper every step passes with room to spare: plate
+/// **15.32** against the glass, rim **9.57**, label **6.99**, detail **20.25**.
+///
+/// ⚠️ TAKING THE PAPER MEANS TAKING THE FAMILY'S VOICE — the two are one decision, not two. The floating
+/// family's ink is the system's neutral semantics set in sentence case (``SlateOverlayInk``), and its
+/// caps-mono eyebrow was rejected wholesale the same week the form cards shed theirs. So `COPIED · 1,204
+/// CHARS` became `Copied · 1,204 characters`: the instrument register is the GLASS's voice, and this
+/// surface no longer stands on the glass. The one instrument chip that still does — the divider's live
+/// ratio readout — keeps ``InstrumentChipShell`` and is untouched.
+///
+/// The rim is ``Slate/Line/overlayRim`` verbatim, NOT a second light-side rim solved for this shape: it is
+/// the same paper over the same terminal, and two washes that mean the same thing drifting apart by a few
+/// hundredths is the exact failure the ``Slate/Opacity`` ladder exists to prevent. Where the capsule
+/// crosses BRIGHT terminal output the cream itself falls to ~1.03 and the rim (1.32–1.86 there) plus the
+/// cast shadow are what carry the boundary — which is why neither is optional on this member.
+struct SlatePaperCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            // Generous sides against a tight top/bottom is what reads as a capsule rather than as a
+            // rounded box — the proportion is the shape here, since a capsule has no radius to tune.
+            .padding(.horizontal, Slate.Metric.space4)
+            .padding(.vertical, Slate.Metric.space2)
+            .background(Slate.Surface.field, in: .capsule)
+            .overlay { Capsule().strokeBorder(Slate.Line.overlayRim, lineWidth: Slate.Metric.hairline) }
+            // ⚠️ THE CLIP IS NOT DECORATION — IT IS WHAT REMOVES THE RIM'S WHISKERS, and the chip's whole
+            // family shares the defect, so both members carry this line. `strokeBorder` on a shape whose
+            // corner radius reaches (or exceeds) half its height leaves a stray vertical TICK a point or so
+            // outside each horizontal extreme, where the two arcs meet. Isolated in the
+            // `testRenderIslandChips` probe on 2026-08-11 by rendering the chip four ways at native scale:
+            // with the border and without, inside a `Button` and bare — the ticks tracked the BORDER alone,
+            // and a plate at a radius small enough to fit inside its own height never had them. Clipping to
+            // the same shape is the fix that keeps a true capsule; an inset `.stroke()` was tried and still
+            // ticks. Ahead of the shadow, so the shadow still falls OUTSIDE the clip.
+            .clipShape(.capsule)
+            // ⚠️ THE INK MUST CLIMB BACK OUT OF THE GLASS. This is the one paper surface mounted INSIDE
+            // the island subtree, which ``Slate/glassColorScheme`` has forced dark — so `SlateOverlayInk`
+            // (semantic, polarity-following) resolved for the dark well and drew WHITE ON CREAM. The
+            // scheme follows the PLATE, not the ancestor: the mirror of the selected tab's flip INTO the
+            // glass. Applied AFTER the surface so it governs the content, and it is the app's own
+            // polarity, not a third appearance — see ``Slate/chromeColorScheme``.
+            .environment(\.colorScheme, Slate.chromeColorScheme)
+            // The ladder's own rung for a pill floating over the glass. It is nearly invisible against the
+            // dark face (a dark cast on a dark ground) and that is fine — it is bought for the case that
+            // needs it, where the capsule overlaps bright output and the cream has no contrast of its own.
+            .slateShadow(.chip, color: Slate.State.overlayShadow)
+    }
+}
+
 extension View {
     /// Draw this content as a floating paper card (see ``SlatePaperCard``). `hitBarrier: false` is for a
     /// card whose whole body is already a button (the notification card) — see the modifier's note.
     func slatePaperCard(hitBarrier: Bool = true) -> some View {
         modifier(SlatePaperCard(hitBarrier: hitBarrier))
+    }
+
+    /// Draw this content as a floating paper CAPSULE — the transient notice family's shell
+    /// (see ``SlatePaperCapsule``).
+    func slatePaperCapsule() -> some View {
+        modifier(SlatePaperCapsule())
     }
 
     /// Sink an editable field into its plate: the pane face, ringed by a hairline, at the small radius.

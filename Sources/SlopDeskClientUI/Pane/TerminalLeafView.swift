@@ -244,20 +244,12 @@ struct TerminalLeafView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        // The transient `COPIED · N` receipt chip — bottom-TRAILING, its own overlay slot so appearing
-        // never reflows the top-trailing pill stack (no layout shift for a frequent action). Fade-only
-        // (no travel), hit-transparent, self-expiring: the chip's dwell task calls `clearCopyReceipt()`
-        // and the `smallFade` below fades it out. Reading `copyReceipt` here registers observation, so
-        // every pane-scoped copy path (⌘C, yank, navigator, hints) lights it reactively.
-        .overlay(alignment: .bottomTrailing) {
-            if !staticMirror, let model = live?.terminalModel, let receipt = model.copyReceipt {
-                CopyReceiptChip(receipt: receipt, onExpire: { model.clearCopyReceipt() })
-                    .padding(Slate.Metric.space2)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-        }
-        .animation(Slate.Anim.smallFade, value: live?.terminalModel?.copyReceipt)
+        // ⚠️ NO copy-receipt chip here any more (user-directed 2026-08-11). The `COPIED · N` confirmation
+        // used to mount bottom-TRAILING in this view for pane-scoped copies while pane-less ones (palette
+        // "Copy Path") drew at the island's foot — one event with two homes, so the user had to learn both
+        // to know where to look. The pane still OWNS the receipt (`TerminalViewModel.copyReceipt`, which is
+        // its state); only the mount moved, to `IslandChipStack`, which now reads it through
+        // `WorkspaceStore.activePaneCopyReceipt()`.
         .animation(Slate.Anim.reveal, value: findBar.visible)
         .animation(Slate.Anim.reveal, value: showReadOnlyPill)
         .animation(Slate.Anim.reveal, value: showSecureInputPill)

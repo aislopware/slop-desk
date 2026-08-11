@@ -264,6 +264,24 @@ enum Slate {
     /// the terminal, and it is the ONE place in the app that opts out of the light pin.
     @MainActor static var glassColorScheme: ColorScheme { .dark }
 
+    /// The colour scheme of the CHROME — the app's one polarity (`SlateAppearancePin` pins `NSApp` to
+    /// `.aqua`), named here so a subtree that has to climb BACK out of the glass can say so in tokens
+    /// rather than in a bare `.light`.
+    ///
+    /// There is exactly one such subtree: ``SlatePaperCapsule``, the transient notice. It is cream —
+    /// ``Surface/field``, a FIXED tone that does not follow any appearance — but it is mounted on the pane
+    /// canvas, INSIDE the island subtree that ``glassColorScheme`` has forced dark. Its ink comes from
+    /// ``SlateOverlayInk``, which derives from `Color.primary`/`.secondary`, so without this it resolved
+    /// for the dark well and drew WHITE ON CREAM: a capsule with the right surface and no readable text
+    /// (caught in the `testRenderIslandChips` snapshot, 2026-08-11, before it ever shipped).
+    ///
+    /// This is the same move the SELECTED TAB already makes in the other direction — a compact island on
+    /// the cream ground flips its row to the glass polarity "so every ink on it resolves against the plate
+    /// it stands on" (`DESIGN.md`). One rule, both directions: the scheme follows the PLATE, not the
+    /// ancestor. It is not a new appearance (the app still has exactly two polarities and one `NSApp`
+    /// pin) — it is the pin, restored for an object that stepped out of the glass.
+    @MainActor static var chromeColorScheme: ColorScheme { .light }
+
     /// The FIXED brand accent (Dracula purple) as an appearance-dynamic pair: Alucard's `#644AC9`
     /// on light appearances, the Pro `#9580FF` on dark. The ONLY chrome colour that is not the
     /// system's — user-directed 2026-08-07 (fixed brand accent over the user-configurable system

@@ -8477,3 +8477,89 @@ right only at the default. The split controller publishes the live width through
 — itself a LEAF, for its own volatile source this time — reads it. And the travel animates on
 `sidebarCollapsed` ONLY, never on `navigatorWidth`: animating a continuous drag would make the
 cluster lag the edge it is glued to, by exactly the animation's duration, on every frame.
+
+## The terminal notices go to PAPER — the on-glass band cannot hold a chip (2026-08-11, user-reported)
+
+Reported as "the notification popup of the terminal pane — characters copied, restore closed pane — is
+ugly and sunken". Measured against the shipping profile, three of the chip's four layers failed: the
+plate stood at **1.63 : 1** against the glass face, its rim at **1.49 : 1** against its own plate, and
+the LABEL — the word saying what happened — at **2.19 : 1**, under even the 3.0 floor for non-text.
+Only the detail run (9.16) worked. The 2026-08-10 `Terminal.rim` fix had only ever touched the border;
+nobody had measured the ink.
+
+⚠️ **It could not be fixed where it stood, and that is arithmetic rather than taste.** The whole
+on-glass band — face `#22212C` to comment ink `#7970A9` — is **3.56 : 1 wide in total**, and a chip
+needs three separable steps inside it. Every arrangement spends one to buy another: lifting the plate
+to 2.95 drops the ink on it to 5.06 and leaves the rim at 1.22. There is no fourth rung to mint.
+
+**This is the same wall ONE ISLAND already hit once, at the whole-app scale** — "any darker frame is
+arithmetically stuck: `#22212C` against pure black is 1.32 : 1, so the whole dark half of the axis
+cannot separate at all" (`DESIGN.md`), which is why the ground is Alucard's cream. The notice met it one
+level down and takes the same way out. On paper every step passes with room to spare: plate **15.32**
+against the glass, rim **9.57**, label **6.99**, detail **20.25**.
+
+- ✅ **`SlatePaperCapsule`** — the floating family's one-line member: `Surface.field` cream, a capsule,
+  `Line.overlayRim` (the family's rim VERBATIM — a second light-side rim solved for this shape is the
+  drift the `Opacity` ladder exists to prevent), the `.chip` shadow. Bought for the case that needs it:
+  where the capsule crosses BRIGHT output the cream itself falls to ~1.03 and the rim (1.32–1.86 there)
+  plus the cast are the only things carrying the boundary.
+- ✅ **Taking the paper means taking the family's VOICE — one decision, not two.** The floating family's
+  ink is the system's neutral semantics in sentence case, and its caps-mono eyebrow was rejected
+  wholesale the same week the form cards shed theirs. So `COPIED · 1,204 CHARS` → `Copied · 1,204
+  characters`. "CHARS" was an abbreviation the caps register needed to stay narrow; a proportional face
+  at reading size does not. The instrument register is the GLASS's voice and this no longer stands there.
+- ✅ **Hierarchy is size and weight in ONE voice, never ink alone.** The old chip set both halves at the
+  same size, face and weight and asked COLOUR to carry the entire distinction — which is how a label at
+  2.19 could read as designed rather than as broken. `NoticeCapsule` is the one rendered form behind both
+  chips, so they cannot drift; the DETAIL is the dominant half in every notice this family carries (the
+  count answers "did I get all of it?", the chord answers "how do I undo that?").
+- 🔁 **RE-SCOPE (user-directed): ONE mount. The copy receipt no longer confirms itself inside its pane.**
+  Pane-scoped copies drew bottom-trailing IN the pane on a "feedback lives at its trigger" rationale
+  while pane-less ones drew at the island's foot — one event, two homes, both to be learned. The pane
+  still OWNS the receipt (it is the pane's state); only the mount moved, reached through the new
+  `WorkspaceStore.activePaneCopyReceipt()`. ⚠️ The chip's dwell is therefore keyed on the WHOLE
+  `CopyReceipt`, not on `epoch`: one mount is now fed by two independent counters, so two copies can
+  carry the same epoch number and the chip would inherit the dead one's nearly-elapsed timer — the exact
+  bug epoch exists to prevent, arriving by a new route.
+- ✅ **ONE SILHOUETTE, TWO MATERIALS — the line is DURATION.** A notice ARRIVES and leaves, so it is
+  paper; `ConnectionAlertChip` LIVES at the foot for as long as a pane is down, and a cream plate glowing
+  over the terminal for minutes is the glare a 1.5 s capsule is too brief to cause. It keeps the glass
+  palette but takes the capsule's shape, padding and type size, so the material difference reads as a
+  ROLE rather than as two unrelated chips stacked by accident. ⚠️ It carried the **2.19 : 1** label
+  bug too, unnoticed, while announcing that a connection was DOWN — its label is `Terminal.ink` (9.16)
+  now, the only rung on the glass that clears the plate.
+- ✅ **`InstrumentChipShell` survives with ONE mount: the divider's live ratio readout.** It did not
+  follow, because it is not a notification — it is an instrument readout under the pointer DURING a drag,
+  gone when the gesture ends, and it never had the legibility bug (its numbers are `Text.primary`, white
+  on the plate). A cream capsule blooming under the cursor mid-drag is exactly the glare the notices are
+  short-lived enough to avoid.
+- ⚠️ **`Slate.chromeColorScheme` — the ink has to climb back OUT of the glass, and the first build shipped
+  white on cream.** The capsule is mounted on the pane canvas, INSIDE the subtree `glassColorScheme` has
+  forced dark, so `SlateOverlayInk` (semantic, polarity-following) resolved for the dark well and drew an
+  unreadable capsule with a perfect surface. Caught by the `testRenderIslandChips` snapshot before it
+  ever ran. The fix is the SELECTED TAB's move in the other direction — a compact island flips its row to
+  the glass polarity "so every ink on it resolves against the plate it stands on". One rule, both ways:
+  **the scheme follows the PLATE, not the ancestor.** Not a third appearance — the app still has two
+  polarities and one `NSApp` pin; this is that pin, restored for an object that stepped off the glass.
+- ✅ **The chord is a KEY, not two words in bold** (`ChipNotice.keycap` + `NoticeKeycap`). `Tab closed ·
+  ⇧⌘T reopens` set the whole answer as one semibold run, which made the chord read as emphasis rather
+  than as something to press; the family already had the opposite rule ("a key you can press right now is
+  drawn as a KEYCAP", `DESIGN.md`) and this was the one notice that ignored it. Five treatments were
+  rendered side by side and the winner puts the CAP on the hero rung with both text runs quiet — the
+  label frames it, the trailing verb only says what pressing does, and there is exactly one hero. Two
+  consequences fall out of that: a notice carrying a cap **drops the `·`** (a keycap is already a
+  boundary object, so the dot would be a second separator doing the first one's job — the dot earns its
+  place only where there is no cap, as in `Copied · 100 lines`), and the cap is **not** `SlateKeycap`,
+  which is built ``Metric/heightControl`` tall for a palette LIST ROW and inflates the capsule to ~40pt.
+  The face and the plate are shared deliberately (a key is a key everywhere, and never mono); the height
+  follows the text line and the ink goes up a rung. VoiceOver has no keycap, so `accessibilityText`
+  rejoins it as plain text in the drawn reading order: `Tab closed · ⇧⌘T reopens`.
+- 🐞 **`strokeBorder` whiskers a shape whose corner radius reaches half its height — clip, or it ships.**
+  The rim left a stray vertical TICK a point or so outside each horizontal extreme, where the two arcs
+  meet. Isolated by rendering the chip four ways at NATIVE scale (the 3× snapshot is an interpolation, so
+  an artefact seen only there proves nothing): with the border and without, inside a `Button` and bare.
+  The ticks tracked the BORDER alone — `Button` was innocent, and a plate at a radius small enough to fit
+  inside its own height never had them. `.clipShape` to the same shape is the fix and keeps a true
+  capsule; an inset `.stroke()` was tried and still ticks. ⚠️ It belongs to the SILHOUETTE, so both
+  members carry it: on the cream the same defect is there and merely too faint to see, and it was only
+  ever CAUGHT on `ConnectionAlertChip` because that is the member whose rim has real contrast.

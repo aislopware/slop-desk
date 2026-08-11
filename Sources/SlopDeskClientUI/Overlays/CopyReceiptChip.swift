@@ -1,18 +1,22 @@
-// CopyReceiptChip — the transient `COPIED · 1,204 CHARS` confirmation chip, the ONE view behind both
-// copy-confirmation mounts: bottom-trailing INSIDE the pane for pane-scoped copies (⌘C selection,
-// copy-mode yank, navigator / hint copies — feedback lives at its trigger), and bottom-centre at the
-// foot of the ISLAND (``IslandChipStack``) for pane-less copies (palette "Copy Path", rail "Copy
-// Window Title" — their trigger sheet/menu is gone by the time the write lands, the Raycast-HUD case).
+// CopyReceiptChip — the transient `Copied · 1,204 characters` confirmation chip.
+//
+// ONE MOUNT, at the foot of the ISLAND (``IslandChipStack``), for every copy the app makes: the
+// pane-scoped ones (⌘C selection, copy-mode yank, navigator / hint copies) and the pane-less ones
+// (palette "Copy Path", rail "Copy Window Title"). It used to have TWO — pane-scoped copies drew
+// bottom-trailing INSIDE the pane on a "feedback lives at its trigger" rationale, pane-less ones at the
+// island's foot — so ONE event had two homes and the user had to learn both to know where to look
+// (user-directed 2026-08-11). The trigger rationale did not survive the split it created: a copy is the
+// same event wherever it starts, and the island's foot is the one place every notice in this family
+// already speaks from.
 //
 // Deliberately NOT a toast: a toast card on a high-frequency terminal action reads as spam and can
 // occlude the prompt line (the ghostty `app-notifications = no-clipboard-copy` lesson). This is a
-// fade-only chip — no spatial travel, no icon, no layout shift anywhere: pure typography in the
-// instrument voice carrying the one number that answers "did I get the whole thing?". A rapid re-copy
-// RETARGETS the mounted chip (the count hard-cuts, `.task(id: epoch)` restarts the dwell) rather than
-// re-animating — mechanical, per MERIDIAN L4.
+// fade-only chip — no spatial travel, no icon, no layout shift anywhere: pure typography carrying the one
+// number that answers "did I get the whole thing?". A rapid re-copy RETARGETS the mounted chip (the count
+// hard-cuts, the dwell restarts) rather than re-animating — mechanical, per MERIDIAN L4.
 //
 // `Slate.*` tokens only (the ds-leaks ratchet). The wording lives on the pure `CopyReceipt` (pinned by
-// `CopyReceiptTests`), never composed here.
+// `CopyReceiptTests`), never composed here; the FORM is ``NoticeCapsule``, shared with every `NoticeChip`.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -29,24 +33,23 @@ struct CopyReceiptChip: View {
     let onExpire: () -> Void
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Text("COPIED")
-                .foregroundStyle(Slate.Terminal.ink2)
-            Text("·")
-                .foregroundStyle(Slate.Terminal.ink2.opacity(Slate.Opacity.muted))
-            Text(receipt.detail)
-                .foregroundStyle(Slate.Terminal.ink)
-        }
-        // The shared instrument-chip treatment (`InstrumentChipShell`) — one shell for this chip and
-        // every `NoticeChip`, so the two can never drift apart visually.
-        .modifier(InstrumentChipShell(accessibility: receipt.label))
-        // Dwell timer, keyed on the receipt's epoch: a re-copy while mounted restarts it (the retarget).
-        // A CANCELLED sleep must NOT expire — cancellation means either a newer receipt owns the chip
-        // or the chip unmounted; calling `onExpire` then would kill the successor's dwell.
-        .task(id: receipt.epoch) {
-            guard await (try? Task.sleep(for: Self.dwell)) != nil else { return }
-            onExpire()
-        }
+        // The shared capsule (`NoticeCapsule`) — one form for this chip and every `NoticeChip`, so the
+        // two can never drift apart visually.
+        NoticeCapsule(label: "Copied", detail: receipt.detail, accessibility: receipt.label)
+            // Dwell timer keyed on the WHOLE receipt, not on `epoch` alone. Epoch was enough while one
+            // owner minted every receipt; now that the single mount is fed by two independent counters
+            // (the pane model's and the overlay coordinator's, ``IslandChipStack``), two different copies
+            // can carry the same epoch number and the chip would inherit the dead one's nearly-elapsed
+            // timer — the exact bug epoch exists to prevent, arriving by a new route. `CopyReceipt` is
+            // `Equatable` over its counts too, so a hand-off only fails to restart when the two receipts
+            // are indistinguishable, where restarting would change nothing.
+            //
+            // A CANCELLED sleep must NOT expire — cancellation means either a newer receipt owns the chip
+            // or the chip unmounted; calling `onExpire` then would kill the successor's dwell.
+            .task(id: receipt) {
+                guard await (try? Task.sleep(for: Self.dwell)) != nil else { return }
+                onExpire()
+            }
     }
 }
 #endif

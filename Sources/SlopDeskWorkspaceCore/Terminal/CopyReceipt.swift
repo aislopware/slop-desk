@@ -5,8 +5,9 @@
 // a CHAR count for a single-line grab (where truncation is the failure mode).
 //
 // Pure value type: counting + label formatting live here (not in a view) so the wording is pinned by
-// unit tests and the pane mount / window mount can never drift. The label speaks the instrument voice's
-// caps register ("COPIED · 1,204 CHARS") — the view renders it in `Slate.Typeface.instrument`.
+// unit tests rather than by a squint at the UI. The label reads as a sentence ("Copied · 1,204
+// characters") — the floating family's voice, since the chip that renders it is paper, not glass
+// (`SlatePaperCapsule`).
 
 import Foundation
 
@@ -30,17 +31,23 @@ public struct CopyReceipt: Equatable, Sendable {
         self.epoch = epoch
     }
 
-    /// The count half of the label: `"18 LINES"` for a multi-line copy (the whole-block doubt),
-    /// `"1,204 CHARS"` / `"1 CHAR"` for a single line (the truncation doubt). Never "1 LINE" — a
-    /// single-line copy always speaks chars, the more informative number.
+    /// The count half of the label: `"18 lines"` for a multi-line copy (the whole-block doubt),
+    /// `"1,204 characters"` / `"1 character"` for a single line (the truncation doubt). Never "1 line" — a
+    /// single-line copy always speaks characters, the more informative number.
+    ///
+    /// ⚠️ SENTENCE CASE, and the words are spelled out. Both changed with the chip's surface
+    /// (2026-08-11): the receipt moved off the glass onto the floating family's paper capsule, whose voice
+    /// is the system's neutral semantics in sentence case, so the instrument caps register went with the
+    /// glass it belonged to. "CHARS" was an abbreviation the caps register needed to stay narrow; a
+    /// proportional face at reading size does not, and "characters" is what the number actually counts.
     public var detail: String {
-        if lineCount > 1 { return "\(Self.grouped(lineCount)) LINES" }
-        return "\(Self.grouped(charCount)) \(charCount == 1 ? "CHAR" : "CHARS")"
+        if lineCount > 1 { return "\(Self.grouped(lineCount)) lines" }
+        return "\(Self.grouped(charCount)) \(charCount == 1 ? "character" : "characters")"
     }
 
-    /// The full caps label (`"COPIED · 1,204 CHARS"`) — one string for accessibility + tests; the chip
-    /// renders the two halves in separate text tones (label secondary, count primary).
-    public var label: String { "COPIED · " + detail }
+    /// The full label (`"Copied · 1,204 characters"`) — one string for accessibility + tests; the chip
+    /// renders the two halves at separate weights (label quiet, count semibold).
+    public var label: String { "Copied · " + detail }
 
     /// Deterministic thousands grouping (`1204` → `"1,204"`) — locale-independent so the instrument
     /// voice reads identically on every machine and the label pins don't drift with system settings.

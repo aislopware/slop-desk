@@ -155,9 +155,12 @@ public final class OverlayCoordinator {
 
     /// The window-level copy receipt — published for NON-pane-scoped copies (palette "Copy Path",
     /// host-window rail "Copy Window Title"), whose trigger sheet / menu is already gone by the time the
-    /// write lands, so no pane can host the confirmation. ``OverlayHostView`` mounts the shared
-    /// `CopyReceiptChip` bottom-center while non-nil; pane-scoped copies publish
+    /// write lands, so no pane can host the confirmation. Pane-scoped copies publish
     /// ``TerminalViewModel/copyReceipt`` on their own pane instead and never route here.
+    ///
+    /// BOTH owners surface at the same place: `IslandChipStack` prefers this one and falls back to
+    /// `WorkspaceStore.activePaneCopyReceipt()`, so a copy has ONE home wherever it started
+    /// (user-directed 2026-08-11).
     public private(set) var copyReceipt: CopyReceipt?
 
     /// Per-copy monotonic counter — fresh identity per receipt so a rapid re-copy restarts the chip's
@@ -182,18 +185,25 @@ public final class OverlayCoordinator {
     /// The window-level transient notice — the copy receipt's generic twin for non-copy cues (a sole-leaf
     /// tab close → the ⇧⌘T undo affordance; a Peek & Reply delivery → which pane got the reply). One slot:
     /// a successor RETARGETS the mounted chip (text hard-cuts, dwell restarts) rather than stacking.
-    /// ``OverlayHostView`` mounts the shared `NoticeChip` bottom-center while non-nil.
+    /// `IslandChipStack` mounts the shared `NoticeChip` at the island's foot while non-nil.
     public private(set) var notice: ChipNotice?
 
     /// Per-notice monotonic counter — fresh identity so a rapid successor restarts the chip's dwell
     /// (`.task(id: epoch)`) instead of expiring on the old timer.
     @ObservationIgnored private var noticeEpoch = 0
 
-    /// Publish a transient notice. `label` speaks the secondary caps register ("TAB CLOSED"), `detail`
-    /// the primary data register ("⇧⌘T REOPENS"; may be empty — the chip then shows the label alone).
-    public func noteNotice(label: String, detail: String, dwell: Duration = .seconds(4)) {
+    /// Publish a transient notice, SENTENCE CASE throughout (the chip is paper now, and the caps register
+    /// belongs to the glass — ``ChipNotice``). `label` names the event ("Tab closed"), `detail` carries the
+    /// answer ("1,204 characters"; may be empty — the chip then shows the label alone), and `keycap` is a
+    /// chord to draw as a pressable key rather than as words, which turns `detail` into the verb that
+    /// finishes the sentence around it: `Tab closed ⇧⌘T reopens`.
+    public func noteNotice(
+        label: String, keycap: String? = nil, detail: String, dwell: Duration = .seconds(4),
+    ) {
         noticeEpoch += 1
-        notice = ChipNotice(label: label, detail: detail, epoch: noticeEpoch, dwell: dwell)
+        notice = ChipNotice(
+            label: label, keycap: keycap, detail: detail, epoch: noticeEpoch, dwell: dwell,
+        )
     }
 
     /// Dismisses the notice chip (its dwell elapsed). Idempotent.
@@ -665,7 +675,7 @@ public final class OverlayCoordinator {
         // the one doubt the advance leaves. The title is untrusted OSC-settable text ⇒ masked at this
         // construction site (idempotent, same rule as the toast surfaces).
         if let title = store?.peekContent(for: pane).title {
-            noteNotice(label: "REPLY SENT", detail: Toast.redactSecretsIfEnabled(title), dwell: .seconds(2.5))
+            noteNotice(label: "Reply sent", detail: Toast.redactSecretsIfEnabled(title), dwell: .seconds(2.5))
         }
         advancePeekReply(answered: pane)
     }

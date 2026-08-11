@@ -793,7 +793,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.peekReplyVisible, "answering the last blocked pane closes the card")
     }
 
-    /// A delivered reply publishes the window-level "REPLY SENT · <pane title>" notice — the delivery
+    /// A delivered reply publishes the window-level "Reply sent · <pane title>" notice — the delivery
     /// cue that makes a submit distinguishable from a skip once the card advances/closes. The detail
     /// names WHICH pane got the reply (the one doubt the advance leaves).
     func testDeliverPeekReplyPublishesReplySentNotice() throws {
@@ -805,7 +805,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
         overlay.deliverPeekReply("approve\n", to: pane)
         let notice = try XCTUnwrap(overlay.notice, "the delivery publishes a notice")
-        XCTAssertEqual(notice.label, "REPLY SENT")
+        XCTAssertEqual(notice.label, "Reply sent")
         XCTAssertEqual(notice.detail, "build-agent", "the detail names the answered pane")
     }
 
@@ -814,13 +814,16 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// `noteNotice` publishes with a FRESH epoch each time (a successor retargets the mounted chip's
     /// dwell task instead of expiring on the old timer), and `clearNotice` dismisses idempotently —
     /// the exact contract the copy receipt pinned, kept in lockstep for the generic twin.
+    ///
+    /// Also pins the KEYCAP's spoken form: the chord is drawn as a key, so VoiceOver — which has no key —
+    /// must get it back as plain text, in the drawn reading order, behind the one separator the eye sees.
     func testNoteNoticePublishesFreshEpochsAndClearIsIdempotent() throws {
         let overlay = OverlayCoordinator()
-        overlay.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        overlay.noteNotice(label: "Tab closed", keycap: "⇧⌘T", detail: "reopens")
         let first = try XCTUnwrap(overlay.notice)
-        XCTAssertEqual(first.accessibilityText, "TAB CLOSED · ⇧⌘T REOPENS")
+        XCTAssertEqual(first.accessibilityText, "Tab closed · ⇧⌘T reopens")
 
-        overlay.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        overlay.noteNotice(label: "Tab closed", keycap: "⇧⌘T", detail: "reopens")
         let second = try XCTUnwrap(overlay.notice)
         XCTAssertNotEqual(first.epoch, second.epoch, "a successor notice gets a fresh dwell identity")
 
@@ -835,13 +838,14 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     func testTabCloseRecordedWiringPublishesTheUndoCue() throws {
         let (overlay, store) = makeCoordinator()
         store.onTabCloseRecorded = { [weak overlay] in
-            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+            overlay?.noteNotice(label: "Tab closed", keycap: "⇧⌘T", detail: "reopens")
         }
         store.newTab(kind: .terminal) // a second tab so the close leaves the workspace alive
         let closing = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
 
         store.closeTab(closing)
-        XCTAssertEqual(overlay.notice?.accessibilityText, "TAB CLOSED · ⇧⌘T REOPENS")
+        XCTAssertEqual(overlay.notice?.accessibilityText, "Tab closed · ⇧⌘T reopens")
+        XCTAssertEqual(overlay.notice?.keycap, "⇧⌘T", "the chord travels as a KEY, not inside the detail")
     }
 
     /// Closing resets the advance-exclusion so a REOPEN re-targets a still-blocked pane (rather than carrying

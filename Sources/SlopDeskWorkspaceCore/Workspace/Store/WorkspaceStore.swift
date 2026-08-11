@@ -4595,6 +4595,30 @@ public extension WorkspaceStore {
 // MARK: - Find-in-terminal + Global Search command entries
 
 public extension WorkspaceStore {
+    /// The ACTIVE pane's live copy receipt, or `nil` when it has none (or is not a terminal).
+    ///
+    /// The seam that let the copy chip collapse to ONE mount (user-directed 2026-08-11). A pane-scoped copy
+    /// publishes on its own ``TerminalViewModel/copyReceipt`` — which is right, it is the pane's state — but
+    /// the CONFIRMATION used to be mounted there too, bottom-trailing inside the pane, while pane-less
+    /// copies (palette "Copy Path") drew at the island's foot. One event, two homes. Reading the active
+    /// pane's receipt from the island's chip stack keeps the state where it belongs and moves only the
+    /// mount. ACTIVE rather than every pane on purpose: a copy is made in the pane the user is typing in,
+    /// and a background pane's receipt is a cue for a place they are not looking at.
+    ///
+    /// A method, not a property, for the reason ``connectionAlert()`` is one: the call registers
+    /// observation on the live model, so the chip appears and expires reactively.
+    func activePaneCopyReceipt() -> CopyReceipt? {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return nil }
+        return (registry[active] as? LivePaneSession)?.terminalModel?.copyReceipt
+    }
+
+    /// Clears the active pane's copy receipt (its chip's dwell elapsed). Idempotent, and a no-op for a
+    /// non-terminal / receipt-less pane.
+    func clearActivePaneCopyReceipt() {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        (registry[active] as? LivePaneSession)?.terminalModel?.clearCopyReceipt()
+    }
+
     /// Advances the active pane's find bar to the NEXT match (the ⌘G keyboard / menu entry).
     /// Routes to the active terminal's ``TerminalViewModel/onRequestFindNext``; when that is unset (the bar
     /// has never been opened) it FALLS BACK to ``onRequestFind`` so ⌘G OPENS the find bar — faithful

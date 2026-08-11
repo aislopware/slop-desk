@@ -367,10 +367,13 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onCopyConfirmation: (() -> Void)?
 
     /// The most recent clipboard-copy receipt — OBSERVABLE: the pane's transient `COPIED · N` chip
-    /// (``TerminalLeafView``) mounts while this is non-nil and clears it after its dwell. Every
-    /// pane-scoped copy path lands here via ``noteClipboardCopy(_:)``: the copy-mode `y`/Enter yank,
+    /// Every pane-scoped copy path lands here via ``noteClipboardCopy(_:)``: the copy-mode `y`/Enter yank,
     /// the renderer's ⌘C / OSC-52 standard-clipboard write (via the surface's clipboard-write hook),
     /// and the navigator / hint-mode / Jump-To copy actions.
+    ///
+    /// ⚠️ The CHIP that renders this does not live in the pane any more (user-directed 2026-08-11). The
+    /// state stays here — it is the pane's — but the mount is `IslandChipStack`, at the island's foot,
+    /// reached through `WorkspaceStore.activePaneCopyReceipt()`, so a copy has ONE home wherever it starts.
     public private(set) var copyReceipt: CopyReceipt?
 
     /// Per-copy monotonic counter — gives each receipt a fresh identity so a rapid re-copy restarts

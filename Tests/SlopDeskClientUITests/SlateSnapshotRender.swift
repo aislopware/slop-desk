@@ -292,6 +292,13 @@ final class SlateSnapshotRender: XCTestCase {
             mock.frame(width: 520, height: 300).scaleEffect(3, anchor: .bottom),
             size: CGSize(width: 520, height: 300), to: dir, named: "island-chips-3x.png",
         )
+        // A NATIVE-scale close-up beside the magnified one: the 3× raster above is an interpolation, so an
+        // edge artefact seen only there proves nothing. This is where the `Capsule()` edge ticks were
+        // confirmed as real geometry and the `RoundedRectangle` spelling was chosen (2026-08-11).
+        try renderHosted(
+            mock.frame(width: 260, height: 300), size: CGSize(width: 260, height: 300), to: dir,
+            named: "island-chips-native.png", scale: 6,
+        )
     }
 
     /// One mark at the column's true size, or magnified.
@@ -1274,9 +1281,19 @@ private struct IslandChipMock: View {
             .overlay(alignment: .bottom) {
                 VStack(spacing: Slate.Metric.space2) {
                     CopyReceiptChip(receipt: CopyReceipt(text: sampleCopy, epoch: 1), onExpire: {})
+                    // The keycap notice and the plain one side by side: the pair is what pins the two
+                    // emphasis rules against each other (a cap takes the hero rung and kills the dot;
+                    // without one the detail takes it back).
                     NoticeChip(
                         notice: ChipNotice(
-                            label: "TAB CLOSED", detail: "⇧⌘T REOPENS", epoch: 1, dwell: .seconds(3),
+                            label: "Tab closed", keycap: "⇧⌘T", detail: "reopens", epoch: 1,
+                            dwell: .seconds(3),
+                        ),
+                        onExpire: {},
+                    )
+                    NoticeChip(
+                        notice: ChipNotice(
+                            label: "Jumped", detail: "hostd · logs", epoch: 1, dwell: .seconds(3),
                         ),
                         onExpire: {},
                     )
@@ -1294,7 +1311,7 @@ private struct IslandChipMock: View {
             .environment(\.colorScheme, Slate.glassColorScheme)
     }
 
-    /// Enough text for a plural receipt (`COPIED · N CHARS`), assembled rather than counted by hand.
+    /// Enough text for a plural receipt (`Copied · N lines`), assembled rather than counted by hand.
     private var sampleCopy: String {
         String(repeating: "swift build\n", count: 100)
     }
