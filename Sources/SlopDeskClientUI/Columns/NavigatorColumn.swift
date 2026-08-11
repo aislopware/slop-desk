@@ -170,12 +170,20 @@ struct NavigatorColumn: View {
             keys: sections.map { $0.header == nil ? nil : $0.projectKey },
         )
         return VStack(alignment: .leading, spacing: 0) {
-            // Traffic-light strip — BARE. The column reserves the band the lights stand in and
-            // nothing else: the sidebar toggle that used to sit here is mounted at WINDOW level now
+            // Traffic-light strip — the band the lights stand in. Its LEADING half is still bare:
+            // the sidebar toggle that used to sit there is mounted at WINDOW level now
             // (``WindowSidebarToggle``, user-directed 2026-08-09). It had to leave, because THIS
             // column travels: the split animates its width on a collapse, so a button parked in it
             // slid leftward under the traffic lights every time it was clicked. A control that never
             // moves cannot live inside a container that does.
+            //
+            // ⚠️ The TRAILING end is bare here too, and that is NOT the same as empty: the band's
+            // status rollup STANDS over this spot, mounted at window level
+            // (``RailStatusRollupMount``). It lived in this column for one afternoon and left for
+            // the toggle's own reason — the column travels, and an aggregate that leaves with the
+            // rail is missing at exactly the moment the rail stops being readable. It parks its
+            // trailing edge on this column's gutter while expanded, so the marks, the search plate
+            // and the islands still close on one line; on a collapse it slides back to the toggle.
             Color.clear
                 .frame(height: Slate.Metric.titlebarHeight)
             // The header row IS the search bar (user-directed 2026-08-03 — it replaced the caps
@@ -207,9 +215,9 @@ struct NavigatorColumn: View {
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
             .slateChromeFieldPlate()
-            // The list's own gutter (the LazyVStack below pads 8) — search bar and tab cards
-            // share one width.
-            .padding(.horizontal, 8)
+            // The column's own gutter (the LazyVStack below and the band's rollup above spend the
+            // same one) — search bar and tab cards share one width, and the band ends on this line.
+            .padding(.horizontal, RailStatusRollup.trailingInset)
             // The band between the field and the first project island. `space3`, not the old 6:
             // the islands are beds now, and a bed starting a breath under the search plate read as
             // if the field were part of the first group (user-reported 2026-08-09).

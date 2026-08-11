@@ -87,6 +87,12 @@ enum StatusPresentation {
     /// tier also matters because this mark is drawn on BOTH grounds: the cream in an ordinary row and
     /// the glass face inside the selected row's compact island, and each side of the pair is solved
     /// against its own.
+    ///
+    /// ⚠️ The system palette was tried for the MARK COLUMN ALONE on 2026-08-11 (user-directed) and
+    /// REVERTED the same day on hardware — see `docs/DECISIONS.md`. The measurement it lost on is the
+    /// one written above, and the loudest case was the thinking cell: systemYellow lands at **1.46**
+    /// on the cream, quieter than the DISABLED slot beside it. Do not re-propose it without a
+    /// different ground under the marks.
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
         // Awaiting input — act-now amber; red stays reserved for broken.
@@ -229,6 +235,11 @@ enum StatusPresentation {
     /// keeps them apart is the silhouette and the motion, not the colour: a question is a still HAND,
     /// a thinking agent is a BLOCK OF DOTS with a hole running round it. If a third yellow reading
     /// ever lands in this column, this is the pair that will collide first.
+    ///
+    /// ⚠️ Splitting the pair by moving this ONE mark to systemYellow was tried and reverted on
+    /// 2026-08-11 (user-directed, same day): it separated the hues and cost the mark most of its
+    /// contrast on the cream (1.46, under the disabled slot's own 1.60). The silhouette and the
+    /// motion stay the separator.
     ///
     /// The accent was tried and rejected on the same pass (the compact glyph used to wear it): in
     /// this app the accent means SELECTION — the reason ``Slate/StatusInk/info`` exists as a separate

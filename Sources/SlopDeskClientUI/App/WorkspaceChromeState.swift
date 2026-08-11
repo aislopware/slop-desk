@@ -17,6 +17,21 @@ import SlopDeskWorkspaceCore
 final class WorkspaceChromeState {
     /// Whether the left navigator (sidebar) split item is collapsed.
     var sidebarCollapsed = false
+
+    /// The navigator column's LIVE width in points, republished by
+    /// ``SlopDeskSplitViewController`` on every divider step. Exists for the ONE thing mounted at
+    /// window level that has to line up with a column edge: the band's status rollup
+    /// (``RailStatusRollupMount``), which parks its trailing edge on the navigator's own gutter.
+    ///
+    /// ⚠️ A constant would be wrong — the item is resizable (`minimumThickness` 220,
+    /// `maximumThickness` 360), so a hard-coded 220 would unalign the cluster the first time anyone
+    /// drags the divider.
+    ///
+    /// ⚠️ It CHANGES ON EVERY FRAME OF A DRAG, so read it only from a LEAF. Reading it in a body
+    /// that owns subtrees (the window root, a column) makes that whole subtree a dependency of the
+    /// divider's motion — the re-render storm `RailRowsMemo` exists to prevent, arriving by a new
+    /// door. Kept UNCLAMPED and untouched while collapsed: the collapsed cluster does not read it.
+    var navigatorWidth: CGFloat = Slate.Metric.sidebarWidth
     /// Whether the RIGHT code panel (project-scoped embedded VS Code) is collapsed. Seeded from the
     /// persisted `Defaults[.codeSidebarCollapsed]` (unlike the session-scoped left panel — expanding the
     /// code panel is a workstyle choice that survives relaunch); ``toggleCodeSidebar()`` writes it back.

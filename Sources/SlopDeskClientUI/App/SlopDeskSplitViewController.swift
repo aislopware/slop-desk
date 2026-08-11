@@ -203,6 +203,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// last step — i.e. when the drag is released. Commit-on-release, without subclassing the split view.
     @objc
     private func splitViewSubviewsDidResize(_: Notification) {
+        publishNavigatorWidth()
         if !resizeForwardingSuspended {
             resizeForwardingSuspended = true
             store.setTerminalResizeSuspended(true)
@@ -219,9 +220,24 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Paint the window-level chrome once the window exists (it only does from `viewDidAppear`), and
     /// restore the code panel's persisted width in the same beat.
+    /// Republish the navigator's live width to the chrome model (``WorkspaceChromeState/navigatorWidth``)
+    /// — the ONE geometry the window-level status rollup needs to park its trailing edge on this
+    /// column's gutter, and the reason a constant would not do (the item resizes 220…360).
+    ///
+    /// ⚠️ A COLLAPSED item measures 0, and writing that would slam the cluster's expanded target to
+    /// the left margin one frame before the collapse animation even starts. The collapsed cluster
+    /// reads a fixed parking spot instead, so the last EXPANDED width is what this must hold.
+    private func publishNavigatorWidth() {
+        guard let navigator = splitView.arrangedSubviews.first else { return }
+        let width = navigator.frame.width
+        guard width > 0, chrome.navigatorWidth != width else { return }
+        chrome.navigatorWidth = width
+    }
+
     override func viewDidAppear() {
         super.viewDidAppear()
         pinWindowAppearance()
+        publishNavigatorWidth()
         // A panel expanded AT LAUNCH must come back at its persisted width — the split item's
         // thickness is session state AppKit never saves. (An expand-toggle mid-session restores via
         // `applyItemCollapse`'s completion instead.) Here the window frame is final.

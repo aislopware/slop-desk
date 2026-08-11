@@ -1,11 +1,13 @@
 // SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
 // window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
 //   • left  — the ``WorkspaceTabStrip``, collapsed-only: the tab list the hidden sidebar took with
-//     it, laid horizontally on the project beds it already had. It starts one plate + one gap to the
-//     right of ``Slate/Metric/windowControlsLead``, leaving the slot the window-level sidebar toggle
-//     stands in. That toggle is NOT mounted here (user-directed 2026-08-09): it used to be a reveal
-//     twin cross-faded against a hide twin inside the navigator, and the pair rode the collapse
-//     slide. One button now hangs off the window root — see ``WindowSidebarToggle``.
+//     it, laid horizontally on the project beds it already had. It starts at
+//     ``RailStatusRollupMount/collapsedTrailingEdge`` — past the sidebar toggle's slot AND past the
+//     agent rollup that parks beside it while the column is hidden. Neither of those is mounted
+//     here (both hang off the window root: ``WindowSidebarToggle``, user-directed 2026-08-09 — it
+//     used to be a reveal twin cross-faded against a hide twin inside the navigator, and the pair
+//     rode the collapse slide — and ``RailStatusRollupMount``, 2026-08-11). The strip only leaves
+//     their room.
 //   • right — the CONNECTION ISLAND, collapsed-only, anchored to the strip's trailing corner
 //     (user-directed 2026-08-09). It is the SAME island that stands at the navigator's foot while
 //     the tabs are vertical: the status follows the tab list's axis, so with the list laid across
@@ -86,9 +88,12 @@ struct SlateTitlebar: View {
             }
             .opacity(sidebarVisible ? 0 : 1)
             .allowsHitTesting(!sidebarVisible)
-            // The toggle's own slot (plate + gap) plus the lights' lead — the strip begins exactly
-            // where it did when the reveal twin still stood in that space.
-            .padding(.leading, Slate.Metric.windowControlsLead + Slate.Metric.plate + Slate.Metric.space2)
+            // ⚠️ The strip begins after EVERYTHING already standing on that band's leading side —
+            // the lights, the toggle's slot, and (since 2026-08-11) the agent rollup that parks
+            // beside the toggle when the column is gone. It used to stop at the toggle, and the
+            // marks landed on top of the first tab (user-reported). One sum, owned by
+            // ``RailStatusRollupMount``, so the two can never drift apart again.
+            .padding(.leading, RailStatusRollupMount.collapsedTrailingEdge)
             // Reserve the trailing slot so a long run of tabs scrolls instead of sliding under the
             // panel's rail (or, with the panel open, off the column's own trailing edge).
             .padding(

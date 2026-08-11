@@ -299,6 +299,12 @@ struct StatusDotStyle: Equatable {
     let ink: Color
     /// The silhouette. Defaults to the agent ring, the shape the resting-agent branch wants.
     var mark: StatusMark = .agentRing
+    /// Hold the ONE mark that moves at a fixed frame instead of running it. `false` everywhere a row
+    /// resolves a mark — a row's spinner spins — and `true` only where the mark is being shown as a
+    /// SLOT rather than as news: the band rollup's absent states (``RailStatusRollup``), which draw
+    /// all three readings always and animate only the ones that are happening. A silhouette that
+    /// moves is a claim that something is moving.
+    var frozen: Bool = false
 }
 
 /// The mark itself. Only the spinner carries a timeline; every other state is drawn once and holds
@@ -326,7 +332,10 @@ struct StatusDotView: View {
         } else {
             switch style.mark {
             case .working:
-                AgentSpinner(ink: style.ink)
+                // A frozen cell holds at phase 0 — the SAME still Reduce Motion asks for, through
+                // the same one parameter, so a disabled slot and an accessibility freeze can never
+                // become two different drawings of "not moving".
+                AgentSpinner(ink: style.ink, pinnedPhase: style.frozen ? 0 : nil)
             case .awaiting:
                 VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
             default:

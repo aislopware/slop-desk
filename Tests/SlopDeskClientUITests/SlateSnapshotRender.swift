@@ -4,6 +4,15 @@
 //   SLOPDESK_SNAPSHOT_OUT="$PWD/.build/showcase.png" swift test --filter SlateSnapshotRender
 // It renders a hand-built mock of the real chrome from the SAME token layer + component kit, so a palette /
 // component regression shows up visually. It is NOT a pixel-diff CI gate.
+//
+// ⚠️⚠️ EVERY FIXTURE HERE STANDS ON ``Slate/Surface/field`` — THE GROUND, the authored cream
+// `#FFFBEB` every column of this app paints (ONE ISLAND law 4). NOT `Surface.ground`, which on macOS
+// is the SEMANTIC aux-window backdrop (`underPageBackgroundColor`, measured `#A1A09F`): a mid grey
+// that appears NOWHERE in the shipping chrome. Every render in this file used to stand on that grey
+// (fixed 2026-08-11), which quietly voided the one job the harness has — an ink judged against a
+// grey it will never be drawn on is not judged at all, and the cream is the harder ground (the
+// status ramp measures ~2.05–2.12 as ink on it, see `design-ink`). If a future render comes out
+// grey, this is the line it crossed.
 
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
@@ -64,10 +73,19 @@ final class SlateSnapshotRender: XCTestCase {
             store: store,
             toggledState: { $0.id == "action.toggleSidebar" },
         )
-        try render(scrimmed(palette), size: CGSize(width: 920, height: 620), to: dir, named: "palette.png")
+        // ⚠️ `renderHosted`, NOT `render`: the palette's query line is a ``SlateSearchField``, an
+        // `NSViewRepresentable`, and `ImageRenderer` CANNOT build an AppKit-backed view — it
+        // silently substitutes a saturated YELLOW placeholder box and drops everything below it.
+        // This render had been a yellow bar and a divider (fixed 2026-08-11); the cheat sheet goes
+        // through the same path so the pair stays comparable.
+        try renderHosted(
+            scrimmed(palette), size: CGSize(width: 920, height: 620), to: dir, named: "palette.png",
+        )
 
         let cheat = KeyboardCheatSheetView(coordinator: overlay)
-        try render(scrimmed(cheat), size: CGSize(width: 920, height: 700), to: dir, named: "cheatsheet.png")
+        try renderHosted(
+            scrimmed(cheat), size: CGSize(width: 920, height: 700), to: dir, named: "cheatsheet.png",
+        )
     }
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
@@ -115,7 +133,7 @@ final class SlateSnapshotRender: XCTestCase {
         }
         .padding(8)
         .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try renderHosted(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 260),
             to: dir, named: "tab-row-badges.png",
@@ -168,10 +186,14 @@ final class SlateSnapshotRender: XCTestCase {
         ]
         // The ink candidates for the thinking cell, so the choice is settled on pixels rather
         // than on the argument for each one. `warn` — herdr's own yellow — is the shipping answer.
+        // ⚠️ systemYellow is in the list because it SHIPPED for half a day on 2026-08-11 and was
+        // reverted on hardware: it separates the cell from the hand's amber, and measures 1.46 on
+        // the cream doing it — under the band rollup's own DISABLED slot.
+        let cellInk = Slate.StatusInk.warn
         let inks: [(String, Color)] = [
-            ("warn — herdr's yellow (shipping)", Slate.StatusInk.warn),
-            ("notice — a rung louder, if yellow reads flat", Slate.StatusInk.notice),
-            ("info — off the attention ramp, and too quiet for it", Slate.StatusInk.info),
+            ("StatusInk.warn — herdr's yellow (shipping)", Slate.StatusInk.warn),
+            ("StatusInk.notice — a rung louder, if yellow reads flat", Slate.StatusInk.notice),
+            ("systemYellow — tried 2026-08-11, reverted at 1.46 on the cream", Slate.Status.warn),
         ]
         let phases: [Double] = (0..<8).map { Double($0) / 8 }
         let sheet = VStack(alignment: .leading, spacing: 16) {
@@ -179,12 +201,12 @@ final class SlateSnapshotRender: XCTestCase {
             let high = Int(StatusDot.lapPeriodRange.upperBound * 1000)
             captioned("one lap, flattened — true size, then 4× (the tempo wanders \(low)–\(high)ms/lap)") {
                 VStack(alignment: .leading, spacing: 8) {
-                    self.strip(phases, ink: Slate.StatusInk.warn, zoom: 1, spacing: 10)
-                    self.strip(phases, ink: Slate.StatusInk.warn, zoom: 4, spacing: 8)
+                    self.strip(phases, ink: cellInk, zoom: 1, spacing: 10)
+                    self.strip(phases, ink: cellInk, zoom: 4, spacing: 8)
                 }
             }
             captioned("the WANDER — 16 frames 250ms apart, so the hole covers uneven ground per step") {
-                self.strip(Self.wanderFrames(), ink: Slate.StatusInk.warn, zoom: 3, spacing: 8)
+                self.strip(Self.wanderFrames(), ink: cellInk, zoom: 3, spacing: 8)
             }
             ForEach(inks.indices, id: \.self) { index in
                 self.captioned("cell ink — \(inks[index].0)") {
@@ -214,7 +236,7 @@ final class SlateSnapshotRender: XCTestCase {
         }
         .padding(20)
         .frame(width: 900, alignment: .leading)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try renderHosted(sheet, size: CGSize(width: 900, height: 940), to: dir, named: "status-marks.png")
     }
 
@@ -311,6 +333,184 @@ final class SlateSnapshotRender: XCTestCase {
         }
     }
 
+    // MARK: - Opt-in render of the band's status rollup (the ONE claim only pixels can settle)
+
+    /// Renders the sidebar's TOP — the traffic-light band carrying ``RailStatusMarks``, the search
+    /// plate, and a real project island of ``SlateTabRow``s — twice, once with all three states lit
+    /// and once with only the waiting one. Everything this round changed is a claim about PIXELS that
+    /// `RailStatusRollupTests` can only pin the arithmetic behind:
+    ///
+    ///  * **flush right** — the cluster must end on the SAME vertical line as the search plate under
+    ///    it (user-reported 2026-08-11: at the rows' mark column, 18pt further in, it read as a
+    ///    cluster that had failed to reach the edge). The plate is in the frame for exactly this, and
+    ///    it is drawn here rather than mounted, because the real field is AppKit-backed and the
+    ///    hosted path greys the cream (see the file header's ⚠️).
+    ///  * **the unlit slots** — three fixed slots means the resting cluster is now the LOUDEST thing
+    ///    this band ever draws when nothing is happening. The second column is the check: the two
+    ///    unlit marks must sit under the lit one AND under the row titles beside them.
+    ///  * **the rung** — the marks share the band's centre line (`bandControlInset` + half a control
+    ///    = 20) with the lights, instead of hanging from the island's top edge the way four earlier
+    ///    band rounds did. The three discs standing in for the window controls are drawn HERE only;
+    ///    AppKit owns the real ones.
+    ///  * **the gap** — `markGap` went `space1` → `space2` because at 4pt the three read as one
+    ///    object and the pointer missed (user-reported 2026-08-11). Whether they now read as three
+    ///    clickable things is exactly the judgement no arithmetic can make.
+    ///  * **the collapsed parking spot** — the third panel is the cluster where it lands once the
+    ///    column is gone: one gap right of the sidebar toggle's plate, still on the band's centre
+    ///    line. Both ends of the travel in one frame, because the claim is that it arrives somewhere
+    ///    deliberate rather than merely somewhere.
+    ///
+    /// SAME opt-in idiom; writes `rail-status-rollup.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderRailStatusRollup() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the band rollup")
+        }
+        let width = Slate.Metric.sidebarWidth
+        // +300: the captions are wider than the panels they label, and an HStack that overflows
+        // its render frame centres — which clipped the FIRST caption off the left edge.
+        let size = CGSize(width: width * 2 + collapsedBandWidth + 300, height: 300)
+        let sheet = HStack(alignment: .top, spacing: 20) {
+            captioned("all three lit") { self.bandPanel(active: RailStatusRollup.order) }
+            captioned("only a question waiting — the other two slots unlit") {
+                self.bandPanel(active: [.waiting])
+            }
+            captioned("collapsed — beside the toggle, tabs begin after it") { self.collapsedBandPanel }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        // ⚠️ The ground goes on OUTSIDE the render frame's own size, or the strip `render`'s
+        // `.frame` adds beyond the content stays UNPAINTED and photographs black.
+        .background(Slate.Surface.field) // THE GROUND — see the file header's ⚠️
+        // `render`, not `renderHosted`: every part of this frame is pure SwiftUI (the marks, the
+        // spinner, the rows, the drawn search plate), and the hosted path composites through a window
+        // whose backing greys the authored cream — which would make the one thing this image exists
+        // to judge, the GROUND the marks stand on, a lie.
+        try render(sheet, size: size, to: dir, named: "rail-status-rollup.png")
+    }
+
+    /// One sidebar top at its true width, with `active` lit.
+    @MainActor
+    private func bandPanel(active: [RailStatusRollup.Kind]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: Slate.Metric.space2) {
+                    ForEach([Slate.Status.err, Slate.Status.warn, Slate.Status.ok], id: \.self) {
+                        Circle().fill($0).frame(width: 14, height: 14)
+                    }
+                }
+                .padding(.leading, 13) // AppKit's measured light inset (docs: windowControlsInset)
+                .padding(.top, 13)
+                // ⚠️ Positioned the way the REAL mount positions it — by lead, not by a trailing
+                // padding inside the cluster. `RailStatusMarks` is intrinsically sized (three
+                // footprints, two gaps) and ``RailStatusRollupMount`` owns where that block stands,
+                // so a fixture that spelled the inset itself would stop testing the shipped sum.
+                RailStatusMarks(active: active)
+                    .padding(.leading, RailStatusRollupMount.lead(
+                        collapsed: false, navigatorWidth: Slate.Metric.sidebarWidth,
+                    ))
+            }
+            // ⚠️ `alignment: .top` — the band's contents are SHORTER than the band, and a centring
+            // frame slides them down 4pt, which reads as the whole rung sitting low. The real mount
+            // in ``NavigatorColumn`` top-aligns for the same reason.
+            .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+            searchPlateStandIn
+            SlateProjectIsland(tint: Slate.ProjectTint.register[0].opacity(Slate.Opacity.bed)) {
+                VStack(alignment: .leading, spacing: 2) {
+                    SlateTabRow(
+                        title: "Claude Code", active: false, agentMarker: true,
+                        badge: .awaitingInput, onSelect: {}, onClose: {},
+                    )
+                    SlateTabRow(
+                        title: "api", active: false, agentMarker: true,
+                        workingLabel: "Agent working", onSelect: {}, onClose: {},
+                    )
+                    SlateTabRow(
+                        title: "web", active: false, agentMarker: true, badge: .finished,
+                        agentFinish: true, onSelect: {}, onClose: {},
+                    )
+                    SlateTabRow(
+                        title: "docs", active: false, processLabel: "zsh", onSelect: {}, onClose: {},
+                    )
+                }
+            }
+            .padding(.horizontal, Slate.Metric.space2) // the list's LazyVStack gutter
+        }
+        .frame(width: Slate.Metric.sidebarWidth)
+    }
+
+    /// Wide enough to show the toggle's slot, the parked cluster, and the start of the tab run that
+    /// begins after it.
+    @MainActor
+    private var collapsedBandWidth: CGFloat {
+        RailStatusRollupMount.collapsedTrailingEdge + 120
+    }
+
+    /// The band with NO column under it — the traffic lights, the sidebar toggle's plate, and the
+    /// cluster at its collapsed parking spot. The toggle is drawn (not mounted) for the same reason
+    /// the search plate is: `PlateIconButton` would drag a store-shaped dependency into a fixture
+    /// that only needs its FOOTPRINT, which is `Slate.Metric.plate` square on the band's centre line.
+    @MainActor
+    private var collapsedBandPanel: some View {
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: Slate.Metric.space2) {
+                ForEach([Slate.Status.err, Slate.Status.warn, Slate.Status.ok], id: \.self) {
+                    Circle().fill($0).frame(width: 14, height: 14)
+                }
+            }
+            .padding(.leading, 13)
+            .padding(.top, 13)
+            Image(systemSymbol: .sidebarLeft)
+                .font(.system(size: Slate.Typeface.body, weight: .medium))
+                .foregroundStyle(Slate.Text.icon)
+                // The plate's FILL is `.clear` at rest (``SlatePlateStyle``) — only its footprint
+                // is in play here, and that is what the collapsed lead is measured from.
+                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .padding(.leading, Slate.Metric.windowControlsLead)
+                .padding(.top, Slate.Metric.bandControlInset)
+            RailStatusMarks(active: [.waiting, .working])
+                .padding(.leading, RailStatusRollupMount.collapsedLead)
+            // ⚠️ The first horizontal tab, stood in for at the inset ``SlateTitlebar`` actually
+            // spends. This is the collision the round fixed (user-reported 2026-08-11: the strip
+            // reserved the TOGGLE's slot only, so the marks were drawn over the first tab's title)
+            // — and a collision between two positions is only ever settled by looking.
+            Text("Kiểm tra và lên kế h…")
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.primary)
+                .padding(.horizontal, Slate.Metric.space2)
+                .frame(height: Slate.Metric.heightControl)
+                .background(
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                        .fill(Slate.ProjectTint.register[0].opacity(Slate.Opacity.bed)),
+                )
+                .padding(.leading, RailStatusRollupMount.collapsedTrailingEdge)
+                .padding(.top, Slate.Metric.bandControlInset)
+        }
+        .frame(width: collapsedBandWidth, height: Slate.Metric.titlebarHeight, alignment: .topLeading)
+    }
+
+    /// The search field's PLATE, drawn — the real one wraps `SlateSearchField`, which is
+    /// AppKit-backed and would force the hosted path. Only its geometry matters here (the plate's
+    /// height, and the gutter its trailing edge lands on), and that is copied from
+    /// ``NavigatorColumn`` verbatim, ``RailStatusRollup/trailingInset`` included: the whole point of
+    /// having it in frame is that the band above it must end on the same line.
+    @MainActor
+    private var searchPlateStandIn: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Image(systemSymbol: .magnifyingglass)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.icon)
+            Text("Search tabs")
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.tertiary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .frame(height: Slate.Metric.heightControl)
+        .slateChromeFieldPlate()
+        .padding(.horizontal, RailStatusRollup.trailingInset)
+        .padding(.bottom, Slate.Metric.space3)
+    }
+
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
     /// Renders the REAL ``SidebarSectionHeaderRow`` (the gutter-chevron + NAME header on the rows'
@@ -389,7 +589,7 @@ final class SlateSnapshotRender: XCTestCase {
         }
         .padding(8) // the sidebar list's LazyVStack inset
         .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try render(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 440),
             to: dir, named: "sidebar-section.png",
@@ -559,7 +759,7 @@ final class SlateSnapshotRender: XCTestCase {
             footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false), pulse: nil)
         }
         .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try render(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 650),
             to: dir, named: "sidebar-footer.png",
@@ -653,13 +853,13 @@ final class SlateSnapshotRender: XCTestCase {
                 self.captioned("\(Int(width)) pt") {
                     SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
                         .frame(width: width)
-                        .background(Slate.Surface.ground)
+                        .background(Slate.Surface.field)
                 }
             }
         }
         .padding(8)
         .frame(width: Slate.Metric.sidebarWidth + 16, alignment: .leading)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try render(
             panel, size: CGSize(width: Slate.Metric.sidebarWidth + 16, height: 460),
             to: dir, named: "git-line-squeeze.png",
@@ -680,7 +880,11 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the grouped navigator")
         }
         let nav = NavigatorColumn(store: makeGroupedNavigatorStore())
-        try render(nav, size: CGSize(width: 240, height: 470), to: dir, named: "navigator-grouped.png")
+        // ⚠️ `renderHosted`, NOT `render` — the column's header row IS a ``SlateSearchField``
+        // (`NSViewRepresentable`), which `ImageRenderer` replaces with a yellow placeholder box,
+        // taking the whole list under it with it. This is the ONE render that mounts the real
+        // `NavigatorColumn`, so it had been the one telling us least (fixed 2026-08-11).
+        try renderHosted(nav, size: CGSize(width: 240, height: 470), to: dir, named: "navigator-grouped.png")
     }
 
     /// A headless `.tree` store with five single-pane tabs across three project cwds (so By-Project yields
@@ -757,7 +961,7 @@ final class SlateSnapshotRender: XCTestCase {
             cursorPanel(surface: wide, rows: rows)
         }
         .padding(12)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try withExtendedLifetime((ascii, wide)) {
             try render(panels, size: CGSize(width: 560, height: 260), to: dir, named: "vi-cursor.png")
         }
@@ -768,7 +972,7 @@ final class SlateSnapshotRender: XCTestCase {
             ViKeyHintBar().frame(width: 300, alignment: .leading)
         }
         .padding(16)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
         try render(bars, size: CGSize(width: 800, height: 980), to: dir, named: "vi-hint-bar.png")
     }
 
@@ -812,12 +1016,24 @@ final class SlateSnapshotRender: XCTestCase {
     }
 
     /// Center an overlay panel on the dimmed scrim + window background, the way `OverlayHostView` composes it.
+    ///
+    /// ⚠️ THAT INCLUDES THE CARD. `OverlayHostView.modalOverlay` wraps every sheet in
+    /// ``SlatePaperCard`` + a `space4` margin; without them this render showed the panel's CONTENTS
+    /// floating naked on the scrim (fixed 2026-08-11) — no corner, no rim, no shadow. Those three
+    /// are exactly what the TWO TONES round settled by rendering options at true size, so a fixture
+    /// that drops them cannot be used for the decision it exists to serve: cream paper on a cream
+    /// ground separates AT ITS EDGE, and the edge was the missing part.
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
         ZStack {
-            Slate.Surface.ground
+            // The window background the card actually floats over: `FlatDividerSplitView` paints
+            // `window.backgroundColor` with THE GROUND, so a paper card's edge is judged here
+            // against cream-under-scrim — the pairing that made `SlatePaperCard` replace the glass.
+            Slate.Surface.field
             Slate.State.shadow // the host's dim scrim role
             panel
+                .slatePaperCard()
+                .padding(Slate.Metric.space4)
         }
     }
 
@@ -929,7 +1145,7 @@ private struct SlateShowcase: View {
             content
         }
         .frame(width: 920, height: 560)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
     }
 
     private var sidebar: some View {
@@ -948,7 +1164,7 @@ private struct SlateShowcase: View {
         }
         .padding(Slate.Metric.space2)
         .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.ground)
+        .background(Slate.Surface.field)
     }
 
     private var content: some View {

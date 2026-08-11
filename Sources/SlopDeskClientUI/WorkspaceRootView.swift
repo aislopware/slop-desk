@@ -163,6 +163,15 @@ public struct WorkspaceRootView: View {
         // in the inset content instead, which parks this button one whole band low — on top of the
         // navigator's search field (measured 2026-08-09).
         .overlay(alignment: .topLeading) { WindowSidebarToggle(chrome: chrome) }
+        // The band's AGGREGATE AGENT READING, mounted beside the toggle for the SAME reason and with
+        // the opposite consequence: the toggle is here so it can never move, this is here so it can
+        // move BETWEEN the two places it belongs — flush with the navigator's gutter while the
+        // column is up, back against the toggle once the column is gone (``RailStatusRollupMount``).
+        // Inside `.ignoresSafeArea()` for the reason above, and below the overlay layer so a modal
+        // card covers it like everything else.
+        .overlay(alignment: .topLeading) {
+            RailStatusRollupMount(store: store, chrome: chrome)
+        }
         .ignoresSafeArea()
         // THE GROUND behind the split (law 1) — one opaque tone under all three columns, which
         // backstops any transient gap (a mid-animation collapse) so no bare window colour ever

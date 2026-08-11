@@ -276,10 +276,20 @@ enum Slate {
     /// `void` (aux-window backdrops) → `ground` (sidebar housing; on macOS the real sidebar material
     /// sits BEHIND the column and this is its fallback) → `face` (the window content ground) →
     /// `raised`/`lift` (the system fill ladder) → `terminal` (the island glass — profile-driven).
+    ///
+    /// ⚠️⚠️ **THE APP'S GROUND IS ``field``, NOT ``ground``.** The name is a leftover: on macOS
+    /// `ground` and `void` are the SAME system backdrop (`underPageBackgroundColor`, a mid grey
+    /// measured `#A1A09F`), and ONE ISLAND law 4 paints every column, moat and band with the
+    /// authored cream `#FFFBEB` = ``field``. Nothing in the shipping chrome stands on `ground`. The
+    /// mistake is silent — it compiles, it renders, and it simply shows the wrong colour: it cost
+    /// the device panels a whole "third grey" round (`docs/DECISIONS.md`, TWO TONES) and, until
+    /// 2026-08-11, every snapshot render in `SlateSnapshotRender`. Reach for `field` unless you
+    /// specifically want the OS's aux-window backdrop.
     @MainActor
     enum Surface {
         #if canImport(AppKit)
         static let void = Color(nsColor: .underPageBackgroundColor)
+        /// ⚠️ NOT the app's ground — see the ladder's note above; you almost certainly want ``field``.
         static let ground = Color(nsColor: .underPageBackgroundColor)
         static let face = Color(nsColor: .windowBackgroundColor)
         static let raised = Color(nsColor: .quaternarySystemFill)

@@ -8365,3 +8365,115 @@ divergence to the RULE (`DIVERGED_RULES`) rather than the agent: excluding the w
 had silently dropped the guard on five rules nothing else pins. Back under test at 10 663 cases,
 PARITY OK. A gate `region` also became an engine-3 key, since an engine that ignores it drops a
 VETO — the quietest way for a rule to fire on the screen it was written to skip. → [50 §4, §5, §5b, §7]
+
+## The band gets an aggregate agent reading — three fixed slots, flush right, on the system palette (2026-08-11, user-directed)
+
+The sidebar's traffic-light strip carried nothing but the lights. It now carries `RailStatusRollup`
+— *is anything at all waiting / working / finished right now*, with no counts, no names, no ranking.
+It exists for the rows the column CANNOT show: scrolled past the fold, or hidden behind a live
+search query. It is deliberately NOT filtered by that query, because a filter hiding a waiting agent
+is exactly when it earns its place. Tapping it is a second door onto ⌘⇧U's own walk, never a second
+implementation, and it is hit-testable only while something actually waits — a control that
+sometimes does nothing is worse than no control.
+
+**⚠️ This is not Round 11's titlebar pip returning.** That pip stood on the CONTENT side and
+restated, in a second vocabulary, what the visible rail was already naming pane by pane. This stands
+on the navigator's own ground, in the rail's own marks, for the rows the rail is not showing.
+
+**⚠️ It must stay a LEAF.** Resolving each row's chrome touches the store's volatile per-pane dicts;
+doing it inside `NavigatorColumn`'s body would register every one as a dependency of the sidebar body
+and bring back the re-render storm `RailRowsMemo` exists to kill — the same rule
+`ConnectionStatusMount` carries. Rows arrive as a STRUCTURAL parameter.
+
+Three things were then corrected on hardware, in the order they were seen:
+
+**1. ALL THREE MARKS ARE ALWAYS DRAWN.** It shipped as a cluster that appeared and collapsed with
+the news, on the argument that a strip bare by design must stay bare. What that produced was a
+widget whose WIDTH and CONTENTS both moved, so the reader had to re-identify the marks on every
+arrival — and a mark's POSITION said nothing, because which mark sat where depended on what else was
+lit. Three fixed slots make the cluster a LEGEND that is sometimes lit: the hand is always in the
+same place and the eye learns it once. An unlit slot keeps its silhouette and gives up both things
+that carry state — the hue goes neutral (`Text.tertiary` at `Opacity.dim`, the "ruled-out hint
+letter" pairing) and the one mark that moves is FROZEN. Deliberately neutral, not the state's own
+hue faded: a dimmed amber is still amber, and three washed-out hues read as three states
+half-happening rather than one legend with one entry lit. Freezing goes through `AgentSpinner`'s
+`pinnedPhase: 0` — the same still Reduce Motion asks for, through the same one parameter, so a
+disabled slot and an accessibility freeze can never become two drawings of "not moving".
+
+**2. IT ENDS ON THE COLUMN'S GUTTER.** It stood 18pt further in, on the rows' MARK COLUMN
+(`space2 + projectIslandInset + islandRail`), on the argument that it read as the head of that
+column. On hardware it read as a cluster that had failed to reach the edge — the search plate
+directly under it is the nearer and far stronger line. `trailingInset` is `space2` now, and the
+search plate reads THAT constant rather than spelling `8` again.
+
+**3. THE MARK COLUMN WAS MOVED TO THE SYSTEM PALETTE AND MOVED BACK, THE SAME DAY.** The proposal
+(`StatusPresentation.markInk`, systemOrange / systemYellow / systemGreen for the three marks, with
+the row TITLE and the git line keeping `StatusInk`) reversed, for the marks only, the argument
+`StatusInk` was written on — "a ring mark 10pt across is the thinnest thing in the rail that carries
+state". The reasoning was that the ink tier is solved on the DEEPEST PROJECT BED, the worst ground a
+git line ever stands on, while the mark column stands on ONE determined ground; and that the tier is
+a six-hue ramp built to keep seven git runs apart AT ISO-LIGHTNESS, while the mark column has three
+readings that need to RANK. It also bought the collision the thinking mark has carried a written
+warning about since it took herdr's yellow: working and awaiting were ONE ink, held apart by
+silhouette and motion alone.
+
+**It lost on the measurement the ink tier exists for.** On the cream, systemOrange measures 2.23:1,
+systemGreen 2.14, and systemYellow — the thinking cell, the one mark on this rail that has to be
+seen across a room — **1.46**. The unlit slots this same round introduced measure 1.60, so the
+FROZEN GREY spinner came out louder than the running yellow one. The counter-argument (hue ranks
+them, not luminance: one saturated mark among two achromatic ones wins the eye at equal contrast)
+is true and was not enough. Reverted on hardware, user-directed, hours later.
+
+⚠️ The ground under the marks is what would have to change for this to come back — not the argument.
+`markInk` and `Slate.Status.working` are gone; there is no second tier to keep in sync, and
+`attentionInk` is the one answer again. The working/awaiting hue collision stands, separated by
+silhouette and motion as before.
+
+**4. EACH MARK IS ITS OWN BUTTON, AND THE GAP DOUBLED.** *"bấm vào cái giữa (running) lại nhảy sang
+cái blocked, bấm vào cái done cũng thế"* — the cluster shipped as ONE tap target over the whole
+`HStack`, calling the attention walk, which ranks needs-permission above everything else. So the
+spinner and the check were live, took the click, and silently landed on the blocked pane. Three
+marks that all do one thing are one button wearing three faces, and the face the pointer chose was
+the one part of the gesture that carried no meaning.
+
+Each slot is now its own hit box, and each jumps into the state it is LIT FOR — derived from
+`matches(_:_:)`, the same predicate that decides whether the slot is lit, so a lit mark always has
+somewhere to go and an unlit one is inert by construction rather than by a second rule that could
+drift. Repeated clicks WALK that state's panes (`nextPane(in:focused:)`, wrapping, restarting at the
+head when focus is elsewhere) instead of pinning its first one — the rollup answers "another one"
+the way ⌘⇧U does, but scoped to the mark that was clicked. Clearing the badge stays scoped too: a
+waiting or finished jump clears, a WORKING jump does not, because arriving at a thinking agent has
+not resolved anything.
+
+The same report named the cause the pointer had to fight: `markGap` was `space1`, 4pt, and at 4pt
+the three read as one object. It is `space2` now. The gap is dead space by construction — a mark's
+hit box is its own `StatusDot.footprint` and never the half-gap beside it — so widening it buys
+separation for the EYE without making a near-miss land on a neighbour.
+
+**5. WHEN THE COLUMN GOES, THE CLUSTER FOLLOWS THE TOGGLE.** *"để khi collapse, thì 3 cái nút trôi
+về cạnh nút collapse sidebar"* — the rollup was mounted inside `NavigatorColumn`, so collapsing the
+navigator took the agent reading away with it, which is precisely when a reading of panes you cannot
+see is worth most. It now hangs off the WINDOW ROOT beside `WindowSidebarToggle`, for the same
+reason that button does (`WindowSidebarToggle`'s header): a view parked inside either column RIDES
+the split's slide.
+
+`RailStatusRollupMount` owns the geometry and the travel. Expanded it parks so its TRAILING edge
+lands on the navigator's gutter; collapsed it parks one `space2` right of the toggle's plate, and
+the two are the same number when the column is narrower than the toggle's own row (`max` clamp) so
+it can never slide under the traffic lights.
+
+**⚠️ Follow-up, same day — the collapsed band already had a tenant.** The parking spot was correct
+and empty-looking, and it was neither: `SlateTitlebar`'s horizontal tab strip starts on that exact
+line, because it was reserving *the sidebar toggle's slot and nothing more*. Collapsed, the three
+marks were drawn straight over the first tab's title (user-reported, screenshot). The strip's inset
+is now `RailStatusRollupMount.collapsedTrailingEdge` — the cluster's own trailing edge plus one gap
+— so the band's leading side is ONE sum owned by the mount rather than two views independently
+deriving "where the toggle ends". The next control added there inherits the same clearance instead
+of re-colliding.
+
+⚠️ **The parked lead cannot be a constant** — the navigator item is RESIZABLE (220…360), so `220` is
+right only at the default. The split controller publishes the live width through
+`WorkspaceChromeState.navigatorWidth` from the resize notification it already answers, and the mount
+— itself a LEAF, for its own volatile source this time — reads it. And the travel animates on
+`sidebarCollapsed` ONLY, never on `navigatorWidth`: animating a continuous drag would make the
+cluster lag the edge it is glued to, by exactly the animation's duration, on every frame.

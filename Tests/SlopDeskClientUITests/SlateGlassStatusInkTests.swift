@@ -16,6 +16,31 @@ final class SlateGlassStatusInkTests: XCTestCase {
     private let proRed: UInt32 = 0xFF9580
     private let proGreen: UInt32 = 0x8AFF80
 
+    /// ⚠️ THE GROUND IS ``Slate/Surface/field``, AND IT IS NOT ``Slate/Surface/ground``. The names
+    /// invite exactly one mistake, it compiles, it renders, and it silently shows the OS's mid-grey
+    /// aux backdrop instead of the app's authored cream — it cost the device panels a whole "third
+    /// grey" round (docs/DECISIONS.md, TWO TONES) and every render in `SlateSnapshotRender` up to
+    /// 2026-08-11. Pinned here so the distinction is executable rather than a comment: `ground` and
+    /// `void` are the SAME system backdrop, and neither is what a column paints.
+    func testTheAppsGroundIsFieldAndNotTheSystemBackdrop() {
+        XCTAssertEqual(
+            Slate.Surface.field, SlateTheme.app.ground,
+            "the columns' ground is the profile's authored cream",
+        )
+        XCTAssertEqual(
+            SlateTheme.app.ground, Color(slateHex: 0xFFFBEB),
+            "ONE ISLAND law 4 — Alucard cream, in the app's one appearance",
+        )
+        XCTAssertNotEqual(
+            Slate.Surface.field, Slate.Surface.ground,
+            "`ground` is the OS aux-window backdrop; painting a column with it is the bug",
+        )
+        XCTAssertEqual(
+            Slate.Surface.ground, Slate.Surface.void,
+            "…and it is the SAME colour as `void`, which is why the name carries no information",
+        )
+    }
+
     func testGlassStatusInksAreTheProfilesOwnAnsiRedAndGreen() {
         XCTAssertEqual(Slate.Terminal.ok, Color(slateHex: proGreen))
         XCTAssertEqual(Slate.Terminal.err, Color(slateHex: proRed))
