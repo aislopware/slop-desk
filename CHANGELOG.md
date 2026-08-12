@@ -4,6 +4,19 @@ Generated from the commit log by [git-cliff](https://git-cliff.org). Sections co
 the conventional-commit type, so what lands here is decided when a commit is written, not
 when a release is cut.
 
+## [0.4.0](https://github.com/aislopware/slop-desk/compare/v0.3.0...v0.4.0) — 2026-08-12
+
+### Features
+
+- Roll the agents' waiting, working and done into the band ([`c1a9ebf`](https://github.com/aislopware/slop-desk/commit/c1a9ebf97c8aed37b3ccce1e1174c91dd4024563))
+- Lift the terminal notices onto a legible paper capsule ([`a0e99e5`](https://github.com/aislopware/slop-desk/commit/a0e99e5854fb1e9b9c5121d3557f4f1903645f71))
+
+### Bug fixes
+
+- The escape hatch becomes reachable, and the guard that lapsed once stops lapsing for good ([`3c0f5dd`](https://github.com/aislopware/slop-desk/commit/3c0f5dd244ae74b75db6585e0b99b1fdbac69543))
+- The editor comes back to the DOM, because the box it measured itself by does not exist here ([`ffc67b8`](https://github.com/aislopware/slop-desk/commit/ffc67b81f1f2e3a55a8c4fcb207c192ace260a38))
+- The thinking mark's speed stops changing too slowly to be seen ([`c19cbcd`](https://github.com/aislopware/slop-desk/commit/c19cbcde05d5590bc12cb91669e96ad83527d5cd))
+
 ## [0.3.0](https://github.com/aislopware/slop-desk/compare/v0.2.2...v0.3.0) — 2026-08-11
 
 ### Features

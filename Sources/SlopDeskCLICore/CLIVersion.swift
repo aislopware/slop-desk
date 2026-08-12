@@ -9,7 +9,7 @@ import SlopDeskProtocol
 public enum CLIVersion {
     /// The marketing version string. Kept in step with the app target's `MARKETING_VERSION`
     /// (`Apps/ClientApp-macOS/project.yml`).
-    public static let version = "0.3.0"
+    public static let version = "0.4.0"
 
     /// Env var carrying an optional short build/commit hash, injected by the release pipeline.
     /// Absent in a plain `swift build`, so the summary simply omits the build parenthetical.
