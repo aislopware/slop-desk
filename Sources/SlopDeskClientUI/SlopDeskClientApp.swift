@@ -29,14 +29,18 @@ public struct SlopDeskClientApp: App {
     /// Retains the notification click-router (the `UNUserNotificationCenter` delegate is held weakly).
     @MainActor static var notificationRouter: PaneNotificationRouter?
 
-    // swiftlint:disable:next unused_declaration - the property wrapper INSTALLS the delegate; the
-    // instance is unreachable by design (SwiftUI builds it), so there is nothing here to reference.
+    // The disable is a REGION, not a `:next`: `:next` between a doc comment and its declaration
+    // orphans the doc comment, and from above the doc comment it silences a `///` line instead.
+    // swiftlint:disable unused_declaration
     /// QUIT-DRAIN (orphaned-session leak): the app delegate that parks ⌘Q behind a BOUNDED
     /// ``WorkspaceStore/quiesce()`` so in-flight pane teardowns (the bye/channelClose of a just-closed
     /// busy pane) reach the wire before the process dies — see ``SlopDeskAppTerminationDelegate``.
     /// The store is threaded via the delegate's static seam in `init()` (SwiftUI instantiates the
     /// adaptor delegate itself, so the property-wrapper instance is not reachable there).
+    /// The property wrapper INSTALLS the delegate; the instance is unreachable by design (SwiftUI
+    /// builds it), so there is nothing here to reference.
     @NSApplicationDelegateAdaptor(SlopDeskAppTerminationDelegate.self) private var terminationDelegate
+    // swiftlint:enable unused_declaration
     #endif
 
     @State private var store: WorkspaceStore

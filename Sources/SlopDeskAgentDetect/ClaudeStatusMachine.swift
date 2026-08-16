@@ -158,11 +158,6 @@ public final class ClaudeStatusMachine: @unchecked Sendable {
         agentPredicate(title) { bytes, len in slopdesk_agent_title_shows_rest(bytes, len) }
     }
 
-    /// Whether an OSC title names Claude at all.
-    static func titleNamesClaude(_ title: String) -> Bool {
-        agentPredicate(title) { bytes, len in slopdesk_agent_title_names_claude(bytes, len) }
-    }
-
     /// Whether a title was written by the agent rather than the shell — the shape that lets the
     /// detector stop trusting a shell-written title once the agent has claimed the slot.
     public static func titleIsAgentWritten(_ title: String) -> Bool {

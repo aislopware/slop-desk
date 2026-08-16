@@ -813,11 +813,6 @@ predicate!(
     /// Whether an OSC title carries the `✳` rest telltale in the leading position.
     slopdesk_agent_title_shows_rest, |text| ClaudeStatusMachine::title_shows_rest(text)
 );
-predicate!(
-    /// Whether an OSC title names Claude at all, case-insensitively.
-    slopdesk_agent_title_names_claude, |text| ClaudeStatusMachine::title_names_claude(text)
-);
-
 /// One of the machine's tuning constants, by index.
 ///
 /// 0 default done→idle · 1 hook-block screen-override grace · 2 post-exit floor lockout · 3 screen

@@ -41,8 +41,9 @@ public enum WatchProgress {
         bytes { out, cap in slopdesk_watch_finish_bytes(exitCode, out, cap) }
     }
 
-    // swiftlint:disable:next unused_declaration - no Swift caller ON PURPOSE (see below); the face
-    // exists so the next arbitrary progress state is framed by the wire crate, not in Swift.
+    // The disable is a REGION, not a `:next`: `:next` between a doc comment and its declaration
+    // orphans the doc comment, and from above the doc comment it silences a `///` line instead.
+    // swiftlint:disable unused_declaration
     /// `ESC ] 9 ; 4 ; <state> BEL` for one canonical progress state (`watch` only ever uses
     /// indeterminate / clear / error). The state digit is the validated ``ProgressState`` raw value, so
     /// this can never emit a discriminant the host would drop.
@@ -54,6 +55,8 @@ public enum WatchProgress {
     static func progressBytes(state: ProgressState) -> [UInt8] {
         bytes { out, cap in slopdesk_watch_progress_bytes(state.rawValue, out, cap) }
     }
+
+    // swiftlint:enable unused_declaration
 
     /// The human-readable "Notify on Watch Finish" message. Starts with `watch: ` so the body can
     /// NEVER begin with the `4;`/`4` progress subtype the host carves out of free-text `OSC 9`

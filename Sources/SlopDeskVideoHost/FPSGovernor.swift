@@ -342,8 +342,16 @@ public struct EncodeLoadPacer: Sendable, Equatable {
         ladder = FPSGovernor.ladder(baseFps: baseFps)
     }
 
+    // The disable is a REGION, not a `:next`: `:next` between a doc comment and its declaration
+    // orphans the doc comment, and from above the doc comment it silences a `///` line instead.
+    // swiftlint:disable unused_declaration
     /// The per-frame wall-clock budget (ms) at a given fps.
+    ///
+    /// No Swift caller ON PURPOSE: `check-supervisor.sh` pins this door among the governor's three,
+    /// so the per-frame budget stays one division in the crate rather than becoming a second
+    /// `1000.0 / fps` wherever someone next needs it.
     static func budgetMs(_ fps: Int) -> Double { slopdesk_fps_budget_millis(Int64(fps)) }
+    // swiftlint:enable unused_declaration
 
     /// Fold one encoded frame's measured wall-time (ms) and return the (possibly unchanged) paced
     /// fps. ANCHOR frames (keyframe/crisp) are episodic 5–10× encode-time outliers — excluded, like

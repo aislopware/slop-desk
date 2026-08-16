@@ -5,8 +5,10 @@ import Foundation
 /// The topology changes a client may ASK for (docs/45 §5.4). The raw value is the `op` byte inside a
 /// type-17 `intent` request, so these numbers are frozen once a golden vector carries one.
 ///
-/// Every one maps onto a pure `WorkspaceTreeOps` static that already exists — that reuse is the whole
-/// implementation lever, and it is why this layer is validation rather than logic.
+/// Every one names a topology change `slopdesk_wire::document::apply` knows how to make. This file is
+/// the ENCODE half only: what a client asks for and how it spells the ask. The decode half — the
+/// bounds-checked `Reader` and the byte→enum readings that went with it — lived here until the
+/// applier moved to Rust, and was deleted with it rather than kept as a second decoder nothing calls.
 public enum WorkspaceIntentOp: UInt8, Sendable, CaseIterable {
     /// The legacy one-shot: a client uploads its own tree to a host whose document is untouched.
     case adoptWorkspace = 0
@@ -288,16 +290,6 @@ public enum WorkspaceIntentArgs {
         }
     }
 
-    static func position(for byte: UInt8) -> NewTabPosition {
-        switch byte {
-        case 1: .end
-        case 2: .afterCurrent
-        // An unknown byte from a newer client is `.auto` — the position the user's own preference
-        // resolves, which is the least surprising place for a tab to land.
-        default: .auto
-        }
-    }
-
     /// The dock edge as a byte: `0 leading · 1 trailing · 2 top · 3 bottom`. Named by SIDE rather
     /// than by axis so the byte says which gutter the user dropped into; the axis follows from it
     /// through ``PaneDropEdge/axis``, which stays the one place that mapping lives.
@@ -307,105 +299,6 @@ public enum WorkspaceIntentArgs {
         case .right: 1
         case .top: 2
         case .bottom: 3
-        }
-    }
-
-    /// An unknown byte docks at the LEADING edge. Every value is a legal dock, so there is nothing to
-    /// reject — and defaulting keeps the pane on screen rather than dropping the gesture.
-    static func edge(for byte: UInt8) -> PaneDropEdge {
-        switch byte {
-        case 1: .right
-        case 2: .top
-        case 3: .bottom
-        default: .left
-        }
-    }
-
-    // MARK: Decode
-
-    /// A bounds-checked cursor. Every read validates BEFORE it advances, so a truncated payload
-    /// produces `nil` rather than a trap or an over-allocation.
-    struct Reader {
-        private let bytes: [UInt8]
-        private var offset = 0
-
-        init(_ data: Data) { bytes = [UInt8](data) }
-
-        var remaining: Int { bytes.count - offset }
-        var isAtEnd: Bool { remaining == 0 }
-
-        mutating func u8() -> UInt8? {
-            guard remaining >= 1 else { return nil }
-            defer { offset += 1 }
-            return bytes[offset]
-        }
-
-        /// C-style bool discipline on a byte that crossed the network: any non-zero is `true`.
-        mutating func bool() -> Bool? {
-            guard let byte = u8() else { return nil }
-            return byte != 0
-        }
-
-        mutating func u16() -> Int? {
-            guard let high = u8(), let low = u8() else { return nil }
-            return Int((UInt16(high) << 8) | UInt16(low))
-        }
-
-        mutating func u64() -> UInt64? {
-            var value: UInt64 = 0
-            for _ in 0..<8 {
-                guard let byte = u8() else { return nil }
-                value = (value << 8) | UInt64(byte)
-            }
-            return value
-        }
-
-        mutating func uuid() -> UUID? {
-            guard remaining >= 16 else { return nil }
-            let slice = Data(bytes[offset..<offset + 16])
-            offset += 16
-            return WorkspaceStateCodec.decodeUUID(slice)
-        }
-
-        mutating func axis() -> SplitAxis? {
-            guard let byte = u8() else { return nil }
-            return byte == 0 ? .horizontal : .vertical
-        }
-
-        /// A length-prefixed string. Over-long is MALFORMED, never clamped: silently truncating a
-        /// field a peer over-declared hides a framing bug behind a plausible value.
-        mutating func name() -> String? {
-            guard let length = u16(), length <= maxNameBytes, remaining >= length else { return nil }
-            let slice = Data(bytes[offset..<offset + length])
-            offset += length
-            return WorkspaceStateCodec.decodeString(slice)
-        }
-
-        /// A length-prefixed sub-payload — a `videoTarget` blob. Bounded before anything is copied,
-        /// and over-long is MALFORMED for the same reason ``name()`` refuses one.
-        mutating func blob() -> Data? {
-            guard let length = u16(), length <= maxBlobBytes, remaining >= length else { return nil }
-            defer { offset += length }
-            return Data(bytes[offset..<offset + length])
-        }
-
-        /// Everything left. The trailing `layoutStructure` needs no length prefix of its own — it is
-        /// the last field, and the codec underneath validates its own framing to the last byte.
-        mutating func rest() -> Data? {
-            guard remaining <= maxBlobBytes else { return nil }
-            defer { offset = bytes.count }
-            return Data(bytes[offset...])
-        }
-
-        mutating func uuidList() -> [UUID]? {
-            guard let count = u16(), count <= maxTabCount, remaining >= count * 16 else { return nil }
-            var out: [UUID] = []
-            out.reserveCapacity(count)
-            for _ in 0..<count {
-                guard let id = uuid() else { return nil }
-                out.append(id)
-            }
-            return out
         }
     }
 }

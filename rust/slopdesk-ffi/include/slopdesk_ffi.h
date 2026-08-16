@@ -262,7 +262,6 @@ bool slopdesk_agent_hold_decide(SlopDeskAgentHold *handle,
 // 4 screen dissent to release, 5 the label clamp in bytes.
 bool   slopdesk_agent_title_shows_spinner(const uint8_t *bytes, size_t len);
 bool   slopdesk_agent_title_shows_rest(const uint8_t *bytes, size_t len);
-bool   slopdesk_agent_title_names_claude(const uint8_t *bytes, size_t len);
 double slopdesk_agent_machine_constant(uint8_t index);
 
 // The state machine. §4b's handle convention: no two calls on one handle may overlap.

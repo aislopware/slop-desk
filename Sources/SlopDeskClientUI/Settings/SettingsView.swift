@@ -1227,21 +1227,6 @@ private struct ControlsSettingsTab: View {
         SettingsGlyphToggleRow(symbol, title, subtitle, isOn: store.refreshing(binding))
     }
 
-    /// A dropdown row (label + subtext leading, a `.menu` picker trailing) for the multi-state Controls enums.
-    private func pickerRow(
-        _ title: String, _ subtitle: String? = nil,
-        selection: Binding<some Hashable>, @ViewBuilder options: () -> some View,
-    ) -> some View {
-        LabeledContent {
-            Picker("", selection: store.refreshing(selection), content: options)
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-        } label: {
-            rowLabel(title, subtitle)
-        }
-    }
-
     /// The row label layout: a bold title with an optional gray subtext beneath.
     private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
