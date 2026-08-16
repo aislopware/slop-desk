@@ -1,4 +1,5 @@
 import CoreGraphics
+import CSlopDeskFFI
 
 // MARK: - Readable wire shape for CoreGraphics values
 
@@ -140,14 +141,11 @@ public extension Canvas {
     /// (NaN / ±inf) origin coordinate collapses to 0 and a non-finite / sub-minimum extent collapses to
     /// the corresponding ``minItemSize`` component. Total + pure: every output rect is finite with
     /// `size ≥ minItemSize`, so it is always safe to render and to drive a terminal reflow.
+    ///
+    /// The rule is `rust/slopdesk-workspace`'s `geometry::sanitize`, which the canvas SOLVERS already
+    /// apply on their side of the boundary. A second copy here would be the one place a frame could
+    /// come back from a slide bounded by one rule and be stored under another.
     static func sanitize(_ frame: CGRect) -> CGRect {
-        let b = coordinateBound
-        // Origin: NaN/inf → 0, then clamp magnitude so a bounding-box union can never overflow to ±inf.
-        let x = frame.origin.x.isFinite ? min(max(frame.origin.x, -b), b) : 0
-        let y = frame.origin.y.isFinite ? min(max(frame.origin.y, -b), b) : 0
-        // Size: floor to minItemSize, cap at the bound; NaN/inf → minItemSize.
-        let w = frame.size.width.isFinite ? min(max(frame.size.width, minItemSize.width), b) : minItemSize.width
-        let h = frame.size.height.isFinite ? min(max(frame.size.height, minItemSize.height), b) : minItemSize.height
-        return CGRect(x: x, y: y, width: w, height: h)
+        slopdesk_ws_sanitize(SlopDeskWsRect(frame)).rect
     }
 }

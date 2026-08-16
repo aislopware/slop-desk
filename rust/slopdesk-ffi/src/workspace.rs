@@ -719,14 +719,29 @@ pub extern "C" fn slopdesk_ws_sanitize(frame: CRect) -> CRect {
     CRect::of(geometry::sanitize(frame.resolve()))
 }
 
-/// The same, but keeping a size the caller has already decided is right.
+/// The same sanitation for a camera's origin, which has no extent to floor.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub extern "C" fn slopdesk_ws_sanitize_preserving_size(frame: CRect) -> CRect {
-    CRect::of(geometry::sanitize_preserving_size(frame.resolve()))
+pub extern "C" fn slopdesk_ws_sanitize_camera(origin: CPoint) -> CPoint {
+    let sanitized = camera_at(origin).sanitized();
+    CPoint {
+        x: sanitized.origin.x,
+        y: sanitized.origin.y,
+    }
+}
+
+/// The bound every coordinate is clamped to, exported rather than transcribed — a caller that
+/// asserts against it must read the same number the clamp used.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_coordinate_bound() -> f64 {
+    geometry::COORDINATE_BOUND
 }
 
 /// A canvas rect in screen coordinates, under the pan-only camera.

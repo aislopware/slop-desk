@@ -381,7 +381,10 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
                                        SlopDeskWsUuid *answer);
 
 SlopDeskWsRect  slopdesk_ws_sanitize(SlopDeskWsRect frame);
-SlopDeskWsRect  slopdesk_ws_sanitize_preserving_size(SlopDeskWsRect frame);
+// A camera's origin has no extent to floor, so it is its own door rather than a rect with a size
+// the caller would have to invent and then discard.
+SlopDeskWsPoint slopdesk_ws_sanitize_camera(SlopDeskWsPoint origin);
+double          slopdesk_ws_coordinate_bound(void);
 SlopDeskWsRect  slopdesk_ws_screen_rect(SlopDeskWsRect frame, SlopDeskWsPoint camera);
 SlopDeskWsPoint slopdesk_ws_canvas_point(SlopDeskWsPoint point, SlopDeskWsPoint camera);
 

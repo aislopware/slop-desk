@@ -1,4 +1,5 @@
 import CoreGraphics
+import CSlopDeskFFI
 
 // MARK: - The pan-only camera
 
@@ -95,9 +96,14 @@ public struct Canvas: Codable, Sendable, Equatable {
 // MARK: - Metrics
 
 public extension Canvas {
-    /// Minimum item size in canvas points — equals the legacy `PaneTreeView.minLeaf` (160×120) so a
-    /// pane's cols/rows never collapse below a usable grid.
-    static let minItemSize = CGSize(width: 160, height: 120)
+    /// Minimum item size in canvas points (160×120) so a pane's cols/rows never collapse below a
+    /// usable grid. Read from the crate that CLAMPS to it rather than transcribed: a number restated
+    /// on this side is a number that can drift from the clamp it is supposed to describe.
+    static var minItemSize: CGSize {
+        let floor = slopdesk_ws_min_leaf()
+        return CGSize(width: floor.x, height: floor.y)
+    }
+
     /// Default size for a brand-new pane (a comfortable shell).
     static let defaultItemSize = CGSize(width: 640, height: 420)
     /// Cascade step for new-pane placement (one title-bar + margin; the `NSWindow.cascadeTopLeft`
@@ -110,8 +116,8 @@ public extension Canvas {
     /// to. Far beyond any real layout (~13k screens), but bounding it keeps a corrupt/hand-edited file
     /// with extreme-but-finite coords from overflowing to ±inf in a bounding-box union (which would make
     /// `JSONEncoder` throw and silently stop ALL persistence). Pairs with the NaN/inf collapse in
-    /// ``sanitize(_:)``.
-    static let coordinateBound: CGFloat = 1_000_000
+    /// ``sanitize(_:)``, and comes from the crate that performs that clamp.
+    static var coordinateBound: CGFloat { slopdesk_ws_coordinate_bound() }
 }
 
 // MARK: - Coordinate sanitation
@@ -120,9 +126,6 @@ public extension CanvasCamera {
     /// A camera whose origin is finite and within ``Canvas/coordinateBound`` — collapses NaN/±inf to 0
     /// and clamps extreme magnitudes, so a corrupt camera can never make a save throw.
     func sanitized() -> CanvasCamera {
-        let b = Canvas.coordinateBound
-        let x = origin.x.isFinite ? min(max(origin.x, -b), b) : 0
-        let y = origin.y.isFinite ? min(max(origin.y, -b), b) : 0
-        return CanvasCamera(origin: CGPoint(x: x, y: y))
+        CanvasCamera(origin: slopdesk_ws_sanitize_camera(SlopDeskWsPoint(origin)).point)
     }
 }
