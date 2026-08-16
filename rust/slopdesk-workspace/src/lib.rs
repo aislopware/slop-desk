@@ -90,7 +90,6 @@ pub use identity::{
 };
 pub use json::{Json, JsonError};
 pub use jump::JumpResolution;
-pub use listen::{EADDRINUSE, VALID_PORT_RANGE};
 pub use persist::{
     decode_canvas, decode_preset, decode_spec, decode_split_node, encode_canvas, encode_preset, encode_spec,
     encode_split_node,

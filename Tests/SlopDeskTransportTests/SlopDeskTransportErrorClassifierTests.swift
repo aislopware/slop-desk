@@ -5,6 +5,10 @@ import XCTest
 /// must NOT misfire on unrelated errors whose text merely embeds the digits "48" (a port like 4843,
 /// a different errno like 148, a buffer size like 1048576). The errno is matched only as a
 /// digit-bounded standalone token, plus the canonical "in use" phrase.
+///
+/// The scan is `slopdesk-workspace`'s `listen` and is tested there. These run the same cases
+/// through the DOOR, which is where a face can still get it wrong: the crossing is bytes, so
+/// what these add over the Rust tests is that a `String` arrives as the string it was.
 final class SlopDeskTransportErrorClassifierTests: XCTestCase {
     func testCanonicalAddressInUsePhraseMatches() {
         XCTAssertTrue(SlopDeskTransportError.listenerDetailIndicatesAddressInUse("Address already in use"))
@@ -34,15 +38,11 @@ final class SlopDeskTransportErrorClassifierTests: XCTestCase {
         XCTAssertFalse(SlopDeskTransportError.listenerDetailIndicatesAddressInUse(""))
     }
 
-    func testStandaloneTokenHelperBoundaries() {
-        XCTAssertTrue(SlopDeskTransportError.containsStandaloneNumber("x 48 y", 48))
-        XCTAssertTrue(SlopDeskTransportError.containsStandaloneNumber("48", 48))
-        XCTAssertTrue(SlopDeskTransportError.containsStandaloneNumber("(48)", 48))
-        XCTAssertFalse(SlopDeskTransportError.containsStandaloneNumber("4843", 48))
-        XCTAssertFalse(SlopDeskTransportError.containsStandaloneNumber("148", 48))
-        XCTAssertFalse(SlopDeskTransportError.containsStandaloneNumber("1048576", 48))
-        // Multiple occurrences: a standalone one later in the string still matches.
-        XCTAssertTrue(SlopDeskTransportError.containsStandaloneNumber("4843 then 48", 48))
+    /// A detail string is whatever the framework printed, and the door takes UTF-8 bytes. Text with
+    /// a multi-byte scalar in it must reach the scan intact rather than be refused on the way.
+    func testNonASCIIDetailStillCrosses() {
+        XCTAssertTrue(SlopDeskTransportError.listenerDetailIndicatesAddressInUse("café — posix(48)"))
+        XCTAssertFalse(SlopDeskTransportError.listenerDetailIndicatesAddressInUse("café — posix(148)"))
     }
 }
 

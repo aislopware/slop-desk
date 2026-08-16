@@ -33,13 +33,6 @@ pub fn port(raw: i64) -> Option<u16> {
     u16::try_from(raw).ok()
 }
 
-/// `raw` clamped into [`VALID_PORT_RANGE`] — for a caller that wants to normalise the displayed
-/// value rather than reject it.
-#[must_use]
-pub fn clamped_port(raw: i64) -> i64 {
-    raw.clamp(*VALID_PORT_RANGE.start(), *VALID_PORT_RANGE.end())
-}
-
 /// Whether a listener-failure detail string says the bind failed because the address is already in
 /// use.
 ///
@@ -98,8 +91,8 @@ fn contains_standalone_number(haystack: &str, number: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        EADDRINUSE, clamped_port, contains_standalone_number, detail_indicates_address_in_use, is_valid_port,
-        port, waiting_errno_is_fatal_bind_conflict,
+        EADDRINUSE, contains_standalone_number, detail_indicates_address_in_use, is_valid_port, port,
+        waiting_errno_is_fatal_bind_conflict,
     };
 
     #[test]
@@ -120,13 +113,6 @@ mod tests {
         assert_eq!(port(99_999), None);
         assert_eq!(port(0), Some(0));
         assert_eq!(port(65_535), Some(65_535));
-    }
-
-    #[test]
-    fn clamping_is_the_other_answer_for_a_caller_that_wants_to_normalise() {
-        assert_eq!(clamped_port(-5), 0);
-        assert_eq!(clamped_port(99_999), 65_535);
-        assert_eq!(clamped_port(7420), 7420);
     }
 
     #[test]

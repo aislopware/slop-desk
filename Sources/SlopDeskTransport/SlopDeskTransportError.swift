@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Errors thrown by the transport layer (distinct from ``SlopDeskProtocol/SlopDeskError``,
@@ -23,21 +24,23 @@ public enum SlopDeskTransportError: Error, Equatable, Sendable {
     case timedOut(String)
 }
 
+/// The bind-conflict classifier — a face over `slopdesk-workspace`'s `listen`.
+///
+/// Both questions were written twice, once here and once in Rust, down to the same three false
+/// positives in the same comment. The Rust half had the tests and no caller; this half had the
+/// caller. The standalone-token scan that made the difference — `48` matches in `"errno 48"` and
+/// `"posix(48)"` but not in `"4843"`, `"148"` or `"1048576"` — is now spelled once, over there.
+///
+/// The port field's half of the same module is ``PortValidation``.
 public extension SlopDeskTransportError {
     /// Whether a ``listenerFailed(_:)`` detail string indicates the bind failed because the
     /// address/port is already in use (POSIX `EADDRINUSE`, errno 48). The host-app classifier uses
     /// this to tell the operator "Port N is already in use" (actionable: change the port / kill the
     /// holder) instead of a generic "could not open port".
-    ///
-    /// Robust against the false positives a loose `contains("48")` produces: a port number like
-    /// `4843`, a different errno like `148`, or a buffer size like `1048576` all embed the digits
-    /// "48" but are NOT EADDRINUSE. The errno is therefore matched only as a STANDALONE token
-    /// (digit-bounded on both sides), in addition to the canonical "in use" phrase that
-    /// `String(describing: NWError.posix(.EADDRINUSE))` produces.
     static func listenerDetailIndicatesAddressInUse(_ detail: String) -> Bool {
-        let lower = detail.lowercased()
-        if lower.contains("in use") { return true } // "Address already in use"
-        return Self.containsStandaloneNumber(lower, 48) // numeric rendering, e.g. "posix(48)"
+        Array(detail.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_ws_listen_detail_is_address_in_use(bytes.baseAddress, bytes.count)
+        }
     }
 
     /// Whether a listener sitting in Network.framework's `.waiting` state — its retryable
@@ -58,29 +61,8 @@ public extension SlopDeskTransportError {
     /// accurate "port in use" instead of burning the full readiness timeout and then mis-reporting a
     /// generic "timed out" for what is really a bind collision. Every other waiting errno
     /// (`ENETDOWN`, `ENETUNREACH`, `ETIMEDOUT`, `EAGAIN`, …) keeps waiting.
-    ///
-    /// Pure (errno → Bool) so the "only EADDRINUSE is fatal; transient network errnos keep waiting"
-    /// decision is unit-testable without standing up a real `NWListener` (the XCTest pool avoids real
-    /// socket binds; the glue is exercised by the subprocess / hardware E2E paths).
     static func waitingErrnoIsFatalBindConflict(_ posixErrno: Int32) -> Bool {
-        posixErrno == EADDRINUSE // 48 — the one waiting errno that never auto-recovers
-    }
-
-    /// True iff `s` contains the decimal `n` as a whole token — not as a substring of a longer run
-    /// of digits. So `48` matches in `"errno 48"` / `"posix(48)"` but NOT in `"4843"` / `"148"` /
-    /// `"1048576"`.
-    internal static func containsStandaloneNumber(_ s: String, _ n: Int) -> Bool {
-        let needle = String(n)
-        var searchStart = s.startIndex
-        while let range = s.range(of: needle, range: searchStart..<s.endIndex) {
-            let beforeOK = range.lowerBound == s.startIndex
-                || !s[s.index(before: range.lowerBound)].isNumber
-            let afterOK = range.upperBound == s.endIndex
-                || !s[range.upperBound].isNumber
-            if beforeOK, afterOK { return true }
-            searchStart = range.upperBound
-        }
-        return false
+        slopdesk_ws_listen_waiting_errno_is_fatal(posixErrno)
     }
 }
 

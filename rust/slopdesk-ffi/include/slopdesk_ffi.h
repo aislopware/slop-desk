@@ -341,6 +341,13 @@ bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
 
+// What the host may listen on, and what to tell the operator when it cannot. `0` is a valid port
+// and means "OS-assigned"; the two errno questions are here because a bind conflict can arrive as
+// a FAILURE or hide inside the framework's retryable waiting state, and both spell it in text.
+bool    slopdesk_ws_listen_port_is_valid(int64_t raw);
+bool    slopdesk_ws_listen_detail_is_address_in_use(const uint8_t *bytes, size_t len);
+bool    slopdesk_ws_listen_waiting_errno_is_fatal(int32_t posix_errno);
+
 // Direction: 0 left · 1 right · 2 up · 3 down · 4 next · 5 previous.
 bool slopdesk_ws_focus_neighbor(const SlopDeskWsFrame *frames, size_t count,
                                 SlopDeskWsUuid pane, uint8_t direction, SlopDeskWsUuid *answer);

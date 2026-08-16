@@ -39,7 +39,7 @@ use slopdesk_workspace::{
     Body, BodyId, Camera, FocusDirection, Guide, GuideKind, NonOverlapConfig, PaneGroupId, PaneId, Point,
     Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId, SplitWeight,
     Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap, canvas_snap,
-    focus, geometry, secrets, send_keys, shell_quoting, split_layout, state_codec, tab_ordering,
+    focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, state_codec, tab_ordering,
 };
 
 use crate::{borrow, deliver};
@@ -368,6 +368,53 @@ fn risk_byte(risk: secrets::PasteRisk) -> u8 {
         .iter()
         .position(|candidate| *candidate == risk)
         .unwrap_or(0) as u8
+}
+
+// MARK: The listen port, and the bind conflict hiding inside a retryable state
+
+/// Whether `raw` is a usable listen port. `0` is valid and means "OS-assigned".
+///
+/// The host's port field is a free-form persisted integer, so this is asked before every bind and
+/// on every keystroke that redraws the Start button.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_listen_port_is_valid(raw: i64) -> bool {
+    listen::is_valid_port(raw)
+}
+
+/// Whether a listener-failure detail string says the bind failed because the address is in use.
+///
+/// Non-UTF-8 reads as "not a bind conflict": the caller renders the same detail as text, so bytes
+/// it cannot render cannot be the phrase this looks for either.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_listen_detail_is_address_in_use(
+    bytes: *const c_uchar,
+    len: usize,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let raw = unsafe { borrow(bytes, len) };
+    core::str::from_utf8(raw).is_ok_and(listen::detail_indicates_address_in_use)
+}
+
+/// Whether a listener parked in the framework's retryable "no usable network path yet" state is
+/// really stuck on a bind conflict that will never auto-recover.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_listen_waiting_errno_is_fatal(posix_errno: i32) -> bool {
+    listen::waiting_errno_is_fatal_bind_conflict(posix_errno)
 }
 
 // MARK: Focus

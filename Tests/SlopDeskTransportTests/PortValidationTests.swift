@@ -3,7 +3,11 @@ import XCTest
 
 /// R16 HOSTVIEW-1 regression: the host port field accepted negative / out-of-range values that were
 /// silently coerced (`-5 → 0`, `99999 → 65535`) and persisted, desyncing the displayed port from the
-/// actually-bound one. The pure validator rejects them so the UI can disable Start instead.
+/// actually-bound one. The validator rejects them so the UI can disable Start instead.
+///
+/// The rule itself is `slopdesk-workspace`'s `listen` and is tested there. What these pin is the
+/// DOOR: that the face converts `Int` to the crate's `i64` without clipping a value at either end,
+/// which is the one thing a face can get wrong on its own.
 final class PortValidationTests: XCTestCase {
     func testIsValid() {
         XCTAssertFalse(PortValidation.isValid(-5))
@@ -24,12 +28,11 @@ final class PortValidationTests: XCTestCase {
         XCTAssertEqual(PortValidation.port(65535), 65535)
     }
 
-    func testClampedNormalizes() {
-        XCTAssertEqual(PortValidation.clamped(-5), 0)
-        XCTAssertEqual(PortValidation.clamped(-1), 0)
-        XCTAssertEqual(PortValidation.clamped(99999), 65535)
-        XCTAssertEqual(PortValidation.clamped(65536), 65535)
-        XCTAssertEqual(PortValidation.clamped(0), 0)
-        XCTAssertEqual(PortValidation.clamped(7779), 7779)
+    /// `Int` is 64-bit and the door takes an `i64`, so the extremes must cross as themselves rather
+    /// than wrap into the valid range. A face that truncated would answer `true` for `Int.min`.
+    func testTheExtremesCrossWithoutWrapping() {
+        XCTAssertFalse(PortValidation.isValid(Int.min))
+        XCTAssertFalse(PortValidation.isValid(Int.max))
+        XCTAssertFalse(PortValidation.isValid(Int(UInt32.max)))
     }
 }

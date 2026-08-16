@@ -1,29 +1,26 @@
-/// Pure TCP-port validation/normalization for the host UI (R16 HOSTVIEW-1).
+import CSlopDeskFFI
+
+/// What the host may listen on.
 ///
-/// The host port field is a free-form, persisted `Int`, but a TCP port is `0...65535` (where `0`
-/// means "OS-assigned"). A negative or out-of-range value must be REJECTED — so the Start button is
-/// disabled and the user gets feedback — rather than silently coerced by `UInt16(clamping: max(0, …))`,
-/// which mapped `-5 → 0` (an OS-assigned port the user never asked for, then persisted) and
-/// `99999 → 65535` (a port the field still displayed as `99999`), leaving the displayed/persisted
-/// value desynced from what the host actually bound. Pure (`Int` only) so it is unit-testable with no
-/// view or `HostController`.
+/// A face over `slopdesk-workspace`'s `listen`. The rule was written twice — here and in Rust, both
+/// with the same comment naming the same two coercion bugs (`-5 → 0`, an OS-assigned port nobody
+/// asked for and then persisted; `99999 → 65535`, while the field still read `99999`). The Rust
+/// half had the tests and no caller, this half had the caller. One implementation now, and it is
+/// the one with the tests.
+///
+/// The bind-conflict half of the same module is
+/// ``SlopDeskTransportError/listenerDetailIndicatesAddressInUse(_:)``.
 public enum PortValidation {
-    /// The inclusive range the field accepts: `0` (OS-assigned) … `65535`.
-    public static let validRange: ClosedRange<Int> = 0...65535
+    /// Whether `raw` is a usable listen port. `0` is allowed and means "OS-assigned".
+    public static func isValid(_ raw: Int) -> Bool {
+        slopdesk_ws_listen_port_is_valid(Int64(raw))
+    }
 
-    /// Whether `raw` is a usable listen port (`0` allowed = OS-assigned).
-    public static func isValid(_ raw: Int) -> Bool { validRange.contains(raw) }
-
-    /// `raw` as a bound `UInt16` port iff it is in range, else `nil`. The UI starts ONLY on a non-nil
-    /// result, so the host never binds a coerced value (no display/actual desync).
+    /// `raw` as a bindable port, or `nil` when it is out of range. The UI starts ONLY on a non-nil
+    /// result, which is what keeps the value the field displays and the value the host bound the
+    /// same number.
     public static func port(_ raw: Int) -> UInt16? {
         guard isValid(raw) else { return nil }
         return UInt16(raw)
-    }
-
-    /// `raw` clamped into ``validRange`` — for a caller that wants to normalize the persisted/displayed
-    /// value (a negative → `0`, an over-range → `65535`) rather than reject it.
-    public static func clamped(_ raw: Int) -> Int {
-        min(max(raw, validRange.lowerBound), validRange.upperBound)
     }
 }
