@@ -121,7 +121,34 @@ fix: fmt ## Format + apply all safe lint autofixes
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
 .PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor
-lint: lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor ## Run every linter strictly
+LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor
+
+# The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
+# and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
+# is 35 s. Overlapping the other six with it is free wall clock — measured 55 s → 36 s.
+#
+# Not a plain prerequisite list under `make -j`: the top-level `make` is not invoked with one, and a
+# prerequisite list only runs in parallel if the make expanding it was told to. And not `-j` here
+# either, because this repo's make is 3.81 (Apple's), which has no `--output-sync` — seven linters
+# interleaving diagnostics line by line is a gate whose failures cannot be read. So each runs into
+# its OWN log, and the logs are replayed IN THE DECLARED ORDER once every one has finished. The
+# output is byte-identical to the serial gate's; only the waiting changed.
+#
+# `wait` on a KNOWN pid, for the reason `build-ffi.sh` and `check-supervisor.sh` say: a bare `wait`
+# yields zero however the jobs died, and a lint gate that passes on a dead linter is worse than a
+# slow one. Every linter is waited on before the exit status is returned, so one failure does not
+# leave six tools running against a tree the next command is about to edit.
+lint: ## Run every linter strictly
+	@dir=$$(mktemp -d -t slopdesk-lint); trap 'rm -rf "$$dir"' EXIT; \
+	for t in $(LINTERS); do \
+	  $(MAKE) --no-print-directory $$t > "$$dir/$$t.log" 2>&1 & echo $$! > "$$dir/$$t.pid"; \
+	done; \
+	rc=0; \
+	for t in $(LINTERS); do \
+	  wait $$(cat "$$dir/$$t.pid") || rc=1; \
+	  if [ -s "$$dir/$$t.log" ]; then printf '── %s ──\n' "$$t"; cat "$$dir/$$t.log"; fi; \
+	done; \
+	exit $$rc
 
 lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 	swiftformat $(SWIFTFMT_PATHS) --lint
@@ -216,8 +243,33 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
+
+# THE INNER LOOP. Run this after every edit; run `check` once before pushing.
+#
+# It is `check` with two substitutions and one omission, and each of the three is a claim about what
+# a single edit can break:
+#
+#   test → test-touched   The full suite re-runs every Swift target for a change that reaches three.
+#                         `test-touched.sh` attributes the change set to SwiftPM targets and runs the
+#                         test targets whose closure contains them — escalating to the full suite
+#                         whenever it cannot attribute a path, so it is fail-toward-slow, not
+#                         fail-toward-green. A touched-green never writes the pre-push marker, so
+#                         this can never make a push skip what it did not run.
+#   check-ios (stamped)   Unchanged as a gate; it just costs nothing when no iOS-compiled input moved
+#                         (scripts/check-ios.sh explains the stamp). It stays IN the inner loop for
+#                         that reason — the `#if os(iOS)` surface breaks on a Swift edit like any
+#                         other, and now noticing costs nothing on the edits that cannot break it.
+#   miri omitted          ~47 s to re-audit `rust/slopdesk-gfsimd`, which only a change to that crate
+#                         can affect. `make miri` by hand when touching it; `check` runs it anyway.
+#
+# `build` is not omitted so much as implied: `test-touched` builds incrementally before selecting.
+#
+# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~38 s of ratchets
+# that read the whole tree — and that floor is the honest price of the cross-language contracts.
+quick: ffi lint test-touched golden check-ios ## The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
+	@printf 'quick: green — run `make check` before pushing (adds the full suite + miri)\n'
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
 # UIKit input host and the iOS components in Sources/SlopDeskClientUI/iOS/ compiled only in someone's

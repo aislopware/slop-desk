@@ -31,6 +31,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The Python half is started HERE and collected at the very bottom, because it shares nothing with
+# the shell half — it reads the same trees and writes only its own verdict — and it is a third of
+# this gate's wall clock (~13 s of ~50 s). Run last-in-line it was 13 s nobody could overlap; run
+# alongside, it finishes while the shell is still walking `Sources/`. Its output is buffered to a
+# file rather than left on the terminal, so an interleave cannot split one of its diagnostics
+# across a line of ours; the wait below replays it verbatim and exits on its status.
+INVARIANTS_LOG="$(mktemp -t check-invariants)"
+trap 'rm -f "${INVARIANTS_LOG}"' EXIT
+python3 scripts/check-invariants.py > "${INVARIANTS_LOG}" 2>&1 &
+INVARIANTS_PID=$!
+
 SWIFT_PATHS="Sources/SlopDeskSupervisor/SupervisorPaths.swift"
 SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
@@ -4238,7 +4249,13 @@ printf 'check-supervisor: one deadline latch, one clipboard clip, one sidecar en
 # failures came out of writing them that way: a pipeline that hides its status, a pattern that
 # matched the gate's own failure message, and a comment-stripper that eats a URL. See the module
 # docstring in `scripts/check-invariants.py`.
-python3 scripts/check-invariants.py ||
+#
+# It has been running since the top of this file (see the note there). `wait` on a KNOWN pid yields
+# that job's exit status, which is the whole reason the pid was kept — a bare `wait` yields zero
+# however the job died, and this gate would then pass on a broken invariant.
+wait "${INVARIANTS_PID}" && invariants_status=0 || invariants_status=$?
+cat "${INVARIANTS_LOG}"
+[[ ${invariants_status} -eq 0 ]] ||
   fail "scripts/check-invariants.py reported a broken invariant — its own output names which"
 
 if [[ "${failures}" -ne 0 ]]; then

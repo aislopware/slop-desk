@@ -181,12 +181,49 @@ cp "${HEADERS}"/* "${HEADER_STAGE}/CSlopDeskFFI/"
 [[ -f "${HEADER_STAGE}/CSlopDeskFFI/module.modulemap" ]] ||
   fail "staged headers have no module.modulemap — Swift would not see CSlopDeskFFI at all"
 
-CREATE_ARGS=()
+# ── The three slices build CONCURRENTLY, each into its own target directory ────────────────────
+#
+# The separate directories are the point, not the parallelism. Cargo takes an exclusive lock on a
+# target directory, so three `cargo build --target …` invocations sharing one merely queue behind
+# each other — measured on one edit to a wrapped crate: 70 s serial, 55 s backgrounded onto the
+# shared directory, 25 s with a directory each. The headroom exists because a release build of this
+# graph is mostly SERIAL: `lto = "fat"` is single-threaded, so one slice never occupies much more
+# than one of this machine's ten cores.
+#
+# They live under `target/`, which the stamp already prunes and `.gitignore` already covers, and
+# they are small — one triple's release artifacts and nothing else.
+slice_dir() { printf '%s/target/ffi/%s' "${CRATE}" "$1"; }
+
+LOG_DIR="$(mktemp -d -t build-ffi)"
+trap 'rm -rf "${LOG_DIR}"' EXIT
+
+PIDS=()
 for target in "${TARGETS[@]}"; do
   log "building ${target}"
-  (cd "${CRATE}" && cargo build --release --target "${target}" --quiet) ||
-    fail "cargo build failed for ${target}"
-  archive="${CRATE}/target/${target}/release/${LIB_NAME}"
+  (cd "${CRATE}" && CARGO_TARGET_DIR="$(slice_dir "${target}")" \
+    cargo build --release --target "${target}" --quiet) > "${LOG_DIR}/${target}" 2>&1 &
+  PIDS+=($!)
+done
+
+# `wait` on each KNOWN pid: a bare `wait` yields zero however the jobs died, and this script would
+# then assemble an xcframework out of whatever archives happened to survive. Every slice is waited
+# on before the first failure is reported, so a doomed run does not leave two compilers racing the
+# tree the next command is about to edit.
+BUILD_FAILED=()
+for index in "${!TARGETS[@]}"; do
+  wait "${PIDS[index]}" || BUILD_FAILED+=("${TARGETS[index]}")
+  if [[ -s "${LOG_DIR}/${TARGETS[index]}" ]]; then
+    {
+      printf '── %s ──\n' "${TARGETS[index]}"
+      cat "${LOG_DIR}/${TARGETS[index]}"
+    } >&2
+  fi
+done
+[[ "${#BUILD_FAILED[@]}" -eq 0 ]] || fail "cargo build failed for ${BUILD_FAILED[*]}"
+
+CREATE_ARGS=()
+for target in "${TARGETS[@]}"; do
+  archive="$(slice_dir "${target}")/${target}/release/${LIB_NAME}"
   [[ -f "${archive}" ]] || fail "expected ${archive} — did [lib] crate-type lose 'staticlib'?"
 
   # The header is a promise; this is where it is kept. A missing symbol here means the header and
@@ -198,11 +235,21 @@ for target in "${TARGETS[@]}"; do
   # from RUSTC's LLVM, which Xcode's older `nm` refuses to parse ("Unknown attribute kind"), so a
   # plain read reports every symbol absent. The armap is the archive INDEX — what the linker
   # resolves against — which is both readable and the more exact question to ask.
+  #
+  # Both directions are answered by `comm` over two SORTED SETS, and that is a fix rather than a
+  # tidy-up. The first draft asked the question 776 times per slice — one `grep -c` over the whole
+  # armap per declared symbol, 2328 subshells for the three slices, 20 s of this script's ~40 s.
+  # It was also WEAKER: `grep -c -- _slopdesk_ws_min` counts `_slopdesk_ws_min_leaf`, so a door
+  # renamed to a longer name kept passing. Line-exact set difference is both instant and stricter.
   symbols="$(nm --print-armap "${archive}" 2> /dev/null || true)"
-  for symbol in "${REQUIRED_SYMBOLS[@]}"; do
-    [[ "$(printf '%s\n' "${symbols}" | grep -c -- "${symbol}")" -gt 0 ]] ||
-      fail "${target}: ${symbol} is declared in slopdesk_ffi.h but absent from the library"
-  done
+  exported="$(printf '%s\n' "${symbols}" | grep -oE '_slopdesk_[a-z0-9_]+' | sort -u || true)"
+  declared="$(printf '%s\n' "${REQUIRED_SYMBOLS[@]}" | sort -u)"
+
+  absent=$(comm -13 <(printf '%s\n' "${exported}") <(printf '%s\n' "${declared}") || true)
+  if [[ -n "${absent}" ]]; then
+    printf '%s\n' "${absent}" >&2
+    fail "${target}: slopdesk_ffi.h declares a symbol the library does not export — the header and src/lib.rs disagree"
+  fi
 
   # And the other direction, which nothing asked until now. A `slopdesk_*` symbol the library
   # EXPORTS but the header never declares is not a link error — it is a door with no handle: the
@@ -215,9 +262,7 @@ for target in "${TARGETS[@]}"; do
   # lines, so feeding it one stripped list and one prefixed list does not report everything —
   # it reports whatever the two sort orders happen to interleave, which is worse than a clear
   # failure and is exactly what the first draft of this check did.
-  undeclared=$(comm -23 \
-    <(printf '%s\n' "${symbols}" | grep -oE '_slopdesk_[a-z0-9_]+' | sort -u || true) \
-    <(printf '%s\n' "${REQUIRED_SYMBOLS[@]}" | sort -u) || true)
+  undeclared=$(comm -23 <(printf '%s\n' "${exported}") <(printf '%s\n' "${declared}") || true)
   if [[ -n "${undeclared}" ]]; then
     printf '%s\n' "${undeclared}" >&2
     fail "${target}: the library exports a slopdesk_* symbol slopdesk_ffi.h never declares — a door Swift cannot open (docs/55)"

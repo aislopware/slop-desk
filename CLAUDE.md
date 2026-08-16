@@ -20,6 +20,14 @@ guessing one.
 
 ## Rules
 
+- **`make quick` after every edit; `make check` once before pushing.** `quick` is `check` with the
+  full suite swapped for `test-touched` (the test targets whose closure contains the change, and the
+  full suite whenever a path cannot be attributed) and Miri omitted. Both are cheap on a warm tree
+  because the two expensive gates are CONTENT-STAMPED, not re-run: `build-ffi.sh` against the Rust
+  sources it links, `check-ios.sh` against every input the iOS triple compiles. `--force` on either
+  re-runs it when the stamp itself is in doubt. A *touched-target* green never writes the pre-push
+  green-tree marker — only a full suite on a clean tree does — so `quick` cannot make a push skip
+  what it did not run.
 - **Rust is the default; perf parity is enough to move existing Swift.** Only SwiftUI/AppKit
   justifies staying in Swift. A *measured* regression is the only veto.
 - **A port ships over a socket, or as a linked library — pick by lifetime.** A component that must
