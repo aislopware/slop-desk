@@ -1975,6 +1975,62 @@ size_t slopdesk_link_scan_take_arena(SlopDeskLinkScan *handle, uint8_t *out, siz
 size_t slopdesk_link_scalar_cells(uint32_t scalar);
 size_t slopdesk_link_text_cells(const uint8_t *bytes, size_t len);
 
+/* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
+ * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
+ * a variable list of records each carrying up to three strings. A LINK target carries the whole
+ * detected link so the actuator routes through the ONE link policy the cmd-click path uses.
+ *
+ * `patterns` and `actions` are two parallel blobs under one `pattern_count`: entry i of `actions`
+ * is pattern i's `{0}` template, and a length of 0 there means the pattern carries none.
+ *
+ * The LABELS are not here. Assigning and filtering two-letter labels is list arithmetic over 26
+ * letters with no text and no untrusted input — it stays in Swift beside the overlay.            */
+
+typedef struct SlopDeskHintScan SlopDeskHintScan;
+
+#define SLOPDESK_HINT_KIND_LINK 0u
+#define SLOPDESK_HINT_KIND_GIT_HASH 1u
+#define SLOPDESK_HINT_KIND_IP_ADDRESS 2u
+#define SLOPDESK_HINT_KIND_CUSTOM 3u
+#define SLOPDESK_HINT_KIND_NONE 4u
+
+typedef struct {
+  size_t   row;              /* index into the rows scanned, NOT a scrollback line */
+  size_t   col_start;        /* display CELLS, the same clustering the link scan reports in */
+  size_t   col_end;
+  uint32_t kind;             /* SLOPDESK_HINT_KIND_* */
+  size_t   raw_offset;       /* into the arena */
+  size_t   raw_length;
+  uint32_t link_kind;        /* SLOPDESK_LINK_KIND_*; NONE unless kind is LINK */
+  bool     has_resolved;
+  size_t   resolved_offset;  /* into the arena; read only when has_resolved */
+  size_t   resolved_length;
+  bool     has_action;
+  size_t   action_offset;    /* into the arena; read only when has_action */
+  size_t   action_length;
+} SlopDeskHintTarget;
+
+typedef struct {
+  size_t target_count;
+  size_t arena_length;
+} SlopDeskHintCounts;
+
+SlopDeskHintScan *slopdesk_hint_scan(const uint8_t *rows, size_t rows_len,
+                                     const size_t *row_lengths, size_t row_count,
+                                     const uint8_t *cwd, size_t cwd_len,
+                                     uint32_t scheme_mode,
+                                     const uint8_t *schemes, size_t schemes_len,
+                                     const size_t *scheme_lengths, size_t scheme_count,
+                                     const uint8_t *patterns, size_t patterns_len,
+                                     const size_t *pattern_lengths,
+                                     const uint8_t *actions, size_t actions_len,
+                                     const size_t *action_lengths,
+                                     size_t pattern_count, size_t max_scan_columns);
+void   slopdesk_hint_scan_free(SlopDeskHintScan *handle);
+SlopDeskHintCounts slopdesk_hint_scan_counts(SlopDeskHintScan *handle);
+SlopDeskHintTarget slopdesk_hint_scan_target(SlopDeskHintScan *handle, size_t index);
+size_t slopdesk_hint_scan_take_arena(SlopDeskHintScan *handle, uint8_t *out, size_t cap);
+
 /* ---- copy mode: where a vi motion lands on ONE row, in display CELL columns --------------
  * Same grapheme clustering as the link scan above, on purpose: a cursor landed by `w` and a hint
  * badge claimed by the overlay must name the same column on a CJK row.

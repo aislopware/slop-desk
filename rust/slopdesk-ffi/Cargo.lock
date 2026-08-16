@@ -147,6 +147,7 @@ dependencies = [
  "slopdesk-cli",
  "slopdesk-dropd",
  "slopdesk-fuzzy",
+ "slopdesk-hint",
  "slopdesk-hookevent",
  "slopdesk-inspectord",
  "slopdesk-sanitize",
@@ -163,6 +164,14 @@ version = "0.1.0"
 [[package]]
 name = "slopdesk-gfsimd"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-hint"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "slopdesk-terminal",
+]
 
 [[package]]
 name = "slopdesk-hookevent"

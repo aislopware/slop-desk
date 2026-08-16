@@ -3614,6 +3614,37 @@ if ! spells 'use crate::link::\{clusters, scalar_cells\}' rust/slopdesk-terminal
 fi
 printf 'check-supervisor: one clustering answers the cursor and the badge.\n'
 
+# ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
+# Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
+# NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
+# both: the columns now come from the link scan's clustering, and the user's `hint-pattern` — a
+# regex a human pasted in, run against text an attacker influences — now runs on a finite automaton
+# whose match time is linear in the row. A backtracking engine here is a hang the user cannot
+# escape, so the Swift face must stay a marshaller.
+SWIFT_HINT=Sources/SlopDeskWorkspaceCore/Terminal/HintLabelAssigner.swift
+if hit=$(spells 'NSRegularExpression|NSString|force_try|displayCellWidth|boundedPrefix|overlapsAccepted' "${SWIFT_HINT}"); then
+  fail "${hit} scans for hint targets in Swift again — slopdesk-hint owns the scan"
+fi
+for entry in 'slopdesk_hint_scan' 'slopdesk_hint_scan_target' 'slopdesk_hint_scan_take_arena'; do
+  if ! spells "${entry}" "${SWIFT_HINT}" > /dev/null; then
+    fail "${SWIFT_HINT} no longer asks ${entry} — the hint scan is one implementation"
+  fi
+done
+# The LABELS deliberately stay Swift: list arithmetic over 26 letters, no text, no untrusted input.
+# If they ever grow a door, this line is where that decision gets argued rather than slipped in.
+for kept in 'static func labels' 'static func filter'; do
+  if ! spells "${kept}" "${SWIFT_HINT}" > /dev/null; then
+    fail "${SWIFT_HINT} lost ${kept} — the label arithmetic stays here on purpose (docs/55)"
+  fi
+done
+if ! spells '^regex = ' rust/slopdesk-hint/Cargo.toml > /dev/null; then
+  fail "rust/slopdesk-hint dropped the regex crate — a hand-written or backtracking matcher is the hang"
+fi
+if spells '^regex = ' rust/slopdesk-terminal/Cargo.toml > /dev/null; then
+  fail "rust/slopdesk-terminal took an external dependency — that crate is on the PTY hot path"
+fi
+printf 'check-supervisor: one regex engine over the untrusted rows, and it does not backtrack.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

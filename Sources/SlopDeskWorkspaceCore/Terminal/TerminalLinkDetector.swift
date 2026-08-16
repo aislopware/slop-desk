@@ -207,7 +207,10 @@ public enum TerminalLinkDetector {
 
     /// The kind a `SLOPDESK_LINK_KIND_*` code names. `nil` for `SLOPDESK_LINK_KIND_NONE` — the
     /// door's answer to an index past the end, which the reader loop never asks for.
-    private static func kind(of code: UInt32) -> DetectedLinkKind? {
+    ///
+    /// Module-internal: a hint target of kind LINK carries a link kind in the same encoding, and
+    /// two readings of one code is how the two overlays start disagreeing about what a span is.
+    static func kind(of code: UInt32) -> DetectedLinkKind? {
         switch code {
         case UInt32(SLOPDESK_LINK_KIND_ABSOLUTE_PATH): .absolutePath
         case UInt32(SLOPDESK_LINK_KIND_TILDE_PATH): .tildePath
@@ -221,7 +224,10 @@ public enum TerminalLinkDetector {
 
     /// Concatenates `values` into one UTF-8 buffer and the byte length of each — the boundary's
     /// list-of-strings form, one allocation instead of one per element.
-    private static func flatten(_ values: [String]) -> (blob: [UInt8], lengths: [Int]) {
+    ///
+    /// Module-internal rather than private because `HintLabelAssigner` marshals the SAME four lists
+    /// to a door that takes them the same way; a second copy of this would be a second bug.
+    static func flatten(_ values: [String]) -> (blob: [UInt8], lengths: [Int]) {
         var blob: [UInt8] = []
         var lengths: [Int] = []
         lengths.reserveCapacity(values.count)
@@ -238,7 +244,7 @@ public enum TerminalLinkDetector {
     ///
     /// This door spells its pair `size_t`, the way §4 spells every length, so the `Int` overload is
     /// the one it reaches for.
-    private static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
+    static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
         ArenaText.text(arena, offset, length)
     }
 }

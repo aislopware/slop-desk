@@ -185,6 +185,25 @@ them, and a door here costs a `withUTF8` over a row that is already contiguous. 
 once per keypress, not once per column — which is the actual saving, because what moved to Rust was
 a per-`Character` FFI call in a Swift loop.
 
+### The record type that covers four kinds, so the reader is one loop
+
+`slopdesk_hint_scan` is `slopdesk_link_scan`'s handle-over-arena shape a second time, because the
+answer is the same shape: a variable list of records each carrying up to three strings. What it
+adds is that a hint target has FOUR kinds and one of them wraps a detected link whole — its link
+kind and its resolved absolute path ride in the same record, so the actuator keeps routing through
+the one link policy the ⌘-click path uses instead of a second mapping that would drift. The other
+three kinds leave those fields at their absent values.
+
+One record type rather than four is what keeps the Swift reader a single loop. Four would mean four
+doors to size, four arenas to take, and a Swift face that has to know which door to ask before it
+knows what it found. The unused fields cost nothing a second crossing would not cost more of.
+
+The two pattern lists cross as PARALLEL blobs under one count: entry `i` of `actions` is pattern
+`i`'s `{0}` template. A zero-length action is NO action rather than an empty one, which is the
+opposite of the presence-bitmask rule above — and it is right here for the reason it is wrong there:
+a pattern with an empty template and a pattern with none behave identically at the actuation site,
+so a flag would name a distinction nothing downstream can act on.
+
 ### The header is written by hand
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)

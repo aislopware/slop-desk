@@ -1,0 +1,127 @@
+# `slopdesk-hint` — Hint Mode's TARGET SCAN: every span in the visible viewport a two-letter label
+# can be pinned to, in the same display-cell columns the link overlay draws in.
+#
+# ## Why not `slopdesk-terminal`, where the link scan lives
+# Because of the one dependency this crate has and that one does not. A user `hint-pattern` is a
+# REGEX the human typed into Settings, run against rows a remote program wrote — the one place in
+# the tree where an untrusted pattern meets untrusted text. `regex` is the answer to exactly that
+# pairing: it is a finite automaton with no backtracking, so its running time is linear in the row
+# no matter what the pattern is. The Swift this replaces used `NSRegularExpression`, which
+# backtracks, which means a `hint-pattern` a user pasted off the internet could hang the UI on a
+# long row. `slopdesk-terminal`'s manifest says it takes no external dependency because everything
+# it parses is untrusted; the honest reading of that rule is not to smuggle a crate in beside the
+# PTY hot path, so the module that needs one lives here instead and takes the link scan as a
+# sibling.
+#
+# ## Why its own workspace
+# The same reason every library crate in this tree is: cargo profiles are workspace-global and the
+# root workspace's is tuned for the hook binary (`opt-level = "z"`, `panic = "abort"`). A hint scan
+# runs on a keystroke over a viewport and wants `opt-level = 3`; a panic in it must never abort a
+# client.
+#
+# ## What is NOT here
+# The LABELS. Assigning `count` collision-free two-letter labels over an alphabet and filtering them
+# against the keys typed so far is list arithmetic over 26 letters with no text, no bounds and no
+# untrusted input — it stays in Swift, where the overlay holding the labels already is. Crossing a
+# boundary twice per keystroke to slice 40 two-character strings would cost more than it computes.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-hint"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Hint Mode target scanning for slopdesk — links, git hashes, IPs and user patterns"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_hint"
+path = "src/lib.rs"
+
+[dependencies]
+# The link scan, the display-cell widths and the per-row bound. Every column this crate reports has
+# to line up with one the link overlay drew, so both read the same clustering — the alternative is a
+# badge that sits half a glyph away from the span it labels on a CJK row.
+slopdesk-terminal = { path = "../slopdesk-terminal" }
+
+# The user-pattern engine. Linear-time by construction, which is the whole reason it is here rather
+# than a hand-written matcher or a backtracking one — see the header above. The same crate
+# `slopdesk-workspace` already takes for the secret shapes and `slopdesk-screend` for the detection
+# ladder, so this adds a version to the lock file and nothing to the tree.
+regex = "1"
+
+# A hint scan runs on the keystroke that opens the overlay, over a whole viewport, so this is a
+# latency-shaped library rather than the hook's startup-tuned profile.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml` and every sibling. A literal copy rather than
+# an inherited table because this is a standalone workspace: there is no parent to inherit from.
+# ---------------------------------------------------------------------------- #
+
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

@@ -131,7 +131,7 @@ impl SlopDeskLinkScan {
 }
 
 /// Maps a detected kind onto its wire constant.
-const fn kind_code(kind: DetectedLinkKind) -> u32 {
+pub(crate) const fn kind_code(kind: DetectedLinkKind) -> u32 {
     match kind {
         DetectedLinkKind::AbsolutePath => SLOPDESK_LINK_KIND_ABSOLUTE_PATH,
         DetectedLinkKind::TildePath => SLOPDESK_LINK_KIND_TILDE_PATH,
@@ -147,7 +147,7 @@ const fn kind_code(kind: DetectedLinkKind) -> u32 {
 /// Lossy because the boundary cannot promise UTF-8 and the scan must stay total; from Swift it is
 /// never lossy, since a `String`'s bytes are valid by construction. A length that runs past the end
 /// of the blob takes what remains and stops, rather than reading memory it was never given.
-fn split(blob: &[u8], lengths: &[usize]) -> Vec<String> {
+pub(crate) fn split(blob: &[u8], lengths: &[usize]) -> Vec<String> {
     let mut cursor = 0_usize;
     let mut out = Vec::with_capacity(lengths.len());
     for length in lengths {

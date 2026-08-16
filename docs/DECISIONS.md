@@ -16115,3 +16115,43 @@ forever by being written before the case it was supposed to catch.
 This was NOT made a gate, and the two correct-prose citations are why: a rule that fails on any
 `*Tests` name without a class would fail on both of them, and the allowance it would need is the
 hand-kept list this audit has already caught drifting six times.
+
+## The cursor and the badge disagreed on a CJK row, so both walks moved (2026-08-17)
+
+`ViLineMotion` walked a terminal row `Character` by `Character` in Swift, asking
+`TerminalLinkDetector.displayCellWidth(of:)` for each glyph's width. `HintLabelAssigner` walked the
+same row the same way. `slopdesk_terminal::link` walked it a third time, through its OWN grapheme
+clustering, to report the spans the underline and the hint badges are drawn over. Three walks, two
+clusterings, one row — and the columns they produce are the columns a cursor lands on and a badge
+claims. On a row where Swift's `Character` and the crate's `clusters()` disagree by one boundary,
+the block cursor sits half a glyph away from the badge that says it is there. Nothing tests that,
+because nobody types `w` over an emoji family by hand.
+
+So `slopdesk_terminal::vimotion` took the motions and `slopdesk_hint` took the target scan, and both
+read `link`'s clustering. Nine `slopdesk_vi_*` doors cross an `intptr_t` per keystroke, which is a
+new reading of §4's refusal: `-1` is the row WRAP (`w` off the last word, `b` at the start), and
+column `0` stays a column, because "0 means no answer" is unavailable when 0 is the most common
+answer there is. `slopdesk_hint_scan` is the link scan's handle-over-arena shape again, with one
+record type covering all four target kinds — a LINK target carries the whole detected link so the
+actuator keeps routing through the one link policy the ⌘-click path uses.
+
+**The hint scan bought a second thing, and it is the reason it is its own crate.** A `hint-pattern`
+is a regex a human pasted into Settings, run against rows a remote program wrote. The Swift ran it
+on `NSRegularExpression`, which backtracks — so a pattern copied off the internet could hang the
+overlay on a long row, and no amount of bounding the SCAN fixes a pathological match. `regex` is a
+finite automaton: linear in the row, whatever the pattern says. That crate cannot go in
+`slopdesk-terminal`, whose manifest takes no external dependency precisely because it sits on the
+PTY hot path parsing untrusted bytes, so `slopdesk-hint` is where the module that needs one lives,
+taking the link scan as a sibling. The cost is a dialect change — the engine has no lookaround and
+no backreferences — and a pattern using either now DROPS, which is the same validate-then-drop an
+uncompilable pattern always had. The two built-in shapes lost their lookarounds too, and their
+boundaries are now predicates over the neighbouring scalar, which is where they can be read.
+
+**The labels stayed in Swift, on purpose.** `labels(count:alphabet:)` and `filter(typed:labels:)`
+are list arithmetic over 26 letters — no text, no bounds, no untrusted input — running per keystroke
+beside the overlay that already holds their result. Crossing a boundary twice to slice forty
+two-character strings would cost more than it computes. `check-supervisor.sh` pins that they stay,
+so the next person to move them has to argue it rather than slip it in.
+
+Both ports are pinned by their PRE-EXISTING Swift suites, unchanged: 12 `ViLineMotionTests` and 20
+`HintLabelAssignerTests` pass against the marshallers exactly as they did against the walks.

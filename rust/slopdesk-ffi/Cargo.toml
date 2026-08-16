@@ -53,6 +53,7 @@ slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-cli = { path = "../slopdesk-cli" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
+slopdesk-hint = { path = "../slopdesk-hint" }
 slopdesk-hookevent = { path = "../slopdesk-hookevent" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }

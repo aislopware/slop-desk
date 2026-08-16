@@ -243,7 +243,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test hookevent-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test hookevent-test hint-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -479,6 +479,13 @@ fuzzy-test: ## cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
 hookevent-test: ## cargo test for the hook body reader (rust/slopdesk-hookevent)
 	cd rust/slopdesk-hookevent && cargo test
 
+# Hint Mode's target scan: links, git hashes, IPv4 addresses and the user's `hint-pattern` matches,
+# in the display cells the link overlay already draws in. Its own crate because it takes `regex` —
+# the linear-time engine that lets an untrusted pattern meet an untrusted row without a backtracking
+# hang — which `slopdesk-terminal` (dependency-free, on the PTY hot path) will not.
+hint-test: ## cargo test for the hint target scan (rust/slopdesk-hint)
+	cd rust/slopdesk-hint && cargo test
+
 # Stage 5 of the same port: the PATH-2 video protocol, opening at the FEC math (GF(2^8),
 # Reed-Solomon, the erasure codec). A LIBRARY like `wire` — nothing links it yet, so `video-test` is
 # the only thing between it and a silent drift away from `Sources/SlopDeskVideoProtocol`. It replays
@@ -587,7 +594,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test hookevent-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + hook bodies + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test hookevent-test hint-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + hook bodies + hint targets + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

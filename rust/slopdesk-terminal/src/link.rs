@@ -474,6 +474,28 @@ pub fn text_cells(text: &str) -> usize {
     clusters(text).map(cluster_cells).sum()
 }
 
+/// The prefix of `line` holding at most `max_cells` display cells — the same anti-hang bound
+/// [`tokenize`] applies, handed to a caller that needs the SUBSTRING rather than the tokens.
+///
+/// A wide glyph that would spill past the cap is excluded whole, so the answer is never a prefix
+/// that ends mid-cell. Exposed for `slopdesk-hint`, which runs its own regexes over a row and must
+/// bound them exactly where the link scan bounds itself, or the two overlays would disagree about
+/// how much of a pathological row was even looked at.
+#[must_use]
+pub fn bounded_prefix(line: &str, max_cells: usize) -> &str {
+    let mut cells = 0_usize;
+    let mut end = 0_usize;
+    for cluster in clusters(line) {
+        let width = cluster_cells(cluster);
+        if cells.saturating_add(width) > max_cells {
+            break;
+        }
+        cells += width;
+        end += cluster.len();
+    }
+    line.get(..end).unwrap_or(line)
+}
+
 /// Width of a single scalar. Zero-width is checked BEFORE wide, which is what makes U+115F — both a
 /// Hangul Jamo filler and default-ignorable — count as nothing rather than two.
 ///

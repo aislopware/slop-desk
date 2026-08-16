@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 // MARK: - Pure Hint Mode target detection + Vimium-style 2-letter label assignment
 
@@ -17,7 +19,14 @@ public enum HintIntent: Equatable, Sendable {
 /// A user-defined hint pattern (`hint-pattern` + `hint-pattern-action`): a regex string plus an
 /// optional shell-command action template whose `{0}` placeholder is replaced with the matched text.
 public struct HintPattern: Equatable, Sendable {
-    /// The regex (ICU `NSRegularExpression` syntax) that defines a custom hintable span.
+    /// The regex that defines a custom hintable span.
+    ///
+    /// The dialect is the `regex` crate's: the full character-class / repetition / alternation
+    /// grammar, minus the two constructs a finite automaton has no room for — lookaround and
+    /// backreferences. That is not a limitation the engine apologises for, it is the reason it was
+    /// chosen: a pattern here is matched in time linear in the row, so no `hint-pattern` a user
+    /// pastes in can hang the overlay on a long line. A pattern the engine cannot compile is
+    /// dropped, and the others keep working.
     public var regex: String
     /// The action template run when the label resolves — `{0}` is replaced with the matched text. `nil` when
     /// the pattern carries no paired action (the target then falls back to copy-on-resolve).
@@ -63,22 +72,28 @@ public struct HintTarget: Equatable, Sendable {
     }
 }
 
-/// The PURE heart of Hint Mode: scan the visible viewport rows for every hintable
-/// target (paths/URLs via the shared ``TerminalLinkDetector``, plus git-hash / IPv4 / user `hint-pattern`
-/// forms), then assign **collision-free 2-letter** Vimium labels and filter them as the user types.
+/// The heart of Hint Mode: every hintable target in the visible viewport, then collision-free
+/// 2-letter Vimium labels over them, filtered as the user types.
 ///
-/// ## Why a pure enum
-/// Like ``TerminalLinkDetector``, hint target detection + label assignment is a deterministic text scan with
-/// no host round-trip, so keeping it environment-free makes it headless-unit-testable (``HintLabelAssignerTests``)
-/// and lets the macOS renderer (key capture) and the iOS overlay (tap-on-label) share ONE engine. The thin
-/// ``HintModeOverlay`` feeds it `viewportTextRows()` and maps `colStart ..< colEnd` to pixels via
-/// ``TerminalCellMetrics``.
+/// ## The SCAN is a call; the LABELS are not
+/// ``targets(rows:cwd:schemes:patterns:maxScanColumns:)`` is `slopdesk_hint::targets`, reached
+/// through `slopdesk_hint_scan` (docs/55). What used to be here was a second regex pass — ten
+/// `NSRegularExpression` runs bridged through `NSString`, with a third cell walk asking the link
+/// detector for each glyph's width. Two problems, and the boundary fixed both: the columns now come
+/// from the SAME clustering the link overlay draws its underline in, and the user's `hint-pattern`
+/// now runs on a finite automaton, so a pattern pasted off the internet can no longer make a long
+/// row hang the overlay the way a backtracking engine could.
 ///
-/// ## Validate-then-drop & bounds (CLAUDE.md §3 habit, applied to untrusted terminal bytes)
+/// ``labels(count:alphabet:)`` and ``filter(typed:labels:)`` stay here. They are list arithmetic
+/// over 26 letters — no text, no bounds, no untrusted input — and they run on every keystroke next
+/// to the overlay that already holds their result.
+///
+/// ## Validate-then-drop & bounds (applied to untrusted terminal bytes)
 /// Terminal output is attacker-influenced. Each row is scanned for at most `maxScanColumns` **cells**, at
 /// most ``TerminalLinkDetector/maxMatchesPerRow`` targets are kept per row, an invalid user regex is dropped
 /// (never a trap), and an extra (git-hash/IP/custom) match that OVERLAPS an already-accepted span is dropped
-/// so a hex run inside a URL — or an IP inside a path — never double-lights.
+/// so a hex run inside a URL — or an IP inside a path — never double-lights. All of that is the
+/// crate's now; `HintLabelAssignerTests` pins it from this side unchanged.
 public enum HintLabelAssigner {
     /// The label alphabet — home row first, then the top row, then the bottom row (Vimium "ordered by
     /// distance from the home row"). 26 letters ⇒ up to 26² = 676 two-letter labels (far more than a
@@ -161,145 +176,95 @@ public enum HintLabelAssigner {
     ) -> [HintTarget] {
         guard maxScanColumns > 0 else { return [] }
 
-        // Per-row accepted targets, so the extra regex scans can drop a span that overlaps a link / a
-        // higher-priority extra match (a hex inside a URL must NOT also light as a git hash).
-        var perRow: [Int: [HintTarget]] = [:]
-
-        // 1) Paths / URLs / file:// / mailto: — reuse the shared detector (cell-accurate columns).
-        for link in TerminalLinkDetector.detect(
-            rows: rows, cwd: cwd, schemes: schemes, maxScanColumns: maxScanColumns,
-        ) {
-            perRow[link.row, default: []].append(
-                HintTarget(
-                    row: link.row, colStart: link.colStart, colEnd: link.colEnd,
-                    raw: link.raw, kind: .link(link),
-                ),
-            )
+        let (rowBlob, rowLengths) = TerminalLinkDetector.flatten(rows)
+        let schemeList: [String]
+        let schemeMode: UInt32
+        switch schemes {
+        case .all:
+            schemeList = []
+            schemeMode = UInt32(SLOPDESK_LINK_SCHEMES_ALL)
+        case let .custom(allowed):
+            schemeList = allowed
+            schemeMode = UInt32(SLOPDESK_LINK_SCHEMES_CUSTOM)
         }
+        let (schemeBlob, schemeLengths) = TerminalLinkDetector.flatten(schemeList)
+        let (patternBlob, patternLengths) = TerminalLinkDetector.flatten(patterns.map(\.regex))
+        // An empty template IS "no action" on the far side, so a pattern without one contributes a
+        // zero-length entry rather than a hole the two lists would then disagree about.
+        let (actionBlob, actionLengths) = TerminalLinkDetector.flatten(patterns.map { $0.action ?? "" })
+        let cwdBytes = Array((cwd ?? "").utf8)
 
-        // 2) Extra regex targets per row, in priority order: custom patterns, then IPs, then git hashes.
-        //    Each is dropped if it overlaps an already-accepted span on the row (validate-then-drop).
-        for (row, line) in rows.enumerated() {
-            let bounded = boundedPrefix(line, maxCells: maxScanColumns)
-            guard !bounded.isEmpty else { continue }
-            for pattern in patterns {
-                guard let regex = compile(pattern.regex) else { continue } // invalid user regex → dropped
-                addMatches(of: regex, in: bounded, row: row, into: &perRow) { range, matched in
-                    HintTarget(
-                        row: row, colStart: range.start, colEnd: range.end,
-                        raw: matched, kind: .custom(actionTemplate: pattern.action),
-                    )
-                }
+        guard let scan = slopdesk_hint_scan(
+            rowBlob, rowBlob.count,
+            rowLengths, rowLengths.count,
+            cwdBytes, cwdBytes.count,
+            schemeMode,
+            schemeBlob, schemeBlob.count,
+            schemeLengths, schemeLengths.count,
+            patternBlob, patternBlob.count,
+            patternLengths,
+            actionBlob, actionBlob.count,
+            actionLengths,
+            patternLengths.count,
+            maxScanColumns,
+        ) else { return [] }
+        defer { slopdesk_hint_scan_free(scan) }
+
+        let counts = slopdesk_hint_scan_counts(scan)
+        var arena = [UInt8](repeating: 0, count: counts.arena_length)
+        let written = arena.withUnsafeMutableBufferPointer {
+            slopdesk_hint_scan_take_arena(scan, $0.baseAddress, $0.count)
+        }
+        precondition(written == counts.arena_length, "the arena answered a size it would not fill")
+
+        // One borrow for every string in the scan: the arena is read at most three times per
+        // target, and each read is a rebase inside a buffer that is already there.
+        return arena.withUnsafeBytes { raw -> [HintTarget] in
+            var out: [HintTarget] = []
+            out.reserveCapacity(counts.target_count)
+            for index in 0..<counts.target_count {
+                let record = slopdesk_hint_scan_target(scan, index)
+                let text = TerminalLinkDetector.text(raw, record.raw_offset, record.raw_length)
+                guard let kind = kind(of: record, raw: raw, text: text) else { continue }
+                out.append(HintTarget(
+                    row: record.row, colStart: record.col_start, colEnd: record.col_end,
+                    raw: text, kind: kind,
+                ))
             }
-            addMatches(of: ipv4Regex, in: bounded, row: row, into: &perRow) { range, matched in
-                HintTarget(row: row, colStart: range.start, colEnd: range.end, raw: matched, kind: .ipAddress)
-            }
-            addMatches(of: gitHashRegex, in: bounded, row: row, into: &perRow) { range, matched in
-                // Drop a pure-decimal run (a long number is not a commit hash): require ≥1 hex LETTER.
-                guard matched.contains(where: \.isHexLetter) else { return nil }
-                return HintTarget(row: row, colStart: range.start, colEnd: range.end, raw: matched, kind: .gitHash)
-            }
-        }
-
-        // 3) Flatten + order row-major, left-to-right (label assignment then reads this order).
-        return perRow.values.flatMap(\.self).sorted {
-            $0.row != $1.row ? $0.row < $1.row : $0.colStart < $1.colStart
+            return out
         }
     }
 
-    // MARK: - Regex scanning helpers
-
-    /// A matched cell span (start inclusive, end exclusive).
-    private struct CellSpan {
-        var start: Int
-        var end: Int
-    }
-
-    /// Run `regex` over `bounded` (already cell-bounded), build a target from each match via `make`, and
-    /// keep it only when it does NOT overlap an already-accepted span on `row` (and the per-row cap is not
-    /// exceeded). Cell columns are computed against the matched substring's UTF-16 prefix using the SAME
-    /// display-cell width the detector uses, so an extra match aligns with the link spans on a CJK row.
-    private static func addMatches(
-        of regex: NSRegularExpression,
-        in bounded: String,
-        row: Int,
-        into perRow: inout [Int: [HintTarget]],
-        make: (CellSpan, String) -> HintTarget?,
-    ) {
-        // `NSString` gives the UTF-16 `substring(with: NSRange)` that `NSRegularExpression` match ranges index
-        // into (Swift `String` has no `NSRange` subscript); the bridge is the idiomatic regex-extraction path.
-        // swiftlint:disable:next legacy_objc_type
-        let ns = bounded as NSString
-        let full = NSRange(location: 0, length: ns.length)
-        let matches = regex.matches(in: bounded, options: [], range: full)
-        for match in matches {
-            if (perRow[row]?.count ?? 0) >= TerminalLinkDetector.maxMatchesPerRow { break }
-            let nsRange = match.range
-            guard nsRange.location != NSNotFound, nsRange.length > 0,
-                  nsRange.location + nsRange.length <= ns.length else { continue }
-            let prefix = ns.substring(to: nsRange.location)
-            let matched = ns.substring(with: nsRange)
-            let colStart = TerminalLinkDetector.displayCellWidth(of: prefix)
-            let colEnd = colStart + TerminalLinkDetector.displayCellWidth(of: matched)
-            let span = CellSpan(start: colStart, end: colEnd)
-            guard !overlapsAccepted(span, row: row, in: perRow), let target = make(span, matched) else { continue }
-            perRow[row, default: []].append(target)
+    /// The kind one record names, reading the arena for whichever strings that kind carries.
+    ///
+    /// `nil` for `SLOPDESK_HINT_KIND_NONE` — the door's answer to an index past the end, which the
+    /// reader loop never asks for — and for a LINK whose link kind does not decode, which is the
+    /// same validate-then-drop the link reader applies.
+    private static func kind(
+        of record: SlopDeskHintTarget,
+        raw: UnsafeRawBufferPointer,
+        text: String,
+    ) -> HintTarget.Kind? {
+        switch record.kind {
+        case UInt32(SLOPDESK_HINT_KIND_LINK):
+            guard let linkKind = TerminalLinkDetector.kind(of: record.link_kind) else { return nil }
+            return .link(DetectedLink(
+                row: record.row, colStart: record.col_start, colEnd: record.col_end,
+                kind: linkKind, raw: text,
+                resolvedAbsolute: record.has_resolved
+                    ? TerminalLinkDetector.text(raw, record.resolved_offset, record.resolved_length)
+                    : nil,
+            ))
+        case UInt32(SLOPDESK_HINT_KIND_GIT_HASH):
+            return .gitHash
+        case UInt32(SLOPDESK_HINT_KIND_IP_ADDRESS):
+            return .ipAddress
+        case UInt32(SLOPDESK_HINT_KIND_CUSTOM):
+            return .custom(actionTemplate: record.has_action
+                ? TerminalLinkDetector.text(raw, record.action_offset, record.action_length)
+                : nil)
+        default:
+            return nil
         }
-    }
-
-    /// Whether `span` overlaps any already-accepted target's cell span on `row`.
-    private static func overlapsAccepted(_ span: CellSpan, row: Int, in perRow: [Int: [HintTarget]]) -> Bool {
-        guard let existing = perRow[row] else { return false }
-        return existing.contains { span.start < $0.colEnd && $0.colStart < span.end }
-    }
-
-    /// A prefix of `line` holding at most `maxCells` display cells (the anti-hang bound; a single wide glyph
-    /// that would spill past the cap is excluded whole).
-    private static func boundedPrefix(_ line: String, maxCells: Int) -> String {
-        var cells = 0
-        var out = ""
-        for character in line {
-            let width = TerminalLinkDetector.displayCellWidth(of: character)
-            if cells + width > maxCells { break }
-            out.append(character)
-            cells += width
-        }
-        return out
-    }
-
-    private static func compile(_ pattern: String) -> NSRegularExpression? {
-        try? NSRegularExpression(pattern: pattern, options: [])
-    }
-
-    // MARK: - Built-in extra patterns
-
-    // `try!` is safe on these compile-time-constant patterns (a programmer-error trap, never attacker input —
-    // only user `hint-pattern` regexes are `try?`-guarded above), matching the `SecretRedactor` idiom. Disabled
-    // as a region (not `:next`) so each `///` doc comment stays attached to its declaration.
-    // swiftlint:disable force_try
-
-    /// Commit-hash shape: a 7–40 char `[0-9a-f]` run on a word boundary. The fixed-length lookarounds keep it
-    /// ICU-legal; the builder additionally requires ≥1 hex LETTER so a long decimal is not mistaken for a hash.
-    private static let gitHashRegex = try! NSRegularExpression(
-        pattern: "(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])", options: [],
-    )
-
-    /// IPv4 dotted-quad with each octet validated 0–255 IN the regex, word-boundaried so a 5-part run does not
-    /// partially match. `try!` is safe on this compile-time-constant pattern (see ``gitHashRegex``).
-    private static let ipv4Regex = try! NSRegularExpression(
-        pattern: "(?<![0-9.])(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
-            + "(?:\\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}(?![0-9.])",
-        options: [],
-    )
-    // swiftlint:enable force_try
-}
-
-// MARK: - Small ASCII predicate
-
-private extension Character {
-    /// A lowercase hex LETTER (`a`–`f`) — used to reject a pure-decimal run as a git hash.
-    var isHexLetter: Bool {
-        guard let scalar = unicodeScalars.first, unicodeScalars.count == 1 else { return false }
-        return scalar.value >= 0x61 && scalar.value <= 0x66
     }
 }
