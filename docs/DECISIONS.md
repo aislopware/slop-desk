@@ -16339,3 +16339,31 @@ This is the second failure mode of a linked port. `build-ffi.sh --check` catches
 artifact older than its sources. A dead door is the quiet one: it costs nothing at runtime and
 everything at read time, because the next reader cannot tell "the way to ask" from "a way nobody
 asks" without doing what this audit did by hand, four times.
+
+## The inner loop's floor was twenty-one tree walks (2026-08-17)
+
+`make quick` runs `lint-supervisor` on every edit, and it was **44 s** — the single largest fixed
+cost in the loop, and the Makefile called it "the honest price of the cross-language contracts".
+Most of it was not the contracts. It was **31 s of the same file tree, walked over and over**:
+
+- **21 "this Swift must stay deleted" bans**, each its own `grep -r … Sources/`, each asking for a
+  list that is EMPTY every time the gate passes. One union walk now collects candidates and each ban
+  re-greps only those — no files at all in the passing case.
+- **four per-file loops**, spawning a grep (sometimes two) for every one of ~1000 files, to answer a
+  question one `grep -l` over the list answers first. Two of the four were added the same day, in
+  this audit, which is how a floor gets built.
+
+**44 s → 31 s**, all 102 checks still running and all still firing — verified by planting a
+violation for each rewritten gate and watching it fail.
+
+**The trick is the one `spells` already used**, and its correctness argument is the same one:
+stripping, or filtering, can only ever REMOVE a match, so a file the first pass rejects could not
+have matched afterwards. Every ban keeps its own pattern and its own message; the union is a filter,
+never the answer.
+
+**The union is verified, not trusted.** Drop one ban's pattern out of it and that ban stops seeing
+its own violation — and reports SUCCESS, because an empty candidate list is exactly what passing
+looks like. That is the silent pass this gate has an entire section warning about, so
+`scripts/check-ban-union.py` runs in `make lint` and fails if any ban is not spliced into the union
+verbatim. The check is textual on purpose: regex-superset is not a thing to decide in a lint gate,
+and verbatim splicing is both the convention and the whole argument.

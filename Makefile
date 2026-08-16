@@ -120,8 +120,8 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-supervisor
-LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-supervisor
+.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-supervisor
+LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-supervisor
 
 # The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
@@ -170,6 +170,13 @@ lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut 
 # to ask from the only way to ask. Text-only, no compile. See scripts/check-ffi-doors.py.
 lint-ffi-doors: ## Dead-FFI-door ratchet (every exported door is called, or named deliberate)
 	python3 scripts/check-ffi-doors.py
+
+# check-supervisor.sh walks Sources/ ONCE for its twenty-one "this Swift must stay deleted" bans,
+# each of which then re-greps only the candidates. Sound only while the union is a superset of every
+# ban — drop one out and that ban reports SUCCESS on the file it exists to catch, which is the
+# silent pass the gate has a whole section warning about. So the union is verified, not trusted.
+lint-ban-union: ## The one-walk ban filter really contains every ban that filters through it
+	python3 scripts/check-ban-union.py
 
 # hostd ↔ superd CONTRACT ratchet: the constants that are necessarily typed in both languages
 # (rendezvous socket name, protocol version, verbs, frame tags, body cap, PTY read chunk) compared
@@ -273,8 +280,10 @@ check: lint build test miri golden check-ios ## lint + build + test + the unsafe
 #
 # `build` is not omitted so much as implied: `test-touched` builds incrementally before selecting.
 #
-# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~34 s of ratchets
-# that read the whole tree — and that floor is the honest price of the cross-language contracts.
+# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~31 s of ratchets
+# that read the whole tree. It was 44 s until the twenty-one "this Swift must stay deleted" bans
+# stopped walking `Sources/` twenty-one times for an answer that is empty whenever they pass (see
+# `DELETED_SWIFT_UNION`); what is left is the honest price of the cross-language contracts.
 # `ffi` and `lint` come first and in order — the artifact before anything that links it, and the
 # linters before the slow half, so a formatting slip fails in seconds rather than after the tests.
 # The slow half then runs CONCURRENTLY, ordered logs and known pids exactly as `lint` does: after a

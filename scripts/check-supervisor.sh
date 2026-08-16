@@ -42,6 +42,27 @@ trap 'rm -f "${INVARIANTS_LOG}"' EXIT
 python3 scripts/check-invariants.py > "${INVARIANTS_LOG}" 2>&1 &
 INVARIANTS_PID=$!
 
+# ── ONE tree walk for every "this Swift must stay deleted" ban in this file ────────────────────
+# Twenty-one bans below each asked `grep -r … Sources/` for a list that is EMPTY every time the gate
+# passes, so the script walked the whole Swift tree twenty-one times per inner loop to be told
+# nothing twenty-one times. The union walks it ONCE, here; each ban then re-greps only the
+# candidates, which is no files at all in the passing case.
+#
+# Semantics are unchanged and the reason is the same one `spells` gives: a file that matches none of
+# the alternatives cannot match one of them. Every ban keeps its own pattern and its own message —
+# the union is a filter, never the answer — which is what a reader needs on the day one fires.
+#
+# The union is BUILT from the bans, not maintained beside them: `make lint` runs
+# `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))'
+DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
+# The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
+among_deleted() {
+  [[ -z "${DELETED_SWIFT_CANDIDATES}" ]] && return 0
+  # shellcheck disable=SC2086 # the candidate list is a FILE LIST on purpose
+  grep -lE "$1" ${DELETED_SWIFT_CANDIDATES} 2> /dev/null || true
+}
+
 SWIFT_PATHS="Sources/SlopDeskSupervisor/SupervisorPaths.swift"
 SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
@@ -320,7 +341,7 @@ for gone in Sources/SlopDeskVideoProtocol/GF256.swift \
     fail "${gone} is back — the FEC field lives in rust/slopdesk-video, its kernel in rust/slopdesk-gfsimd"
   fi
 done
-gf_revived=$(grep -rlE '(enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b' Sources/ || true)
+gf_revived=$(among_deleted '(enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b')
 if [[ -n "${gf_revived}" ]]; then
   printf '%s\n' "${gf_revived}" >&2
   fail "a Swift GF(2^8) backend is back in Sources/ — one implementation, and it is the Rust one"
@@ -549,7 +570,7 @@ for gone in Sources/SlopDeskVideoProtocol/FrameHasher.swift \
 done
 # The fold, the two laws and the plane validation, none of which may grow back ANYWHERE in Sources/:
 # each is small, pure and framework-free, which is exactly the shape a "tiny local helper" takes.
-measure_revived=$(grep -rlE '(struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b' Sources/ || true)
+measure_revived=$(among_deleted '(struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b')
 if [[ -n "${measure_revived}" ]]; then
   printf '%s\n' "${measure_revived}" >&2
   fail "a Swift frame-measurement law is back in Sources/ — rust/slopdesk-video owns the fold and both laws"
@@ -586,7 +607,7 @@ done
 # The arithmetic itself, which may not grow back anywhere in Sources/. `windowPoint(pixel:` and the
 # CG↔Cocoa flip went with this port: they had no caller outside their own tests, and the Rust twin
 # that survives them is the only one left.
-policy_revived=$(grep -rlE 'func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b' Sources/ || true)
+policy_revived=$(among_deleted 'func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b')
 if [[ -n "${policy_revived}" ]]; then
   printf '%s\n' "${policy_revived}" >&2
   fail "a Swift policy law is back in Sources/ — rust/slopdesk-video owns the clamp, the flip and the step"
@@ -1646,7 +1667,7 @@ fi
 # the POINT — a fixture that agreed with the encoder by construction would assert nothing.
 # Back under `Sources/` they are the seed of a second implementation of a wire, which always arrives
 # as "just this one field" rather than as a codec.
-bigendian_revived=$(grep -rlE '(func|var) appendBE|(struct|enum|final class|class) BigEndianReader' Sources/ || true)
+bigendian_revived=$(among_deleted '(func|var) appendBE|(struct|enum|final class|class) BigEndianReader')
 if [[ -n "${bigendian_revived}" ]]; then
   printf '%s\n' "${bigendian_revived}" >&2
   fail "a big-endian helper is back in Sources/ — wire bodies are Rust's, the helper is a test fixture"
@@ -1676,7 +1697,7 @@ fi
 # No SWIFT screen engine. The parser, the renderer and the overprint collapser were DELETED when
 # they moved to Rust, and a re-added Swift copy is the cross-language mirror the tree forbids —
 # which is exactly the shape a "just a small fallback" commit takes (`CLAUDE.md`, `docs/52` §4).
-revived=$(grep -rlE 'enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer' Sources/ || true)
+revived=$(among_deleted 'enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer')
 if [[ -n "${revived}" ]]; then
   printf '%s\n' "${revived}" >&2
   fail "a Swift screen engine is back in Sources/ — screend owns the parse and the render (docs/52)"
@@ -1689,7 +1710,7 @@ fi
 # passthrough policy and not an invitation (`docs/52` §4, `ScrollbackReplayTransform`).
 # `ScrollbackReplayTransform` itself is NOT named: it stayed, as the caller that picks the options.
 # Scoped to DECLARATIONS so prose explaining where the passes went does not fail its gate.
-passes_revived=$(grep -rlE '(enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b' Sources/ || true)
+passes_revived=$(among_deleted '(enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b')
 if [[ -n "${passes_revived}" ]]; then
   printf '%s\n' "${passes_revived}" >&2
   fail "a Swift replay pass is back in Sources/ — screend's sanitize verb owns the chain (docs/52)"
@@ -1701,7 +1722,7 @@ fi
 # "the reassert lands BEFORE the dangling half" a convention two call sites had to remember instead
 # of an invariant of screend's reply, and `compose` vs `transcript` disagree about whether the
 # dangling half survives at all. Function names, not types: these were static methods.
-boundary_revived=$(grep -rlE 'func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=]' Sources/ || true)
+boundary_revived=$(among_deleted 'func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=]')
 if [[ -n "${boundary_revived}" ]]; then
   printf '%s\n' "${boundary_revived}" >&2
   fail "a Swift chunk-boundary splitter is back in Sources/ — screend splits its own input (docs/52 §4)"
@@ -1714,12 +1735,12 @@ fi
 # and it holds no file descriptor. Two shapes are gated: the deleted types, and any Swift that opens
 # a `.scrollback`/`.resume` path for WRITING. The read side is deliberately not gated: hostd opens
 # the path `journal_info` hands back, which is the whole point of returning a path.
-journal_revived=$(grep -rlE '(enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b' Sources/ || true)
+journal_revived=$(among_deleted '(enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b')
 if [[ -n "${journal_revived}" ]]; then
   printf '%s\n' "${journal_revived}" >&2
   fail "a Swift scrollback journal is back in Sources/ — superd writes the transcript (docs/51 §6.8)"
 fi
-journal_writer=$(grep -rlE '(createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$)' Sources/ || true)
+journal_writer=$(among_deleted '(createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$)')
 if [[ -n "${journal_writer}" ]]; then
   printf '%s\n' "${journal_writer}" >&2
   fail "Swift is writing a journal file — superd owns every write under the scrollback dir (docs/51 §6.8)"
@@ -2217,7 +2238,7 @@ bash scripts/build-ffi.sh --check || fail "the FFI artifact is stale — run 'ma
 # Swift, three tables of literal Claude cues next to a nineteen-agent rule ladder. Its process-name
 # half survives as `ClaudeProcessMatcher`; the screen half is gone and must not come back under
 # either name.
-detect_revived=$(grep -rlE '(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b' Sources/ || true)
+detect_revived=$(among_deleted '(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b')
 if [[ -n "${detect_revived}" ]]; then
   printf '%s\n' "${detect_revived}" >&2
   fail "a Swift screen-detection engine is back in Sources/ — screend's detect verb owns the ladder (docs/50 §3)"
@@ -2229,7 +2250,7 @@ fi
 # separate cleanup sites — spawn failure, session teardown, orphan sweep — and still leaked the
 # directory outright whenever hostd was killed. A Swift file that generates rc files again is that
 # leak coming back, plus a second copy of the shell script itself.
-shim_revived=$(grep -rlE '(enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-' Sources/ || true)
+shim_revived=$(among_deleted '(enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-')
 if [[ -n "${shim_revived}" ]]; then
   printf '%s\n' "${shim_revived}" >&2
   fail "the ZDOTDIR shim is back in Sources/ — superd owns it (rust/slopdesk-superd/src/shellintegration.rs)"
@@ -2399,7 +2420,7 @@ fi
 # Scoped to DECLARATIONS, like §9 above: the names still appear in prose explaining where the
 # receiving end went, and a gate that fails on its own documentation teaches people to delete the
 # documentation.
-drop_revived=$(grep -rlE '(enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b' Sources/ || true)
+drop_revived=$(among_deleted '(enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b')
 if [[ -n "${drop_revived}" ]]; then
   printf '%s\n' "${drop_revived}" >&2
   fail "a Swift file-drop receiver is back in Sources/ — dropd owns the receiving end (docs/53)"
@@ -2453,7 +2474,7 @@ fi
 # No SWIFT bridge. Same rule as §9 and §10, and the same scoping to DECLARATIONS so prose explaining
 # where the bridge went does not fail its own gate. `AndroidDevice` is deliberately NOT in this list:
 # the CLIENT's row type is the far end of the protocol, which is exactly what the rule allows.
-android_revived=$(grep -rlE '(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b' Sources/ || true)
+android_revived=$(among_deleted '(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b')
 if [[ -n "${android_revived}" ]]; then
   printf '%s\n' "${android_revived}" >&2
   fail "a Swift Android bridge is back in Sources/ — androidd owns adb and the pump (docs/48)"
@@ -2535,7 +2556,7 @@ fi
 # of the wire, and a "small one just for tests" is the cross-language mirror the tree forbids
 # (`InspectorClient`, `InspectorViewModel` and the event types are the far end, which is allowed).
 # Scoped to DECLARATIONS so prose explaining where the producer went does not fail its own gate.
-inspector_revived=$(grep -rlE '(enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b' Sources/ || true)
+inspector_revived=$(among_deleted '(enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b')
 if [[ -n "${inspector_revived}" ]]; then
   printf '%s\n' "${inspector_revived}" >&2
   fail "a Swift inspector producer is back in Sources/ — inspectord owns the fold (docs/54)"
@@ -2621,7 +2642,7 @@ fi
 # the paths — moved in one change, and the ~2.7k lines it replaced were DELETED with it
 # (`docs/DECISIONS.md`, stage 22). Scoped to DECLARATIONS so the prose in `CodeSeed.swift` naming
 # what moved does not fail its own gate.
-seeder_revived=$(grep -rlE '(static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b' Sources/ || true)
+seeder_revived=$(among_deleted '(static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b')
 if [[ -n "${seeder_revived}" ]]; then
   printf '%s\n' "${seeder_revived}" >&2
   fail "a Swift profile seeder is back in Sources/ — slopdesk-codeseed owns the code-server profile"
@@ -2672,7 +2693,7 @@ fi
 # No SWIFT installer. The merge, the marker, the event list and the paths moved in one change and
 # the Swift original was deleted with it. Scoped to DECLARATIONS so `AgentHooks.swift`'s prose about
 # what moved does not fail its own gate.
-installer_revived=$(grep -rlE '(enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b' Sources/ || true)
+installer_revived=$(among_deleted '(enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b')
 if [[ -n "${installer_revived}" ]]; then
   printf '%s\n' "${installer_revived}" >&2
   fail "a Swift hooks installer is back in Sources/ — slopdesk-agenthooks owns ~/.claude/settings.json"
@@ -2709,7 +2730,7 @@ fi
 # No SWIFT git. Same rule as §9–§15: the porcelain parser, the status packing, the Claude slug and
 # the diff-base ladder moved in one change and the Swift originals were deleted with it. Scoped to
 # DECLARATIONS so the prose in `HostProbe.swift` about what moved does not fail its own gate.
-probe_revived=$(grep -rlE '(struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b' Sources/ || true)
+probe_revived=$(among_deleted '(struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b')
 if [[ -n "${probe_revived}" ]]; then
   printf '%s\n' "${probe_revived}" >&2
   fail "a Swift git/session/terminfo parser is back in Sources/ — slopdesk-probe owns porcelain, the slug, the diff bases and the TERM table"
@@ -2717,7 +2738,7 @@ fi
 # And nothing in Sources/ spawns what the probe spawns. `lsof` is the one subprocess left on the
 # Swift side; a `git` or an `infocmp` next to it is a ported path coming back — for git, the
 # four-spawns-per-request one.
-swift_spawns=$(grep -rlE '"/usr/bin/(git|infocmp)"' Sources/ || true)
+swift_spawns=$(among_deleted '"/usr/bin/(git|infocmp)"')
 if [[ -n "${swift_spawns}" ]]; then
   printf '%s\n' "${swift_spawns}" >&2
   fail "Swift spawns git or infocmp again — both belong inside slopdesk-probe (docs/DECISIONS.md, stages 24 and 25)"
@@ -3496,7 +3517,7 @@ printf 'check-supervisor: one badge ladder for a tab row.\n'
 # shows IS the product, so a second scorer does not fail a test, it just starts ranking differently
 # and nobody can say which copy the person is looking at. Every search field asks the same door.
 SWIFT_FUZZY=Sources/SlopDeskClientUI/Palette/FuzzyMatcher.swift
-scorer_revived=$(grep -rlE '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b' Sources/ || true)
+scorer_revived=$(among_deleted '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b')
 if [[ -n "${scorer_revived}" ]]; then
   printf '%s\n' "${scorer_revived}" >&2
   fail "a Swift fuzzy scorer is back in Sources/ — rust/slopdesk-fuzzy owns FuzzyMatchV2"
@@ -3520,7 +3541,7 @@ printf 'check-supervisor: one fuzzy ranking, for every search field.\n'
 # nudge is not a raised hand) lived nowhere near the case they governed. `rust/slopdesk-hookevent`
 # owns both halves now; Swift marshals.
 SWIFT_HOOKBODY=Sources/SlopDeskAgentDetect/ClaudeHookBody.swift
-parser_revived=$(grep -rlE '(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b' Sources/ || true)
+parser_revived=$(among_deleted '(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b')
 if [[ -n "${parser_revived}" ]]; then
   printf '%s\n' "${parser_revived}" >&2
   fail "a Swift hook-body parser is back in Sources/ — rust/slopdesk-hookevent owns the reading AND the mapping"
@@ -3548,7 +3569,7 @@ printf 'check-supervisor: one reading of a hook body.\n'
 # owns the pass now; the clipboard's plain text is that pass with the styles discarded, which is
 # what keeps the copied text and the coloured text from being two behaviours.
 SWIFT_STYLED=Sources/SlopDeskWorkspaceCore/Terminal/AnsiStyledText.swift
-grammar_revived=$(grep -rlE 'func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b' Sources/ || true)
+grammar_revived=$(among_deleted 'func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b')
 if [[ -n "${grammar_revived}" ]]; then
   printf '%s\n' "${grammar_revived}" >&2
   fail "a Swift VT grammar is back in Sources/ — slopdesk-sanitize::styled owns the styled pass"
@@ -3627,12 +3648,17 @@ fi
 if ! spells 'use slopdesk_sanitize::width::scalar_width' rust/slopdesk-terminal/src/link.rs > /dev/null; then
   fail "rust/slopdesk-terminal/src/link.rs stopped reading the one width table — a second one drifts"
 fi
-for owner in rust/*/src/*.rs rust/*/src/*/*.rs Sources/*/*.swift Sources/*/*/*.swift Sources/*/*/*/*.swift; do
-  [[ "${owner}" == rust/slopdesk-sanitize/src/width.rs ]] && continue
+# ONE `grep -l` over the whole tree for candidates, then `spells` only on those — the same trick
+# `spells` itself uses, for the same reason. Looping `spells` over ~1000 files spawned a process per
+# FILE and cost seconds off every inner loop; the comment-strip is what makes it a `spells` call at
+# all, and stripping can only ever REMOVE a match, so a file this grep rejects cannot match after it.
+while IFS= read -r owner; do
+  [[ -z "${owner}" || "${owner}" == rust/slopdesk-sanitize/src/width.rs ]] && continue
   if spells '0x4E00|0x4e00' "${owner}" > /dev/null 2>&1; then
     fail "${owner} carries its own East Asian width table — slopdesk-sanitize::width is the one"
   fi
-done
+done < <(grep -lE '0x4E00|0x4e00' rust/*/src/*.rs rust/*/src/*/*.rs Sources/*/*.swift \
+  Sources/*/*/*.swift Sources/*/*/*/*.swift 2> /dev/null || true)
 printf 'check-supervisor: one width table under that clustering.\n'
 
 # ── And ONE grammar for where an escape ENDS ───────────────────────────────────────────────────
@@ -3651,12 +3677,13 @@ fi
 if ! spells 'use slopdesk_sanitize::vtscan' rust/slopdesk-altscreen/src/lib.rs > /dev/null; then
   fail "rust/slopdesk-altscreen stopped reading the one escape grammar — a fifth copy drifts"
 fi
-for owner in rust/*/src/*.rs rust/*/src/*/*.rs; do
-  [[ "${owner}" == rust/slopdesk-sanitize/src/vtscan.rs ]] && continue
+# Candidates first, comment-strip only for those — see the width table's loop above.
+while IFS= read -r owner; do
+  [[ -z "${owner}" || "${owner}" == rust/slopdesk-sanitize/src/vtscan.rs ]] && continue
   if spells 'fn (parse_csi|string_sequence_end)' "${owner}" > /dev/null 2>&1; then
     fail "${owner} defines its own escape scanner — slopdesk-sanitize::vtscan is the one"
   fi
-done
+done < <(grep -lE 'fn (parse_csi|string_sequence_end)' rust/*/src/*.rs rust/*/src/*/*.rs 2> /dev/null || true)
 printf 'check-supervisor: one grammar for where an escape ends, and five copies is not it.\n'
 
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
@@ -4110,6 +4137,10 @@ printf 'check-supervisor: two sidecar lifecycles, five faces, one lock each.\n'
 # `DeadlineLatch` down to them, so pinning them here would only demand an impossible import.
 # Not `spells`: the check is a two-line WINDOW (open the Task, then find the guard under it), which
 # is a `grep -A2` per file rather than a pattern over a file list.
+# The `-A2` window is why this is per file rather than one pattern over the list — but only files
+# that carry the INTRODUCER can have a window worth reading, so one `grep -l` picks those out first
+# and the two-process-per-file cost becomes two per candidate. Same trick as `spells`, same reason.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 while IFS= read -r file; do
   [[ -f "${file}" ]] || continue
   [[ "${file}" == *DeadlineLatch.swift ]] && continue
@@ -4117,7 +4148,9 @@ while IFS= read -r file; do
     printf '%s\n' "${file}" >&2
     fail "a cancel-and-re-arm deadline grew back — DeadlineLatch.arm owns the three details"
   fi
-done <<< "$(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskWorkspaceCore/**/*.swift')"
+done <<< "$(grep -lF 'Task { [weak self] in' \
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskWorkspaceCore/**/*.swift') \
+  2> /dev/null || true)"
 declare -a latch_shares=(
   "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:reflowDeadline.arm"
   "Sources/SlopDeskWorkspaceCore/Video/RemoteWindowModel.swift:reflowDeadline.arm"
@@ -4156,15 +4189,17 @@ done
 # Swift's default key order is not stable across runs, so an encoder that omits `.sortedKeys` writes
 # a perfectly good file and turns a passing test into one that fails on a Tuesday. A positive check,
 # because a `JSONEncoder` is ordinary Foundation used in plenty of places that never touch disk.
+# The candidate list IS the `outputFormatting` grep that used to be the loop's first line, hoisted
+# out of it: one process over the tree instead of one per file, and a deleted-but-still-indexed file
+# simply does not come back from `grep -l`.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 while IFS= read -r file; do
-  # `git ls-files` still lists a file this branch has deleted, so ask the filesystem first.
   [[ -f "${file}" ]] || continue
-  grep -q 'outputFormatting' "${file}" || continue
   grep -q '\.sortedKeys' "${file}" || {
     printf '%s\n' "${file}" >&2
     fail "a sidecar encoder set outputFormatting without .sortedKeys — docs/22 §8 compares bytes"
   }
-done <<< "$(repo_files 'Sources/**/*.swift')"
+done <<< "$(grep -lF 'outputFormatting' $(repo_files 'Sources/**/*.swift') 2> /dev/null || true)"
 # …and inside WorkspaceCore, where four stores wrote sidecars, there is one encoder for all of them.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 core_encoders=$(spells 'outputFormatting' \
