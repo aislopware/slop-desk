@@ -17,19 +17,33 @@ import XCTest
 /// So the tree ops keep their document in Swift and cross the RULE instead — the per-tab pre-order
 /// walk, which is bounded by one tab rather than by the whole document.
 ///
-/// It prints a µs/op table and asserts only a loose ceiling; a hard number would flake under load.
+/// It prints a µs/op table and asserts a loose ceiling against the BEST of three timed passes, so a
+/// slice lost to another target under `make quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter WorkspaceMarshalBenchTests`.
 final class WorkspaceMarshalBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.
     private var sink = 0
 
+    /// One measurement, as the BEST of three passes over the same total work.
+    ///
+    /// `make quick` runs this beside thousands of other tests, and one timed loop that lands in
+    /// another target's CPU slice reads as a tenfold regression — which then costs a full re-run of
+    /// the suite to disprove. Splitting the same iteration count into three passes and keeping the
+    /// fastest costs no extra work and asks the question the ceiling is actually about: what does
+    /// this cost when it has the machine, not what did it cost while it was sharing one.
     private func usPerOp(_ iterations: Int, _ block: () -> Void) -> Double {
-        // Warm up (codegen, allocator caches) so the timed loop is steady-state.
+        // Warm up (codegen, allocator caches) so the timed passes are steady-state.
         for _ in 0..<min(iterations, 200) { block() }
-        let start = DispatchTime.now().uptimeNanoseconds
-        for _ in 0..<iterations { block() }
-        let end = DispatchTime.now().uptimeNanoseconds
-        return Double(end - start) / Double(iterations) / 1000.0
+        let passes = 3
+        let per = max(iterations / passes, 1)
+        var best = Double.infinity
+        for _ in 0..<passes {
+            let start = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<per { block() }
+            let end = DispatchTime.now().uptimeNanoseconds
+            best = Double.minimum(best, Double(end - start) / Double(per) / 1000.0)
+        }
+        return best
     }
 
     /// A workspace of `sessions × tabs × panes`, each tab a real split tree rather than a leaf.
