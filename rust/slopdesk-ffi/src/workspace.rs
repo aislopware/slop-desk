@@ -622,34 +622,13 @@ pub unsafe extern "C" fn slopdesk_ws_section_precedes(
     }
 }
 
-/// The natural (digit-aware) comparison of two labels: `-1`, `0` or `1`.
-///
-/// # Safety
-/// Both `(bytes, len)` pairs must be null or point to that many initialised bytes for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_natural_compare(
-    left: *const c_uchar,
-    left_len: usize,
-    right: *const c_uchar,
-    right_len: usize,
-) -> i32 {
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    let (lhs, rhs) = unsafe {
-        (
-            core::str::from_utf8(borrow(left, left_len)).unwrap_or_default(),
-            core::str::from_utf8(borrow(right, right_len)).unwrap_or_default(),
-        )
-    };
-    match tab_ordering::natural_compare(lhs, rhs) {
-        core::cmp::Ordering::Less => -1,
-        core::cmp::Ordering::Equal => 0,
-        core::cmp::Ordering::Greater => 1,
-    }
-}
+// The digit-aware comparison has no door of its own, and never had a Swift caller when it did.
+//
+// What Swift asks is which SECTION comes first, and `slopdesk_ws_section_precedes` above answers
+// exactly that — comparing headers, then keys, so the tie-break that makes the order total cannot
+// be left out by a caller who only borrowed the comparison. `tab_ordering::natural_compare` keeps
+// its own tests in the crate; a second door onto it would only let a caller rebuild that order
+// badly.
 
 /// The tab to focus once `closing` is closed.
 ///
@@ -3670,11 +3649,10 @@ mod tests {
     use super::{
         CPoint, CRect, CVideoTarget, Frame, KeyedTab, Share, Span, TreeNode, Uuid, decode_tree, encode_tree,
         slopdesk_ws_canvas_point, slopdesk_ws_decode_video_target, slopdesk_ws_encode_video_target,
-        slopdesk_ws_extents, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
-        slopdesk_ws_natural_compare, slopdesk_ws_project_key, slopdesk_ws_resize_group, slopdesk_ws_sanitize,
-        slopdesk_ws_screen_rect, slopdesk_ws_section_header, slopdesk_ws_section_precedes,
-        slopdesk_ws_send_keys, slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close,
-        slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
+        slopdesk_ws_extents, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
+        slopdesk_ws_resize_group, slopdesk_ws_sanitize, slopdesk_ws_screen_rect, slopdesk_ws_section_header,
+        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
+        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -3810,16 +3788,6 @@ mod tests {
         assert!(!unsafe {
             slopdesk_ws_section_precedes(core::ptr::null(), 0, false, alpha.as_ptr(), alpha.len(), true)
         });
-    }
-
-    #[test]
-    fn ten_sorts_after_nine_rather_than_after_one() {
-        let compare = |lhs: &str, rhs: &str| unsafe {
-            slopdesk_ws_natural_compare(lhs.as_ptr(), lhs.len(), rhs.as_ptr(), rhs.len())
-        };
-        assert_eq!(compare("tab 9", "tab 10"), -1);
-        assert_eq!(compare("tab 10", "tab 9"), 1);
-        assert_eq!(compare("tab", "tab"), 0);
     }
 
     #[test]

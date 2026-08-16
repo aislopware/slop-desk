@@ -215,6 +215,29 @@ public extension SplitNode {
         }
         return found ? PaneID(ffi: answer) : nil
     }
+
+    // MARK: Compare
+
+    /// Structural equality that IGNORES ``SplitNodeID``s: two trees are structurally equal iff they have the
+    /// same shape (axis + ordered children count), the same leaf ids in the same positions, and the same
+    /// weights. The synthesized `==` includes the split id, so a rebuild that reproduces the same
+    /// arrangement under a freshly-minted id looks "changed" to `!=`; a relocate uses this to detect a true
+    /// no-op drop (drop a pane where it already sits) and skip the reconcile/save churn. Pure.
+    ///
+    /// The walk carries each split's id like every other tree door's does; it is the crate's
+    /// `is_structurally_equal` that declines to read them, so the two trees compare by the arrangement
+    /// alone whichever caller asks.
+    func isStructurallyEqual(to other: SplitNode) -> Bool {
+        var lhs = WsTree.walk(self)
+        var rhs = WsTree.walk(other)
+        return lhs.withUnsafeMutableBufferPointer { left in
+            rhs.withUnsafeMutableBufferPointer { right in
+                slopdesk_ws_tree_structurally_equal(
+                    left.baseAddress, left.count, right.baseAddress, right.count,
+                )
+            }
+        }
+    }
 }
 
 extension SplitAxis {

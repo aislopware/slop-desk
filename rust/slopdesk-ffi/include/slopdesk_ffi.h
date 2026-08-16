@@ -369,8 +369,6 @@ size_t slopdesk_ws_section_header(const uint8_t *bytes, size_t len, bool present
                                   uint8_t *out, size_t cap);
 bool   slopdesk_ws_section_precedes(const uint8_t *left, size_t left_len, bool left_present,
                                     const uint8_t *right, size_t right_len, bool right_present);
-int32_t slopdesk_ws_natural_compare(const uint8_t *left, size_t left_len,
-                                    const uint8_t *right, size_t right_len);
 
 // `tabs` is the display order and still CONTAINS `closing`; each entry carries the project key the
 // caller's closure answered, spanning into `strings`.
