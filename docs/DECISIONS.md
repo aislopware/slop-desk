@@ -16346,8 +16346,10 @@ asks" without doing what this audit did by hand, four times.
 cost in the loop, and the Makefile called it "the honest price of the cross-language contracts".
 Most of it was not the contracts. It was **31 s of the same file tree, walked over and over**:
 
-- **21 "this Swift must stay deleted" bans**, each its own `grep -r … Sources/`, each asking for a
-  list that is EMPTY every time the gate passes. One union walk now collects candidates and each ban
+- **25 "this Swift must stay deleted" bans**, each its own `grep -r … Sources/`, each asking for a
+  list that is EMPTY every time the gate passes. They were written in four different shapes — a
+  one-line assignment, a wrapped one, a `2> /dev/null` one, and a bare `if grep -rq`; the shapes are
+  why the repetition was easy to miss. One union walk now collects candidates and each ban
   re-greps only those — no files at all in the passing case.
 - **four per-file loops**, spawning a grep (sometimes two) for every one of ~1000 files, to answer a
   question one `grep -l` over the list answers first. Two of the four were added the same day, in
@@ -16365,5 +16367,5 @@ never the answer.
 its own violation — and reports SUCCESS, because an empty candidate list is exactly what passing
 looks like. That is the silent pass this gate has an entire section warning about, so
 `scripts/check-ban-union.py` runs in `make lint` and fails if any ban is not spliced into the union
-verbatim. The check is textual on purpose: regex-superset is not a thing to decide in a lint gate,
+verbatim — which also forces the four shapes into one, since only the `among_deleted` form is seen. The check is textual on purpose: regex-superset is not a thing to decide in a lint gate,
 and verbatim splicing is both the convention and the whole argument.
