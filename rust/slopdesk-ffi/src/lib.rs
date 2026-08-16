@@ -107,6 +107,7 @@ pub mod window_placement;
 pub mod wire_message;
 pub mod workspace;
 pub mod workspace_channel;
+pub mod workspace_intent;
 
 use std::ffi::c_uchar;
 

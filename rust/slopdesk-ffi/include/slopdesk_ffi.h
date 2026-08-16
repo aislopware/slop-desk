@@ -700,6 +700,42 @@ size_t slopdesk_ws_encode_diff(const SlopDeskWsEntry *sets, size_t set_count,
                                const uint8_t *blob, size_t blob_len, uint8_t *out, size_t cap);
 
 
+// MARK: The intent applier
+//
+// One client's requested topology change, decided here and nowhere else — the host runs it to
+// decide what the document becomes and the client runs the SAME call for its optimistic overlay,
+// so the two cannot disagree about what a split does.
+//
+// A topology is a split tree, which does not flatten into a struct without inventing a second
+// grammar for it — and does not have to, because it already HAS one. The document goes in as the
+// flat cells `slopdesk_ws_encode_snapshot` takes, and the result comes back as an encoded snapshot
+// the caller reads with `slopdesk_ws_decode_snapshot`.
+
+typedef struct {
+    SlopDeskWsUuid id;
+    SlopDeskWsSpan key;
+} SlopDeskWsKeyedPane;
+
+// The identity pool one intent can spend. Sized here rather than at the call site: a pool one short
+// REPEATS an identity rather than failing, and two tabs sharing an id surfaces days later.
+size_t slopdesk_ws_minted_ids_per_intent(void);
+
+// The status byte for one outcome, by arm order: applied, stale, invalid, not-found, unknown-op.
+// Exported because the numbering is the WIRE's and therefore golden-pinned — a caller that wrote it
+// down beside this would be a second copy of a frozen number.
+uint8_t slopdesk_ws_intent_status(uint8_t index);
+
+// `project_keys` span the SAME `blob` the entries do. `status` receives the intent-status byte on
+// every path including the refusals, so a caller that only wants the verdict passes a null `out`.
+// A refusal answers 0 bytes — not the four an empty snapshot encodes to.
+size_t slopdesk_ws_apply_intent(uint8_t op, const uint8_t *args, size_t args_len,
+                                const SlopDeskWsEntry *entries, size_t entry_count,
+                                const SlopDeskWsKeyedPane *project_keys, size_t project_key_count,
+                                const uint8_t *blob, size_t blob_len,
+                                const SlopDeskWsUuid *minted, size_t minted_count, bool pristine,
+                                uint8_t *status, uint8_t *out, size_t cap);
+
+
 // MARK: The layout structure and the split weights
 //
 // The layout decoder is ITERATIVE where a recursive one would need a depth cap to stay safe: it

@@ -132,6 +132,21 @@ pub struct KeyedTab {
     pub key: Span,
 }
 
+/// A pane and the project key the caller's closure answered for it.
+///
+/// The same two fields as [`KeyedTab`] and deliberately not the same type: a close rule reads a
+/// TAB's key and the intent applier reads a PANE's, the two ids name different objects, and a
+/// struct whose name says "tab" would let one be passed where the other belongs with nothing but a
+/// comment to catch it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct KeyedPane {
+    /// Which pane.
+    pub id: Uuid,
+    /// Its project key, into the blob passed alongside.
+    pub key: Span,
+}
+
 /// Borrows a caller's array for one call.
 ///
 /// # Safety
@@ -140,7 +155,7 @@ pub struct KeyedTab {
     unsafe_code,
     reason = "this IS the boundary: a C array pointer becoming a slice"
 )]
-const unsafe fn borrow_array<'a, T>(items: *const T, count: usize) -> &'a [T] {
+pub(crate) const unsafe fn borrow_array<'a, T>(items: *const T, count: usize) -> &'a [T] {
     if items.is_null() || count == 0 {
         return &[];
     }
@@ -152,7 +167,7 @@ const unsafe fn borrow_array<'a, T>(items: *const T, count: usize) -> &'a [T] {
 ///
 /// Out of range reads as `None` rather than panicking, and so does non-UTF-8: a span arrives from
 /// another process's memory, and the only safe reading of a nonsensical one is "no key".
-fn text_of(span: Span, blob: &[u8]) -> Option<&str> {
+pub(crate) fn text_of(span: Span, blob: &[u8]) -> Option<&str> {
     if !span.present {
         return None;
     }

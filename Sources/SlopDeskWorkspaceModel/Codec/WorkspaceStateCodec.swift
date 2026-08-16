@@ -596,6 +596,16 @@ struct WsBlob {
         )
     }
 
+    /// Text appended to the blob, as the span that reads it back.
+    ///
+    /// The same buffer the entry values go into, deliberately: a door that resolves both against one
+    /// blob has one lifetime to get right instead of two.
+    mutating func span(_ text: String) -> SlopDeskWsSpan {
+        let offset = bytes.count
+        bytes.append(contentsOf: Array(text.utf8))
+        return SlopDeskWsSpan(offset: offset, len: bytes.count - offset, present: true)
+    }
+
     /// A DELETE: a key with no value, which is what an absent span says.
     static func key(_ key: WorkspaceKey) -> SlopDeskWsEntry {
         SlopDeskWsEntry(

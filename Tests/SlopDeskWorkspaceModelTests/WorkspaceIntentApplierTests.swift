@@ -6,6 +6,16 @@ import XCTest
 /// `WorkspaceTreeOps` has been in production for a long time against a caller that could not supply
 /// nonsense: the client's own `@MainActor` store, with local input. An intent hands the same ops a
 /// NETWORK PEER. Every test here is one way that difference could bite.
+///
+/// **These run through the FFI door, not through Swift.** The decision moved to
+/// `slopdesk_wire::document::apply` on 2026-08-16 and every case below passed UNCHANGED across that
+/// move, which is what made it safe to land — the suite was written against the Swift original and
+/// is the only place the two were ever compared. It stays, and it stays here rather than being
+/// transcribed into the crate: this is not a mirror of a Rust suite, it is the boundary's own —
+/// real cells marshalled out, a real snapshot decoded back, on the compiled artifact Swift links.
+/// A dozen of these have no counterpart in `apply.rs` (the depth cap, the dock verbs, the
+/// project-section close rule, two-client convergence), so deleting it would delete coverage, not
+/// duplication.
 final class WorkspaceIntentApplierTests: XCTestCase {
     // MARK: - Fixtures
 

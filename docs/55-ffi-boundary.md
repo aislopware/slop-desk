@@ -329,6 +329,35 @@ so the retry path is correct rather than travelled.
 patch; and a handle whose entry points started deciding things would be the domain logic leaking
 into the shim, which §5 forbids for exactly the same reason.
 
+### The shape that crosses as its own bytes
+
+`slopdesk_ws_apply_intent` is the intent applier, and it is the one door whose argument and answer
+are both a whole document. A `WorkspaceTopology` is a split tree — sessions, tabs, per-pane specs,
+two rings — and there is no `#[repr(C)]` flattening of it that is not a second grammar somebody has
+to keep in step with the first.
+
+It does not need one. **The topology already has a byte encoding: the document's own.** The cells go
+in as the flat `(SlopDeskWsEntry, blob)` pairs `slopdesk_ws_encode_snapshot` already takes, and the
+result comes back as an encoded snapshot the caller reads with `slopdesk_ws_decode_snapshot`. Every
+byte on that path is a codec both sides already run against a host's push, so there is nothing new
+to keep in step — and `rust/slopdesk-ffi/tests/snapshot_codec_parity.rs` is what lets that be said
+out loud, because the encoder the caller reaches (`slopdesk_workspace::state_codec`) and the decoder
+this door uses (`slopdesk_wire::document::codec`) live in two crates that do not depend on each
+other.
+
+Its two closures flatten the way §4's do: the project-key lookup as `(pane, span)` pairs into the
+SAME blob the entries span, and the identity source as a small pool of pre-minted UUIDs
+(`slopdesk_ws_minted_ids_per_intent()`, sized by the crate that spends them — a pool one short
+REPEATS an identity rather than failing). The verdict is `WorkspaceIntentStatus`'s byte, which is
+the wire's and therefore frozen, read out of `slopdesk_ws_intent_status(index)` rather than written
+down a second time.
+
+The evidence the port is behaviour-identical is that all 49 cases in
+`Tests/SlopDeskWorkspaceModelTests/WorkspaceIntentApplierTests.swift` — written against the deleted
+Swift original — passed unchanged the first time the door was wired in. That suite stays where it
+is: it is the boundary's own test, not a mirror of `apply.rs`, and a dozen of its cases have no
+counterpart there.
+
 ## 4c. What the boundary costs, measured
 
 A/B against the deleted Swift implementation, release build, 32 KiB chunks, 64 MiB ring
