@@ -11,10 +11,23 @@
 > additions extend [20](20-wire-protocol.md) §4 (PATH 1 CONTROL, types **17** and **37**).
 > Ownership rulings land in [DECISIONS.md](DECISIONS.md) **before** any code (§12).
 
+> **THE LANGUAGE MOVED, THE DESIGN DID NOT (2026-08-17).** Every verb, every rule and every
+> ordering constraint below still holds; the Swift types they are written in terms of largely do
+> not. The applier is `rust/slopdesk-wire/src/document/apply.rs` behind `WorkspaceIntentApplier`,
+> the codecs are `slopdesk-wire`'s and the Swift files named for them are marshallers, and the
+> tiler the layout presets rebuild through is Rust. `WorkspaceTreeOps` survives, reduced to the
+> ops a VIEWPORT answers — a divider nudge, a directional focus step, a re-tile — because those
+> need solved frames the document does not have and must not grow. So read a `WorkspaceTreeOps`
+> citation below as "the op this intent means", not as "the code that runs it": §5.4's "maps 1:1
+> onto an existing pure static func" was the implementation lever at the time and is now a
+> statement about the SEMANTICS the port had to preserve. The hostile-input rules of §5.4 and
+> §14 are unchanged in force and are enforced in the applier crate.
+
 Floor: macOS 26 / iOS 26. Scope: PATH 1 (terminal, TCP mux) + the workspace shell. PATH 2 (video),
 PATH 3 (inspector) and PATH 4 (file transfer) are untouched — see §11.
 
-All file:line citations below are verified against the working tree at `fc306605`.
+All file:line citations below are verified against the working tree at `fc306605`, which predates
+the Rust port; the note above says how to read the ones that name a Swift type.
 
 ---
 

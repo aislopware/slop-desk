@@ -1560,8 +1560,9 @@ mod tests {
             );
         }
         // A newline is NOT whitespace to Swift's `CharacterSet.whitespaces`, so it is a legal
-        // family byte-for-byte — the two implementations must refuse the same bodies, not merely
-        // similar ones.
+        // family byte-for-byte. The Swift that said so is deleted; a peer still running it is not,
+        // and a decoder that refuses a body its peer accepts is a dropped pane, not a stricter
+        // gate.
         assert!(decode_code_font_spec(&bad("\n", 13.0, 1.2)).is_ok());
         // The inclusive bounds are on the accepted side.
         assert!(decode_code_font_spec(&bad("Mono", 4.0, 0.5)).is_ok());

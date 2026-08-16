@@ -6,10 +6,16 @@ import SlopDeskVideoHost // NetworkEstimate, FPSGovernor (pure controllers)
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace document, docs/45)
 
-// slopdesk-corevectors — emits a deterministic JSON corpus of golden vectors from the
-// REAL Swift `SlopDeskVideoProtocol` codecs, using ONLY the public API. The Rust
-// `slopdesk-core` crate's `golden_parity` integration test replays this corpus and
-// asserts byte-/bit-identical output, proving the two implementations agree on the wire.
+// slopdesk-corevectors — emits a deterministic JSON corpus of golden vectors through the
+// REAL `SlopDeskVideoProtocol` faces, using ONLY the public API.
+//
+// It is no longer a PARITY dumper: there is one implementation, in Rust, and these faces are its
+// marshallers. What the corpus pins now is the pair the one-implementation rule cannot check by
+// itself — the ABI and the marshalling. A field reordered in a `#[repr(C)]` record, a length
+// spelled in the wrong unit, an endianness flipped on the way out: each still produces a Rust
+// suite that passes and bytes on the wire that a peer of an older build cannot read. The frozen
+// corpus catches exactly that class, and `scripts/golden-check.sh` diffs against it rather than
+// regenerating it.
 //
 // Determinism: floats that feed bytes use exactly-representable values; pure-numeric
 // outputs (coordinate math, YCbCr, loss thresholds) are emitted as IEEE bit patterns so

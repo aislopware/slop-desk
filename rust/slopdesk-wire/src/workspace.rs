@@ -595,7 +595,8 @@ pub struct WorkspacePresenceRoster {
 /// and a zero label length). Both numbers reject the same hostile counts in the end, because the
 /// per-record reads catch whatever this admits; the smaller one just catches it one step later. It
 /// is carried across verbatim rather than corrected, because changing it changes nothing a peer can
-/// observe and the two implementations must not drift on a number either could have picked.
+/// observe: the Swift it came from is deleted, but a running peer of an older build is not, and the
+/// golden corpus pins the bytes either number would have produced.
 pub const ROSTER_CLIENT_MIN_BYTES: usize = 42;
 
 /// The bytes a pane record cannot be smaller than: the pane id, the resolved grid, a zero
