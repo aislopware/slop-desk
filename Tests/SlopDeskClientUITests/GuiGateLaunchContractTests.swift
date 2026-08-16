@@ -20,7 +20,7 @@ import XCTest
 ///
 /// A text-level contract over a shell script is unusual, and deliberate: these gates only ever run
 /// on real hardware from an Aqua session, so a silent regression in one costs a whole GUI cycle to
-/// notice. The same discipline as `HostOutputSnifferGoldenGuardTests` reading the committed corpus
+/// notice. The same discipline as the `*GoldenVectorTests` family reading `golden/golden_vectors.json`
 /// out of the working tree.
 final class GuiGateLaunchContractTests: XCTestCase {
     /// The ways a shell script can NAME the macOS app: the bundle, the binary inside it, and the

@@ -4,7 +4,7 @@ import XCTest
 
 /// Pure tests for ``CanvasGeometry`` — the screen transform (a rigid 1:1 translate), the 8-anchor
 /// resize math, and new-pane placement (docs/30 §3, §9.1). The resize table is the canvas analogue of
-/// `SplitContainerTests`' `applyingDelta` coverage.
+/// split tree's divider-drag coverage in `SplitLayoutSolverTests` / `SplitNodeOpsTests`.
 final class CanvasGeometryTests: XCTestCase {
     private let eps: CGFloat = 1e-6
     private let minSize = Canvas.minItemSize // 160 × 120

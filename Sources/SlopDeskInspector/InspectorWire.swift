@@ -52,9 +52,6 @@ public enum InspectorCodec {
 
     static let prefixLength = Int(slopdesk_inspector_constant(1))
 
-    /// The tag of the client's only outbound frame.
-    static let subscribeTag = UInt8(truncatingIfNeeded: slopdesk_inspector_constant(2))
-
     // MARK: Encode (client → host: subscribe only)
 
     /// The `subscribe` / replay-from control (doc 16 §3): the client asks the daemon to (re)send

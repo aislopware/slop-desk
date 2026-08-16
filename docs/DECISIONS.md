@@ -15983,3 +15983,135 @@ vocabulary in Swift and then wrote the Rust twin anyway.** `docs/55` §6 already
 what was missing is that nothing checks the line was respected in the direction of writing too much
 Rust, only in the direction of leaving too much Swift. The module gate catches it only when the
 whole module is stranded, which is why `connection` is caught and `client_input` is not.
+
+## The dead-Swift oracle was in the repo the whole time, and nothing ran it (2026-08-16)
+
+Two hand-rolled dead-code scans were written this session and both were wrong — the first indexed
+only top-level type declarations, so a file whose whole API is a `View` extension method read as
+dead; the second indexed every declared name and returned nothing, because names like `decide` and
+`token` collide. The authoritative answer already existed: `.swiftlint.yml` sets
+`analyzer_rules: all`, and `unused_declaration` resolves through the compiler's index, not a regex.
+It found **154 serious violations in 1423 files** — 91 `unused_declaration`, 45 `unused_import`, 18
+`capture_variable` — the first time it had ever run against a real compiler log.
+
+`make lint-swift-analyze` is reachable from `make lint`, `make check`, the pre-push hook and CI:
+none of them. Deliberately, and the cost argument is right — it needs a clean `swift build
+--build-tests -v` and takes minutes. But "run it when you think of it" is how 154 accumulated, and a
+gate nobody runs is the same shape as a gate that cannot fail, one level up: nothing was silenced,
+nothing was asserted either.
+
+The raw 91 are NOT a delete list, and two systematic false positives have to be named or the list is
+worse than useless:
+
+  * **A reference from inside a `ViewBuilder` or an escaping closure is invisible to the rule.**
+    `selectedPane` is read at `NavigatorColumn.swift:403` inside a `Binding` closure, `pickerRow` is
+    called at `SettingsView.swift:1363`, `activeAgentStatus` three times in a view body,
+    `wireOverlayKeyToggles()` at its own file's line 247, `onToggleFill` at
+    `VideoWindowView.swift:1972`. Five of the six `private` hits — the subset that looks most
+    conclusive, because a `private` declaration unused in its own file cannot be used from anywhere —
+    are live.
+  * **A declaration whose purpose is the side effect of existing has no reference by design.**
+    `@NSApplicationDelegateAdaptor … private var terminationDelegate` installs the app delegate; the
+    property is never read and its own doc-comment says the instance is unreachable. `sigintSource`
+    and `sigtermSource` in `slopdesk-hostd/main.swift` are the retention of two
+    `DispatchSourceSignal`s — dropping either binding cancels the source and the daemon stops
+    shutting down cleanly. `WatchProgress.progressBytes` is a face with no Swift caller ON PURPOSE
+    and says so, and `check-supervisor.sh:2838` pins it.
+
+Comments are not references either: a doc-comment that names a symbol (`windowRadius` is cited by
+the constant below it, `radiusPill` by the one above) reads as a use to a name grep and is prose. It
+took stripping comments and string literals, and reading the two trees the SwiftPM analyzer never
+compiles — `Apps/` and `ThirdParty/ghostty/integration/` — to get from 91 to **34 real ones**.
+
+Six of the 34 were the stranded-mirror class this audit has now found in both directions, and are
+deleted here: a constant that crosses the FFI once and a Swift `static let` restating it with no
+reader. `ClaudeStatusMachine.hookBlockScreenOverrideGrace` (the grace is applied at
+`rust/slopdesk-agent/src/machine.rs:857`), `InspectorWire.subscribeTag` (the subscribe frame is
+encoded whole by `slopdesk_inspector_encode_subscribe`), `MuxEnvelopeCodec.minMuxFrameLength` and
+its `sessionIDByteCount` — the THIRD Swift declaration of that one wire fact, beside
+`WireMessage.sessionIDByteCount` and `ChannelAssociation.sessionIDByteCount`, and the only one
+nothing reads — and `TrendlineEstimator.maxScaledDeltas`.
+
+`FrameReassembler.maxFragmentsPerFrame` is the sharpest of the six: not a door read but a literal
+`8192`, hand-copied from `rust/slopdesk-video`'s `MAX_FRAGMENTS_PER_FRAME`, under a doc-comment
+saying it is "restated here because `FrameReassemblerFragCountPinTests` pins the wire's shape
+against it". That test exists and never names it — it spells `fragCount: 3` and `4` as literals. So
+the comment described a pin that was not there, guarding a cross-language mirror of exactly the kind
+`CLAUDE.md` forbids. The cap is enforced at `reassembler.rs:503` and tested at `reassembler.rs:1003`,
+which is the one implementation.
+
+## Two of the three analyzer rules were the finding; the third was the bug (2026-08-16)
+
+Running the analyzer's 154 to ground turned each of its three rules into a different verdict.
+
+**`capture_variable` (18): all noise, and now off.** The rule warns that `[x]` in a capture list
+snapshots a mutable `x` at closure-creation time. It reads the declaration kind and not the
+lifetime, so it fires on `private let shimLaunchGrace` (`WorkspaceControlBackend.swift:239`), which
+cannot change at all, and on the App struct's `@State private var overlayCoordinator` /
+`keyDispatcher` / `chrome` / `windowBox`, which are reference types assigned once in `init` — where
+the capture list is there precisely to avoid capturing `self`. The one capture of a genuinely
+reassigned `var`, `[state]` at `HostWorkspaceDocument.swift:201`, is a value snapshot taken and
+consumed inside a single actor-isolated call, which is the reason it is written that way.
+
+**`unused_import` (45): the rule is wrong here, and its autocorrect proved it.** SwiftLint asks
+which MODULE each used symbol resolves to; Swift answers with the module that DECLARES it, not the
+one the file imported to reach it. So `@Observable` resolves to `Observation` and not to the
+`Foundation` that re-exports it, `Logger` to `os` and not `OSLog`, `CGFloat` to `CoreFoundation` and
+not `CoreGraphics`. `swiftlint analyze --fix` removed all 45 and the very next build died on
+`unknown attribute 'Observable'` in `InspectorViewModel.swift`. Every import is restored and the
+rule is disabled with that reason: a rule whose `--fix` does not compile cannot be a gate, and its
+warnings cannot be hand-triaged either — the failing case is indistinguishable from the passing one
+without building.
+
+It also took an edit with it. `--fix` reads every file at the start of the run and writes its
+corrections at the end, so a doc-comment fix made to `SlopDeskVideoClientSession.swift` while it ran
+was silently overwritten by swiftlint's stale copy. Nothing warned; the file simply had the old text
+back. Do not edit under a running autocorrect.
+
+**`unused_declaration` (91): 34 real, and they are gone.** Beyond the six stranded FFI mirrors above:
+`Slate`'s chrome ladder lost two of its three rungs — `chromeLine` and `chromeLift` were `Color`
+accessors nothing read, over two stored hexes that existed only to feed them, over two initialiser
+arguments, over two `ChromeLadder` fields the one profile filled in. Four levels of a dead chain
+whose only live rung is `ground`, so the struct itself is gone and the ground crosses as a `UInt32`.
+Ten more `Metric`/`Colors` tokens went the same way (`windowRadius`, `radiusPill`, `railWidth`,
+`railChip`, `edgeHandleLength`, `edgeHandleThickness`, `gaugeDiameter`, `gaugeStroke`, `cardMargin`,
+`Accent.deep` + the private hex behind it) — each carrying real design rationale, so the two
+measurements another token is derived FROM were folded into that token's doc rather than deleted
+with the constant.
+
+Three of them were claims rather than tokens. `AndroidScreenLayout.touchSlop` said "the panel uses
+it to decide when an accumulated wheel delta is worth a move message at all" and no line of the
+panel reads it, so no delta is measured against anything. `NavigatorColumn.detailLine` and
+`PaneConnectionStatus`'s `showsDot` / `pulses` / `detailedLabel` are view-facing derivations no view
+calls. `Tests/SlopDeskProtocolTests`' `BigEndianReader` was a 71-line second copy of
+`VideoWireFixtureBytes`' reader that this target never built one of.
+
+And four are declarations the rule is RIGHT about and that must stay, each now silenced at the site
+with its reason: `progressBytes` (uncalled on purpose, pinned by `check-supervisor.sh:2838`),
+`terminationDelegate` (the property wrapper installs the delegate; the instance is unreachable), and
+`sigintSource` / `sigtermSource` (the bindings ARE the retention — a `DispatchSourceSignal` nobody
+holds is cancelled, and hostd stops draining its children on ⌃C).
+
+## A comment that names a test is a claim, and 12 of them named nothing (2026-08-16)
+
+`maxFragmentsPerFrame`'s doc-comment naming a pin that did not exist turned out not to be a one-off.
+185 comments in `Sources/` and `Tests/` cite a `*Tests` class by name; 17 cite a name no class
+declares. Five of those are test TARGET names (`SlopDeskHostTests`, `SlopDeskScreenTests`, …), which
+is a legitimate citation, and two are correct prose ABOUT a deletion — `OpenTerminalRootedStoreTests`
+says "the since-deleted `WebPaneStoreTests`" and `WireCodecBenchTests` says "it was called
+`RustWireBenchTests` until 2026-08-12". The other ten were stale, and were fixed by finding what the
+test was renamed to (`AgentSettingsCardTests` → `AgentSettingsCardWiringTests`,
+`GeneralSectionLayoutTests` → `SettingsSectionTaxonomyTests`, `RelayBackpressureTests` →
+`MuxChannelSessionBackpressureTests`, `WorkspaceStoreTreeTests` → `TabCloseSuccessorTests`,
+`SplitContainerTests`' resize coverage → `SplitLayoutSolverTests` / `SplitNodeOpsTests`) — except
+one, which named a test that had never been written.
+
+`DropActionResolver` claims no `(zone × content)` cell can spawn a video pane, "pinned by
+`RemoteGUIFirstClassPeerTests`". That pin is real now, and it is a compile-time one rather than an
+assertion: the new sweep walks all 20 cells and switches EXHAUSTIVELY over `DropAction`, so a fifth
+case stops the test file compiling. An `XCTAssertNotEqual` against a video case would have passed
+forever by being written before the case it was supposed to catch.
+
+This was NOT made a gate, and the two correct-prose citations are why: a rule that fails on any
+`*Tests` name without a class would fail on both of them, and the allowance it would need is the
+hand-kept list this audit has already caught drifting six times.

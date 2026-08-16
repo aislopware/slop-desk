@@ -67,10 +67,6 @@ public final class ClaudeStatusMachine: @unchecked Sendable {
     /// Seconds a `.done` status lingers before decaying to `.idle`.
     public let doneToIdleTimeout: TimeInterval
 
-    /// How long a hook-sourced block is protected from a screen verdict that would clear it — long
-    /// enough for the dialog it announced to have painted.
-    static let hookBlockScreenOverrideGrace: TimeInterval = slopdesk_agent_machine_constant(1)
-
     /// After a `sessionEnd`, no weak signal may lift `.none` for this long. Only a hook clears it.
     public static let postExitFloorLockout: TimeInterval = slopdesk_agent_machine_constant(2)
 

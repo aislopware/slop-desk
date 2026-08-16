@@ -48,7 +48,8 @@ public enum DropAction: Equatable, Sendable {
 /// window streamed over the PATH-2 UDP video path; it is minted ONLY by the picker / connect overlay
 /// (`WorkspaceStore.newRemoteWindowTab(windowID:title:appName:)`), NEVER by a file / URL / text drop. There is
 /// deliberately no remote-window arm in this table — ``DropAction`` carries terminal cases only — so no
-/// `(zone × content)` cell can spawn a video pane (pinned by `RemoteGUIFirstClassPeerTests`). Conversely a
+/// `(zone × content)` cell can spawn a video pane (pinned by `DropActionResolverTests`, whose sweep over
+/// every cell switches EXHAUSTIVELY over ``DropAction`` — a fifth case stops that file compiling). Conversely a
 /// foreign drop ONTO an already-mounted video target self-guards: the actuator (`PaneDropReceiver`)
 /// holds a `nil` `terminalModel` for a video pane and every terminal actuator is `terminalModel?.…`
 /// (optional-chained), so the terminal-targeting actions (`injectText` / `hostOpen`) no-op without a crash,

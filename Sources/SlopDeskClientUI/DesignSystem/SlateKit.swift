@@ -2,7 +2,6 @@
 //   • `PlateIconButton` — the hover-plate icon button: a borderless SF-Symbol button that grows a faint
 //     rounded hover plate, 0.12s small-fade. Used by the titlebar + sidebar chrome.
 //   • `slateGlyphAck(_:)` — THE acknowledgement every chrome button gives a click. One definition.
-//   • `HoverSensor` — a hit-test-TRANSPARENT hover tracker for the top-strip reveal choreography.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -314,47 +313,7 @@ struct PanelTabPlate: View {
     }
 }
 
-#if os(macOS)
-import AppKit
-
-/// An invisible, hit-test-TRANSPARENT hover sensor: `hitTest` returns nil so clicks, drags and the
-/// window-move gesture pass through untouched — the tracking area still reports enter/exit. This is
-/// what the top-strip reveal rides: chrome toggles hide at rest and appear only while the pointer is
-/// in the top zone (the otty behavior). SwiftUI `.onHover` needs `.contentShape` over the transparent
-/// strip, which would ALSO swallow those clicks; an NSView tracking area decouples "where hover is
-/// sensed" from "what is clickable".
-struct HoverSensor: NSViewRepresentable {
-    let onChange: (Bool) -> Void
-
-    func makeNSView(context _: Context) -> SensorView {
-        let view = SensorView()
-        view.onChange = onChange
-        return view
-    }
-
-    func updateNSView(_ view: SensorView, context _: Context) {
-        view.onChange = onChange
-    }
-
-    final class SensorView: NSView {
-        var onChange: ((Bool) -> Void)?
-
-        override func hitTest(_: NSPoint) -> NSView? { nil }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-                owner: self,
-                userInfo: nil,
-            ))
-        }
-
-        override func mouseEntered(with _: NSEvent) { onChange?(true) }
-        override func mouseExited(with _: NSEvent) { onChange?(false) }
-    }
-}
-#endif
+// The `HoverSensor` tracking-area view lived here for the top-strip reveal choreography, which the
+// chrome no longer has: the toggles stand where they stand (`WindowSidebarToggle`, `PanelRail`), so
+// nothing mounted it and no strip appears on hover.
 #endif

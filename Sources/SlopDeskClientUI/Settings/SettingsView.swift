@@ -294,7 +294,7 @@ struct SettingsSectionContent: View {
 // MARK: - General section
 
 /// The General-page SECTION group headers, in render order, as a PURE source list so the body can't drift
-/// from a headless taxonomy pin (`GeneralSectionLayoutTests`). macOS appends **OS Integration** — the
+/// from a headless taxonomy pin (`SettingsSectionTaxonomyTests`). macOS appends **OS Integration** — the
 /// home for Default Terminal / Finder Integration / Full Disk Access (`first-launch-default-terminal.png`,
 /// `spec/getting-started__first-launch.md §2`). iOS OMITS it: the LaunchServices registration +
 /// System-Settings deep-links are `#if os(macOS)` (`DefaultTerminalIntegration`), no iOS handler.
@@ -1790,7 +1790,7 @@ private struct AgentsSettingsTab: View {
 /// nil-controller fallbacks live, so the macOS scene and iOS ``SettingsSheet`` derive the card identically. A
 /// `nil` controller (no injection — e.g. the iOS-sheet wiring this regression fixes) MUST fall back to
 /// ``AgentHooksController/InstallState/disconnected`` + behaviour-disabled, NEVER a false live card. Pure +
-/// cross-platform, unit-pinned headlessly (`AgentSettingsCardTests`).
+/// cross-platform, unit-pinned headlessly (`AgentSettingsCardWiringTests`).
 @MainActor
 enum AgentSettingsCard {
     /// The install-card state to show: the controller's state, or `.disconnected` when no controller backs it.

@@ -144,4 +144,34 @@ final class DropActionResolverTests: XCTestCase {
             [.newTab, .insertPath, .openInPlace, .splitLeft, .splitRight],
         )
     }
+
+    // MARK: - No drop mints a video pane
+
+    /// `DropActionResolver`'s own doc claims no `(zone × content)` cell can spawn a streamed host
+    /// window — a video pane is minted ONLY by the picker / connect overlay. The claim named a test
+    /// that did not exist; this is it.
+    ///
+    /// The assert that matters is the `switch`, not the count: it is EXHAUSTIVE over ``DropAction``,
+    /// so adding a fifth case stops this file compiling. A `XCTAssertNotEqual` against a video case
+    /// would pass forever by being written before the case it is supposed to catch.
+    func testEveryLiveCellResolvesToATerminalAction() {
+        var live = 0
+        for zone in DropZone.allCases {
+            for content in [folder, file, url, text] {
+                guard let action = resolve(zone, content) else { continue }
+                live += 1
+                switch action {
+                case .injectText,
+                     .newTabCd,
+                     .hostOpen,
+                     .splitInjectPath:
+                    break // every arm targets a TERMINAL pane; there is no video-pane creator
+                }
+            }
+        }
+        // 5 zones × 4 contents = 20 cells; the spec disables 5 of them (file and URL on New Tab, URL
+        // on Open-In-Place, URL on each split half). Asserted so a table that lost a live cell to a
+        // typo cannot pass this test by resolving nothing at all.
+        XCTAssertEqual(live, 15, "the spec's table has 15 live cells out of 20")
+    }
 }

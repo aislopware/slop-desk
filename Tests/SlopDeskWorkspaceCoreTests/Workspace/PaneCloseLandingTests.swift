@@ -9,7 +9,7 @@ import XCTest
 /// INTENT so every client agrees on it.
 ///
 /// Pins the pure pick (``WorkspaceStore/mostRecentSurvivor(mru:survivors:)``); the store wiring that
-/// feeds it is exercised by the close paths in `WorkspaceStoreTreeTests`.
+/// feeds it is exercised by the close paths in `TabCloseSuccessorTests`.
 @MainActor
 final class PaneCloseLandingTests: XCTestCase {
     func testTheMostRecentSURVIVORWins() {

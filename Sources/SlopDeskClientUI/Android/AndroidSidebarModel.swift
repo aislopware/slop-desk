@@ -470,15 +470,6 @@ final class AndroidSidebarModel {
         openStream(key, serial: serial, host: host, port: port)
     }
 
-    /// Ask the device for a fresh keyframe. Cheaper than ``retry()`` by a whole session setup — no
-    /// jar push, no `app_process`, no new socket — and it is the right verb for the one failure a
-    /// reconnect would be overkill for: a decoder that dropped frames and is showing a smeared
-    /// picture. `scrcpy` exposes this as `RESET_VIDEO`.
-    func refreshPicture() {
-        guard stream != nil else { return }
-        send(AndroidControlMessage.simple(AndroidControlMessage.resetVideo))
-    }
-
     /// A frame arrived. Called on EVERY one, so it must be free once the first has landed — see the
     /// warning on ``hasVideo``.
     private func noteVideoArrived() {

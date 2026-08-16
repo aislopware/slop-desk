@@ -117,12 +117,6 @@ public enum MuxFrame: Equatable, Sendable {
 public enum MuxEnvelopeCodec {
     /// Length of the big-endian `UInt32` mux-frame-length prefix.
     static let prefixLength = slopdesk_mux_envelope_constant(1)
-    /// Number of bytes occupied by a session UUID on the wire (its 16 raw bytes),
-    /// matching ``WireMessage/sessionIDByteCount``.
-    static let sessionIDByteCount = slopdesk_mux_envelope_constant(2)
-    /// Smallest legal `muxFrameLength`: channelID + muxType. The shortest frames (`channelClose`)
-    /// have an empty body.
-    static let minMuxFrameLength = slopdesk_mux_envelope_constant(0)
 
     /// Encodes a frame into the complete mux envelope, ready to write to a socket:
     /// `[UInt32 BE muxFrameLength][UInt32 BE channelID][UInt8 muxType][body...]`.

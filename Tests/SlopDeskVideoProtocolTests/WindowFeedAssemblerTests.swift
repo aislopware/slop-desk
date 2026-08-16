@@ -2,7 +2,8 @@ import XCTest
 @testable import SlopDeskVideoProtocol
 
 /// PURE chunk-assembly rules (docs/45): agree-on-chunkCount, idempotent duplicates, bounded partial
-/// state, completion exactly once. The loss-model counterpart of `FrameReassemblerTests`.
+/// state, completion exactly once. The loss-model counterpart of the `FrameReassembler*Tests` family
+/// (`…ValidationTests`, `…FragCountPinTests`, `…CompletenessPinTests`, `…FrontierJumpTests`).
 final class WindowFeedAssemblerTests: XCTestCase {
     private func record(_ id: UInt32) -> HostWindowRecord {
         HostWindowRecord(

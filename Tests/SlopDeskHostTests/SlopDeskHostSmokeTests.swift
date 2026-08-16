@@ -2,7 +2,7 @@ import XCTest
 @testable import SlopDeskHost
 
 /// Smoke tests so the target compiles and basic wiring holds. Real PTY spawn + relay
-/// + backpressure live in `PTYProcessTests` / `RelayBackpressureTests`.
+/// + backpressure live in `PTYProcessTests` / `MuxChannelSessionBackpressureTests`.
 final class SlopDeskHostSmokeTests: XCTestCase {
     func testPTYProcessInstantiatesWithUnsetFDAndPID() {
         let pty = unattachedPTY()

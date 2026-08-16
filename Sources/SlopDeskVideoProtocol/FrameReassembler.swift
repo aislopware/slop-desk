@@ -73,10 +73,6 @@ public enum ReassemblyResult: Equatable, Sendable {
 /// loop (one per video stream). Not `Sendable` by design: it owns the handle, and the receive loop
 /// is what serialises it.
 public final class FrameReassembler {
-    /// Hostile-input cap on a frame's fragment count — the value the Rust side enforces, restated
-    /// here because `FrameReassemblerFragCountPinTests` pins the wire's shape against it.
-    static let maxFragmentsPerFrame = 8192
-
     /// The Rust reassembler: the buffers, the frontier, the queues and the FEC.
     private let handle: OpaquePointer
 

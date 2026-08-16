@@ -246,8 +246,12 @@ func makeShutdownSignalSource(_ sig: Int32, name: String) -> DispatchSourceSigna
     return source
 }
 
+// The bindings ARE the retention: a `DispatchSourceSignal` nobody holds is cancelled, and the
+// daemon stops draining its children on ⌃C. Never "unused".
+// swiftlint:disable unused_declaration
 let sigintSource = makeShutdownSignalSource(SIGINT, name: "SIGINT")
 let sigtermSource = makeShutdownSignalSource(SIGTERM, name: "SIGTERM")
+// swiftlint:enable unused_declaration
 
 Task {
     let bound: UInt16

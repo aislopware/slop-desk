@@ -131,11 +131,6 @@ enum AndroidScreenLayout {
         return CGSize(width: delta.width * scale, height: delta.height * scale)
     }
 
-    /// How far a finger has to travel before Android calls it a scroll rather than a tap.
-    /// `ViewConfiguration.getScaledTouchSlop()` is 8dp on every current device; the panel uses it to
-    /// decide when an accumulated wheel delta is worth a move message at all.
-    static let touchSlop: CGFloat = 8
-
     /// A pinch's two contacts — shared, see ``DevicePanelGeometry/pinchFingers(centre:spread:fitted:)``.
     static func pinchFingers(
         centre: CGPoint, spread: CGFloat, fitted: CGRect,

@@ -55,18 +55,6 @@ struct PaneConnectionStatus: Equatable {
         }
     }
 
-    /// Whether a dot should be drawn at all (a video / faked handle has no connection ⇒ none).
-    var showsDot: Bool { phase != .none }
-
-    /// Whether the dot pulses (the "something is in flight" cue): connecting + reconnecting only.
-    var pulses: Bool {
-        switch phase {
-        case .connecting,
-             .reconnecting: true
-        default: false
-        }
-    }
-
     /// The static label (no countdown — the live "retrying in Ns" is composed by the view from
     /// `nextRetry`, so this stays pure/clock-free and testable).
     var label: String {
@@ -79,14 +67,6 @@ struct PaneConnectionStatus: Equatable {
         case .failed: "Failed"
         case .none: ""
         }
-    }
-
-    /// The tooltip / accessibility detail: the label plus the `.failed` message when present.
-    var detailedLabel: String {
-        if phase == .failed, let failureDetail, !failureDetail.isEmpty {
-            return "Failed: \(failureDetail)"
-        }
-        return label
     }
 
     // MARK: - Tab-level salience fold

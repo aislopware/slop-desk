@@ -63,8 +63,8 @@ enum AndroidControlMessage {
     static let injectTouchEvent: UInt8 = 2
     static let injectScrollEvent: UInt8 = 3
     static let backOrScreenOn: UInt8 = 4
-    static let expandNotificationPanel: UInt8 = 5
-    static let expandSettingsPanel: UInt8 = 6
+    // 5 = EXPAND_NOTIFICATION_PANEL, 6 = EXPAND_SETTINGS_PANEL — never sent; the panel reaches the
+    // shade through the notification KEYCODE instead, which needs no control channel round trip.
     static let collapsePanels: UInt8 = 7
     // 8 = GET_CLIPBOARD — never sent; see the file comment.
     static let setClipboard: UInt8 = 9

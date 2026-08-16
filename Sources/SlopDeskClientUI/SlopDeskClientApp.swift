@@ -29,6 +29,8 @@ public struct SlopDeskClientApp: App {
     /// Retains the notification click-router (the `UNUserNotificationCenter` delegate is held weakly).
     @MainActor static var notificationRouter: PaneNotificationRouter?
 
+    // swiftlint:disable:next unused_declaration - the property wrapper INSTALLS the delegate; the
+    // instance is unreachable by design (SwiftUI builds it), so there is nothing here to reference.
     /// QUIT-DRAIN (orphaned-session leak): the app delegate that parks ⌘Q behind a BOUNDED
     /// ``WorkspaceStore/quiesce()`` so in-flight pane teardowns (the bye/channelClose of a just-closed
     /// busy pane) reach the wire before the process dies — see ``SlopDeskAppTerminationDelegate``.

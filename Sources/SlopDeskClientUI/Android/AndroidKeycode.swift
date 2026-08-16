@@ -38,8 +38,6 @@ struct AndroidKeycode: RawRepresentable, Equatable, Hashable {
 
     // Hardware.
     static let power = Self(26)
-    static let volumeUp = Self(24)
-    static let volumeDown = Self(25)
     static let camera = Self(27)
     static let notification = Self(83)
 

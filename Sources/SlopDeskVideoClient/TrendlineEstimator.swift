@@ -113,8 +113,6 @@ public struct TrendlineEstimator: Sendable, Equatable {
     /// OURS: an arrival gap larger than this resets the window (≥15 missed frame slots at 60fps —
     /// stale queue context + the two-cluster regression artifact; FPS-governor-proof).
     public static var resetGapMs: Double { constants.reset_gap_ms }
-    /// `numDeltas` saturation in the modified-trend scale factor (libwebrtc caps at 60).
-    static var maxScaledDeltas: Int { constants.max_scaled_deltas }
 
     private var record: SlopDeskTrendline
 

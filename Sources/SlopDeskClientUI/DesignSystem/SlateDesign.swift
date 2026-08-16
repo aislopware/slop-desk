@@ -89,19 +89,10 @@ struct SlateTheme: Equatable, Sendable {
     /// construction, so a profile cannot ship an island in a tone its terminal does not wear. Raw
     /// hex for the AppKit side.
     let chromeHexValue: UInt32
-    /// A hairline rule — the pane seam inside the island, a section rule on the ground.
-    let chromeLineHexValue: UInt32
-    /// The LIFTED rung standing on the ground (hover plates, inset fills) — the activity-bar rung of
-    /// the published Dracula ladder (#343746), transposed.
-    let chromeLiftHexValue: UInt32
     /// ``groundHexValue`` as the SwiftUI colour the band, the side panels and the moat read.
     var ground: Color { Color(slateHex: groundHexValue) }
     /// ``chromeHexValue`` as the SwiftUI colour the island reads.
     var chrome: Color { Color(slateHex: chromeHexValue) }
-    /// ``chromeLineHexValue`` as the SwiftUI colour rules read.
-    var chromeLine: Color { Color(slateHex: chromeLineHexValue) }
-    /// ``chromeLiftHexValue`` as the SwiftUI colour lifted plates read.
-    var chromeLift: Color { Color(slateHex: chromeLiftHexValue) }
 
     // The on-glass ink
     /// Primary on-glass ink — the profile foreground.
@@ -133,15 +124,6 @@ struct SlateTheme: Equatable, Sendable {
     /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    /// The AUTHORED chrome ladder (ONE ISLAND, user-directed 2026-08-08): `ground` (everything that
-    /// is not the island), `line` (rules), `lift` (plates). The island itself is not a rung: it IS
-    /// the glass face.
-    struct ChromeLadder {
-        let ground: UInt32
-        let line: UInt32
-        let lift: UInt32
-    }
-
     /// The published GLASS palette a profile ships — the terminal's own five (face/ink/comment/
     /// selection-edge/accent), verbatim from the theme's spec.
     struct GlassSet {
@@ -158,7 +140,7 @@ struct SlateTheme: Equatable, Sendable {
     private static func profile(
         glass: GlassSet,
         ansi: [UInt32],
-        chrome: ChromeLadder,
+        ground: UInt32,
     ) -> Self {
         Self(
             terminal: Color(slateHex: glass.face),
@@ -169,10 +151,8 @@ struct SlateTheme: Equatable, Sendable {
             // clear step off the plate it bounds: on the shipped profile #454158 → #5F5880 against
             // the ink's #7970A9, which reads as an edge without reaching the label's own weight.
             terminalRim: Color(slateHex: mix(glass.edge, glass.ink2)),
-            groundHexValue: chrome.ground,
+            groundHexValue: ground,
             chromeHexValue: glass.face,
-            chromeLineHexValue: chrome.line,
-            chromeLiftHexValue: chrome.lift,
             terminalInk: Color(slateHex: glass.ink),
             terminalInk2: Color(slateHex: glass.ink2),
             terminalAccent: Color(slateHex: glass.accent),
@@ -241,10 +221,9 @@ struct SlateTheme: Equatable, Sendable {
         ],
         // The GROUND is Alucard's cream #FFFBEB — a LIGHT frame carrying the dark island, the
         // Canario read (~13:1 apart). Any darker frame is arithmetically stuck: #22212C against
-        // pure black is 1.32:1, so the whole dark half of the axis cannot separate at all. Lift is
-        // the published rail rung (+0C/+0D/+10 on the face → #2E2E3C); the LINE stays the 10%-ink
-        // tint, the pane seam inside the island.
-        chrome: ChromeLadder(ground: 0xFFFBEB, line: 0x312F37, lift: 0x2E2E3C),
+        // pure black is 1.32:1, so the whole dark half of the axis cannot separate at all. It is the
+        // ONE authored chrome tone: the island is not a second one, it IS the glass face (law 1).
+        ground: 0xFFFBEB,
     )
 }
 
@@ -287,7 +266,6 @@ enum Slate {
     /// accent; purple replaced the Ember teal in the round-8 Dracula verdict).
     private static let accentPurple = Color(slateDynamicLight: 0x644AC9, dark: 0x9580FF)
     /// The accent's fill/badge band (filled pills, progress fills — white text sits on it).
-    private static let accentPurpleDeep = Color(slateDynamicLight: 0x4B29A7, dark: 0x6B4BD6)
 
     /// The chrome surface ladder — SEMANTIC system surfaces plus the one glass exception:
     /// `void` (aux-window backdrops) → `ground` (sidebar housing; on macOS the real sidebar material
@@ -748,15 +726,8 @@ enum Slate {
         static let syncInput = Color(slateHex: 0xD97A1F)
     }
 
-    /// The accent's deep band — the fill/badge variant for surfaces where the text-sized accent would
-    /// be a pastel wash (filled pills, progress fills).
-    @MainActor
-    enum Accent {
-        static let deep = Slate.accentPurpleDeep
-    }
-
-    /// The status vocabulary as INK — the mirror of ``Accent/deep``, which exists because a colour
-    /// tuned for a FILL is the wrong colour for a mark or a word.
+    /// The status vocabulary as INK, because a colour tuned for a FILL is the wrong colour for a
+    /// mark or a word.
     ///
     /// ## Why ``Status`` could not keep doing this job
     ///
@@ -790,8 +761,8 @@ enum Slate {
     /// Closest pair 32 ΔE76 on the light side, 41 on the dark — no two runs can be confused.
     ///
     /// ⚠️ This tier is for TEXT AND MARKS. Fills keep ``Status``: a filled amber plate wants the
-    /// vivid system orange behind black ink, and darkening it would only muddy the plate. The split
-    /// is the same one ``Accent/deep`` already makes, pointing the other way.
+    /// vivid system orange behind black ink, and darkening it would only muddy the plate — a colour
+    /// tuned for a fill is the wrong colour for a mark, and the reverse.
     ///
     /// ⚠️ NOT for anything inside the terminal island — `ok`/`err` there are the profile's own ANSI
     /// pair (``Terminal/ok``, ``Terminal/err``), because a surface that ships its own palette must
@@ -822,13 +793,6 @@ enum Slate {
     enum Metric {
         // MARK: The ONE-ISLAND geometry (law 3)
 
-        /// The WINDOW's own corner radius — macOS 26 Tahoe gives a window the corner its titlebar
-        /// asks for, and this app runs `.hiddenTitleBar`. MEASURED on Tahoe 26.5 by rendering one
-        /// `NSWindow` per configuration and reading the alpha profile of its corner: no toolbar 16,
-        /// `.unifiedCompact` toolbar 21, `.unified` toolbar 26 (Finder and System Settings both
-        /// measure 26). Kept because it is a real dimension of the frame — NOT because the island is
-        /// derived from it; see ``islandRadius``.
-        static let windowRadius: CGFloat = 16
         /// The MOAT — the uniform strip of ground between the island and everything around it. The
         /// island's only margin, equal on all four sides so the lift reads as a lift and not as a
         /// misaligned panel.
@@ -845,8 +809,11 @@ enum Slate {
         /// spacing.
         static let islandInset: CGFloat = 8
         /// The island's corner — THE FRAME'S OWN, so the glass and the window that holds it speak one
-        /// corner. Equal to ``windowRadius`` by intent, not by coincidence: this app runs
-        /// `.hiddenTitleBar`, and 16 is what macOS 26 Tahoe measures on a titlebar-only window.
+        /// corner. Equal to the WINDOW's own by intent, not by coincidence: this app runs
+        /// `.hiddenTitleBar`, and 16 is what macOS 26 Tahoe measures on a titlebar-only window —
+        /// MEASURED on 26.5 by rendering one `NSWindow` per configuration and reading the alpha
+        /// profile of its corner (no toolbar 16, `.unifiedCompact` 21, `.unified` 26, which is what
+        /// Finder and System Settings both measure).
         ///
         /// DOWN FROM 26 (user-directed 2026-08-10), settled on a true-size board rather than on the
         /// argument: 26 / 21 / 16 rendered at the reference 1280 × 800 from this token layer, with the
@@ -903,14 +870,13 @@ enum Slate {
         static let radiusCard: CGFloat = 8
         /// A FLOATING panel's corner — the notification card, and any future free-standing panel. One rung
         /// softer than ``radiusCard``, which is tuned for content INSET into a surface: at the notification's
-        /// 320pt × ~46pt an 8pt corner reads boxy, and 16 starts sliding toward ``radiusPill``. 12 was picked
+        /// 320pt × ~46pt an 8pt corner reads boxy, and 16 starts sliding toward a pill. 12 was picked
         /// by rendering 8 / 10 / 12 / 16 at true size side by side.
         static let radiusPanel: CGFloat = 12
         static let radiusTab: CGFloat = 6 // tab / sidebar-row card — rides the control-radius family
         static let radiusControl: CGFloat = 6
         static let radiusItem: CGFloat = 6
         static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
-        static let radiusPill: CGFloat = 20
 
         // 8pt spacing grid
         static let space1: CGFloat = 4
@@ -930,12 +896,6 @@ enum Slate {
         /// (user-reported 2026-08-09). At 24 there is a clear channel of glass under it, so the
         /// prompt stays readable while the chip is up.
         static let islandChipInset: CGFloat = space4 + space2
-
-        /// The footer ARC GAUGE (`PulseGauge`): a ring the size of a footnote glyph box, so it
-        /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.
-        static let gaugeDiameter: CGFloat = 11
-        /// The gauge's ring weight — two hairlines: one reads as a slot, two read as a filling band.
-        static let gaugeStroke: CGFloat = 2
 
         // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
         // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
@@ -990,11 +950,6 @@ enum Slate {
         /// four lines on a laptop and twenty on a display. Six rows plus the drawer's own strip.
         static let heightDrawer: CGFloat = 180
 
-        // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
-        static let cardMargin = EdgeInsets(
-            top: space1, leading: space4, bottom: space4, trailing: space4,
-        )
-
         /// A FORM card's fixed width (connect, peek-reply) — one width for every dialog-shaped overlay,
         /// so two cards summoned in a row read as the same object at the same distance. List overlays
         /// (palette / open-quickly / global search) size to their own content instead.
@@ -1018,13 +973,6 @@ enum Slate {
         /// positioning the buttons by frame is what made them flicker on every window re-title.
         static let windowControlsLead: CGFloat = 80
         static let sidebarWidth: CGFloat = 220
-        /// The MINIMIZED sidebar — the rail (user-directed 2026-08-07, rail round): collapsing the
-        /// tabs panel narrows it to this instead of removing it, so the window controls keep a
-        /// column under them and the projects stay one glance away. Wide enough that the system
-        /// traffic lights (which end ~74pt in) sit inside it with air to spare.
-        static let railWidth: CGFloat = 80
-        /// One rail project chip — the roomy-row rung, a square the folder mark centres in.
-        static let railChip: CGFloat = heightRowTall
         /// The RIGHT PANEL'S RAIL — what the panel leaves behind instead of vanishing (user-directed
         /// 2026-08-09). One control plate with the grid's inset either side, which puts the rail's
         /// toggle at exactly the x the panel's own hide toggle stands at, so the one control the
@@ -1035,11 +983,6 @@ enum Slate {
         /// (the widest name plus its mark and the plate's own padding), because a rail of tabs each
         /// as long as its own word reads as a ragged list rather than as a strip of tabs.
         static let panelRailTabLength: CGFloat = 104
-        /// The collapsed right panel's EDGE HANDLE (the drawer pull on the window's trailing edge):
-        /// its long side. Two control rungs, so the pull reads as a handle, not a button.
-        static let edgeHandleLength: CGFloat = heightControl * 2
-        /// The edge handle's short side — slim enough to hug the edge, wide enough to hit.
-        static let edgeHandleThickness: CGFloat = 20
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
         static let settingsSidebarWidth: CGFloat = 260

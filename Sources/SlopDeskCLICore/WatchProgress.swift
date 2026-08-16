@@ -41,6 +41,8 @@ public enum WatchProgress {
         bytes { out, cap in slopdesk_watch_finish_bytes(exitCode, out, cap) }
     }
 
+    // swiftlint:disable:next unused_declaration - no Swift caller ON PURPOSE (see below); the face
+    // exists so the next arbitrary progress state is framed by the wire crate, not in Swift.
     /// `ESC ] 9 ; 4 ; <state> BEL` for one canonical progress state (`watch` only ever uses
     /// indeterminate / clear / error). The state digit is the validated ``ProgressState`` raw value, so
     /// this can never emit a discriminant the host would drop.

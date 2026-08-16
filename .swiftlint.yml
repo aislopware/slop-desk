@@ -103,6 +103,27 @@ disabled_rules:
   # non-compiling `isEmpty`. The rule can't tell the two apart; net-negative here.
   - empty_count
 
+  # ---- ANALYZER false-positive: a capture list over a STORED property ----
+  # capture_variable warns that `[x]` snapshots a mutable `x` at closure-creation time. It reads
+  # only the declaration kind, not the lifetime, and every one of the 18 hits on this tree is a
+  # stored property that either cannot change (`private let shimLaunchGrace`,
+  # WorkspaceControlBackend.swift:239) or is a reference type the App struct assigns once in
+  # `init` (`@State private var overlayCoordinator` / `keyDispatcher` / `chrome` / `windowBox`).
+  # The one capture of a genuinely reassigned `var` — `[state]` at HostWorkspaceDocument.swift:201 —
+  # is a value snapshot taken and consumed inside one actor-isolated call, which is the point of
+  # writing it. 18 of 18 noise buries the two rules on this pass that DO find things.
+  - capture_variable
+
+  # ---- ANALYZER false-positive: Swift's re-export graph is not the import graph ----
+  # unused_import asks which MODULE each used symbol resolves to, and Swift answers with the module
+  # that DECLARES it, not the one the file imported to reach it. `@Observable` resolves to
+  # `Observation` (re-exported by Foundation), `Logger` to `os` (re-exported by OSLog), `CGFloat` to
+  # CoreFoundation (re-exported by CoreGraphics) — so all three imports read as unused and all three
+  # are load-bearing. Its autocorrect was run once on this tree, removed 45 imports, and the very
+  # first build failed on `unknown attribute 'Observable'` in InspectorViewModel.swift. A rule whose
+  # --fix does not compile cannot be a gate, and its warnings cannot be triaged either.
+  - unused_import
+
   # ---- Niche / leak-debug rule, not a production quality signal ----
   - required_deinit                         # would require an explicit deinit on EVERY class
 

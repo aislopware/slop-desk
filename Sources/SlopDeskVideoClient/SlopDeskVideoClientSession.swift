@@ -410,8 +410,8 @@ public actor SlopDeskVideoClientSession {
     /// hello on the pure ``HelloRetryPolicy`` backoff while the FSM stays `.connecting`, and ends
     /// itself the first time ``VideoClientStateMachine/resendHello()`` returns no effects (the
     /// state resolved — streaming / rejected / stopped). Cancelled in ``stop()``. ⚠️ Timer firing
-    /// is real-clock glue; the retry DECISION + cadence are covered by `VideoClientStateMachineTests`
-    /// / `HelloRetryPolicyTests`.
+    /// is real-clock glue; the retry DECISION and the backoff cadence are both covered by
+    /// `VideoClientStateMachineTests` (`testHelloRetryPolicyBacksOffExponentiallyToTheCap`).
     private var helloRetryTask: Task<Void, Never>?
 
     // MARK: Stall-scrim liveness stamps

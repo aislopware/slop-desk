@@ -738,14 +738,10 @@ struct SidebarSectionHeaderRow: View {
     }
 
     /// The header's SECOND line: the live git line (branch + dirt) on a full-width line of its own
-    /// under the folder name, so neither fights the other for one row's width. A collapsed header
-    /// folds it away — the count speaks instead. Pure + static so the swap is unit-pinned.
-    static func detailLine(collapsed: Bool, summary: PaneGitSummary?) -> String? {
-        collapsed ? nil : summary.flatMap(gitLine)
-    }
-
-    /// ``detailLine(collapsed:summary:)`` in its RENDERED form — the per-run segments the header paints,
-    /// empty when the line is folded away or there is no repo. Same swap, same dialect, one ink per run.
+    /// under the folder name, so neither fights the other for one row's width — as the per-run
+    /// segments the header paints, one ink per run. A collapsed header folds it away (the count
+    /// speaks instead), and an empty result is also "no repo". Pure + static so the swap is
+    /// unit-pinned.
     static func detailSegments(collapsed: Bool, summary: PaneGitSummary?) -> [GitSegment] {
         guard !collapsed, let summary else { return [] }
         return gitSegments(summary)
