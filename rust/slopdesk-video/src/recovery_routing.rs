@@ -6,11 +6,9 @@
 //! mis-decode a recovery datagram as a phantom mouse event. The two are routed by separate
 //! functions here for the same reason.
 
-use crate::cursor::CursorChannelMessage;
 use crate::fragment::FrameFragment;
 use crate::recovery::{NO_FRAME_DECODED_SENTINEL, NetworkStatsReport, RecoveryMessage};
 use crate::video_control::VideoControlMessage;
-use crate::window_geometry::WindowGeometryMessage;
 
 /// The decision for one received recovery datagram.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,24 +286,6 @@ pub fn schedule_frame_raw(datagrams: Vec<Vec<u8>>) -> Vec<Outgoing> {
             }
         })
         .collect()
-}
-
-/// Schedules a geometry update on the geometry channel.
-#[must_use]
-pub fn schedule_geometry(message: &WindowGeometryMessage) -> Outgoing {
-    Outgoing {
-        channel: VideoChannel::Geometry,
-        bytes: message.encode(),
-    }
-}
-
-/// Schedules a cursor message on the dedicated cursor socket.
-#[must_use]
-pub fn schedule_cursor(message: &CursorChannelMessage) -> Outgoing {
-    Outgoing {
-        channel: VideoChannel::Cursor,
-        bytes: message.encode(),
-    }
 }
 
 /// Schedules a control message.

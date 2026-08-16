@@ -25,7 +25,6 @@ use crate::canvas_non_overlap::{Body, BodyId};
 use crate::geometry::{CASCADE_STEP, Camera, DEFAULT_ITEM_SIZE, Point, Rect, Size, sanitize};
 use crate::identity::{LayoutPresetId, PaneGroupId, PaneId};
 use crate::session::PaneSpec;
-use crate::split_layout::SolvedLayout;
 
 /// A named collection of panes — pure metadata.
 ///
@@ -232,23 +231,6 @@ impl Canvas {
         self.max_z().map_or(0, |z| z.saturating_add(1))
     }
 
-    /// The frames keyed by pane — the input the focus resolver reads.
-    #[must_use]
-    pub fn frames_by_id(&self) -> BTreeMap<PaneId, Rect> {
-        self.items.iter().map(|item| (item.id, item.frame)).collect()
-    }
-
-    /// The solved layout of the plane, in CANVAS space.
-    ///
-    /// Canvas space rather than screen space on purpose: directional focus then stays stable across
-    /// a pan, and a pane scrolled off the viewport is still reachable from the keyboard.
-    #[must_use]
-    pub fn solved_layout(&self) -> SolvedLayout {
-        SolvedLayout {
-            frames: self.frames_by_id(),
-        }
-    }
-
     /// The frontmost pane whose frame contains a canvas-space point.
     ///
     /// Walks z DESCENDING — the inverse of the render order — so a click on overlapping panes hits
@@ -329,19 +311,6 @@ impl Canvas {
         self.adding(id, spec, near, viewport, DEFAULT_ITEM_SIZE)
     }
 
-    /// The plane with a closed pane re-added at its exact former frame, frontmost.
-    ///
-    /// The identity is deliberately a FRESH one rather than the closed pane's. The old pane's
-    /// session teardown is asynchronous, so reusing its id could race the in-flight bookkeeping —
-    /// and the reopened pane is a new session regardless, since its scrollback did not survive. The
-    /// menu says "Reopen", not "Undo", for the same reason.
-    #[must_use]
-    pub fn restoring(&self, id: PaneId, spec: PaneSpec, frame: Rect, group: Option<PaneGroupId>) -> Self {
-        let mut items = self.items.clone();
-        items.push(CanvasItem::new(id, spec, sanitize(frame), self.next_z()).in_group(group));
-        Self::with_items(items, self.camera)
-    }
-
     /// The plane without a pane, or `None` when it was the LAST one.
     ///
     /// `None` is the signal the tab emptied and should close — an empty plane is not a state the
@@ -363,14 +332,6 @@ impl Canvas {
     #[must_use]
     pub fn moving_by(&self, id: PaneId, dx: f64, dy: f64) -> Self {
         self.map_item(id, |item| item.frame = sanitize(item.frame.offset_by(dx, dy)))
-    }
-
-    /// The plane with a pane's origin set.
-    #[must_use]
-    pub fn moving_to(&self, id: PaneId, origin: Point) -> Self {
-        self.map_item(id, |item| {
-            item.frame = sanitize(Rect::new(origin, item.frame.size));
-        })
     }
 
     /// The plane with a pane's frame set, floored at the minimum pane size.
@@ -688,24 +649,12 @@ impl Canvas {
         Self::with_items(items, self.camera)
     }
 
-    /// The plane with every member of a group translated — the group-handle drag.
-    #[must_use]
-    pub fn moving_group(&self, group: PaneGroupId, dx: f64, dy: f64) -> Self {
-        if dx == 0.0 && dy == 0.0 {
-            return self.clone();
-        }
-        let mut items = self.items.clone();
-        for item in &mut items {
-            if item.group == Some(group) {
-                item.frame = sanitize(item.frame.offset_by(dx, dy));
-            }
-        }
-        Self::with_items(items, self.camera)
-    }
-
-    // The group-handle RESIZE is not here. It is a rule over frames, so it lives with the other
-    // arrange rules in `canvas_arrange::resized_group`, where the FFI shim reaches it without
-    // marshalling a whole document across the boundary to get a handful of frames back.
+    // NEITHER group-handle gesture is here, and the two absences have the same cause. A gesture over
+    // a group is a rule over FRAMES, so it lives with the other arrange rules in `canvas_arrange`,
+    // where the FFI shim reaches it without marshalling a whole document across the boundary to get
+    // a handful of frames back — `resized_group` is the resize. A document-shaped `moving_group` sat
+    // here until 2026-08-16 with no caller on either side of the boundary, which is what a door onto
+    // the wrong shape becomes: not wrong, just never the one anybody could reach for.
 }
 
 /// A frame fitted entirely inside a box.

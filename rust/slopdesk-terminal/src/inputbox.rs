@@ -71,18 +71,6 @@ impl InputBoxModel {
         }
     }
 
-    /// A model whose dedup ring carries an explicit pending-byte bound.
-    #[must_use]
-    pub const fn with_dedup_capacity(capacity: usize) -> Self {
-        Self {
-            tracker: TerminalModeTracker::new(),
-            dedup: InputDedupRing::with_capacity(capacity),
-            affordance: InputAffordance::ShellCommand,
-            command_running: false,
-            last_exit_code: None,
-        }
-    }
-
     /// The current terminal mode (a passthrough for inspection).
     #[must_use]
     pub const fn mode(&self) -> TerminalMode {

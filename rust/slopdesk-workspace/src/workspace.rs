@@ -156,23 +156,6 @@ impl TreeWorkspace {
             .or_else(|| (!self.sessions.is_empty()).then_some(0))
     }
 
-    /// The selected session's panes.
-    #[must_use]
-    pub fn active_session_pane_ids(&self) -> Vec<PaneId> {
-        self.active_session()
-            .map(Session::all_pane_ids)
-            .unwrap_or_default()
-    }
-
-    /// The selected tab's panes.
-    #[must_use]
-    pub fn active_tab_pane_ids(&self) -> Vec<PaneId> {
-        self.active_session()
-            .and_then(Session::active_tab)
-            .map(Tab::all_pane_ids)
-            .unwrap_or_default()
-    }
-
     /// Whether the spec table matches the panes, in every session.
     ///
     /// The load-bearing property: `specs.keys() == leaves ∪ detached`. Both directions matter — an

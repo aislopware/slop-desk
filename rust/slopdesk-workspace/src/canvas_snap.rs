@@ -158,19 +158,6 @@ pub struct Resolution {
     pub stick_y: Option<Stick>,
 }
 
-impl Resolution {
-    /// A resolution that snapped to nothing.
-    #[must_use]
-    pub const fn unsnapped(frame: Rect) -> Self {
-        Self {
-            frame,
-            guides: Vec::new(),
-            stick_x: None,
-            stick_y: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Axis {
     X,
