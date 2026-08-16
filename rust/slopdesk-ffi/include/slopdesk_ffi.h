@@ -1566,6 +1566,20 @@ size_t slopdesk_jump_resolve(const uint8_t *query, size_t query_len,
                              bool change_directory, SlopDeskJumpResolution *out, uint8_t *arena,
                              size_t arena_cap);
 
+/* ---- fuzzy: how a typed query ranks against one candidate ------------------------------- */
+
+/* fzf's `FuzzyMatchV2` (`rust/slopdesk-fuzzy`). The answer is `[int32 BE score][uint32 BE pos]*`
+ * over the candidate's Unicode scalars — one call for the size, one for the bytes. 0 means the
+ * candidate does not carry the query in order; an empty query is a 4-byte match with score 0. */
+size_t slopdesk_fuzzy_score(const uint8_t *query, size_t query_len, const uint8_t *candidate,
+                            size_t candidate_len, uint8_t *out, size_t cap);
+
+/* The same ranking without the positions — for a list that sorts by score and underlines only the
+ * rows it draws. Skips fzf's phase 4, so there is no buffer, no second call and no allocation on
+ * either side. `-1` is "no match"; a score is never negative, so the two cannot collide. */
+int64_t slopdesk_fuzzy_rank(const uint8_t *query, size_t query_len, const uint8_t *candidate,
+                            size_t candidate_len);
+
 /* ---- watch: what `slopdesk watch` decides, and the bytes it prints ---------------------- */
 
 /* One poll's observation of an `agent-status` reply. */

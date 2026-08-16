@@ -150,6 +150,21 @@ makes the Swift side pick the magic number — which is a decision, which is the
 may not hold. Rust rebuilds the `Option` on entry and the domain crate sees the shape it was written
 against.
 
+### The answer that is one scalar, and the refusal that cannot collide
+
+`slopdesk_fuzzy_rank` takes two `(ptr, len)` pairs and answers an `int64_t`. There is no out-buffer,
+no size call and no allocation on either side, because the answer is one number — and the refusal is
+`-1`, which cannot be mistaken for one: an fzf score is `max(…, 0)` at every cell, so it is never
+negative. That is the whole reason a sentinel is admissible here and not in `SlopDeskLiveness` above:
+the sentinel is outside the answer's range *by construction of the algorithm*, not by a convention
+someone has to remember.
+
+The same matcher also has `slopdesk_fuzzy_score`, which is §4-shaped because it answers a score AND a
+variable number of matched positions. Two doors over one implementation is not two answers — the
+score is bit-identical, and `rust/slopdesk-fuzzy` pins that in a test — it is one implementation told
+whether the caller will underline anything. Most callers will not: a filtered list ranks every row
+and highlights only the handful it draws.
+
 ### The header is written by hand
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)
@@ -381,6 +396,25 @@ is `rust/slopdesk-screend`'s library function; linking it into the shim removes 
 64 MiB AF_UNIX round trip that BOTH implementations pay today, which would put the cold path well
 ahead of the Swift original. It is not in this change because it also removes screend's
 absent-engine identity policy and grows the artifact — a decision of its own.
+
+### The scorer, measured against the Swift it replaced
+
+`slopdesk-fuzzybench` is in the tree and is not a second implementation — it is a harness that runs
+the door over every Swift path in the package (1333 candidates × 16 queries) and diffs the result
+against the real `fzf --filter` binary. Release build, same corpus, same machine:
+
+| path | ns per candidate | |
+| --- | --- | --- |
+| Swift `FuzzyMatcher` (deleted) | 5766 | |
+| `slopdesk_fuzzy_score` (score + positions) | 3443 | 1.7× |
+| `slopdesk_fuzzy_rank` (score only) | 2388 | **2.4×** |
+
+Both doors: match-set identical to `fzf` on 16/16 queries, top-1 exact 16/16, 0 strict score
+inversions over fzf's own order. This is the shape the boundary is cheapest in — a call per candidate
+whose arguments are two short byte spans and whose answer is a scalar or twelve bytes — and it is
+worth noting *why* the door beats the Swift it replaced rather than merely matching it: the DP is
+`i32` in a flat `Vec` against Swift's `Int` in an `Array` with retain/release on the closure captures,
+and the score-only path deletes fzf's phase 4 outright.
 
 ## 4d. The descriptor convention, tried and rejected
 

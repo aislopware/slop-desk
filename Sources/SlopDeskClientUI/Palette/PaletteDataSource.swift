@@ -596,14 +596,16 @@ public struct SearchMixer: Sendable {
                     if let title = FuzzyMatcher.score(query, item.title) {
                         return (RankedRow(item: item, titleRanges: title.ranges), title.score, 1, offset)
                     }
-                    if let subtitle = item.subtitle, let sub = FuzzyMatcher.score(query, subtitle) {
-                        return (RankedRow(item: item), sub.score, 0, offset)
+                    // A subtitle and a keyword hit carry NO ranges — nothing underlines them — so
+                    // both ask the score-only door and skip the backtrace entirely.
+                    if let subtitle = item.subtitle, let sub = FuzzyMatcher.rank(query, subtitle) {
+                        return (RankedRow(item: item), sub, 0, offset)
                     }
                     // HIDDEN synonyms: a row's `keywords` (e.g. "Read Only" accepting `lock` / `freeze`
                     // / `view only`) are searchable but never rendered, so a keyword hit sits at tier -1 —
                     // below every title (1) and subtitle (0) hit — and carries NO title highlight ranges.
-                    if let keywords = item.keywords, let kw = FuzzyMatcher.score(query, keywords) {
-                        return (RankedRow(item: item), kw.score, -1, offset)
+                    if let keywords = item.keywords, let kw = FuzzyMatcher.rank(query, keywords) {
+                        return (RankedRow(item: item), kw, -1, offset)
                     }
                     return nil
                 }

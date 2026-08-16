@@ -3490,6 +3490,27 @@ if [[ "${swift_badges}" != "${rust_badges}" ]]; then
 fi
 printf 'check-supervisor: one badge ladder for a tab row.\n'
 
+# ── One fuzzy ranking, for every search field ──────────────────────────────────────────────────
+# fzf's `FuzzyMatchV2` — a Smith-Waterman DP, a structural-bonus table and a backtrace — was 300
+# lines of Swift beside the Rust that owns it now. This one carries IDENTITY: the order a palette
+# shows IS the product, so a second scorer does not fail a test, it just starts ranking differently
+# and nobody can say which copy the person is looking at. Every search field asks the same door.
+SWIFT_FUZZY=Sources/SlopDeskClientUI/Palette/FuzzyMatcher.swift
+scorer_revived=$(grep -rlE '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b' Sources/ || true)
+if [[ -n "${scorer_revived}" ]]; then
+  printf '%s\n' "${scorer_revived}" >&2
+  fail "a Swift fuzzy scorer is back in Sources/ — rust/slopdesk-fuzzy owns FuzzyMatchV2"
+fi
+if ! spells 'slopdesk_fuzzy_score' "${SWIFT_FUZZY}" > /dev/null; then
+  fail "${SWIFT_FUZZY} stopped asking the door — it is a marshaller over the matcher, not a second one"
+fi
+for rule in 'pub fn score' 'pub fn rank' 'pub fn match_pattern' 'fn bonus_for'; do
+  if ! spells "${rule}" rust/slopdesk-fuzzy/src/lib.rs > /dev/null; then
+    fail "rust/slopdesk-fuzzy/src/lib.rs lost ${rule} — the ranking is one module"
+  fi
+done
+printf 'check-supervisor: one fuzzy ranking, for every search field.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

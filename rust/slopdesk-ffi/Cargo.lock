@@ -146,6 +146,7 @@ dependencies = [
  "slopdesk-altscreen",
  "slopdesk-cli",
  "slopdesk-dropd",
+ "slopdesk-fuzzy",
  "slopdesk-inspectord",
  "slopdesk-sanitize",
  "slopdesk-terminal",
@@ -153,6 +154,10 @@ dependencies = [
  "slopdesk-wire",
  "slopdesk-workspace",
 ]
+
+[[package]]
+name = "slopdesk-fuzzy"
+version = "0.1.0"
 
 [[package]]
 name = "slopdesk-gfsimd"

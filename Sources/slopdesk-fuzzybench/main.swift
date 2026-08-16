@@ -1,4 +1,4 @@
-// slopdesk-fuzzybench — benchmark + parity validator for the vendored `FuzzyMatcher` (the in-tree
+// slopdesk-fuzzybench — benchmark + parity validator for `FuzzyMatcher` (the in-tree
 // fzf FuzzyMatchV2 port behind the command palette). It answers two questions the user asked when we
 // chose to port rather than depend:
 //
@@ -166,6 +166,10 @@ var top1Agree = 0
 var top1Count = 0
 var scoreInversions = 0 // strict score-order violations in fzf's order = real divergences
 var scorePairs = 0
+// The SCORE-ONLY door, timed beside the one that underlines: `rank` skips fzf's phase 4 and the
+// positions, which is what every filtered list that highlights nothing actually needs.
+var totalRankNanos: UInt64 = 0
+var rankDisagreements = 0
 
 for query in queries {
     // Ours: score every candidate, keep matches. Rank with fzf's DEFAULT tiebreak so the comparison is
@@ -178,6 +182,12 @@ for query in queries {
     }
     totalOursNanos += dt
     totalComparisons += corpus.count
+
+    var ranked: [Int?] = []
+    totalRankNanos += nanos { ranked = corpus.map { FuzzyMatcher.rank(query, $0) } }
+    for (idx, c) in corpus.enumerated() where ranked[idx] != FuzzyMatcher.score(query, c)?.score {
+        rankDisagreements += 1
+    }
     let scoreOf = Dictionary(ours.map { ($0.cand, $0.score) }, uniquingKeysWith: { a, _ in a })
     let oursRanked = ours.sorted { lhs, rhs in
         if lhs.score != rhs.score { return lhs.score > rhs.score }
@@ -234,6 +244,12 @@ print(String(
     format: "ours throughput: %.2f M comparisons/sec  (%.1f ns/comparison avg)",
     mPerSec / 1_000_000,
     Double(totalOursNanos) / Double(max(totalComparisons, 1)),
+))
+print(String(
+    format: "score-only door: %.2f M comparisons/sec  (%.1f ns/comparison avg)  •  %d disagreements with the scoring door",
+    Double(totalComparisons) / (Double(totalRankNanos) / 1_000_000_000.0) / 1_000_000,
+    Double(totalRankNanos) / Double(max(totalComparisons, 1)),
+    rankDisagreements,
 ))
 if setChecks > 0 {
     print("match-set parity vs fzf: \(setMatches)/\(setChecks) queries identical")

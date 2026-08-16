@@ -12,11 +12,11 @@ import Foundation
 /// ``WorkspaceStore/jumpToNavigatorBlockInActivePane(index:)`` (the shared ``BlockJump`` re-anchor engine — so
 /// the delta math is never re-derived in the view).
 ///
-/// The vendored `FuzzyMatcher` lives in the view module, so it is INJECTED into ``filtered(_:query:score:)``
+/// `FuzzyMatcher` lives in the view module, so it is INJECTED into ``filtered(_:query:score:)``
 /// rather than imported here — keeping the model + its tests headless (mirrors ``JumpToModel/filtered``).
 public enum CommandNavigatorModel {
     /// Fuzzy-filter + rank `blocks` by `query` using the INJECTED `score` closure (the view passes
-    /// `FuzzyMatcher.score(_:_:)?.score`; the headless tests pass a deterministic scorer). An EMPTY query
+    /// `FuzzyMatcher.rank(_:_:)`; the headless tests pass a deterministic scorer). An EMPTY query
     /// returns `blocks` unchanged (the zero-state list — caller-ordered, i.e. newest-first). A non-empty
     /// query drops every block the scorer rejects (`nil`) AND every still-forming block (empty `commandText`,
     /// which can never match a real query), then orders the survivors by score DESCENDING, breaking ties by

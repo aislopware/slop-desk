@@ -52,6 +52,7 @@ path = "src/lib.rs"
 slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-cli = { path = "../slopdesk-cli" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }
+slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 slopdesk-terminal = { path = "../slopdesk-terminal" }

@@ -7,7 +7,7 @@
 // SEAM: every source is assembled by the PURE `OpenQuicklyModel` (headlessly tested) — Opened from
 // `WorkspaceStore.tree`, Recent from `closedTabRecords`, Folders from the injected `FolderFrecencyStore`,
 // Current from the focused pane's `JumpToModel` snapshot, Agents from its host metadata RPC
-// (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC. Ranking runs the vendored `FuzzyMatcher`.
+// (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC. Ranking runs `FuzzyMatcher`.
 // Each row's default + `⌘K` actions actuate through the shared `LinkActionActuator` (renderer + Jump-To use
 // the same dispatch), so link/cd/host routing has ONE home. The active pill lives on the `OverlayCoordinator`
 // (`openQuicklyFilter`); the search query + keyboard selection are local view state.
@@ -489,7 +489,7 @@ struct OpenQuicklyView: View {
             rowActions(for: item),
             query: actionsQuery,
             title: { $0.title },
-        ) { q, h in FuzzyMatcher.score(q, h)?.score }
+        ) { q, h in FuzzyMatcher.rank(q, h) }
     }
 
     /// ↑/↓ move the highlight over the filtered actions (clamped); Esc closes just the popover. ↩ is handled
@@ -670,13 +670,13 @@ struct OpenQuicklyView: View {
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
-    /// ALL-CAPS header; a specific pill is one section. Ranks via the vendored `FuzzyMatcher` (integer scores).
+    /// ALL-CAPS header; a specific pill is one section. Ranks via `FuzzyMatcher` (integer scores).
     private var sections: [OpenQuicklySection] {
         OpenQuicklyModel.sectioned(
             sources: sources,
             filter: coordinator.openQuicklyFilter,
             query: query,
-        ) { q, h in FuzzyMatcher.score(q, h)?.score }
+        ) { q, h in FuzzyMatcher.rank(q, h) }
     }
 
     /// The flattened, navigable rows (headers excluded) — the arrow-key / ⌘1–9 target.

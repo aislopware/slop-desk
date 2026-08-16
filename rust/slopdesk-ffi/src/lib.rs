@@ -59,6 +59,7 @@ pub mod file_transfer;
 pub mod folders;
 pub mod frame_decoder;
 pub mod frame_rate;
+pub mod fuzzy;
 pub mod hevc_parameter_sets;
 pub mod host_policy;
 pub mod host_state;

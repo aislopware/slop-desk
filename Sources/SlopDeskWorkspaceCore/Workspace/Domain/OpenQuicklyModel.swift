@@ -254,7 +254,7 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 /// testable.
 ///
 /// ### Reuse
-/// - Ranking takes an INJECTED `score` closure (the view passes `FuzzyMatcher.score(_:_:)?.score`; the tests
+/// - Ranking takes an INJECTED `score` closure (the view passes `FuzzyMatcher.rank(_:_:)`; the tests
 ///   pass a deterministic subsequence scorer) — the same contract as ``JumpToModel/filtered(_:query:score:)``.
 ///   Scores are `Int` (no float / FMA / NaN hazard — CLAUDE.md §2).
 /// - The **Current** source is the existing ``JumpToModel`` output, wrapped 1:1 via ``currentItems(from:)``.

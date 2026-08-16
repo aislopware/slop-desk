@@ -320,6 +320,9 @@ let package = Package(
                 // Type-safe UserDefaults — the `@Default(.key)` SwiftUI bindings in SettingsView (replacing
                 // the stringly-typed `@AppStorage`). Same pure-Foundation `Defaults` product as the core.
                 .product(name: "Defaults", package: "Defaults"),
+                // `FuzzyMatcher` is a marshaller over `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2`
+                // lives in `rust/slopdesk-fuzzy`, and every search field in the app ranks through it.
+                "CSlopDeskFFI",
             ],
             // The bundled Symbols Nerd Font (the SAME fallback face ghostty gives the terminal grid),
             // registered at first use by `NerdSymbolFont` so chrome text carrying nerd-font private-use

@@ -1,5 +1,6 @@
-// FuzzyMatcherTests — golden pins for the vendored fzf `FuzzyMatchV2` port (`FuzzyMatcher`). Two kinds of
-// assertions, both INDEPENDENT of the implementation (not tautological):
+// FuzzyMatcherTests — golden pins for the fzf `FuzzyMatchV2` ranking, read through the `FuzzyMatcher`
+// door (the matcher itself is `rust/slopdesk-fuzzy`). Two kinds of assertions, both INDEPENDENT of
+// the implementation (not tautological):
 //
 //   1. EXACT scores hand-derived from fzf's published constants (scoreMatch 16, bonusBoundaryWhite 10,
 //      bonusBoundaryDelimiter 9, bonusBoundary 8, bonusFirstCharMultiplier 2, scoreGapStart -3,
@@ -16,6 +17,13 @@ import XCTest
 
 final class FuzzyMatcherTests: XCTestCase {
     private func score(_ q: String, _ c: String) -> Int? { FuzzyMatcher.score(q, c)?.score }
+
+    /// Every exact score below is asserted through BOTH doors. `rank` skips fzf's phase 4, and the
+    /// one thing that must never buy is a different number: a list ranked by `rank` and a row
+    /// highlighted by `score` would then disagree about which match is better.
+    private func assertBothDoorsAgree(_ q: String, _ c: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(FuzzyMatcher.rank(q, c), score(q, c), "\(q) vs \(c)", file: file, line: line)
+    }
 
     // MARK: Exact single-char scores — pins the position bonus table + first-char multiplier
 
@@ -53,9 +61,17 @@ final class FuzzyMatcherTests: XCTestCase {
 
     func testMatchedPositions() {
         // "fz" on "fuzzy": f@0, the leftmost optimal z@2. Score 49 (hand-traced through the DP).
-        let m = FuzzyMatcher.match(pattern: ["f", "z"], in: Array("fuzzy".unicodeScalars), caseSensitive: false)
-        XCTAssertEqual(m?.score, 49)
-        XCTAssertEqual(m?.positions, [0, 2])
+        // The positions are read back through the ranges, which is the only shape the door answers
+        // in: two 1-scalar runs, at offsets 0 and 2.
+        let candidate = "fuzzy"
+        let matched = FuzzyMatcher.score("fz", candidate)
+        XCTAssertEqual(matched?.score, 49)
+        let offsets = matched?.ranges.map { candidate.unicodeScalars.distance(
+            from: candidate.startIndex,
+            to: $0.lowerBound,
+        ) }
+        XCTAssertEqual(offsets, [0, 2])
+        XCTAssertEqual(matched?.ranges.map { String(candidate[$0]) }, ["f", "z"])
     }
 
     func testRangesHighlightOriginalCandidate() {
@@ -118,5 +134,25 @@ final class FuzzyMatcherTests: XCTestCase {
         XCTAssertEqual(r?.score, 0)
         XCTAssertEqual(r?.ranges.count, 0)
         XCTAssertEqual(FuzzyMatcher.score("   ", "anything")?.score, 0) // whitespace-only trims to empty
+        XCTAssertEqual(FuzzyMatcher.rank("", "anything"), 0)
+    }
+
+    // MARK: The two doors are one ranking
+
+    /// Every case pinned above, asked the other way. The palette ranks subtitles and keywords through
+    /// `rank` and highlights titles through `score`; the day those two disagree, a row sorts by one
+    /// number and underlines by another.
+    func testRankAgreesWithScoreOnEveryPinnedCase() {
+        for (query, candidate) in [
+            ("a", "a"), ("a", "ba"), ("a", " a"), ("a", "/a"), ("-", "a-"), ("-", "-"),
+            ("ab", "ab"), ("fz", "fuzzy"), ("fm", "FuzzyMatcher"),
+            ("ff", "fuzzy-finder"), ("ff", "fuzzyfinder"),
+            ("foobar", "foobar"), ("foobar", "foo-bar"),
+            ("gc", "getConfig"), ("GC", "getConfig"), ("GC", "GetConfig"),
+            ("xyz", "getConfig"), ("zx", "xyz"), ("abc", "ab"), ("xz", "xyz"),
+            ("", "anything"), ("   ", "anything"),
+        ] {
+            assertBothDoorsAgree(query, candidate)
+        }
     }
 }
