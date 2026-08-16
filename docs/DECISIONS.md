@@ -15906,3 +15906,45 @@ the `RustServicePaths` call sites rather than a maintained list. It reads the to
 `package-release.sh`, not the file — a first draft grepped the script whole, and the comment above
 those arrays names every daemon, so it passed on prose alone. A gate a comment can satisfy is not
 a gate.
+
+## Four Rust modules were written, tested, and then called by nothing (2026-08-16)
+
+An audit of what is still worth moving to Rust, what is duplicated, and what was moved without
+deleting the Swift found the third category in its worst form. `e6b1ce9b` added four modules to
+`rust/slopdesk-workspace`, gave them 47 tests between them, re-exported all four from `lib.rs`, and
+wired none of them to anything:
+
+| module | lines | tests | the Swift that still runs |
+| --- | --- | --- | --- |
+| `persist` | 928 | 22 | `WorkspacePersistence.swift`, `Canvas+Codable.swift`, `SplitNode+Codable.swift` |
+| `templates` | 606 | 15 | `SessionTemplate.swift`, `LaunchPreset.swift` |
+| `listen` | 171 | 7 | `PortValidation.swift`, `SlopDeskTransportError.swift` |
+| `connection` | 94 | 3 | `ConnectionTarget.swift` |
+
+Nothing failed, and that is the finding. `cargo` has no unused warning to give for a `pub` item in
+a library crate; the tests are green because a test is a caller; and the only place the defect was
+visible was a question nobody had asked — *who calls this?* Every one of the eight `persist`
+encode/decode functions appears exactly once outside its own file, on the `pub use` line that
+exports it. Two implementations of the same rule, which is the one thing `CLAUDE.md` forbids
+outright, hidden behind a re-export that reads like use.
+
+`listen` and `templates`'s keystroke rule are now wired and their Swift bodies are faces. That one
+mattered beyond tidiness: the `cd` line a preset types is built from literal bytes and must never
+reach the token parser, because a `<Enter>` inside a path ends the quoted line early and runs the
+rest as its own command. Two copies of a security property agree only until they do not.
+
+`persist` and `connection` are registered as debt in the new gate's waiver set rather than fixed
+here. They point opposite ways, and that is the interesting part: `persist` should be finished —
+it is an encoder, and the Swift should go. `connection` should be DELETED — `ConnectionTarget` is
+a four-field `Codable` value twenty files hold and SwiftUI diffs, which `docs/55` §6 already calls
+a vocabulary rather than an implementation, so the Rust twin is the copy in the wrong language.
+Neither is a change to make without the user, since one deletes tested Rust and the other rewrites
+the client's persistence.
+
+The gate is `check-invariants.py`'s `no_rust_module_is_written_and_then_never_called`. A module
+counts as reached when another Rust file names `module::`, or names something `lib.rs` re-exports
+from it, or when it exports a `no_mangle` door — that last is the FFI crate's whole shape and its
+caller is Swift, which is not in this tree's `.rs` files. `lib.rs` counts as a caller, but its own
+`pub mod` / `pub use` lines do not: a re-export is precisely what a stranded module has INSTEAD of
+a caller, so counting one would have made the gate unable to fail — which is how all four of these
+survived a repo that already ratchets cross-language contracts in two other scripts.

@@ -289,6 +289,78 @@ def shell_quoting_has_one_owner() -> Report:
     return found, "a site quotes a shell word itself — every one asks slopdesk_ws_shell_quote"
 
 
+#: The modules this gate knows are stranded, each with the Swift that still runs instead. They are
+#: DEBT, registered so the gate can be green while it shrinks — not exemptions. Removing a name here
+#: is the last step of finishing that port; adding one is a change `docs/DECISIONS.md` must record.
+STRANDED_RUST_MODULES = {
+    # `WorkspacePersistence.swift` + `Canvas+Codable.swift` + `SplitNode+Codable.swift` still
+    # encode and decode the client's workspace file. The Rust half has 22 tests and no caller.
+    "slopdesk-workspace::persist",
+    # `ConnectionTarget.swift` is a four-field `Codable` value 20 files hold and SwiftUI diffs —
+    # a vocabulary by `docs/55` §6, so the Rust twin is the copy that should go, not the Swift.
+    "slopdesk-workspace::connection",
+}
+
+_PUB_MOD = re.compile(r"^pub mod (\w+);", re.MULTILINE)
+_PUB_USE_GROUP = re.compile(r"^pub use (\w+)::\{(.*?)\};", re.MULTILINE | re.DOTALL)
+_PUB_USE_ONE = re.compile(r"^pub use (\w+)::(\w+);", re.MULTILINE)
+_LIB_DECLARATIONS = re.compile(r"^pub (?:mod|use) [^;]*;", re.MULTILINE | re.DOTALL)
+
+
+def no_rust_module_is_written_and_then_never_called() -> Report:
+    """A crate module nothing reaches is a port that stopped one step short of finishing.
+
+    The failure this catches is quiet and expensive: `e6b1ce9b` moved four `slopdesk-workspace`
+    modules to Rust, gave them 47 tests between them, re-exported all four from `lib.rs` — and
+    wired none. `cargo` says nothing, because a `pub` item in a library crate has no unused
+    warning to give; the tests are green; and the Swift the port was meant to delete is what
+    actually runs. Two implementations, which is the one thing `CLAUDE.md` forbids outright.
+
+    A module counts as REACHED when another Rust file names `module::`, or names something
+    `lib.rs` re-exports from it, or when the module exports a `no_mangle` door — that last one is
+    the FFI crate's whole shape, and its caller is Swift, which is not in this tree's `.rs` files.
+    `lib.rs` itself counts as a caller, but its own `pub mod` / `pub use` lines do not: a
+    re-export is what a stranded module has instead of a caller, so reading it as one would make
+    this gate unable to fail.
+    """
+    sources = [path for path in repo_files("rust/*.rs") if "target" not in path.parts]
+    bodies = {path: path.read_text(errors="ignore") for path in sources}
+    found: list[str] = []
+    for lib in sorted(path for path in sources if path.name == "lib.rs"):
+        crate, source = lib.parent.parent.name, bodies[lib]
+        exported: dict[str, set[str]] = {}
+        for module, group in _PUB_USE_GROUP.findall(source):
+            spelled = group.replace("\n", " ").split(",")
+            names = (name.strip().split(" as ")[0] for name in spelled)
+            wanted = {name for name in names if name and name != "self"}
+            exported.setdefault(module, set()).update(wanted)
+        for module, name in _PUB_USE_ONE.findall(source):
+            exported.setdefault(module, set()).add(name)
+
+        for module in _PUB_MOD.findall(source):
+            file, directory = lib.parent / f"{module}.rs", lib.parent / module
+            inside = [path for path in sources if path == file or directory in path.parents]
+            body = "".join(bodies[path] for path in inside)
+            if "no_mangle" in body:
+                continue  # a door; its caller is Swift
+            names = exported.get(module, set())
+            reached = False
+            for path in sources:
+                if path in inside:
+                    continue
+                text = _LIB_DECLARATIONS.sub("", bodies[path]) if path == lib else bodies[path]
+                named = any(re.search(rf"\b{name}\b", text) for name in names)
+                if named or re.search(rf"\b{module}::", text):
+                    reached = True
+                    break
+            if not reached and f"{crate}::{module}" not in STRANDED_RUST_MODULES:
+                found.append(f"{lib.relative_to(REPO)}: pub mod {module};")
+    if not found:
+        return None
+    stranded = "a Rust module is written and tested and reached by nothing — finish or drop it"
+    return found, stranded
+
+
 #: The docs `CLAUDE.md` sends a reader to before touching anything, plus the two front doors. These
 #: must not lie. Every OTHER document — `docs/19`, the `27` to `31` handoffs, `docs/40`, and all of
 #: `docs/ui-shell/` — is a record of a plan as it stood, and a path that was real then is not a
@@ -375,6 +447,7 @@ GATES = [
     every_script_sets_pipefail,
     a_script_with_a_shebang_is_executable,
     the_release_ships_every_sidecar_the_host_needs,
+    no_rust_module_is_written_and_then_never_called,
     pkill_never_reaches_the_developers_host,
     shell_quoting_has_one_owner,
 ]
