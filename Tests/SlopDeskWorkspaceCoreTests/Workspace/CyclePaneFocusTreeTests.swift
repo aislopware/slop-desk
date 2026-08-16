@@ -127,7 +127,7 @@ final class CyclePaneFocusTreeTests: XCTestCase {
     }
 
     /// The pure op WRAPS at both ends: forward from the LAST pane lands on the first, backward from the
-    /// FIRST lands on the last; ``WorkspaceTreeOps/cyclePaneFocus(forward:in:)`` applies that target as the
+    /// FIRST lands on the last; the `focusPane` intent applies that target as the
     /// new active pane.
     func testPureOpWrapsAtBothEnds() {
         let a = PaneID(), b = PaneID(), c = PaneID()
@@ -141,7 +141,7 @@ final class CyclePaneFocusTreeTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceTreeOps.cyclePaneTarget(forward: false, in: fromFirst), c, "backward from first wraps → last",
         )
-        let cycled = WorkspaceTreeOps.cyclePaneFocus(forward: true, in: fromLast)
+        let cycled = TreeIntent.cyclePaneFocus(forward: true, in: fromLast)
         XCTAssertEqual(cycled.activeSession?.activeTab?.activePane, a, "cyclePaneFocus focuses the wrapped target")
     }
 
@@ -152,7 +152,7 @@ final class CyclePaneFocusTreeTests: XCTestCase {
         let ws = tiledWorkspace([only], active: only)
         XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: true, in: ws), "one pane → nothing to cycle to")
         XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: false, in: ws))
-        XCTAssertEqual(WorkspaceTreeOps.cyclePaneFocus(forward: true, in: ws), ws, "cyclePaneFocus leaves it unchanged")
+        XCTAssertEqual(TreeIntent.cyclePaneFocus(forward: true, in: ws), ws, "cyclePaneFocus leaves it unchanged")
     }
 
     /// No active pane to step from → the pure op no-ops (it must NOT silently jump focus to the front leaf).
@@ -162,6 +162,6 @@ final class CyclePaneFocusTreeTests: XCTestCase {
         ws.sessions[0].tabs[0].activePane = nil
         XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: true, in: ws), "nil active → nothing to step from")
         XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: false, in: ws))
-        XCTAssertEqual(WorkspaceTreeOps.cyclePaneFocus(forward: true, in: ws), ws)
+        XCTAssertEqual(TreeIntent.cyclePaneFocus(forward: true, in: ws), ws)
     }
 }

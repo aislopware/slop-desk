@@ -5,7 +5,7 @@
 /// unit-tests headless. A `Tab` owns:
 ///
 /// - ``root`` — the recursive n-ary ``SplitNode`` tree of ``PaneID``s. **Never empty for a live tab** (a
-///   tab with no panes is closed; see ``WorkspaceTreeOps/closePane(_:in:)``).
+///   tab with no panes is closed by the `closePane` intent).
 /// - ``activePane`` — the focused leaf within this tab (the one taking keyboard input). Kept in `root` by
 ///   the ops + ``Session/normalizingActive()``.
 /// - ``zoomedPane`` — the **out-of-tree** zoom (WezTerm `TabInner.zoomed`): render-only, the tree is

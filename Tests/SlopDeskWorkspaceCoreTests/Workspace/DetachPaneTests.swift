@@ -3,9 +3,9 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pins the detach-to-own-window model (docs/DECISIONS.md — pane detach ↔ reattach):
-/// ``WorkspaceTreeOps/detachPane(_:in:)`` moves a leaf OUT of the split tree into the session's
+/// The `detachPane` intent moves a leaf OUT of the split tree into the session's
 /// ``Session/detached`` list while its spec (and therefore its live registry handle) survives;
-/// ``WorkspaceTreeOps/reattachPane(_:in:)`` folds it back KEEPING the `PaneID`. The widened invariant is
+/// `reattachPane` folds it back KEEPING the `PaneID`. The widened invariant is
 /// `specs.keys == leafIDs ∪ detachedIDs`. Pure ops first, then the store-level reconcile behaviour with
 /// the ``FakePaneSession`` seam (never a real client/host).
 final class DetachPaneTests: XCTestCase {
@@ -16,7 +16,7 @@ final class DetachPaneTests: XCTestCase {
     private func twoPaneWorkspace() -> (TreeWorkspace, PaneID, PaneID) {
         let ws = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "left"))
         let left = ws.allPaneIDs()[0]
-        let (split, right) = WorkspaceTreeOps.splitPane(
+        let (split, right) = TreeIntent.splitPane(
             left, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "right"), in: ws,
         )
         return (split, left, right)
@@ -28,7 +28,7 @@ final class DetachPaneTests: XCTestCase {
         let (ws, left, right) = twoPaneWorkspace()
         let originTab = ws.sessions[0].tabs[0].id
 
-        let out = WorkspaceTreeOps.detachPane(right, in: ws)
+        let out = TreeIntent.detachPane(right, in: ws)
 
         XCTAssertFalse(out.contains(right), "detached pane left the split tree")
         XCTAssertTrue(out.contains(left), "sibling stays tiled")
@@ -44,7 +44,7 @@ final class DetachPaneTests: XCTestCase {
         let pane = ws.allPaneIDs()[0]
         let sessionID = ws.sessions[0].id
 
-        let out = WorkspaceTreeOps.detachPane(pane, in: ws)
+        let out = TreeIntent.detachPane(pane, in: ws)
 
         XCTAssertEqual(out.sessions.map(\.id), [sessionID], "the owning session SURVIVES (it owns the satellite)")
         XCTAssertTrue(out.isDetached(pane))
@@ -57,9 +57,9 @@ final class DetachPaneTests: XCTestCase {
     func testDetachFocusedZoomedPaneClearsZoomAndRepointsFocus() {
         var (ws, left, right) = twoPaneWorkspace()
         ws = WorkspaceTreeOps.focusPane(right, in: ws)
-        ws = WorkspaceTreeOps.toggleZoom(right, in: ws)
+        ws = TreeIntent.toggleZoom(right, in: ws)
 
-        let out = WorkspaceTreeOps.detachPane(right, in: ws)
+        let out = TreeIntent.detachPane(right, in: ws)
 
         XCTAssertNil(out.sessions[0].tabs[0].zoomedPane, "dangling zoom cleared")
         XCTAssertEqual(out.sessions[0].tabs[0].activePane, left, "focus repointed to the survivor")
@@ -67,11 +67,11 @@ final class DetachPaneTests: XCTestCase {
 
     func testDetachAbsentOrAlreadyDetachedIsNoOp() {
         let (ws, _, right) = twoPaneWorkspace()
-        let detachedOnce = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detachedOnce = TreeIntent.detachPane(right, in: ws)
 
-        XCTAssertEqual(WorkspaceTreeOps.detachPane(PaneID(), in: ws), ws, "absent id no-ops")
+        XCTAssertEqual(TreeIntent.detachPane(PaneID(), in: ws), ws, "absent id no-ops")
         XCTAssertEqual(
-            WorkspaceTreeOps.detachPane(right, in: detachedOnce), detachedOnce,
+            TreeIntent.detachPane(right, in: detachedOnce), detachedOnce,
             "an already-detached pane is not a tree leaf — no-op, no duplicate entry",
         )
     }
@@ -80,9 +80,9 @@ final class DetachPaneTests: XCTestCase {
 
     func testReattachReturnsToOriginTabFocusedAndRevealed() {
         let (ws, left, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
-        let out = WorkspaceTreeOps.reattachPane(right, in: detached)
+        let out = TreeIntent.reattachPane(right, in: detached)
 
         XCTAssertTrue(out.contains(right), "pane is a tree leaf again")
         XCTAssertFalse(out.isDetached(right))
@@ -94,14 +94,14 @@ final class DetachPaneTests: XCTestCase {
 
     func testReattachRecreatesOwnTabWhenOriginTabClosed() {
         let (ws, left, right) = twoPaneWorkspace()
-        var detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        var detached = TreeIntent.detachPane(right, in: ws)
         // Close the origin tab (its sole survivor `left` cascades the tab away; the session survives
         // because it still owns the detached pane) — a fresh default tab is re-seeded.
-        detached = WorkspaceTreeOps.closePane(left, in: detached)
+        detached = TreeIntent.closePane(left, in: detached)
         XCTAssertTrue(detached.isDetached(right), "satellite survives its origin tab closing")
         let reseededTab = detached.sessions[0].tabs[0].id
 
-        let out = WorkspaceTreeOps.reattachPane(right, in: detached)
+        let out = TreeIntent.reattachPane(right, in: detached)
 
         XCTAssertTrue(out.contains(right))
         XCTAssertFalse(out.isDetached(right))
@@ -124,13 +124,13 @@ final class DetachPaneTests: XCTestCase {
     func testReattachAfterMoveToOwnTabThenDetachDoesNotRejoinOldSplit() {
         let (ws, left, right) = twoPaneWorkspace()
         // Move `right` out of the split into its own fresh tab (the drag-to-New-Tab shape).
-        var moved = WorkspaceTreeOps.breakPaneToTab(right, in: ws)
+        var moved = TreeIntent.breakPaneToTab(right, in: ws)
         XCTAssertEqual(moved.sessions[0].tabs.count, 2, "precondition: the pane owns a lone tab")
         // Detach it — the lone tab is pruned, so the recorded origin tab is now dead.
-        moved = WorkspaceTreeOps.detachPane(right, in: moved)
+        moved = TreeIntent.detachPane(right, in: moved)
         XCTAssertEqual(moved.sessions[0].tabs.count, 1, "precondition: the lone origin tab was pruned")
 
-        let out = WorkspaceTreeOps.reattachPane(right, in: moved)
+        let out = TreeIntent.reattachPane(right, in: moved)
 
         XCTAssertEqual(
             out.sessions[0].tabs[0].root.allPaneIDs(), [left],
@@ -144,17 +144,17 @@ final class DetachPaneTests: XCTestCase {
 
     func testReattachNotDetachedIsNoOp() {
         let (ws, _, right) = twoPaneWorkspace()
-        XCTAssertEqual(WorkspaceTreeOps.reattachPane(right, in: ws), ws)
-        XCTAssertEqual(WorkspaceTreeOps.reattachPane(PaneID(), in: ws), ws)
+        XCTAssertEqual(TreeIntent.reattachPane(right, in: ws), ws)
+        XCTAssertEqual(TreeIntent.reattachPane(PaneID(), in: ws), ws)
     }
 
     // MARK: - reattachPane(beside:) / (toActiveTabRootEdge:) / reattachPaneToNewTab (drag-to-merge ops)
 
     func testReattachBesideAnchorInsertsSiblingFocusedAndKeepsSpec() {
         let (ws, left, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
-        let out = WorkspaceTreeOps.reattachPane(right, beside: left, axis: .vertical, before: true, in: detached)
+        let out = TreeIntent.reattachPane(right, beside: left, axis: .vertical, before: true, in: detached)
 
         XCTAssertEqual(out.sessions[0].tabs[0].root.allPaneIDs(), [right, left], "inserted on the BEFORE side")
         XCTAssertFalse(out.isDetached(right))
@@ -165,13 +165,13 @@ final class DetachPaneTests: XCTestCase {
 
     func testReattachBesideAnchorInBackgroundTabSelectsThatTab() {
         let (ws, left, right) = twoPaneWorkspace()
-        var detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        var detached = TreeIntent.detachPane(right, in: ws)
         // A fresh tab takes the selection; the anchor `left` now lives in a BACKGROUND tab.
-        let (grown, _) = WorkspaceTreeOps.newTab(in: detached, spec: PaneSpec(kind: .terminal, title: "c"))
+        let (grown, _) = TreeIntent.newTab(in: detached, spec: PaneSpec(kind: .terminal, title: "c"))
         detached = grown
         XCTAssertEqual(detached.sessions[0].activeTabIndex, 1, "precondition: the fresh tab is active")
 
-        let out = WorkspaceTreeOps.reattachPane(right, beside: left, axis: .horizontal, before: false, in: detached)
+        let out = TreeIntent.reattachPane(right, beside: left, axis: .horizontal, before: false, in: detached)
 
         XCTAssertEqual(out.sessions[0].tabs[0].root.allPaneIDs(), [left, right])
         XCTAssertEqual(out.sessions[0].activeTabIndex, 0, "the anchor's tab is revealed")
@@ -179,32 +179,47 @@ final class DetachPaneTests: XCTestCase {
         XCTAssertTrue(out.isInvariantHeld())
     }
 
-    func testReattachBesideNoOpsForBadInputs() {
+    /// The gesture is TWO intents — dock the pane back into the tree, then place it beside the anchor
+    /// — and only the FIRST is load-bearing. A refused dock stops the gesture dead; a dock that lands
+    /// and a placement that cannot be honoured leaves the pane where the tree's own rule put it, back
+    /// in the main window. That is strictly better than the old all-or-nothing helper: a satellite the
+    /// user dragged home never bounces back out because the drop target turned out to be unusable.
+    func testReattachBesideFallsBackToTheTreesOwnLandingForBadTargets() {
         let (ws, left, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
         XCTAssertEqual(
-            WorkspaceTreeOps.reattachPane(left, beside: right, axis: .horizontal, before: false, in: ws),
-            ws, "a pane that is not detached no-ops",
+            TreeIntent.reattachPane(left, beside: right, axis: .horizontal, before: false, in: ws),
+            ws, "a pane that is not detached no-ops — the dock is refused, so nothing is staged",
         )
+
+        let absentAnchor = TreeIntent.reattachPane(
+            right, beside: PaneID(), axis: .horizontal, before: false, in: detached,
+        )
+        XCTAssertFalse(absentAnchor.isDetached(right), "the dock landed")
         XCTAssertEqual(
-            WorkspaceTreeOps.reattachPane(right, beside: PaneID(), axis: .horizontal, before: false, in: detached),
-            detached, "an absent anchor no-ops (the detached entry survives)",
+            absentAnchor.sessions[0].tabs[0].root.allPaneIDs(), [left, right],
+            "the pane went home to its origin tab; only the placement was dropped",
         )
-        // An anchor in ANOTHER session: the spec cannot leave its session's side table.
-        let (twoSessions, other) = WorkspaceTreeOps.newSession(
+
+        // An anchor in ANOTHER session: the spec cannot leave its session's side table, so the
+        // placement is refused and the pane stays home.
+        let (twoSessions, other) = TreeIntent.newSession(
             in: detached, name: "s2", spec: PaneSpec(kind: .terminal, title: "other"),
         )
+        let crossSession = TreeIntent.reattachPane(
+            right, beside: other, axis: .horizontal, before: false, in: twoSessions,
+        )
+        XCTAssertEqual(crossSession.sessions[0].tabs[0].root.allPaneIDs(), [left, right])
         XCTAssertEqual(
-            WorkspaceTreeOps.reattachPane(right, beside: other, axis: .horizontal, before: false, in: twoSessions),
-            twoSessions, "a cross-session anchor no-ops",
+            crossSession.sessions[1].allPaneIDs(), [other], "the other session is untouched",
         )
     }
 
     func testReattachToActiveTabRootEdgeDocksFullSpan() {
         let (ws, left, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
-        let out = WorkspaceTreeOps.reattachPane(right, toActiveTabRootEdge: .left, in: detached)
+        let out = TreeIntent.reattachPane(right, toActiveTabRootEdge: .left, in: detached)
 
         XCTAssertEqual(out.sessions[0].tabs[0].root.allPaneIDs(), [right, left], "docked BEFORE at the left edge")
         XCTAssertFalse(out.isDetached(right))
@@ -213,26 +228,30 @@ final class DetachPaneTests: XCTestCase {
         XCTAssertTrue(out.isInvariantHeld())
     }
 
-    func testReattachToActiveTabRootEdgeNoOpsWhenOwningSessionNotActive() {
-        let (ws, _, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
-        var (twoSessions, _) = WorkspaceTreeOps.newSession(
+    /// A satellite owned by a BACKGROUND session docks into its OWN session, and reveals it — the
+    /// spec never left that session's side table, so there is nowhere else the pane could go. The
+    /// edge the drop named is honoured against the tab it actually landed in.
+    func testReattachToActiveTabRootEdgeRevealsTheOwningSession() {
+        let (ws, left, right) = twoPaneWorkspace()
+        let detached = TreeIntent.detachPane(right, in: ws)
+        var (twoSessions, _) = TreeIntent.newSession(
             in: detached, name: "s2", spec: PaneSpec(kind: .terminal, title: "other"),
         )
-        // The canvas the user dropped on renders the ACTIVE session — a satellite owned by a
-        // background session must not dock into it.
         twoSessions.activeSessionID = twoSessions.sessions[1].id
-        XCTAssertEqual(
-            WorkspaceTreeOps.reattachPane(right, toActiveTabRootEdge: .right, in: twoSessions),
-            twoSessions,
-        )
+
+        let out = TreeIntent.reattachPane(right, toActiveTabRootEdge: .right, in: twoSessions)
+
+        XCTAssertEqual(out.activeSessionID, out.sessions[0].id, "the owning session is revealed")
+        XCTAssertFalse(out.isDetached(right))
+        XCTAssertEqual(out.sessions[0].tabs[0].root.allPaneIDs(), [left, right])
+        XCTAssertTrue(out.isInvariantHeld())
     }
 
     func testReattachToNewTabAppendsSelectedLoneTab() {
         let (ws, left, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
-        let out = WorkspaceTreeOps.reattachPaneToNewTab(right, in: detached)
+        let out = TreeIntent.reattachPaneToNewTab(right, in: detached)
 
         XCTAssertEqual(out.sessions[0].tabs.count, 2)
         XCTAssertEqual(out.sessions[0].tabs[1].root.allPaneIDs(), [right], "a fresh lone-leaf tab")
@@ -242,7 +261,7 @@ final class DetachPaneTests: XCTestCase {
         XCTAssertTrue(out.contains(left))
         XCTAssertTrue(out.isInvariantHeld())
         XCTAssertEqual(
-            WorkspaceTreeOps.reattachPaneToNewTab(left, in: ws), ws,
+            TreeIntent.reattachPaneToNewTab(left, in: ws), ws,
             "a pane that is not detached no-ops",
         )
     }
@@ -251,9 +270,9 @@ final class DetachPaneTests: XCTestCase {
 
     func testCloseDetachedPaneDropsEntryAndSpec() {
         let (ws, _, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
-        let out = WorkspaceTreeOps.closeDetachedPane(right, in: detached)
+        let out = TreeIntent.closeDetachedPane(right, in: detached)
 
         XCTAssertFalse(out.isDetached(right))
         XCTAssertNil(out.sessions[0].specs[right], "spec dropped → reconcile tears the handle down")
@@ -265,11 +284,11 @@ final class DetachPaneTests: XCTestCase {
     func testClosingLastTreePaneKeepsSessionOwningSatellites() {
         let (ws, left, right) = twoPaneWorkspace()
         let sessionID = ws.sessions[0].id
-        var out = WorkspaceTreeOps.detachPane(right, in: ws)
+        var out = TreeIntent.detachPane(right, in: ws)
 
         // `left` is now the session's sole tree pane; closing it empties the last tab. The cascade must
         // NOT drop the session — it still owns the satellite's spec.
-        out = WorkspaceTreeOps.closePane(left, in: out)
+        out = TreeIntent.closePane(left, in: out)
 
         XCTAssertEqual(out.sessions.map(\.id), [sessionID], "session survives — it owns a satellite")
         XCTAssertTrue(out.isDetached(right))
@@ -279,10 +298,10 @@ final class DetachPaneTests: XCTestCase {
 
     func testExplicitCloseSessionDropsItsSatellitesToo() {
         let (ws, _, right) = twoPaneWorkspace()
-        var out = WorkspaceTreeOps.detachPane(right, in: ws)
+        var out = TreeIntent.detachPane(right, in: ws)
         let sessionID = out.sessions[0].id
 
-        out = WorkspaceTreeOps.closeSession(sessionID, in: out)
+        out = TreeIntent.closeSession(sessionID, in: out)
 
         XCTAssertFalse(out.isDetached(right), "an explicit session close is destructive — satellites included")
         XCTAssertNil(out.spec(for: right))
@@ -292,7 +311,7 @@ final class DetachPaneTests: XCTestCase {
 
     func testSessionDetachedRoundTripsAndOldFilesDecodeEmpty() throws {
         let (ws, _, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
         let data = try JSONEncoder().encode(detached.sessions[0])
         let decoded = try JSONDecoder().decode(Session.self, from: data)
@@ -311,7 +330,7 @@ final class DetachPaneTests: XCTestCase {
 
     func testNormalizingSpecsRepairsDetachedList() {
         let (ws, left, right) = twoPaneWorkspace()
-        var corrupt = WorkspaceTreeOps.detachPane(right, in: ws)
+        var corrupt = TreeIntent.detachPane(right, in: ws)
         // Corrupt the file three ways: an entry shadowing a live tree leaf, a duplicate of a valid
         // entry, and an entry with no spec to materialize from.
         let specless = PaneID()
@@ -331,10 +350,10 @@ final class DetachPaneTests: XCTestCase {
         // Two tabs; detach a pane from tab 0, keep tab 1 selected — the launch re-dock must fold the
         // pane back into its origin tab while PRESERVING the persisted selection.
         var (ws, _, right) = twoPaneWorkspace()
-        let (grown, _) = WorkspaceTreeOps.newTab(in: ws, spec: PaneSpec(kind: .terminal, title: "t2"))
+        let (grown, _) = TreeIntent.newTab(in: ws, spec: PaneSpec(kind: .terminal, title: "t2"))
         ws = grown // newTab selected tab 1
-        var detached = WorkspaceTreeOps.detachPane(right, in: ws)
-        detached = WorkspaceTreeOps.selectTab(1, in: detached)
+        var detached = TreeIntent.detachPane(right, in: ws)
+        detached = TreeIntent.selectTab(1, in: detached)
 
         let out = detached.redockingDetachedPanes()
 
@@ -403,7 +422,7 @@ final class DetachPaneTests: XCTestCase {
     @MainActor
     func testStoreRestoreRedocksPersistedDetachedPanes() {
         let (ws, _, right) = twoPaneWorkspace()
-        let detached = WorkspaceTreeOps.detachPane(right, in: ws)
+        let detached = TreeIntent.detachPane(right, in: ws)
 
         // Simulate a relaunch restoring the persisted (detached) tree: v1 re-docks satellites into tabs.
         let store = makeTreeStore(restoringTree: detached)

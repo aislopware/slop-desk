@@ -118,7 +118,7 @@ final class HostRetiredPaneRedialTests: XCTestCase {
     private func makeStore(_ dials: Dials) -> (store: WorkspaceStore, kept: PaneID, doomed: PaneID) {
         let base = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "kept"))
         let kept = base.allPaneIDs()[0]
-        let (tree, doomed) = WorkspaceTreeOps.splitPane(
+        let (tree, doomed) = TreeIntent.splitPane(
             kept, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "doomed"), in: base,
         )
         let store = WorkspaceStore(

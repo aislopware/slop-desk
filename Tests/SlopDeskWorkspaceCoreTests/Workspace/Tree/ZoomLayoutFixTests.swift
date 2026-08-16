@@ -87,13 +87,13 @@ final class ZoomLayoutFixTests: XCTestCase {
     func testSplitPaneWhileZoomedExitsZoom() throws {
         let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
         let a = ws0.allPaneIDs()[0]
-        let (ws1, _) = WorkspaceTreeOps.splitPane(
+        let (ws1, _) = TreeIntent.splitPane(
             a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
         )
-        let zoomedWs = WorkspaceTreeOps.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
+        let zoomedWs = TreeIntent.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
         XCTAssertEqual(zoomedWs.activeSession?.activeTab?.zoomedPane, a, "precondition: a is zoomed")
 
-        let (ws2, newID) = WorkspaceTreeOps.splitPane(
+        let (ws2, newID) = TreeIntent.splitPane(
             a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "c"), in: zoomedWs,
         )
 
@@ -107,10 +107,10 @@ final class ZoomLayoutFixTests: XCTestCase {
     func testFocusOtherPaneWhileZoomedExitsZoomButRefocusKeepsIt() throws {
         let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
         let a = ws0.allPaneIDs()[0]
-        let (ws1, b) = WorkspaceTreeOps.splitPane(
+        let (ws1, b) = TreeIntent.splitPane(
             a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
         )
-        let zoomedWs = WorkspaceTreeOps.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
+        let zoomedWs = TreeIntent.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
         XCTAssertEqual(zoomedWs.activeSession?.activeTab?.zoomedPane, a, "precondition: a is zoomed")
 
         // Re-focusing the zoomed pane keeps the zoom (a click on the zoomed pane is not an exit).
@@ -129,10 +129,10 @@ final class ZoomLayoutFixTests: XCTestCase {
     func testMoveFocusWhileZoomedLandsOnSiblingAndExitsZoom() throws {
         let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
         let a = ws0.allPaneIDs()[0]
-        let (ws1, b) = WorkspaceTreeOps.splitPane(
+        let (ws1, b) = TreeIntent.splitPane(
             a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
         )
-        let zoomedWs = WorkspaceTreeOps.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
+        let zoomedWs = TreeIntent.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
 
         let moved = WorkspaceTreeOps.moveFocus(.right, bounds: bounds, in: zoomedWs)
 

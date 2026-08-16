@@ -39,7 +39,7 @@ public extension WorkspaceStore {
     /// 1 = the one closed before it; …) — the index-addressed reopen the Open-Quickly **Recent** rows route
     /// through so row N reopens EXACTLY tab N, not always the newest (the bug a plain `popLast()` caused for
     /// every row but the first). Removes that record from the DOCUMENT's ``closedTabRecords`` ring and
-    /// re-inserts it via ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` at the configured ``NewTabPosition``
+    /// re-inserts it via the `reopenClosedTab` intent at the configured ``NewTabPosition``
     /// — restoring the whole tab (its split tree + every pane's spec, keeping the original ``PaneID``s). The
     /// tab lands back in its OWNING session when that session is still alive; otherwise (the session was
     /// closed while the record sat on the LIFO) it falls back to the active session. The reopened session is

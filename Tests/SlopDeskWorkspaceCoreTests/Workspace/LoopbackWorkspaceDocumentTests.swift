@@ -203,7 +203,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
         await host.install(state: opening, pristine: true)
 
         // Every op here is fully determined by its arguments. `spawnTab` and `splitPane` are not —
-        // `WorkspaceTreeOps.newTab` mints the TabID itself — so running one through two documents
+        // `TreeIntent.newTab` mints the TabID itself — so running one through two documents
         // would compare two different trees and prove nothing about the versioning.
         let script: [(WorkspaceIntentOp, Data)] = [
             (.renameTab, WorkspaceIntentArgs.encode(id: s.tab.raw, name: "build")),

@@ -251,7 +251,7 @@ public extension TreeWorkspace {
     /// Re-docks every detached pane back into a tab — the LAUNCH-ONLY restore policy (v1): satellite
     /// windows do not restore across relaunch, but a quit/crash while detached must lose nothing, so the
     /// persisted detached panes fold back into their sessions (origin tab when alive, else a fresh tab —
-    /// ``WorkspaceTreeOps/reattachPane(_:in:)``). The persisted SELECTION is preserved (each reattach
+    /// the `reattachPane` intent). The persisted SELECTION is preserved (each reattach
     /// focuses its pane; a launch restore must not let the last-detached pane steal the saved focus).
     /// Applied by the store AFTER `normalized()` and ONLY at restore time — never op-internally (see
     /// ``normalized()``).
@@ -265,7 +265,7 @@ public extension TreeWorkspace {
         let savedActiveSession = copy.activeSessionID
         let savedTabIndices = copy.sessions.map { ($0.id, $0.activeTabIndex) }
         for id in copy.detachedPaneIDs() {
-            copy = WorkspaceTreeOps.reattachPane(id, in: copy)
+            copy = copy.applying(.reattachPane, to: id)
         }
         // Restore the saved selection (appended tabs never shift existing indices).
         copy.activeSessionID = savedActiveSession
@@ -284,20 +284,33 @@ public extension TreeWorkspace {
     /// older file may carry from the era when the desktop was a tab. Specs are dropped with them so
     /// reconcile never opens a stream for a pane no window will show. Pure.
     private func droppingDesktopPanes() -> TreeWorkspace {
+        let desktopIDs = sessions.flatMap { session in
+            session.specs.filter { $0.value.kind == .desktop }.map(\.key)
+        }
+        guard !desktopIDs.isEmpty else { return self }
+        // ONE op for both shapes a stale desktop can take: `closePane` walks the detached set as well
+        // as the tree, and it drops the spec with the pane either way, so reconcile never opens a
+        // stream for a pane no window will show.
         var copy = self
-        for (sIdx, session) in copy.sessions.enumerated() {
-            let desktopIDs = session.specs.filter { $0.value.kind == .desktop }.map(\.key)
-            guard !desktopIDs.isEmpty else { continue }
-            var repaired = session
-            repaired.detached.removeAll { entry in desktopIDs.contains(entry.pane) }
-            for id in desktopIDs {
-                repaired.specs.removeValue(forKey: id)
-            }
-            copy.sessions[sIdx] = repaired
-            for id in desktopIDs {
-                copy = WorkspaceTreeOps.closePane(id, in: copy)
-            }
+        for id in desktopIDs {
+            copy = copy.applying(.closePane, to: id)
         }
         return copy.normalized()
+    }
+
+    /// Asks the applier — the Rust decision, through the FFI door — to run `op` against `pane`, and
+    /// keeps the workspace unchanged on a refusal.
+    ///
+    /// The launch restore is the ONE place a document-shaping op runs outside an intent: it is not a
+    /// gesture, so there is no client to send one, and no host to answer. Routing it through the same
+    /// door anyway is what keeps the rule honest — a re-dock and a close mean here exactly what they
+    /// mean when a person asks for them, because it is the same code deciding. It runs once per
+    /// launch, so the round trip through the snapshot encoding costs nothing that matters.
+    private func applying(_ op: WorkspaceIntentOp, to pane: PaneID) -> TreeWorkspace {
+        WorkspaceIntentApplier.apply(
+            op: op.rawValue,
+            args: WorkspaceIntentArgs.encode(pane: pane),
+            to: WorkspaceTopology(tree: self),
+        ).topology?.tree ?? self
     }
 }

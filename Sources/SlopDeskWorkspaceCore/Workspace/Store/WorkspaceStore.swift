@@ -4522,7 +4522,7 @@ public extension WorkspaceStore {
     /// the union of the frames the view last reported via ``updateSolvedLayout(_:)`` (the exact geometry
     /// the user sees), else the reported container bounds (``updateContainerBounds(_:)``), else a nominal
     /// desktop rect — a directional neighbour is scale-invariant on the tiled tree (cf.
-    /// `WorkspaceTreeOps.neighbour(of:in:)`, which solves into a fixed unit square), so a chord fired
+    /// `FocusResolver.neighbor(of:_:in:)`, which reads solved frames), so a chord fired
     /// before the first layout report still resolves correctly instead of dying.
     private var treeGeometryBounds: CGRect {
         if let solved = lastSolvedLayout, !solved.frames.isEmpty {

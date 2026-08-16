@@ -121,6 +121,15 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         return (next, minted)
     }
 
+    private func closePane(
+        _ target: PaneID,
+        in ws: TreeWorkspace,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> TreeWorkspace {
+        applied(.closePane, WorkspaceIntentArgs.encode(pane: target), ws, file: file, line: line)
+    }
+
     private func setZoom(
         _ pane: PaneID,
         _ zoomed: Bool,
@@ -173,7 +182,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         let (ws, a) = singleLeaf()
         let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
-        let s3 = WorkspaceTreeOps.closePane(b, in: s2)
+        let s3 = closePane(b, in: s2)
         XCTAssertEqual(s3.allPaneIDs(), [a, c], "b removed; a and c survive")
         XCTAssertNil(s3.spec(for: b), "spec for the closed pane is dropped")
         assertInvariant(s3)
@@ -183,7 +192,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a|b; close a → the split collapses into just b (a single leaf, no orphan split node).
         let (ws, a) = singleLeaf()
         let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let s2 = WorkspaceTreeOps.closePane(a, in: s1)
+        let s2 = closePane(a, in: s1)
         let root = try activeRoot(s2)
         XCTAssertEqual(root, .leaf(b), "a 2-child split collapses to the lone survivor leaf")
         assertInvariant(s2)
@@ -196,7 +205,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // s1 active tab is the new one (index 1). Close its lone pane.
         let secondTabPane = try XCTUnwrap(s1.activeSession?.tabs[1].root.allPaneIDs().first)
         XCTAssertEqual(s1.sessions[0].tabs.count, 2)
-        let s2 = WorkspaceTreeOps.closePane(secondTabPane, in: s1)
+        let s2 = closePane(secondTabPane, in: s1)
         XCTAssertEqual(s2.sessions[0].tabs.count, 1, "closing a tab's last pane closes the tab")
         assertInvariant(s2)
     }
@@ -206,7 +215,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         let (ws, _) = singleLeaf()
         let (s1, d) = newSession(in: ws, name: "s2", spec: termSpec("d"))
         XCTAssertEqual(s1.sessions.count, 2)
-        let s2 = WorkspaceTreeOps.closePane(d, in: s1)
+        let s2 = closePane(d, in: s1)
         XCTAssertEqual(s2.sessions.count, 1, "closing the last pane of the last tab closes the session")
         assertInvariant(s2)
     }
@@ -214,7 +223,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testCloseLastPaneOfOnlySessionKeepsAFreshDefaultPane() {
         // The whole workspace can never be empty: closing the very last pane re-seeds a default leaf.
         let (ws, a) = singleLeaf()
-        let s1 = WorkspaceTreeOps.closePane(a, in: ws)
+        let s1 = closePane(a, in: ws)
         XCTAssertEqual(s1.sessions.count, 1, "the only session is preserved")
         XCTAssertEqual(s1.allPaneIDs().count, 1, "a fresh default pane re-seeds the empty workspace")
         XCTAssertNotEqual(s1.allPaneIDs()[0], a, "the re-seeded pane is a new identity")
@@ -232,7 +241,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
         // b is active (split focuses the new pane = c, then we split again; re-focus b explicitly).
         let s2b = WorkspaceTreeOps.focusPane(b, in: s2)
-        let s3 = WorkspaceTreeOps.closePane(b, in: s2b)
+        let s3 = closePane(b, in: s2b)
         let focus = try XCTUnwrap(activeTab(s3).activePane)
         XCTAssertEqual(focus, a, "focus moves to the LEFT neighbour (a), the first cardinal-direction hit")
         XCTAssertNotEqual(focus, c, "the right column is not chosen — left is tried first")
@@ -245,7 +254,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         let (ws, a) = singleLeaf()
         let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let s2 = setZoom(b, true, in: s1)
-        let s3 = WorkspaceTreeOps.closePane(b, in: s2)
+        let s3 = closePane(b, in: s2)
         XCTAssertNil(try activeTab(s3).zoomedPane, "closing the zoomed pane clears the dangling zoom")
         assertInvariant(s3)
     }

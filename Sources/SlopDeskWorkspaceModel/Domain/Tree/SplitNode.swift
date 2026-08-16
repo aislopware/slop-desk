@@ -15,8 +15,8 @@ public enum SplitAxis: String, Codable, Sendable, Equatable {
 // MARK: - Drop edge (drag-to-re-split / dock)
 
 /// A side a pane can be dropped against in the drag-to-re-split / dock-to-edge gesture — of a hovered
-/// target leaf (``WorkspaceTreeOps/moveLeaf(_:beside:axis:before:in:)``) or of the whole container
-/// (``WorkspaceTreeOps/moveLeafToRootEdge(_:edge:in:)``). It maps a screen edge to the split ``SplitAxis``
+/// target leaf (the `movePane` intent) or of the whole container
+/// (the `dockPaneAtTabEdge` intent). It maps a screen edge to the split ``SplitAxis``
 /// and the insertion side, so the UI hit-test and the pure tree ops read ONE source of truth and the
 /// edge→axis mapping can never drift (the easy place to invert it). `.left`/`.right` form COLUMNS (a
 /// `.horizontal` split partitions width); `.top`/`.bottom` form ROWS (a `.vertical` split partitions

@@ -54,7 +54,7 @@ public enum DropAction: Equatable, Sendable {
 /// holds a `nil` `terminalModel` for a video pane and every terminal actuator is `terminalModel?.…`
 /// (optional-chained), so the terminal-targeting actions (`injectText` / `hostOpen`) no-op without a crash,
 /// while the store-level split / reorder geometry stays kind-generic (a video pane tiles and splits as a
-/// first-class peer once minted — see `WorkspaceTreeOps.splitPane`).
+/// first-class peer once minted — see the `splitPane` intent).
 public enum DropActionResolver {
     public static func resolve(zone: DropZone, content: DroppedContent) -> DropAction? {
         // Text snippet: pastes into the focused terminal in EVERY zone ("Same" for both halves).

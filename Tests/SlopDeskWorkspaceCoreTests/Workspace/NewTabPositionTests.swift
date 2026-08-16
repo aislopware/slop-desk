@@ -3,9 +3,9 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pins the `new-tab-position` policy — the pure
-/// ``NewTabPosition/insertionIndex(activeTabIndex:tabCount:)`` math, the `at:`-aware
-/// ``WorkspaceTreeOps/newTab(in:spec:at:)`` / ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` placement, and
-/// the `SettingsKey.newTabPosition` Defaults bridge.
+/// ``NewTabPosition/insertionIndex(activeTabIndex:tabCount:)`` math, the `at:`-aware placement both
+/// ops that add a tab obey (`spawnTab` for ⌘T, `reopenClosedTab` for ⇧⌘T), and the
+/// `SettingsKey.newTabPosition` Defaults bridge.
 ///
 /// The load-bearing guarantee is that `.auto`/`.end` stay **byte-identical to the old `tabs.append`** (so
 /// every existing call site is unchanged) while `.afterCurrent` lands the new tab right after the active
@@ -68,7 +68,7 @@ final class NewTabPositionTests: XCTestCase {
 
     func testNewTabAfterCurrentInsertsAfterActiveTab() throws {
         let (ws, ids) = multiTabWorkspace(tabCount: 3, active: 1)
-        let (next, paneID) = WorkspaceTreeOps.newTab(
+        let (next, paneID) = TreeIntent.newTab(
             in: ws,
             spec: PaneSpec(kind: .terminal, title: "New"),
             at: .afterCurrent,
@@ -89,7 +89,7 @@ final class NewTabPositionTests: XCTestCase {
         // that every default-`.end` call site is unchanged from the old `tabs.append`.
         for pos in [NewTabPosition.end, .auto] {
             let (ws, ids) = multiTabWorkspace(tabCount: 3, active: 1)
-            let (next, paneID) = WorkspaceTreeOps.newTab(
+            let (next, paneID) = TreeIntent.newTab(
                 in: ws,
                 spec: PaneSpec(kind: .terminal, title: "New"),
                 at: pos,
@@ -106,45 +106,47 @@ final class NewTabPositionTests: XCTestCase {
     /// The default parameter is `.end`, so the no-`at:` call site is the append path (every existing caller).
     func testNewTabDefaultsToAppend() throws {
         let (ws, ids) = multiTabWorkspace(tabCount: 2, active: 0)
-        let (next, _) = WorkspaceTreeOps.newTab(in: ws, spec: PaneSpec(kind: .terminal, title: "New"))
+        let (next, _) = TreeIntent.newTab(in: ws, spec: PaneSpec(kind: .terminal, title: "New"))
         let session = try activeSession(next)
         XCTAssertEqual(session.activeTabIndex, 2)
         XCTAssertEqual(session.tabs.prefix(2).map(\.id), ids)
     }
 
-    // MARK: - insertTab placement (reopen restore)
+    // MARK: - Reopen-restore placement
 
-    func testInsertTabAfterCurrentPlacesAndMergesSpecs() throws {
-        let (ws, ids) = multiTabWorkspace(tabCount: 3, active: 0)
-        let pid = PaneID()
-        let restored = Tab(root: .leaf(pid), activePane: pid)
-        let specs = [pid: PaneSpec(kind: .terminal, title: "Restored")]
+    //
+    // The same `at:` policy on the OTHER path that inserts a pre-built tab: ⇧⌘T. There is no way to
+    // hand the document a tab it has never seen — a restored tab comes off the closed ring, which is
+    // why these go close-then-reopen rather than calling an insert directly.
 
-        let next = WorkspaceTreeOps.insertTab(restored, specs: specs, at: .afterCurrent, in: ws)
-        let session = try activeSession(next)
+    func testReopenAfterCurrentPlacesAfterTheActiveTabAndRestoresItsSpec() throws {
+        let (ws, ids) = multiTabWorkspace(tabCount: 4, active: 0)
+        let closed = try XCTUnwrap(ws.activeSession?.tabs[3])
+        let title = try XCTUnwrap(closed.root.allPaneIDs().first)
+        let ringed = TreeIntent.closeTab(closed.id, in: WorkspaceTopology(tree: ws))
+        XCTAssertEqual(ringed.closedTabRing, [closed.id], "the closed tab is on the ring to be restored")
+
+        let next = TreeIntent.reopenClosedTab(0, at: .afterCurrent, in: ringed)
+        let session = try activeSession(next.tree)
 
         XCTAssertEqual(session.tabs.count, 4)
         XCTAssertEqual(session.activeTabIndex, 1, "restored tab lands after the active (index 0) tab")
-        XCTAssertEqual(session.tabs[1].id, restored.id, "the pre-built tab id is preserved")
+        XCTAssertEqual(session.tabs[1].id, closed.id, "the pre-built tab id is preserved")
         XCTAssertEqual(session.tabs[3].id, ids[2], "trailing tabs shift down")
-        XCTAssertEqual(session.spec(for: pid)?.title, "Restored", "the restored spec is merged in")
-        XCTAssertTrue(next.isInvariantHeld(), "specs == leafIDs holds for the restored leaves")
+        XCTAssertNotNil(next.tree.spec(for: title), "the restored spec is merged back in")
+        XCTAssertTrue(next.tree.isInvariantHeld(), "specs == leafIDs holds for the restored leaves")
     }
 
-    func testInsertTabEndAppends() throws {
-        let (ws, _) = multiTabWorkspace(tabCount: 2, active: 1)
-        let pid = PaneID()
-        let restored = Tab(root: .leaf(pid), activePane: pid)
-        let next = WorkspaceTreeOps.insertTab(
-            restored,
-            specs: [pid: PaneSpec(kind: .terminal, title: "R")],
-            at: .end,
-            in: ws,
-        )
-        let session = try activeSession(next)
+    func testReopenEndAppends() throws {
+        let (ws, _) = multiTabWorkspace(tabCount: 3, active: 1)
+        let closed = try XCTUnwrap(ws.activeSession?.tabs[2])
+        let ringed = TreeIntent.closeTab(closed.id, in: WorkspaceTopology(tree: ws))
+
+        let next = TreeIntent.reopenClosedTab(0, at: .end, in: ringed)
+        let session = try activeSession(next.tree)
         XCTAssertEqual(session.activeTabIndex, 2)
-        XCTAssertEqual(session.tabs[2].id, restored.id)
-        XCTAssertTrue(next.isInvariantHeld())
+        XCTAssertEqual(session.tabs[2].id, closed.id)
+        XCTAssertTrue(next.tree.isInvariantHeld())
     }
 
     // MARK: - SettingsKey + Defaults bridge

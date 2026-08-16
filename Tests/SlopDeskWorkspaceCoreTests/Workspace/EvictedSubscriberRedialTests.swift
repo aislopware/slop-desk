@@ -113,7 +113,7 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     private func makeStore(_ dials: Dials) -> (store: WorkspaceStore, other: PaneID, subject: PaneID) {
         let base = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "other"))
         let other = base.allPaneIDs()[0]
-        let (tree, subject) = WorkspaceTreeOps.splitPane(
+        let (tree, subject) = TreeIntent.splitPane(
             other, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "subject"), in: base,
         )
         let store = WorkspaceStore(

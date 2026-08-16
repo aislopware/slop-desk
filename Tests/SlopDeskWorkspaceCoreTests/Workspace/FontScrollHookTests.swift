@@ -141,7 +141,7 @@ final class FontScrollHookTests: XCTestCase {
         // defensive contract for a tree that somehow carries one; the recorder of the ORIGINAL
         // terminal pane must stay empty after we act on the GUI pane.
         let seed = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
-        let (next, grafted) = WorkspaceTreeOps.splitPane(
+        let (next, grafted) = TreeIntent.splitPane(
             seed, axis: .horizontal, newSpec: PaneSpec(kind: .desktop, title: "Desktop"), in: store.tree,
         )
         _ = grafted

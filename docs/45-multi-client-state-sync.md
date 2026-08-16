@@ -1496,7 +1496,7 @@ the review round after it added exactly one op (26 `setPaneVideoTarget`, below).
   `WorkspaceIntentApplier.successorAfterClosing` re-lands the `ed76f137` project-section rule. The
   RULE is unchanged; the MRU RING is now shared, so two clients closing one tab land on one tab.
 - **Op 23 `dockPaneAtTabEdge` honours the tab its args always named** —
-  `WorkspaceTreeOps.moveLeafToTabRootEdge`, so the cross-tab rail-drag gutter drop lands. No wire
+  `tree_ops::move_leaf_to_tab_root_edge`, so the cross-tab rail-drag gutter drop lands. No wire
   change.
 - **`LoopbackWorkspaceDocument`** — the opt-in in-process document (§7.2) every tree-driving test now
   holds, pinned byte-for-byte against `HostWorkspaceDocument`.

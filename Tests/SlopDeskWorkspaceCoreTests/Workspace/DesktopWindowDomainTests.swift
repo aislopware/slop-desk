@@ -23,7 +23,7 @@ final class DesktopWindowDomainTests: XCTestCase {
     func testMintDetachedPaneNeverTouchesTheTree() {
         let before = ws
         let tabsBefore = before.activeSession?.tabs.count
-        let (after, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: before)
+        let (after, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: before)
 
         XCTAssertEqual(after.activeSession?.tabs.count, tabsBefore, "no tab is minted or grown")
         XCTAssertTrue(after.activeSession?.isDetached(id) == true)
@@ -34,9 +34,9 @@ final class DesktopWindowDomainTests: XCTestCase {
     /// Each mint is a fresh pane (one per display is the multi-display shape).
     func testMintDetachedPaneMintsSiblings() {
         var tree = ws
-        let (t1, first) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(displayID: 0), in: tree)
+        let (t1, first) = TreeIntent.mintDetachedPane(spec: desktopSpec(displayID: 0), in: tree)
         tree = t1
-        let (t2, second) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(displayID: 7), in: tree)
+        let (t2, second) = TreeIntent.mintDetachedPane(spec: desktopSpec(displayID: 7), in: tree)
         XCTAssertNotEqual(first, second)
         XCTAssertEqual(t2.activeSession?.detached.count, 2)
     }
@@ -44,27 +44,27 @@ final class DesktopWindowDomainTests: XCTestCase {
     // MARK: - reattach guards (the desktop never joins a tab)
 
     func testReattachPaneNoOpsForADesktopPane() {
-        let (tree, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: ws)
-        let after = WorkspaceTreeOps.reattachPane(id, in: tree)
+        let (tree, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: ws)
+        let after = TreeIntent.reattachPane(id, in: tree)
         XCTAssertEqual(after, tree, "a desktop pane must never fold back into a tab")
     }
 
     func testReattachPaneToNewTabNoOpsForADesktopPane() {
-        let (tree, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: tree0())
-        let after = WorkspaceTreeOps.reattachPaneToNewTab(id, in: tree)
+        let (tree, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: tree0())
+        let after = TreeIntent.reattachPaneToNewTab(id, in: tree)
         XCTAssertEqual(after, tree)
     }
 
     func testReattachBesideAnchorNoOpsForADesktopPane() throws {
-        let (tree, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: tree0())
+        let (tree, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: tree0())
         let anchor = try XCTUnwrap(tree.activeSession?.activeTab?.allPaneIDs().first)
-        let after = WorkspaceTreeOps.reattachPane(id, beside: anchor, axis: .horizontal, before: false, in: tree)
+        let after = TreeIntent.reattachPane(id, beside: anchor, axis: .horizontal, before: false, in: tree)
         XCTAssertEqual(after, tree)
     }
 
     func testReattachToRootEdgeNoOpsForADesktopPane() {
-        let (tree, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: tree0())
-        let after = WorkspaceTreeOps.reattachPane(id, toActiveTabRootEdge: .right, in: tree)
+        let (tree, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: tree0())
+        let after = TreeIntent.reattachPane(id, toActiveTabRootEdge: .right, in: tree)
         XCTAssertEqual(after, tree)
     }
 
@@ -73,21 +73,21 @@ final class DesktopWindowDomainTests: XCTestCase {
         var tree = tree0()
         let target = try XCTUnwrap(tree.activeSession?.activeTab?.allPaneIDs().first)
         // Give the tab a second leaf so the detach leaves the tab alive.
-        tree = WorkspaceTreeOps.splitPane(
+        tree = TreeIntent.splitPane(
             target, axis: .horizontal,
             newSpec: PaneSpec(kind: .terminal, title: "Terminal"),
             in: tree,
         ).0
-        tree = WorkspaceTreeOps.detachPane(target, in: tree)
+        tree = TreeIntent.detachPane(target, in: tree)
         XCTAssertTrue(tree.activeSession?.isDetached(target) == true)
-        let after = WorkspaceTreeOps.reattachPane(target, in: tree)
+        let after = TreeIntent.reattachPane(target, in: tree)
         XCTAssertFalse(after.activeSession?.isDetached(target) == true)
     }
 
     // MARK: - launch drop (the desktop never survives a relaunch)
 
     func testRedockDropsDetachedDesktopPanes() {
-        let (tree, id) = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: tree0())
+        let (tree, id) = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: tree0())
         let restored = tree.redockingDetachedPanes()
         XCTAssertNil(restored.spec(for: id), "a persisted desktop window is dropped, never redocked")
         XCTAssertFalse(restored.activeSession?.isDetached(id) == true)
@@ -99,7 +99,7 @@ final class DesktopWindowDomainTests: XCTestCase {
     func testRedockDropsTreeResidentDesktopLeavesFromOlderFiles() throws {
         var tree = tree0()
         let anchor = try XCTUnwrap(tree.activeSession?.activeTab?.allPaneIDs().first)
-        let (grown, desktopLeaf) = WorkspaceTreeOps.splitPane(
+        let (grown, desktopLeaf) = TreeIntent.splitPane(
             anchor, axis: .horizontal, newSpec: desktopSpec(), in: tree,
         )
         tree = grown
@@ -116,13 +116,13 @@ final class DesktopWindowDomainTests: XCTestCase {
     func testRedockKeepsRedockingTerminalDetachedPanes() throws {
         var tree = tree0()
         let target = try XCTUnwrap(tree.activeSession?.activeTab?.allPaneIDs().first)
-        tree = WorkspaceTreeOps.splitPane(
+        tree = TreeIntent.splitPane(
             target, axis: .horizontal,
             newSpec: PaneSpec(kind: .terminal, title: "Terminal"),
             in: tree,
         ).0
-        tree = WorkspaceTreeOps.detachPane(target, in: tree)
-        tree = WorkspaceTreeOps.mintDetachedPane(spec: desktopSpec(), in: tree).0
+        tree = TreeIntent.detachPane(target, in: tree)
+        tree = TreeIntent.mintDetachedPane(spec: desktopSpec(), in: tree).0
 
         let restored = tree.redockingDetachedPanes()
         XCTAssertFalse(restored.activeSession?.isDetached(target) == true, "the terminal redocked")

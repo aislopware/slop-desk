@@ -25,7 +25,7 @@ final class SelectLayoutTransformTests: XCTestCase {
         var ws = TreeWorkspace.singlePane(spec: termSpec("p0"))
         let first = ws.allPaneIDs()[0]
         for i in 1..<max(n, 1) where n > 1 {
-            let (after, _) = WorkspaceTreeOps.splitPane(first, axis: .horizontal, newSpec: termSpec("p\(i)"), in: ws)
+            let (after, _) = TreeIntent.splitPane(first, axis: .horizontal, newSpec: termSpec("p\(i)"), in: ws)
             ws = after
         }
         // Pin the active pane to the first leaf in DFS order (deterministic across the split chain).

@@ -424,14 +424,14 @@ final class WorkspacePersistenceTests: XCTestCase {
         let session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "build"))
         // Add a second TERMINAL tab + a DESKTOP tab so the round-trip exercises the mixed-kind tree
         // (terminal / desktop panes are ordinary leaves).
-        let (withWindow, windowPane) = WorkspaceTreeOps.newTab(
+        let (withWindow, windowPane) = TreeIntent.newTab(
             in: TreeWorkspace(sessions: [session], activeSessionID: session.id),
             spec: PaneSpec(
                 kind: .desktop, title: "agent",
                 video: VideoEndpoint(windowID: 0, title: "agent", displayID: 0),
             ),
         )
-        let (grown, _) = WorkspaceTreeOps.newTab(
+        let (grown, _) = TreeIntent.newTab(
             in: withWindow,
             spec: PaneSpec(kind: .terminal, title: "logs"),
         )
@@ -519,18 +519,22 @@ final class WorkspacePersistenceTests: XCTestCase {
     func testLoadTreeExceedingMaxItemsIsBoundedReset() throws {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
-        // A single session whose one tab carries maxItems + 1 leaves (a deep split), via the tree ops.
-        var tree = TreeWorkspace.defaultWorkspace()
-        let firstLeaf = try XCTUnwrap(tree.allPaneIDs().first)
-        // Split the active pane repeatedly to grow leaves past the ceiling. Each split adds one leaf.
-        for _ in 0...(WorkspacePersistence.maxItems) {
-            let active = tree.activeSession?.activeTab?.activePane ?? firstLeaf
-            let (next, _) = WorkspaceTreeOps.splitPane(
-                active, axis: .horizontal,
-                newSpec: PaneSpec(kind: .terminal, title: "x"), in: tree,
+        // A single session carrying maxItems + 1 leaves, spread over tabs of 200: the document's own
+        // `childCount` is a u8, so no ONE split can hold them — an over-ceiling file is wide, never a
+        // single impossible fan-out.
+        var tabs: [Tab] = []
+        var specs: [PaneID: PaneSpec] = [:]
+        while specs.count <= WorkspacePersistence.maxItems {
+            let leaves = (0..<200).map { _ in PaneID() }
+            for leaf in leaves { specs[leaf] = PaneSpec(kind: .terminal, title: "x") }
+            let root = SplitNode.split(
+                id: SplitNodeID(), axis: .horizontal,
+                children: leaves.map { WeightedChild(weight: .flex(1.0), node: .leaf($0)) },
             )
-            tree = next
+            tabs.append(Tab(root: root, activePane: leaves[0]))
         }
+        let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         XCTAssertGreaterThan(tree.allPaneIDs().count, WorkspacePersistence.maxItems, "the fixture is over the ceiling")
         try persistence.save(tree)
 

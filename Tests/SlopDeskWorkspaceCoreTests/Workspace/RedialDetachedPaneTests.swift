@@ -71,7 +71,7 @@ final class RedialDetachedPaneTests: XCTestCase {
     private func makeStore(_ rec: Recorder) -> (WorkspaceStore, left: PaneID, right: PaneID) {
         let base = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "left"))
         let left = base.allPaneIDs()[0]
-        let (ws, right) = WorkspaceTreeOps.splitPane(
+        let (ws, right) = TreeIntent.splitPane(
             left, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "right"), in: base,
         )
         let store = WorkspaceStore(
