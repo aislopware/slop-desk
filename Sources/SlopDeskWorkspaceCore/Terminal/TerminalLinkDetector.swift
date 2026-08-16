@@ -22,9 +22,10 @@
 // ## Why there are two width entries behind one overload set
 //
 // ``displayCellWidth(of:)`` for a `Character` reaches the scalar entry, not the string one. The
-// callers that walk a line cell by cell — `ViLineMotion`, `HintLabelAssigner` — would otherwise
-// build a one-character `String` per column, allocating once per cell to ask a question about a
-// scalar they were already holding.
+// callers that walk a line cell by cell — `HintLabelAssigner`, `ScrollbackWrapMapper` — would
+// otherwise build a one-character `String` per column, allocating once per cell to ask a question
+// about a scalar they were already holding. `ViLineMotion` used to be the third; its walk moved
+// wholesale to `slopdesk_terminal::vimotion`, which reads the same widths without crossing at all.
 
 import CSlopDeskFFI
 import SlopDeskArena

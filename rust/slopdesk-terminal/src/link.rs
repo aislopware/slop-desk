@@ -549,7 +549,7 @@ const fn is_regional_indicator(scalar: char) -> bool {
 /// because the cases a terminal actually renders — combining marks, variation selectors, ZWJ
 /// sequences, skin tones, flag pairs — are exactly the ones above, and a dependency would bring a
 /// Unicode table this file measures in five lines.
-fn clusters(text: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn clusters(text: &str) -> impl Iterator<Item = &str> {
     let mut chars = text.char_indices().peekable();
     core::iter::from_fn(move || {
         let (start, first) = chars.next()?;

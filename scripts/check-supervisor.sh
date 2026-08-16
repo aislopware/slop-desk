@@ -3589,6 +3589,31 @@ for bit in 'MULTI_LINE: u32 = 1 << 0' 'TRAILING_NEWLINE: u32 = 1 << 1' 'SUDO_OR_
 done
 printf 'check-supervisor: one paste guard, and the secret one stays a different engine.\n'
 
+# ── One clustering answers the cursor and the badge that says where it is ──────────────────────
+# The vi copy-mode motions used to walk the row in Swift, `Character` by `Character`, asking the
+# link detector for each glyph's width. The link and hint overlays walked the SAME row through
+# `slopdesk_terminal::link`'s clustering. Two clusterings over one row put a cursor half a glyph
+# away from the badge claiming to be on it, on exactly the CJK rows nobody checks by hand — so the
+# motions moved beside the clustering, and this pins that they stay there.
+SWIFT_VI=Sources/SlopDeskWorkspaceCore/Terminal/ViLineMotion.swift
+if hit=$(spells 'CellChar|charClass|isWhitespace|isLetter|isNumber|runStartIndex|runEndIndex' "${SWIFT_VI}"); then
+  fail "${hit} walks the row in Swift again — slopdesk-terminal::vimotion owns the motions"
+fi
+for entry in 'slopdesk_vi_next_word_start' 'slopdesk_vi_column_step' 'slopdesk_vi_cell_width'; do
+  if ! spells "${entry}" "${SWIFT_VI}" > /dev/null; then
+    fail "${SWIFT_VI} no longer asks ${entry} — the motions are one implementation"
+  fi
+done
+for law in 'pub fn cells' 'pub fn addressable_cells' 'fn run_start_index' 'fn run_end_index'; do
+  if ! spells "${law}" rust/slopdesk-terminal/src/vimotion.rs > /dev/null; then
+    fail "rust/slopdesk-terminal/src/vimotion.rs lost ${law} — the copy-mode motions live there"
+  fi
+done
+if ! spells 'use crate::link::\{clusters, scalar_cells\}' rust/slopdesk-terminal/src/vimotion.rs > /dev/null; then
+  fail "vimotion stopped reading link's clustering — the cursor and the hint badge would drift apart"
+fi
+printf 'check-supervisor: one clustering answers the cursor and the badge.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

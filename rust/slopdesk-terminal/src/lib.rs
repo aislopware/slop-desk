@@ -41,6 +41,7 @@ pub mod link;
 pub mod mode;
 pub mod paste;
 pub mod tracker;
+pub mod vimotion;
 
 pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, OutputRequests};
 pub use dedup::InputDedupRing;

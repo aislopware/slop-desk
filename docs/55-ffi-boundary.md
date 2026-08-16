@@ -170,6 +170,21 @@ score is bit-identical, and `rust/slopdesk-fuzzy` pins that in a test — it is 
 whether the caller will underline anything. Most callers will not: a filtered list ranks every row
 and highlights only the handful it draws.
 
+### The scalar answer whose refusal is not a refusal
+
+The nine `slopdesk_vi_*` doors answer an `intptr_t`, and `-1` on half of them means the copy-mode
+cursor ran off the row — which is not an error but a WRAP: the caller moves to the neighbouring row
+and asks again. That reading forces the type. Column `0` is the most common landing a vi motion has,
+so §4's "0 means no answer" is unavailable here, and `size_t` has no room for the sentinel at all.
+`intptr_t` with `-1` outside the answer's range gives one, and the four doors that always land —
+`first_non_blank`, `column_step`, `snap_to_cell`, `cell_width` — never return it, which the header
+states so a caller knows which three lines need the `nil` arm.
+
+Nine doors rather than one that returns a struct of nine columns: a keystroke asks exactly one of
+them, and a door here costs a `withUTF8` over a row that is already contiguous. The row crosses
+once per keypress, not once per column — which is the actual saving, because what moved to Rust was
+a per-`Character` FFI call in a Swift loop.
+
 ### The header is written by hand
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)

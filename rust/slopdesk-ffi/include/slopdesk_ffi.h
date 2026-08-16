@@ -1975,6 +1975,25 @@ size_t slopdesk_link_scan_take_arena(SlopDeskLinkScan *handle, uint8_t *out, siz
 size_t slopdesk_link_scalar_cells(uint32_t scalar);
 size_t slopdesk_link_text_cells(const uint8_t *bytes, size_t len);
 
+/* ---- copy mode: where a vi motion lands on ONE row, in display CELL columns --------------
+ * Same grapheme clustering as the link scan above, on purpose: a cursor landed by `w` and a hint
+ * badge claimed by the overlay must name the same column on a CJK row.
+ *
+ * The answer is an intptr_t because half these motions can fail to land — `w` off the last word,
+ * `b` at the row's start — and that is a WRAP to the neighbouring row, not an error. -1 is that
+ * wrap; every other answer is a real column, INCLUDING 0. The four that always land never
+ * return -1.                                                                                  */
+#define SLOPDESK_VI_NO_LANDING ((intptr_t)-1)
+intptr_t slopdesk_vi_first_non_blank(const uint8_t *line, size_t len);
+intptr_t slopdesk_vi_last_non_blank(const uint8_t *line, size_t len);
+intptr_t slopdesk_vi_next_word_start(const uint8_t *line, size_t len, size_t col);
+intptr_t slopdesk_vi_prev_word_start(const uint8_t *line, size_t len, size_t col);
+intptr_t slopdesk_vi_word_end(const uint8_t *line, size_t len, size_t col);
+intptr_t slopdesk_vi_last_word_start(const uint8_t *line, size_t len);
+intptr_t slopdesk_vi_column_step(const uint8_t *line, size_t len, size_t col, intptr_t delta);
+intptr_t slopdesk_vi_snap_to_cell(const uint8_t *line, size_t len, size_t col);
+intptr_t slopdesk_vi_cell_width(const uint8_t *line, size_t len, size_t col);
+
 /* ---------------------------------------------------------------------------- *
  * The per-pane command blocks: one record per command the shell ran.
  *
