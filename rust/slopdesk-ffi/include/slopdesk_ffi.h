@@ -65,6 +65,11 @@ size_t slopdesk_sanitize(const uint8_t *bytes, size_t len, bool distill, bool re
                          uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_strip(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_holdback(const uint8_t *bytes, size_t len);
+// The sync-input fan-out's mirror: client→host bytes with everything a KEYBOARD did not
+// produce removed — replies, mouse reports, focus events. The other direction from
+// `slopdesk_sanitize`, which drops the QUERIES rather than the answers.
+size_t slopdesk_sync_input_keyboard_only(const uint8_t *bytes, size_t len, uint8_t *out,
+                                        size_t cap);
 size_t slopdesk_input_mode_reset(uint8_t *out, size_t cap);
 // The STYLED reading — the clipboard's and the preview's, columns rewritten and colours kept.
 // Answer: [u32 BE lines] ( [u32 BE runs] ( [u8 flags][u8 fg][3] [u8 bg][3] [u32 BE len][text] )* )*

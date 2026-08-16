@@ -13,7 +13,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_sanitize::{Options, inputmode, plaintext, sanitize, styled};
+use slopdesk_sanitize::{Options, inputmode, plaintext, sanitize, styled, syncinput};
 
 use crate::{borrow, deliver};
 
@@ -90,6 +90,30 @@ pub unsafe extern "C" fn slopdesk_plaintext_strip(
 pub unsafe extern "C" fn slopdesk_plaintext_holdback(bytes: *const c_uchar, len: usize) -> usize {
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     unsafe { plaintext::holdback_start(borrow(bytes, len)) }
+}
+
+/// An input chunk with everything a KEYBOARD did not produce removed, for the sync-input fan-out.
+///
+/// The other direction from [`slopdesk_sanitize`]. That one reads host→client bytes and drops the
+/// queries a replay would make a fresh terminal answer again; this reads client→host bytes and
+/// drops the ANSWERS — terminal replies, mouse reports, focus events — because the tap rides the
+/// pane's single OUT funnel and a sibling shell that never asked would run them as a command.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_sync_input_keyboard_only(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
+    unsafe { deliver(&syncinput::keyboard_only(borrow(bytes, len)), out, cap) }
 }
 
 /// The bytes that put a terminal back to a known-quiet input state.
@@ -199,8 +223,30 @@ const fn colour(value: Option<styled::Color>) -> [u8; 4] {
 mod tests {
     use super::{
         slopdesk_input_mode_reset, slopdesk_plaintext_holdback, slopdesk_plaintext_strip, slopdesk_sanitize,
-        slopdesk_styled_lines,
+        slopdesk_styled_lines, slopdesk_sync_input_keyboard_only,
     };
+
+    /// The sync-input door answers under the same convention, and strips the input direction's
+    /// reports rather than the output direction's queries.
+    #[test]
+    fn the_sync_input_door_measures_then_fills() {
+        let input = b"cc\x1b[8;33;96t\x1b[<65;31;18M\r";
+        // SAFETY: the input is a live local; a null `out` with `cap` 0 is the measuring call.
+        let needed = unsafe {
+            slopdesk_sync_input_keyboard_only(input.as_ptr(), input.len(), core::ptr::null_mut(), 0)
+        };
+        assert_eq!(needed, 3, "the measure names the keystrokes without writing them");
+
+        let mut out = [0_u8; 16];
+        // SAFETY: both buffers are live locals.
+        let written =
+            unsafe { slopdesk_sync_input_keyboard_only(input.as_ptr(), input.len(), out.as_mut_ptr(), 16) };
+        assert_eq!(
+            &out[..written],
+            b"cc\r",
+            "the reports are gone and the typing is not"
+        );
+    }
 
     /// The passes run, and the answer fits the convention: a closed alt-screen segment is dropped
     /// and the history either side of it survives.

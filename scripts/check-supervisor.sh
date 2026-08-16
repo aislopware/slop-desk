@@ -3681,7 +3681,18 @@ while IFS= read -r owner; do
     fail "${owner} defines its own escape scanner — slopdesk-sanitize::vtscan is the one"
   fi
 done < <(grep -lE 'fn (parse_csi|string_sequence_end)' rust/*/src/*.rs rust/*/src/*/*.rs 2> /dev/null || true)
-printf 'check-supervisor: one grammar for where an escape ends, and five copies is not it.\n'
+# And the SIXTH copy, which was in Swift and on the INPUT path. `SyncInputByteFilter` hand-rolled
+# both walks under a "mirror, don't share" comment, deciding which client→host bytes get mirrored
+# into a sibling pane. A disagreement there does not merely render wrong: the bytes it lets through
+# are typed into another shell, and the next mirrored `↵` runs them.
+SWIFT_SYNC_INPUT=Sources/SlopDeskWorkspaceCore/Workspace/Store/SyncInputByteFilter.swift
+if hit=$(spells 'func (parseCSI|stringSequenceEnd)|struct CSISequence|0x3F\)\.contains' "${SWIFT_SYNC_INPUT}"); then
+  fail "${hit} walks escapes in Swift again — slopdesk-sanitize::syncinput owns the input filter"
+fi
+if ! spells 'slopdesk_sync_input_keyboard_only' "${SWIFT_SYNC_INPUT}" > /dev/null; then
+  fail "${SWIFT_SYNC_INPUT} no longer asks the door — the sync-input filter is one implementation"
+fi
+printf 'check-supervisor: one grammar for where an escape ends, and six copies is not it.\n'
 
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through

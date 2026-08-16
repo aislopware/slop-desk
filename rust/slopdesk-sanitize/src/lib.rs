@@ -50,6 +50,7 @@ pub mod query;
 pub mod sanitize;
 pub mod styled;
 pub mod syncframe;
+pub mod syncinput;
 pub mod vtscan;
 pub mod width;
 
