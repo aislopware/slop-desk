@@ -3567,6 +3567,28 @@ for rule in 'pub fn lines' 'fn escape_end' 'fn apply_sgr' 'fn is_erase_to_line_e
 done
 printf 'check-supervisor: one VT grammar for styled text, and the clipboard destyles it.\n'
 
+# ── One paste guard, and the other one stays a different engine ────────────────────────────────
+# Two guards ask two questions and must never merge: `paste` asks "would this run something
+# dangerous at a prompt?", `secrets` asks "would typing this leak a credential?". Both are Rust
+# now; what this pins is that neither Swift face grows rules of its own, and that the four dangers
+# keep the same bit numbering on both sides — the mask crosses as itself, so a renumbering here
+# would silently relabel every warning the sheet prints.
+SWIFT_PASTE=Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift
+if hit=$(spells 'containsElevationToken|isSeparator|unicodeScalars' "${SWIFT_PASTE}"); then
+  fail "${hit} classifies a paste in Swift again — slopdesk-terminal::paste owns the four dangers"
+fi
+for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn'; do
+  if ! spells "${entry}" "${SWIFT_PASTE}" > /dev/null; then
+    fail "${SWIFT_PASTE} no longer asks ${entry} — the guard is one implementation"
+  fi
+done
+for bit in 'MULTI_LINE: u32 = 1 << 0' 'TRAILING_NEWLINE: u32 = 1 << 1' 'SUDO_OR_SU: u32 = 1 << 2' 'CONTROL_CHARS: u32 = 1 << 3'; do
+  if ! spells "${bit}" rust/slopdesk-terminal/src/paste.rs > /dev/null; then
+    fail "rust/slopdesk-terminal/src/paste.rs renumbered a danger (${bit}) — the mask crosses as itself"
+  fi
+done
+printf 'check-supervisor: one paste guard, and the secret one stays a different engine.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

@@ -16,6 +16,9 @@
 //! - [`blocks`] — the per-command records the host segments the stream into: their bounded ring,
 //!   the status each derives, the jump-to-failed walk, and the coalescing that keeps ten clicks on
 //!   one block from becoming ten wire requests.
+//! - [`paste`] — what a clipboard payload would DO at a prompt, and the states in which it provably
+//!   cannot run, which is the difference between a confirmation worth reading and one worth
+//!   dismissing.
 //!
 //! ## What is guaranteed
 //! - **No `unsafe`.** `#![forbid(unsafe_code)]`, so not even a downstream `allow` reintroduces it.
@@ -36,6 +39,7 @@ pub mod inputbox;
 pub mod keybind;
 pub mod link;
 pub mod mode;
+pub mod paste;
 pub mod tracker;
 
 pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, OutputRequests};

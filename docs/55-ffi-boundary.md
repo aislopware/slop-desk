@@ -159,6 +159,11 @@ negative. That is the whole reason a sentinel is admissible here and not in `Slo
 the sentinel is outside the answer's range *by construction of the algorithm*, not by a convention
 someone has to remember.
 
+`slopdesk_paste_dangers` is the same shape read one step further: its answer is a BITMASK, and a
+mask of `0` is a real answer — nothing about this clipboard is dangerous — where `0` from an
+`(out, cap)` entry means the caller should stop. The two cannot be confused because the return type
+is not `size_t`; a scalar door that wants a refusal has to say so in its own type.
+
 The same matcher also has `slopdesk_fuzzy_score`, which is §4-shaped because it answers a score AND a
 variable number of matched positions. Two doors over one implementation is not two answers — the
 score is bit-identical, and `rust/slopdesk-fuzzy` pins that in a test — it is one implementation told

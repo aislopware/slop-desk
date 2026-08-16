@@ -72,6 +72,14 @@ size_t slopdesk_input_mode_reset(uint8_t *out, size_t cap);
 // 0 absent, 1 palette (a = slot), 2 direct (a,b,c = r,g,b). An absent colour is the surface's own.
 size_t slopdesk_styled_lines(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 
+/* ---- paste protection: what a clipboard payload would do at a prompt ---------------------
+ * The mask is multi-line 1, trailing newline 2, sudo/su 4, control characters 8. A mask of 0 is
+ * an ANSWER — nothing dangerous — not the refusal `0` means for the (out, cap) entries above.  */
+uint32_t slopdesk_paste_dangers(const uint8_t *text, size_t len);
+bool slopdesk_paste_should_warn(const uint8_t *text, size_t len, bool protection_on,
+                                bool bracketed_safe, bool program_advertised_bracketed,
+                                bool is_alternate_screen);
+
 typedef struct SlopDeskReplay SlopDeskReplay;
 
 // Lifecycle. Returns NULL only if allocation failed.
