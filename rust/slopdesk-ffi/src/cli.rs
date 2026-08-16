@@ -444,22 +444,11 @@ pub unsafe extern "C" fn slopdesk_cli_shell(
     true
 }
 
-/// A shell's canonical name, which is what the parser round-trips on.
-///
-/// # Safety
-/// `out` must be null, or writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub const unsafe extern "C" fn slopdesk_cli_shell_name(shell: u32, out: *mut c_uchar, cap: usize) -> usize {
-    let Some(shell) = shell_of(shell) else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation on the output buffer.
-    unsafe { text(shell.name(), out, cap) }
-}
+// The code-to-NAME direction has no door: Swift's `CLICompletions.Shell` is a `String`-raw enum
+// whose cases ARE the CLI tokens, so its `rawValue` is that answer already. What has to be shared
+// is the PARSE — which spellings a user may type, `pwsh` among them — and `slopdesk_cli_shell`
+// above is it; a name the enum could produce but the parser would reject fails `init?(argument:)`
+// on the spot.
 
 /// The completion script for a shell, terminated by a trailing newline.
 ///

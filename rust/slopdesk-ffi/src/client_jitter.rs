@@ -142,19 +142,6 @@ pub const extern "C" fn slopdesk_adaptive_jitter_new(
     ))
 }
 
-/// The depth that would absorb the given jitter. A pure query — the controller does not move.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_adaptive_jitter_depth_for(
-    controller: SlopDeskAdaptiveJitter,
-    jitter_seconds: f64,
-) -> u32 {
-    controller_of(controller).depth_for_jitter(jitter_seconds)
-}
-
 /// Folds one decoded frame's smoothed jitter and answers the recommendation.
 ///
 /// # Safety
@@ -275,10 +262,10 @@ const fn controller_record(working: &AdaptiveJitterController) -> SlopDeskAdapti
 )]
 mod tests {
     use super::{
-        slopdesk_adaptive_jitter_default_cooldown, slopdesk_adaptive_jitter_default_safety,
-        slopdesk_adaptive_jitter_depth_for, slopdesk_adaptive_jitter_new,
-        slopdesk_adaptive_jitter_note_frame, slopdesk_adaptive_jitter_note_underrun,
-        slopdesk_owd_jitter_micros, slopdesk_owd_jitter_new, slopdesk_owd_jitter_note,
+        controller_of, slopdesk_adaptive_jitter_default_cooldown, slopdesk_adaptive_jitter_default_safety,
+        slopdesk_adaptive_jitter_new, slopdesk_adaptive_jitter_note_frame,
+        slopdesk_adaptive_jitter_note_underrun, slopdesk_owd_jitter_micros, slopdesk_owd_jitter_new,
+        slopdesk_owd_jitter_note,
     };
 
     #[test]
@@ -326,7 +313,7 @@ mod tests {
         assert_eq!(grown, 3);
         assert_eq!(controller.shrink_run, 0);
         assert_eq!(
-            slopdesk_adaptive_jitter_depth_for(controller, 0.0),
+            controller_of(controller).depth_for_jitter(0.0),
             1,
             "a clean link is the floor"
         );

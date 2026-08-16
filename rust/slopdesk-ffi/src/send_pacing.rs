@@ -12,7 +12,7 @@
 //! at the first said it "mirrors the lane's own one-shot test", which is the drift risk stated as a
 //! promise. There is one test now, and both callers ask it.
 
-use slopdesk_video::send_pacing::{PacedChunk, SendJob, may_send_inline, pace_plan, total_span_nanos};
+use slopdesk_video::send_pacing::{PacedChunk, SendJob, may_send_inline, pace_plan};
 
 /// One frame's pacing parameters, as its owner computes them.
 #[derive(Debug, Clone, Copy, Default)]
@@ -90,17 +90,6 @@ pub unsafe extern "C" fn slopdesk_send_pace_plan(
     plan.len()
 }
 
-/// The lane's total serialisation for a job in nanoseconds — the last chunk's deadline plus any
-/// leading delay. What a caller reasons about a frame's wire span with, not what it sleeps on.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_send_total_span_nanos(job: SlopDeskSendJob) -> u64 {
-    total_span_nanos(job_of(job))
-}
-
 /// Whether a job may skip the lane and go out on the caller's own thread.
 ///
 /// `queued` and `transmitting` are the lane's own state, read together under its lock: a job that
@@ -136,8 +125,7 @@ mod tests {
     use core::ptr;
 
     use super::{
-        SlopDeskPacedChunk, SlopDeskSendJob, slopdesk_send_may_inline, slopdesk_send_pace_plan,
-        slopdesk_send_total_span_nanos,
+        SlopDeskPacedChunk, SlopDeskSendJob, job_of, slopdesk_send_may_inline, slopdesk_send_pace_plan,
     };
 
     /// 0.7 ms — the gap the timer-quantum argument is about.
@@ -203,7 +191,10 @@ mod tests {
     fn the_span_counts_the_leading_delay_once() {
         let mut delayed = job(10, GAP);
         delayed.leading_delay_nanos = 5_000_000;
-        assert_eq!(slopdesk_send_total_span_nanos(delayed), 5_000_000 + GAP * 2);
+        assert_eq!(
+            slopdesk_video::send_pacing::total_span_nanos(job_of(delayed)),
+            5_000_000 + GAP * 2,
+        );
     }
 
     #[test]

@@ -107,16 +107,12 @@ impl SlopDeskQpController {
     }
 }
 
-/// The knobs, forced into a shape the fold can honour: both quantisers inside the legal span, the
-/// coarse one never below the sharp one, and both steps at least one.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_qp_sanitize(config: SlopDeskQpConfig) -> SlopDeskQpConfig {
-    SlopDeskQpConfig::of(config.inner().sanitized())
-}
+// The knobs are sanitised by `slopdesk_qp_new`, and there is no door that only sanitises.
+//
+// `QpController::new` calls `sanitized()` on the way in and so does the by-value rebuild, so every
+// controller that exists has legal knobs whatever a caller passed. A standalone door would answer a
+// config the caller then has to remember to use — and the one that forgot would be
+// indistinguishable from the one that did.
 
 /// A controller seeded at `seed_q`, with the config sanitised and the seed clamped into it.
 #[unsafe(no_mangle)]
@@ -377,8 +373,15 @@ mod tests {
         SlopDeskIdrConfig, SlopDeskQpConfig, SlopDeskQpController, slopdesk_idr_policy_available_tokens,
         slopdesk_idr_policy_decide, slopdesk_idr_policy_free, slopdesk_idr_policy_grace,
         slopdesk_idr_policy_new, slopdesk_idr_policy_note_keyframe_sent, slopdesk_qp_clamped_int,
-        slopdesk_qp_decide, slopdesk_qp_new, slopdesk_qp_sanitize,
+        slopdesk_qp_decide, slopdesk_qp_new,
     };
+
+    /// The sanitation `QpController::new` applies on the way in, asked directly: there is no door
+    /// that only sanitises, because a caller who forgot to use its answer would look identical to
+    /// one who did.
+    fn sanitized(config: SlopDeskQpConfig) -> SlopDeskQpConfig {
+        SlopDeskQpConfig::of(config.inner().sanitized())
+    }
 
     /// The production knobs.
     const fn knobs() -> SlopDeskQpConfig {
@@ -406,7 +409,7 @@ mod tests {
     #[test]
     fn a_hostile_config_cannot_invert_or_escape_the_legal_span() {
         assert_eq!(
-            slopdesk_qp_sanitize(SlopDeskQpConfig {
+            sanitized(SlopDeskQpConfig {
                 sharp: -5,
                 coarse: 3,
                 up_step: 0,
@@ -421,7 +424,7 @@ mod tests {
             "a sub-legal sharp rises to the floor and the steps land at one",
         );
         assert_eq!(
-            slopdesk_qp_sanitize(SlopDeskQpConfig {
+            sanitized(SlopDeskQpConfig {
                 sharp: 44,
                 coarse: 12,
                 up_step: 3,

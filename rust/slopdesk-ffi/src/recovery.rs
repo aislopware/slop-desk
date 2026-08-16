@@ -302,15 +302,12 @@ pub extern "C" fn slopdesk_recovery_constant(index: u8) -> u32 {
     }
 }
 
-/// The default lossy-escalation floor in seconds, for a caller building a policy without one.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_recovery_default_escalation_floor() -> f64 {
-    recovery::DEFAULT_LOSSY_ESCALATION_FLOOR_SECONDS
-}
+// The DEFAULT floor has no door of its own, because no caller wants it on its own.
+//
+// Swift reads the floor exactly once, through `slopdesk_recovery_escalation_floor_seconds` with the
+// process environment — and that door already ANSWERS the default for an absent, unparseable or
+// out-of-band `SLOPDESK_ESCALATION_FLOOR_MS`. A second door would let a caller take the default
+// while skipping the env, which is the one way the resolved floor could differ per process.
 
 /// What `SLOPDESK_ESCALATION_FLOOR_MS` means, in seconds.
 ///
@@ -665,7 +662,7 @@ mod tests {
 
     #[test]
     fn the_floor_takes_the_default_for_anything_outside_its_band() {
-        let default = slopdesk_recovery_default_escalation_floor();
+        let default = recovery::DEFAULT_LOSSY_ESCALATION_FLOOR_SECONDS;
         for raw in ["", "nonsense", "5000", "1"] {
             let seconds = unsafe { slopdesk_recovery_escalation_floor_seconds(raw.as_ptr(), raw.len()) };
             assert_eq!(seconds, default, "{raw} is not in the band");

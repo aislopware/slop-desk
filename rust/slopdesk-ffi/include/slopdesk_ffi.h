@@ -289,11 +289,6 @@ void slopdesk_agent_job_push_argv(SlopDeskAgentJob *handle, const uint8_t *bytes
 // -1 = no agent in this job. The name that identified it lands in the answer slot.
 int32_t slopdesk_agent_job_identify(SlopDeskAgentJob *handle,
                                     slopdesk_agent_resolve_fn resolve, void *context);
-// The LAST pushed process, into the answer slot; false when there is no process to name.
-bool    slopdesk_agent_job_normalized_name(SlopDeskAgentJob *handle,
-                                           slopdesk_agent_resolve_fn resolve, void *context);
-uint8_t slopdesk_agent_job_priority(SlopDeskAgentJob *handle,
-                                    const uint8_t *name, size_t name_len);
 size_t  slopdesk_agent_job_answer(SlopDeskAgentJob *handle, uint8_t *out, size_t cap);
 
 // MARK: - The workspace document's solvers (`rust/slopdesk-workspace`)
@@ -863,7 +858,6 @@ size_t slopdesk_recovery_encode(const SlopDeskRecoveryMessage *message, const ui
 
 uint32_t slopdesk_recovery_decode(const uint8_t *bytes, size_t len, SlopDeskRecoveryMessage *out,
                                   uint16_t *frags, size_t frags_cap);
-double slopdesk_recovery_default_escalation_floor(void);
 double slopdesk_recovery_escalation_floor_seconds(const uint8_t *raw, size_t len);
 bool slopdesk_recovery_should_escalate_to_idr(double idr_timeout_rtt_multiple,
                                               double lossy_idr_timeout_rtt_multiple,
@@ -1461,7 +1455,6 @@ SlopDeskCliShape slopdesk_cli_parse(const SlopDeskByteSpan *args, size_t args_co
                                     size_t tokens_cap, uint8_t *out_arena, size_t arena_cap);
 
 bool slopdesk_cli_shell(const uint8_t *name, size_t name_len, uint32_t *out_shell);
-size_t slopdesk_cli_shell_name(uint32_t shell, uint8_t *out, size_t cap);
 size_t slopdesk_cli_completion_script(uint32_t shell, uint8_t *out, size_t cap);
 SlopDeskCliShape slopdesk_cli_subcommands(SlopDeskByteSpan *out, size_t cap, uint8_t *out_arena,
                                           size_t arena_cap);
@@ -2079,7 +2072,6 @@ typedef struct {
   size_t keyframe_ring_capacity;
 } SlopDeskIdrConfig;
 
-SlopDeskQpConfig     slopdesk_qp_sanitize(SlopDeskQpConfig config);
 SlopDeskQpController slopdesk_qp_new(SlopDeskQpConfig config, int32_t seed_q);
 SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool congested);
 int32_t slopdesk_qp_clamped_int(const uint8_t *raw, size_t raw_len, bool has_raw,
@@ -2588,8 +2580,10 @@ SlopDeskTrendSample  slopdesk_trend_sampler_should_sample(SlopDeskTrendSampler s
  * valves bound how much can be outstanding, so both sets cross as fixed-capacity arrays whose
  * capacity is the CEILING of the valves' own band, and no legal setting is ever truncated.
  *
- * slopdesk_decode_sequencer_eq exists for the same reason slopdesk_pacer_depth_eq does: a C array
- * is a TUPLE on the Swift side and a tuple that long has no equality.
+ * There is no equality door. A C array is a TUPLE on the Swift side and a tuple that long has no
+ * equality — but nothing over there compares two sequencers, and a door with no caller is a claim
+ * about the boundary nobody can check. slopdesk_pacer_depth_eq, which HAS one, is the shape to copy
+ * if that ever changes.
  * ---------------------------------------------------------------------------- */
 
 #define SLOPDESK_GATE_MODE_OPEN         0u  /* the chain is intact — everything submits */
@@ -2673,8 +2667,6 @@ slopdesk_decode_sequencer_note_completed(const SlopDeskDecodeSequencer *sequence
                                          uint32_t frame_id, bool keyframe);
 SlopDeskDecodeSequencerStep
 slopdesk_decode_sequencer_note_lost(const SlopDeskDecodeSequencer *sequencer, uint32_t frame_id);
-bool slopdesk_decode_sequencer_eq(const SlopDeskDecodeSequencer *left,
-                                  const SlopDeskDecodeSequencer *right);
 
 SlopDeskDecodeBudget      slopdesk_decode_budget_default(void);
 SlopDeskDecodeBudget      slopdesk_decode_budget_new(size_t max_pending_count,
@@ -2768,8 +2760,8 @@ bool   slopdesk_audio_consumer_starved(bool primed, bool emitted_since_prime,
  * frame and every underrun, and re-priming that often would hold the picture where the user can see
  * it. The two controllers are mutually exclusive upstream, so the two doors never both apply.
  *
- * slopdesk_present_queue_eq exists for the same reason slopdesk_decode_sequencer_eq does: a C array
- * is a TUPLE on the Swift side and a tuple that long has no equality.
+ * There is no equality door here either, for the reason the decode sequencer has none: nothing on
+ * the Swift side compares two queues.
  * ---------------------------------------------------------------------------- */
 
 #define SLOPDESK_PRESENT_PRIMING 0u  /* still filling — re-show last_shown, if any */
@@ -3081,7 +3073,6 @@ bool                    slopdesk_swipe_slow_required_travel(double duration, dou
 
 
 
-SlopDeskPresentConstants slopdesk_present_constants(void);
 
 SlopDeskPresentQueue slopdesk_present_queue_new(uint32_t live_depth, uint32_t max_depth);
 SlopDeskPresentQueue slopdesk_present_queue_set_live_depth(const SlopDeskPresentQueue *queue,
@@ -3091,7 +3082,6 @@ SlopDeskPresentQueue slopdesk_present_queue_adopt_live_depth(const SlopDeskPrese
 SlopDeskPresentSubmit slopdesk_present_queue_submit(const SlopDeskPresentQueue *queue,
                                                     uint64_t handle, double submitted_at);
 SlopDeskPresentStep  slopdesk_present_queue_step(const SlopDeskPresentQueue *queue);
-bool slopdesk_present_queue_eq(const SlopDeskPresentQueue *left, const SlopDeskPresentQueue *right);
 
 /* The schedule — pure, so the near side spells none of it. */
 double slopdesk_present_clamped_playout_seconds(double next_seconds);
@@ -3493,7 +3483,6 @@ typedef struct {
 } SlopDeskPacedChunk;
 
 size_t   slopdesk_send_pace_plan(SlopDeskSendJob job, SlopDeskPacedChunk *out, size_t cap);
-uint64_t slopdesk_send_total_span_nanos(SlopDeskSendJob job);
 bool     slopdesk_send_may_inline(SlopDeskSendJob job, bool closed, size_t queued, bool transmitting);
 
 /* ---------------------------------------------------------------------------- *
@@ -5014,7 +5003,6 @@ SlopDeskAdaptiveJitter slopdesk_adaptive_jitter_new(uint32_t min_depth, uint32_t
                                                     double fps, uint32_t initial_depth,
                                                     double jitter_safety,
                                                     uint32_t shrink_cooldown_frames);
-uint32_t slopdesk_adaptive_jitter_depth_for(SlopDeskAdaptiveJitter controller, double jitter_seconds);
 uint32_t slopdesk_adaptive_jitter_note_frame(SlopDeskAdaptiveJitter *controller,
                                              double jitter_seconds);
 uint32_t slopdesk_adaptive_jitter_note_underrun(SlopDeskAdaptiveJitter *controller);

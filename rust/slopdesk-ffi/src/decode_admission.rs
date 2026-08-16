@@ -524,22 +524,6 @@ pub const extern "C" fn slopdesk_decode_budget_complete(
     SlopDeskDecodeBudget::of(inner)
 }
 
-/// Whether two sequencers are the same state.
-///
-/// The sets make this the one comparison the near side cannot spell for itself: a C array is a
-/// tuple over there, and a tuple that long has no equality.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_decode_sequencer_eq(
-    left: &SlopDeskDecodeSequencer,
-    right: &SlopDeskDecodeSequencer,
-) -> bool {
-    left.inner() == right.inner()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -550,9 +534,8 @@ mod tests {
         slopdesk_decode_frontier_wire_value, slopdesk_decode_gate_new,
         slopdesk_decode_gate_note_awaiting_keyframe, slopdesk_decode_gate_note_decode_succeeded,
         slopdesk_decode_gate_note_hard_decode_failure, slopdesk_decode_gate_note_loss,
-        slopdesk_decode_gate_submits, slopdesk_decode_sequencer_constants, slopdesk_decode_sequencer_eq,
-        slopdesk_decode_sequencer_new, slopdesk_decode_sequencer_note_completed,
-        slopdesk_decode_sequencer_note_lost,
+        slopdesk_decode_gate_submits, slopdesk_decode_sequencer_constants, slopdesk_decode_sequencer_new,
+        slopdesk_decode_sequencer_note_completed, slopdesk_decode_sequencer_note_lost,
     };
 
     /// The live prefix of a step's releases.
@@ -726,11 +709,12 @@ mod tests {
     fn the_state_compares_the_whole_set_and_not_just_its_expectation() {
         let mut sequencer = anchored();
         complete(&mut sequencer, 2);
-        assert!(slopdesk_decode_sequencer_eq(&sequencer, &sequencer));
+        assert_eq!(sequencer.inner(), sequencer.inner());
         let mut moved = sequencer;
         complete(&mut moved, 3);
-        assert!(
-            !slopdesk_decode_sequencer_eq(&sequencer, &moved),
+        assert_ne!(
+            sequencer.inner(),
+            moved.inner(),
             "same expectation, different outstanding ids",
         );
         assert_eq!(sequencer.next_expected, moved.next_expected);

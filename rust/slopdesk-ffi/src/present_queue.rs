@@ -25,10 +25,9 @@
 use core::ffi::c_char;
 
 use slopdesk_video::present_queue::{
-    MAX_QUEUE_DEPTH, MAX_TICK_HZ, MIN_TICK_HZ, PLAYOUT_HARD_CEILING_SECONDS, PLAYOUT_RECOMPUTE_EVERY,
-    PresentOutcome, PresentQueue, PresentQueueSnapshot, QUEUE_CAPACITY, QueuedFrame,
-    RENDER_CAP_SLACK_SECONDS, clamped_playout_seconds, deadline_due, deadline_for_arrival,
-    playout_recompute_due, resolve_tick_rate, should_present_on_arrival, should_render,
+    PresentOutcome, PresentQueue, PresentQueueSnapshot, QUEUE_CAPACITY, QueuedFrame, clamped_playout_seconds,
+    deadline_due, deadline_for_arrival, playout_recompute_due, resolve_tick_rate, should_present_on_arrival,
+    should_render,
 };
 
 use crate::{optional, optional_of};
@@ -256,24 +255,6 @@ pub struct SlopDeskPlayoutRecompute {
 
 // MARK: the queue
 
-/// The law's fixed numbers.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_present_constants() -> SlopDeskPresentConstants {
-    SlopDeskPresentConstants {
-        playout_hard_ceiling_seconds: PLAYOUT_HARD_CEILING_SECONDS,
-        render_cap_slack_seconds: RENDER_CAP_SLACK_SECONDS,
-        min_tick_hz: MIN_TICK_HZ,
-        max_tick_hz: MAX_TICK_HZ,
-        queue_capacity: QUEUE_CAPACITY,
-        max_queue_depth: MAX_QUEUE_DEPTH,
-        playout_recompute_every: PLAYOUT_RECOMPUTE_EVERY,
-    }
-}
-
 /// An empty queue at the given live depth, under a hard cap bounded by the law's own band.
 #[unsafe(no_mangle)]
 #[expect(
@@ -348,20 +329,6 @@ pub extern "C" fn slopdesk_present_queue_step(queue: &SlopDeskPresentQueue) -> S
     let mut inner = queue.inner();
     let step = inner.step();
     SlopDeskPresentStep::of(&inner, step)
-}
-
-/// Whether two queues are the same state. A C array is a tuple on the near side, and a tuple that
-/// long has no equality of its own.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_present_queue_eq(
-    left: &SlopDeskPresentQueue,
-    right: &SlopDeskPresentQueue,
-) -> bool {
-    left == right
 }
 
 // MARK: the schedule, pure
@@ -479,9 +446,9 @@ mod tests {
 
     use super::{
         SLOPDESK_PRESENT_PRESENT, SLOPDESK_PRESENT_PRIMING, SLOPDESK_PRESENT_RESHOW, SlopDeskPresentQueue,
-        slopdesk_present_clamped_playout_seconds, slopdesk_present_constants, slopdesk_present_deadline_due,
+        slopdesk_present_clamped_playout_seconds, slopdesk_present_deadline_due,
         slopdesk_present_deadline_for_arrival, slopdesk_present_playout_recompute_due,
-        slopdesk_present_queue_adopt_live_depth, slopdesk_present_queue_eq, slopdesk_present_queue_new,
+        slopdesk_present_queue_adopt_live_depth, slopdesk_present_queue_new,
         slopdesk_present_queue_set_live_depth, slopdesk_present_queue_step, slopdesk_present_queue_submit,
         slopdesk_present_resolve_tick_rate, slopdesk_present_should_present_on_arrival,
         slopdesk_present_should_render,
@@ -573,19 +540,19 @@ mod tests {
 
     #[test]
     fn the_depth_is_bounded_by_the_band_the_capacity_is_proved_against() {
-        let constants = slopdesk_present_constants();
+        use slopdesk_video::present_queue::{MAX_QUEUE_DEPTH, QUEUE_CAPACITY};
         let queue = slopdesk_present_queue_new(999, 999);
-        assert_eq!(queue.live_depth, constants.max_queue_depth);
-        assert_eq!(queue.max_depth, constants.max_queue_depth);
-        assert_eq!(constants.queue_capacity, constants.max_queue_depth as usize);
+        assert_eq!(queue.live_depth, MAX_QUEUE_DEPTH);
+        assert_eq!(queue.max_depth, MAX_QUEUE_DEPTH);
+        assert_eq!(QUEUE_CAPACITY, MAX_QUEUE_DEPTH as usize);
     }
 
     #[test]
     fn a_queue_equals_itself_across_the_array_no_tuple_can_compare() {
         let left = submit(&slopdesk_present_queue_new(2, 6), 1);
         let right = submit(&slopdesk_present_queue_new(2, 6), 1);
-        assert!(slopdesk_present_queue_eq(&left, &right));
-        assert!(!slopdesk_present_queue_eq(&left, &submit(&left, 2)));
+        assert_eq!(left, right);
+        assert_ne!(left, submit(&left, 2));
     }
 
     #[test]

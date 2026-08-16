@@ -1225,69 +1225,12 @@ pub unsafe extern "C" fn slopdesk_agent_job_identify(
     kind_index(agent)
 }
 
-/// The normalized name of the LAST pushed process, into the answer slot. Returns `false` when there
-/// is no process to name.
-///
-/// # Safety
-/// As [`slopdesk_agent_job_identify`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_normalized_name(
-    handle: *mut SlopDeskAgentJob,
-    resolve: Option<ResolveFn>,
-    context: *mut core::ffi::c_void,
-) -> bool {
-    if handle.is_null() {
-        return false;
-    }
-    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
-    let staged = unsafe { &mut *handle };
-    staged.answer.clear();
-    let Some(process) = staged.job.processes.last() else {
-        return false;
-    };
-    let resolver = Resolver {
-        call: resolve,
-        context,
-    };
-    staged.answer = slopdesk_agent::job::normalized_process_name(process, &resolver);
-    true
-}
-
-/// The tie-break rank of the LAST pushed process against the given normalized name. `0` when there
-/// is no process, which is also the lowest real rank — a job with no processes has no winner either
-/// way.
-///
-/// # Safety
-/// `handle` must be null or a live job with no other call on it in flight; `name` must be null or
-/// valid for `name_len` bytes for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_priority(
-    handle: *mut SlopDeskAgentJob,
-    name: *const c_uchar,
-    name_len: usize,
-) -> u8 {
-    if handle.is_null() {
-        return 0;
-    }
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    unsafe {
-        let Ok(text) = core::str::from_utf8(borrow(name, name_len)) else {
-            return 0;
-        };
-        let Some(process) = (*handle).job.processes.last() else {
-            return 0;
-        };
-        slopdesk_agent::job::process_priority(process, text)
-    }
-}
+// Neither the per-process NAME nor its tie-break RANK has a door of its own.
+//
+// They are the two steps `identify` folds — normalize each process, then keep the highest rank —
+// and the fold is the whole question a caller has. Exposing the steps invites a caller to run them
+// in the wrong order, or to stop at the first match, which is exactly the bug the strict `>` in
+// `slopdesk_agent::job::identify` exists to prevent. Both keep their tests in `slopdesk-agent`.
 
 /// Reads the answer slot — the name the last identify or normalize call produced.
 ///
