@@ -16214,3 +16214,35 @@ backreferences it costs everywhere else.
 Pinned by the pre-existing suite: 8 `WaitUntilScannerTests` and 47 `AgentControlListenerTests` pass.
 The only test edit is the two lines that built a scanner — an `NSRegularExpression` became a pattern
 string, and a `var` became a `let` now that the scanner is a class holding the handle.
+
+## One clustering was not enough: there were still two width tables (2026-08-17)
+
+Moving the vi motions beside the link scan gave the cursor and the hint badge one CLUSTERING. It
+did not give them one answer, because underneath sat two hand-written tables saying how wide a
+cluster is — `slopdesk-sanitize::width::scalar_width`, which the screen model measures a pane with,
+and `slopdesk-terminal::link`'s `is_zero_width`/`is_wide`, which the cursor, the ⌘-hold underline
+and the hint badge measure the same row with. They disagreed in three ways, each in a different
+direction:
+
+- **sanitize knew marks terminal did not** — the Arabic, Hebrew, Cyrillic and Thai combining ranges
+  (U+0483–0489, U+0591–05BD, U+0610–061A, U+064B–065F, U+06D6–06DC, U+0E31, U+0E34–0E3A). On a Thai
+  line the overlay counted every mark as a cell the screen model did not.
+- **terminal knew ignorables sanitize did not** — the whole `Default_Ignorable_Code_Point` set, so
+  a soft hyphen or a bidi control shifted every column below it in the screen model only.
+- **terminal painted U+1F300..U+1FAFF wide with one brush** — which swallows the ornamental
+  dingbats, the alchemical symbols and Supplemental Arrows-C, all of them NARROW.
+
+They also straddled the Hangul split incompatibly. The merged table takes the standard reading: the
+leading jamo at U+1100..U+115F carries the cell, and U+1160..U+11FF — the medial filler and the
+trailing jamo — compose onto it at zero.
+
+`slopdesk-terminal` now reads `slopdesk-sanitize`'s table and keeps no copy. Its manifest already
+settled that a path dependency on a sibling under the same `forbid(unsafe_code)` contract is not
+the supply chain its "no external dependencies" rule guards against — `slopdesk-wire` took
+`slopdesk-workspace` for exactly this reason, to stop spelling six enums twice.
+
+**The rule this is an instance of:** one implementation means one at every layer it decomposes
+into. A shared clustering over two width tables is two implementations wearing one name, and it
+fails on precisely the rows nobody types by hand. `check-supervisor.sh` now greps every source file
+in the tree for the CJK sentinel `0x4E00`, which is the cheapest tell that a third table has
+appeared: nothing measures East Asian width without it.

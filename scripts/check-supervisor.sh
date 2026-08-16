@@ -3614,6 +3614,27 @@ if ! spells 'use crate::link::\{clusters, scalar_cells\}' rust/slopdesk-terminal
 fi
 printf 'check-supervisor: one clustering answers the cursor and the badge.\n'
 
+# ── And ONE width table under that clustering ──────────────────────────────────────────────────
+# One clustering was not enough, because there were still two tables saying how wide a cluster IS.
+# `slopdesk-sanitize` knew the Arabic, Hebrew and Thai combining marks; the link scan's copy knew
+# the Default_Ignorable set and painted U+1F300..U+1FAFF wide over three ranges of narrow
+# pictographs. A screen model measuring a Thai line one way while the cursor, the underline and the
+# hint badge measure it another is the same drift one layer down. The CJK sentinel below is the
+# cheapest tell that a third table has appeared: nothing measures East Asian width without it.
+if ! spells 'pub const fn scalar_width' rust/slopdesk-sanitize/src/width.rs > /dev/null; then
+  fail "rust/slopdesk-sanitize/src/width.rs lost scalar_width — it is the one width table"
+fi
+if ! spells 'use slopdesk_sanitize::width::scalar_width' rust/slopdesk-terminal/src/link.rs > /dev/null; then
+  fail "rust/slopdesk-terminal/src/link.rs stopped reading the one width table — a second one drifts"
+fi
+for owner in rust/*/src/*.rs rust/*/src/*/*.rs Sources/*/*.swift Sources/*/*/*.swift Sources/*/*/*/*.swift; do
+  [[ "${owner}" == rust/slopdesk-sanitize/src/width.rs ]] && continue
+  if spells '0x4E00|0x4e00' "${owner}" > /dev/null 2>&1; then
+    fail "${owner} carries its own East Asian width table — slopdesk-sanitize::width is the one"
+  fi
+done
+printf 'check-supervisor: one width table under that clustering.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins

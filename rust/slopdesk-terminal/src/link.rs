@@ -64,6 +64,7 @@ pub struct DetectedLink {
 }
 
 use slopdesk_sanitize::escape::percent_decoded;
+use slopdesk_sanitize::width::scalar_width;
 
 /// Which `scheme://…` URLs are underlined — the "Auto-Detect Link Schemes" setting.
 ///
@@ -496,8 +497,14 @@ pub fn bounded_prefix(line: &str, max_cells: usize) -> &str {
     line.get(..end).unwrap_or(line)
 }
 
-/// Width of a single scalar. Zero-width is checked BEFORE wide, which is what makes U+115F — both a
-/// Hangul Jamo filler and default-ignorable — count as nothing rather than two.
+/// Width of a single scalar, from the ONE table in the tree.
+///
+/// This used to be a second table beside `slopdesk_sanitize::width`'s, and the two disagreed: this
+/// one knew the `Default_Ignorable` set, that one knew the Arabic, Hebrew and Thai combining marks,
+/// and this one painted U+1F300..U+1FAFF wide with a single brush over three ranges of narrow
+/// pictographs. A screen model measuring a line one way while the cursor, the link underline and
+/// the hint badge measure it another is the bug the vi motions moved to fix — this is the same bug
+/// one layer down, and the fix is the same shape: read the table, do not keep one.
 ///
 /// Exposed alongside [`cluster_cells`] because the callers that walk a line one character at a time
 /// — vi-style line motion, the hint assigner's column mapping — already hold a scalar. Handing them
@@ -505,47 +512,7 @@ pub fn bounded_prefix(line: &str, max_cells: usize) -> &str {
 /// about the scalar they were already holding.
 #[must_use]
 pub const fn scalar_cells(scalar: char) -> usize {
-    if is_zero_width(scalar) {
-        0
-    } else if is_wide(scalar) {
-        2
-    } else {
-        1
-    }
-}
-
-const fn is_zero_width(scalar: char) -> bool {
-    matches!(
-        scalar as u32,
-        // Default_Ignorable_Code_Point, spelled out rather than pulled from a Unicode crate: the
-        // set is small, stable, and a dependency here would buy nothing this table does not.
-        0x00AD | 0x034F | 0x061C | 0x115F..=0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180E
-            | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F
-            | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8 | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
-            | 0xE0000..=0xE0FFF
-            // Combining marks, whose width belongs to the base they attach to.
-            | 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF
-            | 0xFE20..=0xFE2F
-    )
-}
-
-const fn is_wide(scalar: char) -> bool {
-    matches!(
-        scalar as u32,
-        0x1100..=0x115F      // Hangul Jamo
-            | 0x2E80..=0x303E    // CJK radicals through CJK symbols and punctuation
-            | 0x3041..=0x33FF    // Hiragana, katakana, CJK compatibility
-            | 0x3400..=0x4DBF    // CJK unified ideographs extension A
-            | 0x4E00..=0x9FFF    // CJK unified ideographs
-            | 0xA000..=0xA4CF    // Yi syllables and radicals
-            | 0xAC00..=0xD7A3    // Hangul syllables
-            | 0xF900..=0xFAFF    // CJK compatibility ideographs
-            | 0xFE30..=0xFE4F    // CJK compatibility forms
-            | 0xFF00..=0xFF60    // Fullwidth forms
-            | 0xFFE0..=0xFFE6    // Fullwidth signs
-            | 0x1F300..=0x1FAFF  // Emoji and pictographs
-            | 0x20000..=0x3FFFD // CJK unified ideographs extension B and beyond
-    )
+    scalar_width(scalar as u32)
 }
 
 /// Whether `scalar` continues the cluster it follows rather than starting a new one.
@@ -555,7 +522,7 @@ const fn is_wide(scalar: char) -> bool {
 /// case — the scalar AFTER a zero-width joiner — is handled by the iterator, which needs to know
 /// what it just consumed.
 const fn extends_cluster(scalar: char) -> bool {
-    is_zero_width(scalar) || matches!(scalar as u32, 0x1F3FB..=0x1F3FF)
+    scalar_cells(scalar) == 0 || matches!(scalar as u32, 0x1F3FB..=0x1F3FF)
 }
 
 const ZERO_WIDTH_JOINER: char = '\u{200D}';

@@ -37,14 +37,23 @@ pub const fn dec_graphic(scalar: u32) -> Option<char> {
 }
 
 /// Display width of a scalar: 0 (combining/format), 2 (East Asian wide + emoji), else 1.
+///
+/// **The only width table in the tree.** There were two — this one and a second in
+/// `slopdesk-terminal`'s link scan — and they disagreed in both directions: this one knew the
+/// Arabic, Hebrew and Thai combining marks the other did not, the other knew the
+/// `Default_Ignorable` set this one did not, and the other widened three ranges of narrow
+/// pictographs. A screen model measuring a Thai line one way while the cursor, the link underline
+/// and the hint badge measure it another is the same bug the vi motions were moved to fix, one
+/// layer up. `slopdesk_terminal::link::scalar_cells` reads this now.
 #[must_use]
 pub const fn scalar_width(scalar: u32) -> usize {
-    // Everything below the first zero-width range (U+0300) is width 1 — the ASCII fast path skips
-    // the whole cascade for the common case.
-    if scalar < 0x0300 {
+    // Everything below the first zero-width scalar (U+00AD SOFT HYPHEN) is width 1 — the ASCII fast
+    // path skips the whole cascade for the common case.
+    if scalar < 0x00AD {
         return 1;
     }
     match scalar {
+        // Combining marks, whose width belongs to the base they attach to.
         0x0300..=0x036F
         | 0x0483..=0x0489
         | 0x0591..=0x05BD
@@ -55,10 +64,29 @@ pub const fn scalar_width(scalar: u32) -> usize {
         | 0x0E34..=0x0E3A
         | 0x1AB0..=0x1AFF
         | 0x1DC0..=0x1DFF
-        | 0x200B..=0x200F
         | 0x20D0..=0x20FF
+        | 0xFE20..=0xFE2F
+        // Hangul Jamo medial and final: the fillers and the trailing jamo compose onto the leading
+        // one at U+1100..U+115F, which stays WIDE below.
+        | 0x1160..=0x11FF
+        // Default_Ignorable_Code_Point, spelled out rather than pulled from a Unicode crate: the
+        // set is small, stable, and a dependency here would buy nothing this table does not.
+        | 0x00AD
+        // (U+034F COMBINING GRAPHEME JOINER is default-ignorable too, and already zero above.)
+        | 0x061C
+        | 0x17B4..=0x17B5
+        | 0x180B..=0x180E
+        | 0x200B..=0x200F
+        | 0x202A..=0x202E
+        | 0x2060..=0x206F
+        | 0x3164
         | 0xFE00..=0xFE0F
-        | 0xFE20..=0xFE2F => 0,
+        | 0xFEFF
+        | 0xFFA0
+        | 0xFFF0..=0xFFF8
+        | 0x1BCA0..=0x1BCA3
+        | 0x1D173..=0x1D17A
+        | 0xE0000..=0xE0FFF => 0,
         0x1100..=0x115F
         | 0x231A..=0x231B
         | 0x2329..=0x232A
@@ -136,6 +164,47 @@ mod tests {
         assert_eq!(scalar_width(0x4E00), 2, "CJK");
         assert_eq!(scalar_width(0x1F600), 2, "emoji");
         assert_eq!(scalar_width(0x00E9), 1, "precomposed latin");
+    }
+
+    /// The ranges that used to be in ONE of the two tables and not the other. Each of these was a
+    /// column the screen model and the hint overlay disagreed about.
+    #[test]
+    fn the_ranges_the_two_tables_disagreed_about_answer_once() {
+        // Known only to this table before: the marks a Thai, Hebrew or Arabic line is written with.
+        for zero in [0x0E31, 0x0591, 0x064B, 0x0483, 0x06D6] {
+            assert_eq!(scalar_width(zero), 0, "{zero:#x} attaches to its base");
+        }
+        // Known only to the link scan's table before: the Default_Ignorable set.
+        for zero in [0x00AD, 0x034F, 0x061C, 0x3164, 0xFEFF, 0x2060, 0x202A, 0xE0001] {
+            assert_eq!(scalar_width(zero), 0, "{zero:#x} is default-ignorable");
+        }
+        // The Hangul split the two tables straddled: the leading jamo carries the cell, the medial
+        // and final compose onto it.
+        assert_eq!(scalar_width(0x1100), 2, "choseong is the wide one");
+        assert_eq!(scalar_width(0x115F), 2, "choseong filler holds a cell");
+        assert_eq!(scalar_width(0x1160), 0, "jungseong filler composes");
+        assert_eq!(scalar_width(0x11A8), 0, "jongseong composes");
+        // The pictographs the link scan widened by painting U+1F300..U+1FAFF with one brush.
+        assert_eq!(scalar_width(0x1F650), 1, "ornamental dingbats are narrow");
+        assert_eq!(scalar_width(0x1F700), 1, "alchemical symbols are narrow");
+        assert_eq!(scalar_width(0x1F800), 1, "supplemental arrows-C are narrow");
+        // …and the ones it was right about.
+        assert_eq!(scalar_width(0x1F600), 2);
+        assert_eq!(scalar_width(0x1F9D1), 2);
+        assert_eq!(scalar_width(0x1FA70), 2);
+    }
+
+    /// The fast path moved from U+0300 down to U+00AD when the soft hyphen joined the zero list;
+    /// everything it still skips must really be one column.
+    #[test]
+    fn the_fast_path_covers_only_what_is_one_column() {
+        for scalar in 0x00_u32..0x00AD {
+            assert_eq!(
+                scalar_width(scalar),
+                1,
+                "{scalar:#x} is below the first zero-width scalar"
+            );
+        }
     }
 
     #[test]

@@ -577,8 +577,13 @@ mod tests {
         assert_eq!(unsafe { slopdesk_link_scalar_cells(u32::from('日')) }, 2);
         assert_eq!(
             unsafe { slopdesk_link_scalar_cells(0x115F) },
+            2,
+            "the leading jamo carries the cell",
+        );
+        assert_eq!(
+            unsafe { slopdesk_link_scalar_cells(0x1160) },
             0,
-            "zero-width is checked before wide",
+            "the medial filler composes onto it",
         );
         assert_eq!(
             unsafe { slopdesk_link_scalar_cells(0xD800) },
