@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskBenchClock
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -35,34 +36,12 @@ import XCTest
 /// beside it. If a per-frame caller ever appears, the fix is a batch entry that answers a whole
 /// row's widths in one call, not a table.
 ///
-/// It prints a µs/op table and asserts a loose ceiling against the BEST of three timed passes, so a
-/// slice lost to another target under `make quick` is not read as a regression.
+/// It prints a µs/op table and asserts a loose ceiling against ``BenchClock``, which measures THREAD
+/// CPU time — so a slice lost to another target under `make quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter TerminalLinkScanBenchTests`.
 final class TerminalLinkScanBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.
     private var sink = 0
-
-    /// One measurement, as the BEST of three passes over the same total work.
-    ///
-    /// `make quick` runs this beside thousands of other tests, and one timed loop that lands in
-    /// another target's CPU slice reads as a tenfold regression — which then costs a full re-run of
-    /// the suite to disprove. Splitting the same iteration count into three passes and keeping the
-    /// fastest costs no extra work and asks the question the ceiling is actually about: what does
-    /// this cost when it has the machine, not what did it cost while it was sharing one.
-    private func usPerOp(_ iterations: Int, _ block: () -> Void) -> Double {
-        // Warm up (codegen, allocator caches) so the timed passes are steady-state.
-        for _ in 0..<min(iterations, 200) { block() }
-        let passes = 3
-        let per = max(iterations / passes, 1)
-        var best = Double.infinity
-        for _ in 0..<passes {
-            let start = DispatchTime.now().uptimeNanoseconds
-            for _ in 0..<per { block() }
-            let end = DispatchTime.now().uptimeNanoseconds
-            best = Double.minimum(best, Double(end - start) / Double(per) / 1000.0)
-        }
-        return best
-    }
 
     /// Rows a terminal actually holds: build output, a diagnostic with a `:line:col`, a URL, a CJK
     /// row (the width table's worst case), prose that must NOT light up, and a `file://`.
@@ -91,7 +70,7 @@ final class TerminalLinkScanBenchTests: XCTestCase {
         for shape in shapes {
             let sample = rows(shape.rows)
             let links = TerminalLinkDetector.detect(rows: sample, cwd: "/work/proj", schemes: .all)
-            let detect = usPerOp(shape.iterations) {
+            let detect = BenchClock.usPerOp(shape.iterations) {
                 sink &+= TerminalLinkDetector.detect(rows: sample, cwd: "/work/proj", schemes: .all).count
             }
             print(
@@ -107,12 +86,12 @@ final class TerminalLinkScanBenchTests: XCTestCase {
         var perCharacter = 0.0
         for (name, line) in [("ascii", Self.templates[1]), ("cjk", Self.templates[3])] {
             let characters = Array(line)
-            let perLine = usPerOp(20000) {
+            let perLine = BenchClock.usPerOp(20000) {
                 var total = 0
                 for character in characters { total += TerminalLinkDetector.displayCellWidth(of: character) }
                 sink &+= total
             }
-            let perString = usPerOp(20000) { sink &+= TerminalLinkDetector.displayCellWidth(of: line) }
+            let perString = BenchClock.usPerOp(20000) { sink &+= TerminalLinkDetector.displayCellWidth(of: line) }
             print(
                 "width " + name.padding(toLength: 6, withPad: " ", startingAt: 0)
                     + String(

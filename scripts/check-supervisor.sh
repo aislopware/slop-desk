@@ -3662,6 +3662,28 @@ if ! spells 'pub fn matches' rust/slopdesk-rowscan/src/find.rs > /dev/null; then
 fi
 printf 'check-supervisor: the find bar asks the same non-backtracking engine.\n'
 
+# ── `wait --until` runs an agent's pattern on the PTY read loop, so it may not backtrack ───────
+# The third and worst of the untrusted-pattern sites: the pattern is an agent's, the text is
+# whatever holds the far side of the PTY, and the match runs on the thread every pane's bytes come
+# through. A pathological match there stalls the whole host, not one window. The carry, the overlap
+# window and the accumulator's cap are the crate's now — a second copy of any of them in Swift is
+# two implementations of an incremental scan, which is how the strip and the holdback drifted before.
+# `ANSIStripper` is NOT banned here: the read/output verbs in the same file strip a finished string
+# through the same door, which is the one implementation, not a second one.
+SWIFT_WAIT=Sources/SlopDeskHost/AgentControlListener.swift
+if hit=$(spells 'NSRegularExpression|maxCarryBytes|overlapWindow' "${SWIFT_WAIT}"); then
+  fail "${hit} scans the wait stream in Swift again — slopdesk-rowscan::waituntil owns the scan"
+fi
+for entry in 'slopdesk_wait_scan_new' 'slopdesk_wait_scan_ingest' 'slopdesk_wait_scan_free'; do
+  if ! spells "${entry}" "${SWIFT_WAIT}" > /dev/null; then
+    fail "${SWIFT_WAIT} no longer asks ${entry} — the wait scan is one implementation"
+  fi
+done
+if ! spells '^slopdesk-sanitize = ' rust/slopdesk-rowscan/Cargo.toml > /dev/null; then
+  fail "rust/slopdesk-rowscan dropped slopdesk-sanitize — the wait scan would need its own stripper"
+fi
+printf 'check-supervisor: the wait stream is scanned once, off the read loop critical path.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

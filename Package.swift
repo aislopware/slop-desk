@@ -586,6 +586,13 @@ let package = Package(
 
         // MARK: Tests
 
+        // The clock every ceiling bench measures with. A TEST-ONLY library — it lives under
+        // `Tests/`, no product depends on it, and only bench targets do. It exists because four
+        // copies of "time this loop" drifted into four ceilings that meant four different things,
+        // and because the wall clock they all used made a bench under `make quick`'s parallel load
+        // fail for reasons that had nothing to do with the code under it.
+        .target(name: "SlopDeskBenchClock", path: "Tests/SlopDeskBenchClock"),
+
         // The user-facing `slopdesk` CLI core: global-flag parsing (`CLIArgs`), the `version`
         // summary builder, and the per-shell completion generator. PURE — no socket, no GUI, no
         // subprocess (the `slopdesk` executable's socket I/O + GUI launch are compiled-only and
@@ -609,7 +616,7 @@ let package = Package(
             ],
         ),
 
-        .testTarget(name: "SlopDeskProtocolTests", dependencies: ["SlopDeskProtocol"]),
+        .testTarget(name: "SlopDeskProtocolTests", dependencies: ["SlopDeskProtocol", "SlopDeskBenchClock"]),
         // W7: the pure detection core — state-machine transitions (incl. injected-clock
         // timeouts, idempotent/out-of-order signals), the conservative manifest matcher,
         // and the rollup most-urgent order. No GUI/socket/PTY — signals are fed directly.
@@ -664,7 +671,9 @@ let package = Package(
         // type under test does not belong in the leaf target.
         .testTarget(
             name: "SlopDeskWorkspaceModelTests",
-            dependencies: ["SlopDeskWorkspaceModel"],
+            // `SlopDeskBenchClock` is the shared bench clock, test-only; it does not weaken the
+            // "depends on the leaf and NOTHING else" rule above, because it is not a product.
+            dependencies: ["SlopDeskWorkspaceModel", "SlopDeskBenchClock"],
         ),
 
         .testTarget(
@@ -680,6 +689,7 @@ let package = Package(
                 "SlopDeskAgentDetect",
                 "SlopDeskTerminal",
                 "SlopDeskVideoProtocol",
+                "SlopDeskBenchClock",
             ],
         ),
         // Client UI: view-logic tests for the rebuilt native-SwiftUI chrome. VIEW-MODEL level only —

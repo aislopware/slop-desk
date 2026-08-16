@@ -185,6 +185,7 @@ name = "slopdesk-rowscan"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "slopdesk-sanitize",
  "slopdesk-terminal",
 ]
 

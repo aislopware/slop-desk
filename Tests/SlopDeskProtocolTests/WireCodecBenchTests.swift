@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskBenchClock
 import XCTest
 @testable import SlopDeskProtocol
 
@@ -18,28 +19,6 @@ final class WireCodecBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.
     private var sink = 0
 
-    /// One measurement, as the BEST of three passes over the same total work.
-    ///
-    /// `make quick` runs this beside thousands of other tests, and one timed loop that lands in
-    /// another target's CPU slice reads as a tenfold regression — which then costs a full re-run of
-    /// the suite to disprove. Splitting the same iteration count into three passes and keeping the
-    /// fastest costs no extra work and asks the question the ceiling is actually about: what does
-    /// this cost when it has the machine, not what did it cost while it was sharing one.
-    private func nsPerOp(_ iterations: Int, _ block: () -> Void) -> Double {
-        // Warm up (codegen, allocator caches) so the timed passes are steady-state.
-        for _ in 0..<min(iterations, 1000) { block() }
-        let passes = 3
-        let per = max(iterations / passes, 1)
-        var best = Double.infinity
-        for _ in 0..<passes {
-            let start = DispatchTime.now().uptimeNanoseconds
-            for _ in 0..<per { block() }
-            let end = DispatchTime.now().uptimeNanoseconds
-            best = Double.minimum(best, Double(end - start) / Double(per))
-        }
-        return best
-    }
-
     func testEncodeDecodePerfIsBounded() throws {
         let sid = try XCTUnwrap(UUID(uuidString: "01234567-89AB-CDEF-0123-456789ABCDEF"))
         let scenarios: [(String, WireMessage, Int)] = [
@@ -55,9 +34,9 @@ final class WireCodecBenchTests: XCTestCase {
         print("\n=== WireMessage Rust codec (ns/op, lower is better) ===")
         print(String(format: "%-22@ %12@ %12@", "scenario", "encode", "decode"))
         for (name, msg, iters) in scenarios {
-            let enc = nsPerOp(iters) { sink &+= msg.encode().count }
+            let enc = BenchClock.nsPerOp(iters) { sink &+= msg.encode().count }
             let payload = Data(msg.encode().dropFirst(4))
-            let dec = nsPerOp(iters) {
+            let dec = BenchClock.nsPerOp(iters) {
                 sink &+= ((try? WireMessage.decode(payload: payload))?.messageType).map(Int.init) ?? 0
             }
             print(String(format: "%-22@ %12.1f %12.1f", name, enc, dec))

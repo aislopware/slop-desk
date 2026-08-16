@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskProtocol
@@ -498,24 +499,22 @@ public struct AgentControlHandler: Sendable {
             return errorResponse(id: id, message: "pane not found: \(paneId)")
         }
 
-        // Compile the regex once (validate-then-drop: a bad pattern is an error, not a crash).
-        let regex: NSRegularExpression
-        do {
-            regex = try NSRegularExpression(pattern: untilPattern)
-        } catch {
-            return errorResponse(id: id, message: "invalid regex: \(error.localizedDescription)")
+        // Compile the pattern once (validate-then-report: a bad pattern is an error, not a crash,
+        // and not a silent block until the timeout either).
+        guard let scanner = WaitUntilScanner(pattern: untilPattern) else {
+            return errorResponse(id: id, message: "invalid regex '\(untilPattern)'")
         }
 
-        // Box the mutable scanner + matched flag in a class so the @Sendable observer closure
-        // (PTY read-loop thread) and the NSCondition wait (connection thread) share state without
+        // Box the scanner + matched flag in a class so the @Sendable observer closure (PTY
+        // read-loop thread) and the NSCondition wait (connection thread) share state without
         // capturing `var`s across concurrency boundaries — Swift 6 strict sendability.
         final class WaitState: @unchecked Sendable {
             let condition = NSCondition()
             var matched = false
-            var scanner: WaitUntilScanner
-            init(regex: NSRegularExpression) { scanner = WaitUntilScanner(regex: regex) }
+            let scanner: WaitUntilScanner
+            init(scanner: WaitUntilScanner) { self.scanner = scanner }
         }
-        let state = WaitState(regex: regex)
+        let state = WaitState(scanner: scanner)
 
         let observerID = UUID()
         // Register the observer; it runs on the PTY read-loop thread — so the per-chunk work MUST
@@ -749,91 +748,66 @@ public struct AgentControlHandler: Sendable {
 
 // MARK: - Incremental `wait --until` scanner
 
-/// Incremental matcher for the `wait --until` output scan: decodes UTF-8 + strips ANSI
-/// CHUNK-BY-CHUNK and regex-matches only a bounded window, so per-chunk work on the PTY
-/// read-loop thread stays O(chunk) instead of O(accumulated) — the old whole-buffer
-/// re-decode/re-strip/re-regex was O(n²) over a chatty command's output and lagged the pane's
-/// live echo for the duration of the run.
+/// Incremental matcher for the `wait --until` output scan — the Swift face of
+/// `slopdesk_rowscan::waituntil`, which holds every piece of the state.
 ///
-/// - A small RAW CARRY (≤ ``maxCarryBytes``) holds back a trailing incomplete UTF-8 sequence or
-///   an unterminated ANSI escape so sequences split across chunk boundaries decode/strip exactly
-///   as if they had arrived whole. A "sequence" that does not terminate within the carry budget is
-///   force-flushed through the stripper — hostile/garbage bytes (or a giant inline-image OSC) must
-///   not buffer raw output indefinitely; their body may then surface as plain text, the bounded
-///   trade this scanner makes.
-/// - The regex runs over the newly stripped text plus the last ``overlapWindow`` characters of
-///   what came before (cross-chunk marker matches). A marker longer than the overlap window is not
-///   guaranteed to match across a chunk boundary; `^` anchors match the window, not the whole run.
-/// - ``stripped`` keeps the full stripped accumulation under the same ``AgentControlHandler/waitBufferCap``
-///   cap + trim-oldest-half semantics the raw accumulator had.
-struct WaitUntilScanner {
-    /// Raw-byte budget for the held-back tail (an escape/UTF-8 sequence still awaiting its
-    /// terminator/continuation). Real terminal escapes are far shorter; past this the tail is
-    /// force-flushed.
-    static let maxCarryBytes = 128
+/// The scan runs on the PTY READ-LOOP thread, one chunk at a time, so two bounds have to hold at
+/// once. Per-chunk work stays O(chunk) rather than O(accumulated): a raw carry holds back a
+/// trailing incomplete UTF-8 sequence or unterminated escape, and the match runs over the new text
+/// plus a fixed overlap window rather than the whole run. And the MATCH itself is linear in that
+/// window — the pattern is an agent's, the text is a remote program's, and the
+/// `NSRegularExpression` this replaced backtracks, which on this thread stalls every pane's bytes
+/// rather than one window.
+///
+/// Two behaviours the crate keeps that a caller might otherwise assume away: a "sequence" that does
+/// not terminate within the carry budget is force-flushed through the stripper — hostile bytes or a
+/// giant inline-image OSC must not buffer output indefinitely, so their body may surface as plain
+/// text — and a marker longer than the overlap window is not guaranteed to match across a chunk
+/// boundary, with `^`/`$` anchoring the window rather than the whole run.
+///
+/// A CLASS, not a struct: the handle it holds is freed on `deinit`, and the observer closure and
+/// the condition wait touch the same instance from two threads under the caller's lock.
+final class WaitUntilScanner {
+    /// The live scan. Owned — freed exactly once, on `deinit`.
+    private let handle: OpaquePointer
 
-    /// Characters of already-stripped text re-included ahead of each new chunk's match window so a
-    /// marker spanning a chunk boundary still matches.
-    static let overlapWindow = 4096
-
-    private let regex: NSRegularExpression
-    private let bufferCap: Int
-
-    /// Raw bytes held back from the previous chunk (see ``maxCarryBytes``).
-    private var carry = Data()
-
-    /// The last ``overlapWindow`` characters of stripped text — the cross-chunk match prefix.
-    private var recent = ""
-
-    /// The full stripped accumulation (UTF-8 bytes; storage only — matching is windowed), capped
-    /// at `bufferCap` with the oldest half trimmed past the cap.
-    private(set) var stripped = Data()
-
-    init(regex: NSRegularExpression, bufferCap: Int = AgentControlHandler.waitBufferCap) {
-        self.regex = regex
-        self.bufferCap = bufferCap
+    /// Opens a scan for `pattern`, or fails when the pattern does not compile.
+    ///
+    /// Failing is the point: unlike a find field being typed into, this pattern arrived whole from
+    /// an agent, so a caller that mistyped it must hear about it rather than block until its
+    /// timeout. The dialect is the `regex` crate's — no lookaround, no backreferences.
+    init?(pattern: String, bufferCap: Int = AgentControlHandler.waitBufferCap) {
+        var text = pattern
+        let opened = text.withUTF8 { bytes in
+            slopdesk_wait_scan_new(bytes.baseAddress, bytes.count, bufferCap)
+        }
+        guard let opened else { return nil }
+        handle = opened
     }
+
+    deinit { slopdesk_wait_scan_free(handle) }
 
     /// Feeds one raw PTY chunk. Returns `true` when the pattern matched in the window this chunk
     /// completed (a match is latched by the caller; ingest never needs to re-report it).
-    mutating func ingest(_ chunk: Data) -> Bool {
-        var pending = [UInt8](carry)
-        pending.append(contentsOf: chunk)
-        carry.removeAll(keepingCapacity: true)
-
-        var cut = Self.holdbackStart(in: pending)
-        // Bound the carry: a sequence that will not terminate within the budget is not a real
-        // escape worth waiting for — flush it through the stripper (whose skip helpers handle a
-        // runaway body safely) rather than buffering raw bytes without bound.
-        if pending.count - cut > Self.maxCarryBytes { cut = pending.count }
-        if cut < pending.count { carry = Data(pending[cut...]) }
-        guard cut > 0 else { return false }
-
-        let text = ANSIStripper.strip(AgentControlHandler.decodeLossyUTF8(Array(pending[..<cut])))
-        guard !text.isEmpty else { return false }
-
-        // Storage accumulator: same cap + trim-oldest-half semantics as the raw buffer had.
-        stripped.append(contentsOf: text.utf8)
-        if stripped.count > bufferCap {
-            stripped = Data(stripped.suffix(bufferCap / 2))
+    func ingest(_ chunk: Data) -> Bool {
+        chunk.withUnsafeBytes { raw in
+            slopdesk_wait_scan_ingest(
+                handle,
+                raw.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                raw.count,
+            )
         }
-
-        // Windowed match: the new text plus the trailing overlap of everything before it.
-        let searchText = recent + text
-        recent = String(searchText.suffix(Self.overlapWindow))
-        let range = NSRange(searchText.startIndex..., in: searchText)
-        return regex.firstMatch(in: searchText, range: range) != nil
     }
 
-    /// Returns the index from which the tail of `bytes` must be HELD BACK into the next chunk: the
-    /// start of a trailing escape sequence that has not terminated yet, or of a trailing truncated
-    /// UTF-8 multi-byte codepoint — either can only be stripped/decoded once its continuation
-    /// arrives. `bytes.count` = nothing held.
-    ///
-    /// One question over the grammar ``ANSIStripper`` strips by, asked through it. The two used to
-    /// be separate machines here, each documented as "matching" the other.
-    static func holdbackStart(in bytes: [UInt8]) -> Int {
-        ANSIStripper.holdbackStart(in: bytes)
+    /// The capped accumulation of everything stripped so far. Storage only — matching is windowed.
+    var stripped: Data {
+        let needed = slopdesk_wait_scan_stripped(handle, nil, 0)
+        guard needed > 0 else { return Data() }
+        var out = [UInt8](repeating: 0, count: needed)
+        let written = out.withUnsafeMutableBufferPointer {
+            slopdesk_wait_scan_stripped(handle, $0.baseAddress, $0.count)
+        }
+        return Data(out.prefix(written))
     }
 }
 

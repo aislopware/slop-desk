@@ -104,7 +104,8 @@ final class TerminalFindBarModel {
         armSearch()
     }
 
-    /// `.*` — flip regex mode (ICU `NSRegularExpression`), refresh the mirror, recompute + re-arm.
+    /// `.*` — flip regex mode (the `regex` crate's dialect: linear-time, no lookaround), refresh the
+    /// mirror, recompute + re-arm.
     func toggleRegex() {
         controller.setRegex(!controller.isRegex)
         controller.setLines(model?.searchScrollbackLines() ?? [])

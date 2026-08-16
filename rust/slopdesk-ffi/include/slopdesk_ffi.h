@@ -2070,6 +2070,24 @@ size_t slopdesk_find_matches(const uint8_t *rows, size_t rows_len,
                              bool case_sensitive, bool is_regex, bool whole_word,
                              uint8_t *out, size_t cap);
 
+/* ---- `wait --until`: the same engine, over a stream that has not finished -----------------
+ * A handle, because this scan IS state: raw bytes held back mid-escape, a fixed overlap window so
+ * a marker split across chunks still matches, and a capped accumulation. Fed one PTY chunk at a
+ * time from the read loop — where a backtracking match would stall every pane's bytes, not just
+ * one window.
+ *
+ * `new` answers NULL when the pattern does not compile, and that is an ERROR rather than an empty
+ * scan: the pattern arrived whole from an agent, so a caller that mistyped it must not be left
+ * blocking until its timeout. The handle is NOT thread-safe; the caller already holds a lock
+ * around every touch.                                                                          */
+typedef struct SlopDeskWaitScan SlopDeskWaitScan;
+
+SlopDeskWaitScan *slopdesk_wait_scan_new(const uint8_t *pattern, size_t pattern_len,
+                                         size_t buffer_cap);
+void   slopdesk_wait_scan_free(SlopDeskWaitScan *handle);
+bool   slopdesk_wait_scan_ingest(SlopDeskWaitScan *handle, const uint8_t *chunk, size_t chunk_len);
+size_t slopdesk_wait_scan_stripped(SlopDeskWaitScan *handle, uint8_t *out, size_t cap);
+
 /* ---------------------------------------------------------------------------- *
  * The per-pane command blocks: one record per command the shell ran.
  *

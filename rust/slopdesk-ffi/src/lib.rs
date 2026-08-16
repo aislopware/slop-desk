@@ -106,6 +106,7 @@ pub mod video_packetize;
 pub mod video_policy;
 pub mod video_reassemble;
 pub mod vimotion;
+pub mod wait_scan;
 pub mod watch;
 pub mod window_feed;
 pub mod window_feed_host;

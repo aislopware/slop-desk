@@ -16184,3 +16184,33 @@ keystrokes, and a §4 return of `0` already means "no answer", so a derived coun
 
 Pinned by the PRE-EXISTING Swift suites, unchanged: 20 `TerminalSearchControllerTests` and 11
 `GlobalSearchControllerTests` pass against the marshaller exactly as they did against the walks.
+
+## The third untrusted pattern was the one on the read loop (2026-08-17)
+
+`wait --until PATTERN` is how an agent blocks on a marker appearing in a pane. The pattern comes
+from the agent, the text comes from whatever program holds the far side of the PTY, and
+`WaitUntilScanner` matched them with `NSRegularExpression` — on the PTY READ-LOOP thread. Hint Mode's
+version of this hazard hangs an overlay and ⌘F's hangs a find bar; this one stalls the thread every
+pane's bytes come through. It was the worst of the three and the least visible.
+
+So it moved into `slopdesk-rowscan` beside the other two, and the crate stopped being "row scans"
+in the narrow sense: `waituntil` holds STATE, because its text is not a buffer that exists — it is a
+stream arriving a chunk at a time. All three carried pieces went with it: the raw carry that holds
+back a chunk ending mid-escape, the fixed overlap window that lets a marker span a boundary, and the
+capped accumulation. Leaving any one of them in Swift would have been a second implementation of an
+incremental scan, which is exactly how the strip and the holdback drifted apart the last time.
+
+**The crate took `slopdesk-sanitize` as a second sibling**, for the stripper and the
+where-does-this-chunk-stop-being-decidable rule. `slopdesk-sanitize` refuses external dependencies
+for the same reason `slopdesk-terminal` does, and the same reading applies: the module that needs a
+regex engine lives here and reaches back, rather than smuggling one in beside the stripper.
+
+**The door is a handle**, unlike the find scan's blob — a scan that carries state is what §4b is
+for, and `new` answers NULL when the pattern does not compile. Null is an ERROR here rather than an
+empty scan: this pattern arrived whole from an agent, so a mistyped one has to be reported, not
+silently blocked on until the timeout. The dialect change costs the same lookaround and
+backreferences it costs everywhere else.
+
+Pinned by the pre-existing suite: 8 `WaitUntilScannerTests` and 47 `AgentControlListenerTests` pass.
+The only test edit is the two lines that built a scanner — an `NSRegularExpression` became a pattern
+string, and a `var` became a `let` now that the scanner is a class holding the handle.

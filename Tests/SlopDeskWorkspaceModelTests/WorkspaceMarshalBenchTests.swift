@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskBenchClock
 import XCTest
 @testable import SlopDeskWorkspaceModel
 
@@ -17,34 +18,12 @@ import XCTest
 /// So the tree ops keep their document in Swift and cross the RULE instead — the per-tab pre-order
 /// walk, which is bounded by one tab rather than by the whole document.
 ///
-/// It prints a µs/op table and asserts a loose ceiling against the BEST of three timed passes, so a
-/// slice lost to another target under `make quick` is not read as a regression.
+/// It prints a µs/op table and asserts a loose ceiling against ``BenchClock``, which measures THREAD
+/// CPU time — so a slice lost to another target under `make quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter WorkspaceMarshalBenchTests`.
 final class WorkspaceMarshalBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.
     private var sink = 0
-
-    /// One measurement, as the BEST of three passes over the same total work.
-    ///
-    /// `make quick` runs this beside thousands of other tests, and one timed loop that lands in
-    /// another target's CPU slice reads as a tenfold regression — which then costs a full re-run of
-    /// the suite to disprove. Splitting the same iteration count into three passes and keeping the
-    /// fastest costs no extra work and asks the question the ceiling is actually about: what does
-    /// this cost when it has the machine, not what did it cost while it was sharing one.
-    private func usPerOp(_ iterations: Int, _ block: () -> Void) -> Double {
-        // Warm up (codegen, allocator caches) so the timed passes are steady-state.
-        for _ in 0..<min(iterations, 200) { block() }
-        let passes = 3
-        let per = max(iterations / passes, 1)
-        var best = Double.infinity
-        for _ in 0..<passes {
-            let start = DispatchTime.now().uptimeNanoseconds
-            for _ in 0..<per { block() }
-            let end = DispatchTime.now().uptimeNanoseconds
-            best = Double.minimum(best, Double(end - start) / Double(per) / 1000.0)
-        }
-        return best
-    }
 
     /// A workspace of `sessions × tabs × panes`, each tab a real split tree rather than a leaf.
     private func workspace(sessions: Int, tabs: Int, panes: Int) -> WorkspaceTopology {
@@ -97,12 +76,13 @@ final class WorkspaceMarshalBenchTests: XCTestCase {
             let state = HostWorkspaceState(entries)
             let bytes = WorkspaceStateCodec.encodeSnapshot(state)
 
-            let project = usPerOp(shape.iterations) { sink &+= topology.entries().count }
-            let codec = usPerOp(shape.iterations) {
+            let project = BenchClock.usPerOp(shape.iterations) { sink &+= topology.entries().count }
+            let codec = BenchClock.usPerOp(shape.iterations) {
                 let blob = WorkspaceStateCodec.encodeSnapshot(state)
                 sink &+= ((try? WorkspaceStateCodec.decodeSnapshot(blob))?.entries.count ?? 0)
             }
-            let ingest = usPerOp(shape.iterations) { sink &+= WorkspaceTopology(entries: state) == nil ? 0 : 1 }
+            let ingest = BenchClock
+                .usPerOp(shape.iterations) { sink &+= WorkspaceTopology(entries: state) == nil ? 0 : 1 }
             print(String(
                 format: "%-30@ %8d %8.1f %8.1f %8.1f",
                 shape.name,

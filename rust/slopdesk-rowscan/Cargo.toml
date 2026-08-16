@@ -49,6 +49,11 @@ path = "src/lib.rs"
 # is a badge that sits half a glyph away from the span it labels on a CJK row.
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 
+# The escape stripper and the held-back-tail rule `waituntil` feeds its chunks through. One grammar
+# answers "where does this chunk stop being decidable" and "what did it say" — they used to be two
+# machines, each documented as matching the other.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+
 # The pattern engine. Linear-time by construction, which is the whole reason it is here rather than
 # a hand-written matcher or a backtracking one — see the header above. The same crate
 # `slopdesk-workspace` already takes for the secret shapes and `slopdesk-screend` for the detection
