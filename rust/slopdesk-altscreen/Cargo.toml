@@ -13,8 +13,7 @@
 # whose whole invariant is that the state lives IN the bytes.
 #
 # So the scanner is its own crate: one implementation, two workspaces, no protocol in sight. It is
-# small enough that its own workspace costs nothing but two Makefile lines, and its dependency list
-# is empty for the same reason the wire codec's is — it parses bytes a foreign program wrote.
+# small enough that its own workspace costs nothing but two Makefile lines.
 [workspace]
 resolver = "3"
 
@@ -30,6 +29,16 @@ repository = "https://github.com/aislopware/slop-desk"
 [lib]
 name = "slopdesk_altscreen"
 path = "src/lib.rs"
+
+[dependencies]
+# The ONE external-looking edge, and it is not external: a sibling under the same
+# `forbid(unsafe_code)` contract, for the same reason `slopdesk-terminal` took it (docs/DECISIONS,
+# the one-width-table entry). This crate used to hand-roll `parse_csi` and `string_sequence_end`,
+# which made it the FIFTH copy of a grammar `vtscan` exists to have exactly one of — and its header
+# says so: the Swift originals hand-rolled it four times and a bug in the CSI parameter ranges was
+# fixable in four places. A fifth copy deciding where an escape ends is how this crate and the
+# replay passes come to disagree about the same evicted bytes.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 
 # The scanner runs on eviction, inside two long-lived daemons.
 [profile.release]

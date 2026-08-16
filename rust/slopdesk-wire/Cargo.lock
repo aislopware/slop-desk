@@ -121,6 +121,13 @@ dependencies = [
 [[package]]
 name = "slopdesk-altscreen"
 version = "0.1.0"
+dependencies = [
+ "slopdesk-sanitize",
+]
+
+[[package]]
+name = "slopdesk-sanitize"
+version = "0.1.0"
 
 [[package]]
 name = "slopdesk-wire"

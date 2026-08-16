@@ -16246,3 +16246,66 @@ into. A shared clustering over two width tables is two implementations wearing o
 fails on precisely the rows nobody types by hand. `check-supervisor.sh` now greps every source file
 in the tree for the CJK sentinel `0x4E00`, which is the cheapest tell that a third table has
 appeared: nothing measures East Asian width without it.
+
+## The hand-written JSON stays, but not for the reason it said (2026-08-17)
+
+`slopdesk-workspace/src/json.rs` is ~700 lines of parser and writer, and its header justified them
+with a supply-chain argument: `serde_json` would be "the first third-party dependency in a crate
+whose whole supply-chain story is that it has none". **That argument is dead.** `src/secrets.rs`
+took `regex` — a bigger transitive tree than `serde_json` — so the premise stopped being true, and
+the audit had to re-decide the module on its merits rather than inherit a stale ruling.
+
+It survives on the WRITER, and only the writer. Both persistence files are on disk today in Swift's
+`.prettyPrinted` spelling, and `serde_json`'s pretty formatter disagrees with it three ways --
+measured against `serde_json` 1, not assumed:
+
+| | this module | `serde_json` |
+| --- | --- | --- |
+| object separator | `"a" : 1` | `"a": 1` |
+| U+007F | `\u007f` | emitted raw |
+| U+0008 / U+000C | `\u0008` / `\u000c` | `\b` / `\f` |
+
+Each divergence is a whole-file diff on every user's first save after the swap. Buying them back
+means a hand-written `serde_json::ser::Formatter` impl — most of what would have been deleted,
+re-added with a dependency underneath it. Porting the parser alone is worse still: a parser and a
+writer that disagree about one file's shape is two implementations of that file.
+
+**What would reopen it:** the on-disk spelling being allowed to change for some other reason. Then
+the module goes at once, not in halves. The two OTHER `json.rs` modules in the tree — codeseed's
+and inspectord's — are already accessors over `serde_json::Value`, not a third JSON.
+
+## The fifth CSI parser is gone (2026-08-17)
+
+`slopdesk-sanitize/src/vtscan.rs` opens by saying why it exists: "The Swift originals hand-rolled
+this four times over ... it is one implementation, and a bug in the CSI parameter ranges is fixable
+in one place instead of four."
+
+`slopdesk-altscreen` was the fifth. It carried its own `ESC`, `BEL`, `parse_csi` and
+`string_sequence_end` — and it is the crate that decides, from bytes an evictor is about to drop,
+whether tens of MiB of alt-screen churn replays into a user's scrollback. Two scanners disagreeing
+about where one sequence ends is how that crate and the replay passes reach different answers about
+the same bytes. Same shape as the two width tables, one layer down.
+
+The copies turned out to be semantically identical: its `parse_csi` matched `vtscan::parse_csi`
+range for range, and its `string_sequence_end` was exactly `Terminators::replay(bel)`. All 18 of
+its tests passed against the shared scanner UNCHANGED, which is the evidence that this was
+duplication and not divergence — caught before it became a bug rather than after.
+
+Two behaviours the deleted parser enforced implicitly now have tests, because the shared `Csi`
+REPORTS what the local one decided:
+
+- **an intermediate byte disqualifies a look-alike DECSET.** The old parser zeroed its own
+  `final_byte` when intermediates were present; `vtscan` hands back both, so `alt_transition_param`
+  makes the call where it can be read.
+- **a bare `ESC` inside an OSC body does not end it.** `vtscan` offers `Terminators::lenient()`,
+  which would; this crate must stay on `replay()`, or the scan walks into body text and reads an
+  embedded `?1049h` as a real transition.
+
+**The crate's "empty dependency list" was not the argument it looked like.** That rule guards
+against parsing foreign bytes with a foreign crate; `slopdesk-sanitize` is a sibling under the same
+`forbid(unsafe_code)` contract, which is the distinction `slopdesk-terminal` already drew when it
+took the same edge for the width table.
+
+**Not a sixth copy:** `slopdesk-screend/src/model.rs` walks CSI too, but incrementally, byte at a
+time, into a cell grid — it interprets parameters, where `vtscan` only answers "where does this
+end" over a whole buffer. Different question, correctly separate.

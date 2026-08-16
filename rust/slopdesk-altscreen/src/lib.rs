@@ -34,8 +34,7 @@
 
 #![forbid(unsafe_code)]
 
-const ESC: u8 = 0x1B;
-const BEL: u8 = 0x07;
+use slopdesk_sanitize::vtscan::{self, Csi, ESC, Terminators};
 
 /// DEC private modes that switch to the alternate screen.
 const ALT_MODES: [u32; 3] = [47, 1047, 1049];
@@ -71,9 +70,9 @@ pub fn reopen_sequence(dropped: &[u8], kept_head: &[u8]) -> Option<Vec<u8>> {
         match bytes.get(index + 1).copied() {
             // CSI
             Some(b'[') => {
-                match parse_csi(&bytes, index) {
+                match vtscan::parse_csi(&bytes, index) {
                     Some(sequence) => {
-                        if let Some(mode) = alt_transition_param(&bytes, &sequence) {
+                        if let Some(mode) = alt_transition_param(&sequence) {
                             in_alt = sequence.final_byte == b'h';
                             if in_alt {
                                 enter_mode = mode;
@@ -87,9 +86,9 @@ pub fn reopen_sequence(dropped: &[u8], kept_head: &[u8]) -> Option<Vec<u8>> {
             },
             // OSC / DCS / SOS / PM / APC — opaque bodies.
             Some(terminator @ (b']' | b'P' | b'X' | b'^' | b'_')) => {
-                let bel_terminates = terminator == b']';
-                match string_sequence_end(&bytes, index + 2, bel_terminates) {
-                    Some(end) => index = end,
+                let policy = Terminators::replay(terminator == b']');
+                match vtscan::string_sequence_end(&bytes, index + 2, policy) {
+                    Some(sequence) => index = sequence.seq_end,
                     // Cut inside the body — no transitions possible past here.
                     None => index = bytes.len(),
                 }
@@ -103,41 +102,18 @@ pub fn reopen_sequence(dropped: &[u8], kept_head: &[u8]) -> Option<Vec<u8>> {
     Some(format!("\u{1B}[?{enter_mode}h").into_bytes())
 }
 
-/// One parsed CSI: where its parameter bytes live, its final byte, and where it ends.
-struct CsiSequence {
-    params: core::ops::Range<usize>,
-    /// The final byte, or `0` when intermediates are present (⇒ never a DECSET/DECRST).
-    final_byte: u8,
-    end: usize,
-}
-
-fn parse_csi(bytes: &[u8], start: usize) -> Option<CsiSequence> {
-    let mut index = start + 2;
-    let params_start = index;
-    while matches!(bytes.get(index), Some(&(0x30..=0x3F))) {
-        index += 1;
-    }
-    let inters_start = index;
-    while matches!(bytes.get(index), Some(&(0x20..=0x2F))) {
-        index += 1;
-    }
-    let Some(&final_byte @ 0x40..=0x7E) = bytes.get(index) else {
-        return None;
-    };
-    Some(CsiSequence {
-        params: params_start..inters_start,
-        // Intermediates present ⇒ not a DECSET/DECRST; params are still parsed for uniform skipping.
-        final_byte: if inters_start == index { final_byte } else { 0 },
-        end: index + 1,
-    })
-}
-
 /// The alt-screen mode when the CSI is a DECSET/DECRST whose params include one, else `None`.
-fn alt_transition_param(bytes: &[u8], sequence: &CsiSequence) -> Option<u32> {
+fn alt_transition_param(sequence: &Csi<'_>) -> Option<u32> {
     if sequence.final_byte != b'h' && sequence.final_byte != b'l' {
         return None;
     }
-    let (marker, rest) = bytes.get(sequence.params.clone())?.split_first()?;
+    // Intermediates present ⇒ not a DECSET/DECRST, whatever the final byte says. The hand-rolled
+    // parser expressed this by zeroing its own `final_byte`; the shared `Csi` reports both, so the
+    // discrimination has to be made here instead of hidden in the scan.
+    if !sequence.intermediates.is_empty() {
+        return None;
+    }
+    let (marker, rest) = sequence.params.split_first()?;
     if *marker != b'?' {
         return None;
     }
@@ -146,20 +122,6 @@ fn alt_transition_param(bytes: &[u8], sequence: &CsiSequence) -> Option<u32> {
     rest.split(|&byte| byte == b';')
         .filter_map(|token| core::str::from_utf8(token).ok()?.parse::<u32>().ok())
         .find(|mode| ALT_MODES.contains(mode))
-}
-
-fn string_sequence_end(bytes: &[u8], body_start: usize, bel_terminates: bool) -> Option<usize> {
-    let mut index = body_start;
-    while let Some(&byte) = bytes.get(index) {
-        if bel_terminates && byte == BEL {
-            return Some(index + 1);
-        }
-        if byte == ESC && bytes.get(index + 1) == Some(&b'\\') {
-            return Some(index + 2);
-        }
-        index += 1;
-    }
-    None
 }
 
 #[cfg(test)]
@@ -176,6 +138,23 @@ mod tests {
     #[test]
     fn plain_text_is_outside_alt_screen() {
         assert_eq!(reopen("hello\nworld\n", ""), None);
+    }
+
+    /// The two properties the hand-rolled scanner enforced implicitly and `vtscan` reports instead
+    /// of deciding, so the discrimination now lives in `alt_transition_param` where it can be read.
+    #[test]
+    fn an_intermediate_byte_disqualifies_a_look_alike_decset() {
+        // `ESC [ ? 1049 SP h` — parameters and a final byte that read like an enter, with an
+        // intermediate between them. ECMA-48 says that is a different sequence entirely.
+        assert_eq!(reopen("\u{1B}[?1049 h", ""), None);
+    }
+
+    /// `vtscan` offers a LENIENT policy where a bare `ESC` ends a string body. This crate must not
+    /// take it: an unterminated OSC here is a head-cut artifact, and calling it "ended" would let
+    /// the scan walk into body text and read an embedded `?1049h` as a real transition.
+    #[test]
+    fn a_bare_escape_inside_an_osc_body_does_not_end_it() {
+        assert_eq!(reopen("\u{1B}]0;ti\u{1B}tle\u{1B}[?1049h", ""), None);
     }
 
     #[test]

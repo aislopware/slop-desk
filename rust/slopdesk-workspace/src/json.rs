@@ -12,11 +12,22 @@
 //!
 //! ## Why hand-written rather than a crate
 //!
-//! `serde_json` would be one line in the manifest. It would also be the first third-party
-//! dependency in a crate whose whole supply-chain story is that it has none — and the JSON this
-//! crate needs is a state file with four scalar shapes in it, not the general problem. A parser for
-//! that fits in one screen and is auditable in one sitting, which is a better trade than a
-//! transitive tree pulled in to read `{"version": 1}`.
+//! Not the supply chain. That was the original reason and it is DEAD: `src/secrets.rs` took
+//! `regex`, which pulls a far larger tree than `serde_json` would, so "this crate has no
+//! third-party dependency" stopped being true and cannot be the argument any more.
+//!
+//! What is left is the WRITER, and it is enough. Every byte here is pinned to what Swift's
+//! `.prettyPrinted` wrote, because both persistence files are already on disk in that spelling:
+//! a space either side of the `:`, `U+007F` escaped, and `U+0008`/`U+000C` spelled long as
+//! `\u0008`/`\u000c`. `serde_json` disagrees on all three — measured, not assumed: it writes
+//! `"a":`, emits DEL raw, and shortens to `\b`/`\f`. So the swap is a
+//! whole-file diff on every user's first save — and buying it back means a hand-written `Formatter`
+//! impl, which is most of what would have been deleted, re-added with a dependency underneath it.
+//! The parser could go alone, but a parser and a writer that disagree about the same file's shape
+//! is a worse thing to own than either half.
+//!
+//! Revisit if the on-disk spelling is ever allowed to change for another reason — then the whole
+//! module goes at once.
 //!
 //! ## Sorted keys are structural
 //!

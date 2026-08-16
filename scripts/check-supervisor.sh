@@ -3635,6 +3635,30 @@ for owner in rust/*/src/*.rs rust/*/src/*/*.rs Sources/*/*.swift Sources/*/*/*.s
 done
 printf 'check-supervisor: one width table under that clustering.\n'
 
+# ── And ONE grammar for where an escape ENDS ───────────────────────────────────────────────────
+# `vtscan` exists because the Swift originals hand-rolled the CSI/string-sequence walk four times
+# and a bug in the parameter ranges was fixable in four places. `slopdesk-altscreen` then made a
+# FIFTH copy — in the crate that decides, from evicted bytes, whether tens of MiB of alt-screen
+# churn replays into a user's scrollback. Two scanners disagreeing about where one sequence ends is
+# how that crate and the replay passes reach different answers about the same bytes.
+#
+# The ban is on the two function NAMES rather than on the ranges: 0x40..=0x7E is the ECMA-48 final
+# byte and appears in the shared scanner itself, but nothing walks a sequence without defining
+# where it stops.
+if ! spells 'pub fn parse_csi' rust/slopdesk-sanitize/src/vtscan.rs > /dev/null; then
+  fail "rust/slopdesk-sanitize/src/vtscan.rs lost parse_csi — it is the one escape grammar"
+fi
+if ! spells 'use slopdesk_sanitize::vtscan' rust/slopdesk-altscreen/src/lib.rs > /dev/null; then
+  fail "rust/slopdesk-altscreen stopped reading the one escape grammar — a fifth copy drifts"
+fi
+for owner in rust/*/src/*.rs rust/*/src/*/*.rs; do
+  [[ "${owner}" == rust/slopdesk-sanitize/src/vtscan.rs ]] && continue
+  if spells 'fn (parse_csi|string_sequence_end)' "${owner}" > /dev/null 2>&1; then
+    fail "${owner} defines its own escape scanner — slopdesk-sanitize::vtscan is the one"
+  fi
+done
+printf 'check-supervisor: one grammar for where an escape ends, and five copies is not it.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
