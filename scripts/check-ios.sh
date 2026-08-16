@@ -11,11 +11,12 @@
 #
 # ## Why it is stamped
 #
-# Two xcodebuild schemes over the whole package graph cost ~245 s, and they cost it whether or not
-# a single compiled byte changed: xcodebuild's incrementality does not survive the package
-# re-resolution, so a re-run on an untouched tree is a full re-run. That made this the most
-# expensive gate in the repo by a factor of four, and it was being paid after every edit — including
-# edits to Rust, docs and shell that the iOS compiler never sees.
+# An xcodebuild over this package graph costs ~85 s whether or not a single compiled byte changed.
+# That is not a missing cache: with a private `-derivedDataPath`, a second run on an untouched tree
+# emits an EMPTY build-timing summary — no compile task ran at all — and still spends the 85 s
+# resolving the packages and re-creating the build description. Planning IS the cost here, and
+# nothing on this side can make Xcode skip it. It was being paid after every edit, including edits
+# to Rust, docs and shell that the iOS compiler never sees.
 #
 # So the verdict is CACHED against a hash of its inputs, exactly the way `build-ffi.sh` caches the
 # xcframework. The stamp is written only after a green run, so a red one is never cached, and it
@@ -77,27 +78,33 @@ fi
 echo "==> xcodegen generate --spec ${SPEC}"
 xcodegen generate --spec "${SPEC}" > /dev/null
 
-build() {
-  local scheme="$1"
-  echo "==> iOS-triple build: ${scheme}"
-  xcodebuild \
-    -project "${PROJECT}" \
-    -scheme "${scheme}" \
-    -destination "${DEST}" \
-    CODE_SIGNING_ALLOWED=NO \
-    build
-}
-
-# The app target links SlopDeskClientUI + SlopDeskVideoClient, so building it compiles the host +
-# every `#if os(iOS)` source it depends on.
-build "ClientApp-iOS"
-
-# Belt-and-suspenders: the SlopDeskClientUI scheme is exposed by the project (it carries the iOS
-# table-stakes). Build it directly too if present, so the library's iOS slice is checked on its
-# own, independent of the app target's other dependencies.
-if xcodebuild -project "${PROJECT}" -list 2> /dev/null | grep -qx '        SlopDeskClientUI'; then
-  build "SlopDeskClientUI"
-fi
+# ONE scheme, and the second one's removal is measured rather than assumed.
+#
+# The app target links SlopDeskClientUI + SlopDeskVideoClient, so building it compiles the host and
+# every `#if os(iOS)` source it depends on. This script also built the `SlopDeskClientUI` scheme
+# directly, "belt-and-suspenders … independent of the app target's other dependencies" — but the
+# build's OWN dependency dump says it is not independent of anything:
+#
+#     Target 'ClientApp-iOS' in project 'ClientApp-iOS'
+#         ➜ Explicit dependency on target 'SlopDeskClientUI' in project 'SlopDesk'
+#         ➜ Explicit dependency on target 'SlopDeskVideoClient' in project 'SlopDesk'
+#
+# and `SlopDeskClientUI` in turn pulls in all seventeen library targets. The second scheme's graph
+# is a strict SUBSET of the first's, so it compiled nothing the first had not already compiled —
+# for ~85 s, on every Swift edit, forever. The one thing it would have caught (the app spec dropping
+# its SlopDeskClientUI dependency) cannot happen quietly: the app does not build without it.
+#
+# `-derivedDataPath` under `.build/` rather than the shared `~/Library/Developer/Xcode/DerivedData`:
+# this gate's cache is then wiped by `make clean` with the rest of the derived state, and Xcode.app
+# working on the same project cannot evict it out from under the stamp.
+echo "==> iOS-triple build: ClientApp-iOS"
+xcodebuild \
+  -project "${PROJECT}" \
+  -scheme "ClientApp-iOS" \
+  -destination "${DEST}" \
+  -derivedDataPath "${REPO_ROOT}/.build/ios-dd" \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 
 # Only a GREEN run is cached, and the stamp is recomputed rather than reused: xcodegen rewrote the
 # .xcodeproj above, and a source file edited while the build ran must not be recorded as checked.

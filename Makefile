@@ -266,10 +266,31 @@ check: lint build test miri golden check-ios ## lint + build + test + the unsafe
 #
 # `build` is not omitted so much as implied: `test-touched` builds incrementally before selecting.
 #
-# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~38 s of ratchets
+# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~34 s of ratchets
 # that read the whole tree — and that floor is the honest price of the cross-language contracts.
-quick: ffi lint test-touched golden check-ios ## The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
-	@printf 'quick: green — run `make check` before pushing (adds the full suite + miri)\n'
+# `ffi` and `lint` come first and in order — the artifact before anything that links it, and the
+# linters before the slow half, so a formatting slip fails in seconds rather than after the tests.
+# The slow half then runs CONCURRENTLY, ordered logs and known pids exactly as `lint` does: after a
+# Swift edit `test-touched` and `check-ios` are the two costs left, they share nothing but the
+# SwiftPM lock (which only makes `golden` wait, and `golden` is three seconds), and serially the
+# inner loop paid their sum. Measured on one Swift edit: 5:46 serial, and the iOS half of that was
+# two schemes where one does the work.
+QUICK_SLOW := test-touched golden check-ios
+
+quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
+	@dir=$$(mktemp -d -t slopdesk-quick); trap 'rm -rf "$$dir"' EXIT; \
+	for t in $(QUICK_SLOW); do \
+	  $(MAKE) --no-print-directory $$t > "$$dir/$$t.log" 2>&1 & echo $$! > "$$dir/$$t.pid"; \
+	done; \
+	rc=0; \
+	for t in $(QUICK_SLOW); do \
+	  wait $$(cat "$$dir/$$t.pid") || rc=1; \
+	  if [ -s "$$dir/$$t.log" ]; then printf '── %s ──\n' "$$t"; cat "$$dir/$$t.log"; fi; \
+	done; \
+	if [ $$rc -eq 0 ]; then \
+	  printf 'quick: green — run `make check` before pushing (adds the full suite + miri)\n'; \
+	fi; \
+	exit $$rc
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
 # UIKit input host and the iOS components in Sources/SlopDeskClientUI/iOS/ compiled only in someone's
