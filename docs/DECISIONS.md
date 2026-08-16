@@ -15948,3 +15948,38 @@ caller is Swift, which is not in this tree's `.rs` files. `lib.rs` counts as a c
 `pub mod` / `pub use` lines do not: a re-export is precisely what a stranded module has INSTEAD of
 a caller, so counting one would have made the gate unable to fail — which is how all four of these
 survived a repo that already ratchets cross-language contracts in two other scripts.
+
+## The same audit, one level down: item granularity was tried and rejected (2026-08-16)
+
+The module gate above is precise because a module is a unit a `pub mod` line declares. The obvious
+next question — which `pub` ITEMS inside a live module are reached by nothing — was measured and
+does not gate. Three scans, with what each got wrong:
+
+**Every `pub` item, unreferenced outside its own file: 100 hits, 281 more that are `pub` but only
+used file-locally.** Most of the 100 are legitimate: `retained_count`, `subscriber_count`,
+`followed_count`, `open_ids` are observability a test asks and production does not, which is a
+pattern, not a defect. Gating would mean a hundred-entry waiver list, which is a list nobody reads.
+
+**Types re-exported from `lib.rs` and named nowhere outside their module: 26 hits.** Over-reports
+badly — a return type is used without ever being named (`let decision = decide(…)`), so
+`QpDecision`, `CongestionDecision` and most of the other 24 are live. Worse, it MISSES the case it
+was built for: `ConnectionTarget` passes because the Swift twin has the same name, and a name-based
+scan cannot tell a duplicate from a caller. A gate that is blind to its own motivating example is
+not a gate.
+
+What the scans did surface, by hand rather than by rule, is a THIRD instance of the pattern the
+module gate found — and the tail it comes from is now legible. `e6b1ce9b` ported the video input
+path as two free functions, `slopdesk_input_normalize` and `slopdesk_input_next_tag`, and Swift's
+`InputEventEncoder` (`VideoClientSessionLogic.swift:779`) is a proper face over both: it normalises
+through the door and mints tags through the door, and the only Swift left is assembling the
+`InputEvent` enum, which is a vocabulary the codec and SwiftUI both read. Correct. But the port ALSO
+wrote `slopdesk_video::client_input::InputEventEncoder` — the same struct, the same five methods,
+the same tag semantics — and nothing constructs one. The FFI imports six names from that module and
+not this one; `lib.rs:217` re-exports it, and that line is its only mention in the tree.
+
+So all three stranded duplicates — `ConnectionTarget`, `InputEventEncoder`, and the value types
+inside `templates` — are the same mistake, and it is a specific one: **the port correctly left a
+vocabulary in Swift and then wrote the Rust twin anyway.** `docs/55` §6 already draws that line;
+what was missing is that nothing checks the line was respected in the direction of writing too much
+Rust, only in the direction of leaving too much Swift. The module gate catches it only when the
+whole module is stranded, which is why `connection` is caught and `client_input` is not.
