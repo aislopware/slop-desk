@@ -645,7 +645,6 @@ let package = Package(
         .testTarget(
             name: "SlopDeskInspectorTests",
             dependencies: ["SlopDeskInspector", "SlopDeskProtocol"],
-            exclude: ["Fixtures"],
         ),
         // WF-7 logic: env/auth (SlopDeskHost) + mode sniffer / dedup ring / input-box model
         // (SlopDeskClaudeCode). Byte-sequence + fixture based; the sniffer tests feed the

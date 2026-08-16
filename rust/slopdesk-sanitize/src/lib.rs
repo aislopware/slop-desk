@@ -22,7 +22,9 @@
 //!
 //! [`plaintext`] is not one of the passes: it renders PTY bytes as the plain text a REGEX is
 //! matched against, which means removing every sequence rather than only the churn. It lives here
-//! because it reads the same grammar through the same scanner.
+//! because it reads the same grammar through the same scanner. [`styled`] is its counterpart for an
+//! EYE rather than a pattern — the clipboard's and the preview's reading, colours kept, columns
+//! rewritten — and it lives here for the same reason.
 //!
 //! [`boundary`] holds back the trailing half of an escape sequence the caller's own chunking cut,
 //! so the reassert appended after the passes cannot land in the middle of one.
@@ -46,6 +48,7 @@ pub mod plaintext;
 pub mod prompteol;
 pub mod query;
 pub mod sanitize;
+pub mod styled;
 pub mod syncframe;
 pub mod vtscan;
 pub mod width;

@@ -401,6 +401,29 @@ the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, an interrup
 TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One crate
 holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears.
 
+### The answer that is a NESTED shape, walked once
+
+`slopdesk_styled_lines` renders a finished command's captured bytes as the styled lines a person
+reads — lines of runs, each run a style plus its text. That is two levels of variable count, which
+§4's flat `(offset, length)` pairs do not express, so the answer is a WALK: a count, then that many
+groups, each a count and that many `[13-byte header][text]` records.
+
+The walk is the whole contract. Nothing is indexable and nothing is seekable — the caller reads
+forward exactly once, and a length that would leave the buffer is a shape disagreement between the
+two sides rather than bad input, because the pass itself never refuses. `rust/slopdesk-ffi`'s own
+tests walk it too, and assert the cursor lands exactly on the end: a layout pinned on one side only
+is a layout nothing pins.
+
+A colour's ABSENCE is a `kind` byte of `0` rather than a reserved palette slot. The surface's
+default is not a colour the stream named, and encoding it as one would paint a pane's own background
+over text nothing coloured — §4b's rule about presence flags, at the granularity of a run.
+
+What made the port worth doing is that the Swift it replaced was a SECOND VT GRAMMAR: a hand-rolled
+escape skipper, a hand-rolled SGR decoder and a hand-rolled string-sequence scan, sitting beside the
+`vtscan` module that already owned all three for the replay passes. Two grammars over one byte
+stream is how a sequence one side skips and the other prints becomes a bug nobody can localise. All
+45 tests written against the deleted Swift passed unchanged the first time the door was wired in.
+
 ## 4c. What the boundary costs, measured
 
 A/B against the deleted Swift implementation, release build, 32 KiB chunks, 64 MiB ring

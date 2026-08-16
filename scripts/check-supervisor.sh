@@ -3540,6 +3540,33 @@ for rule in 'pub fn parse' 'fn classify' 'fn stop_label' 'fn question_label'; do
 done
 printf 'check-supervisor: one reading of a hook body.\n'
 
+# ── One VT grammar for STYLED text, and the clipboard reads it destyled ────────────────────────
+# `AnsiStyledParser` was a SECOND VT grammar: a hand-rolled escape skipper, a hand-rolled SGR
+# decoder and a hand-rolled string-sequence scan, sitting beside the `vtscan` module that already
+# owned all three for the replay passes. Two grammars over one byte stream is how a sequence one
+# side skips and the other prints becomes a bug nobody can localise. `slopdesk_sanitize::styled`
+# owns the pass now; the clipboard's plain text is that pass with the styles discarded, which is
+# what keeps the copied text and the coloured text from being two behaviours.
+SWIFT_STYLED=Sources/SlopDeskWorkspaceCore/Terminal/AnsiStyledText.swift
+grammar_revived=$(grep -rlE 'func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b' Sources/ || true)
+if [[ -n "${grammar_revived}" ]]; then
+  printf '%s\n' "${grammar_revived}" >&2
+  fail "a Swift VT grammar is back in Sources/ — slopdesk-sanitize::styled owns the styled pass"
+fi
+if ! spells 'slopdesk_styled_lines' "${SWIFT_STYLED}" > /dev/null; then
+  fail "${SWIFT_STYLED} stopped asking the door — it is a marshaller over the pass, not a second one"
+fi
+SWIFT_PLAIN=Sources/SlopDeskWorkspaceCore/Terminal/BlockOutputSanitizer.swift
+if ! spells 'AnsiStyledParser\.lines' "${SWIFT_PLAIN}" > /dev/null; then
+  fail "${SWIFT_PLAIN} skims on its own again — the clipboard's text IS the styled pass, destyled"
+fi
+for rule in 'pub fn lines' 'fn escape_end' 'fn apply_sgr' 'fn is_erase_to_line_end'; do
+  if ! spells "${rule}" rust/slopdesk-sanitize/src/styled.rs > /dev/null; then
+    fail "rust/slopdesk-sanitize/src/styled.rs lost ${rule} — one grammar, read two ways"
+  fi
+done
+printf 'check-supervisor: one VT grammar for styled text, and the clipboard destyles it.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the
