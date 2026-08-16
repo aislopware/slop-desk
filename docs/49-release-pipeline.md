@@ -17,7 +17,8 @@ GitHub Actions · aislopware/slop-desk · macos-26 · arm64
    publish     →  GitHub Release v<version>
    tap         →  aislopware/homebrew-tap                (version + sha256 rewrite)
         ▼
-brew install aislopware/tap/slopdesk           # slopdesk, slopdesk-hostd, slopdesk-ctl
+brew install aislopware/tap/slopdesk           # the CLI + every sidecar daemon
+brew services start slopdesk                   # superd — REQUIRED, see below
 brew install --cask aislopware/tap/slopdesk    # SlopDesk.app + SlopDeskHost.app
 ```
 
@@ -291,13 +292,55 @@ to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a de
 `.executable` products. The other `executableTarget`s are dev/bench tools and stay product-less on
 purpose.
 
-The tarball's third binary, `slopdesk-ctl`, is **not** a SwiftPM product at all: it is Rust
-(`rust/slopdesk-ctl`, see `docs/DECISIONS.md`) and `package-release.sh` builds it with
+Everything else in the tarball is Rust, and `package-release.sh` builds it with
 `cargo build --release --target aarch64-apple-darwin`. That target triple is explicit for the same
 reason `--arch arm64` is on the Swift half. `locate_tool` resolves a cargo binary to its cargo path
 or to *nothing* — deliberately never falling through to the SwiftPM search, because a stale
 `.build*/release/slopdesk-ctl` left by the deleted Swift target would otherwise ship silently under
 the right name, and that is the one substitution the `slopdesk version` check cannot catch.
+
+## What the tarball ships, and why the list is not shorter
+
+Ten binaries, not three. The three it used to be — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` —
+produced a host that could not open a pane, because `slopdesk-superd` forks and owns every PTY
+master and hostd has no fallback path (`docs/51`; `HostServiceSupervisor.connected()` says it in
+one line). The other five daemons each cost a feature outright: no screen engine, no file drop, no
+inspector, no Android panel, no profile seed.
+
+The cargo half splits along the **workspace** boundary, and so does the build:
+
+| Group | Binaries | Built from | Lands in |
+| --- | --- | --- | --- |
+| root workspace members | `slopdesk-ctl`, `slopdesk-probe`, `slopdesk-hook`, `slopdesk-agenthooks` | `rust/`, with `-p` | `rust/target/…` |
+| own-workspace daemons | `slopdesk-superd`, `-screend`, `-dropd`, `-inspectord`, `-androidd`, `-codeseed` | the crate's own directory | that crate's own `target/` |
+
+`rust/Cargo.toml` `exclude`s every daemon, so `cargo build -p slopdesk-superd` from `rust/` fails —
+cargo cannot see a package it excluded. That same seam is the one `RustServicePaths` walks, which is
+why one function walks for a per-crate `target/` and the other only looks beside the executable.
+
+`slopdesk-hook` is not optional trim: `slopdesk-agenthooks` installs the relay from
+`executable.parent()/slopdesk-hook`, so the two must land in the same directory. That is also why
+the formula puts everything in one flat `bin` rather than tucking the daemons into `libexec`.
+
+`check-invariants.py` derives the required set from the `RustServicePaths.locate`/`locateBeside`
+call sites and compares it with the tool arrays in `package-release.sh`, so a seventh daemon cannot
+be forgotten the way six were. It reads the ARRAYS, not the file: a first draft grepped the script
+whole and the comment naming every daemon satisfied it on its own.
+
+## superd is a service, not a caveat
+
+The formula carries a `service` block, so `brew services start slopdesk` runs superd as a LaunchAgent
+under `homebrew.mxcl.slopdesk`. It is `keep_alive successful_exit: false`, never a bare `true`, and
+that detail is load-bearing: superd exits **0 on purpose** when another instance already holds its
+lock file, rather than stealing a live socket and stranding the panes behind it. A bare `KeepAlive`
+restarts on any exit, so the loser respawned every ten seconds forever. A machine with both agents —
+this one and a checkout's `com.slopdesk.superd` from `scripts/install-superd.sh` — now settles, with
+whichever booted first keeping the panes. `install-superd.sh` was fixed to the same form.
+
+The **cask depends on the formula**. `SlopDeskHost.app` does not shell out to `slopdesk-hostd`; it
+runs the same `HostServer` in-process, so it needs superd exactly as much as the CLI does, and a
+cask-only install was the same broken host wearing a menu-bar icon. The CLI tools coming along is a
+side effect of declaring the real dependency.
 
 `package-release.sh` also pins `--scratch-path .build-release` rather than discovering the output
 directory, and still *searches* it for the SwiftPM binaries instead of assuming a layout: the path

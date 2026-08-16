@@ -15842,3 +15842,67 @@ without noticing.
 The rule that follows: when the tree is a working migration, restore from a copy of the *working
 tree*, never from a commit. `git stash` or a `cp -a` of the file, and check `git diff --stat` for the
 file first — an empty diff is the only case where `checkout HEAD --` is what it looks like.
+
+## The next tag would ship a host that cannot open a pane (2026-08-16)
+
+`scripts/package-release.sh` ships exactly five things: two apps in the DMG, and three binaries in
+the CLI tarball —
+
+    SPM_TOOLS=(slopdesk slopdesk-hostd)
+    RUST_TOOLS=(slopdesk-ctl)
+
+Not one of the sidecar daemons is in that list, in either app spec's copy phase, or anywhere else in
+the pipeline: `slopdesk-superd`, `slopdesk-screend`, `slopdesk-dropd`, `slopdesk-inspectord`,
+`slopdesk-androidd`, `slopdesk-codeseed`, `slopdesk-agenthooks`, `slopdesk-probe`.
+
+For five of those the consequence is a feature that reports unavailable, which is survivable.
+superd is not one of the five. It forks and owns every pane's PTY master
+(`Sources/SlopDeskHost/PTYProcess.swift:9`, `docs/51`), and `HostServiceSupervisor.connected()` says
+what happens without it in its own doc comment: "hostd does not fork, so there is no fallback to
+have." A `brew install aislopware/tap/slopdesk` therefore yields a `slopdesk-hostd` that cannot open
+a terminal — the product's entire purpose.
+
+It has not shipped broken. v0.4.0 was cut from a tree whose hostd still forked its own PTYs; the gap
+opens the moment a tag is cut from the migration. That is the same window the FFI xcframework step
+was found in, and for the same reason: the release path is exercised by tagging, so a change that
+moves an implementation out of the Swift graph is invisible to every gate that is not a release.
+
+Shipping the binaries is necessary and not sufficient. `scripts/install-superd.sh` also installs a
+LaunchAgent plist pointing OUT of the build tree, and superd must be RUNNING before hostd's first
+pane — `SupervisorClient.swift:38` calls `make superd-install` "a prerequisite, not an optimisation".
+So the release needed an answer to *who loads the agent on a machine that never had a checkout*.
+
+**Decided (user-directed 2026-08-16): the formula owns it, through `brew services`.** Not caveats —
+a required daemon left to a paragraph somebody skims is not shipped — and not hostd bootstrapping
+its own LaunchAgent, which would make the host write to `~/Library/LaunchAgents` and call
+`launchctl` as a side effect of starting. One install path, and it is the package manager's.
+
+Four things fell out of it, and each was its own defect:
+
+**A packaged host could not have found the daemons even with them installed.** `RustServicePaths`
+searched the override, `~/Library/Application Support/SlopDesk/bin`, and a cargo target tree — a
+release tarball is none of the three. It now looks beside the running executable too, after the
+hand-installed copy and before the walk, which is exactly what a flat `bin` directory needs. The
+function had NO test; it has seven now, and removing the new step fails two of them.
+
+**The cask was the same bug wearing a menu-bar icon.** `SlopDeskHost.app` does not shell out to
+`slopdesk-hostd` — `HostController` runs the same `HostServer` in-process — so it needs superd just
+as much. The cask now declares `depends_on formula:`, because the dependency is real rather than a
+convenience.
+
+**`slopdesk-hook` had to ship for a reason no lookup in Swift states.** `slopdesk-agenthooks`
+installs the relay from `executable.parent()/slopdesk-hook`, so a formula that split the daemons
+into `libexec` would leave the hook install with nothing to copy. Everything lands in one flat `bin`.
+
+**superd's `KeepAlive` contradicted superd's own comment.** It exits 0 on purpose when another
+instance holds the lock, and `main.rs` reasons that launchd "would restart a job that exited
+non-zero" — true only of `KeepAlive { SuccessfulExit: false }`. The plist said `<true/>`, which
+restarts on ANY exit, so the loser respawned every ten seconds forever. Both plists are the dict
+form now, which is also what lets the checkout's agent and Homebrew's coexist: whichever booted
+first keeps the panes, the other exits once and stays quiet.
+
+The gate is `check-invariants.py`'s `the_release_ships_every_sidecar_the_host_needs`, derived from
+the `RustServicePaths` call sites rather than a maintained list. It reads the tool ARRAYS in
+`package-release.sh`, not the file — a first draft grepped the script whole, and the comment above
+those arrays names every daemon, so it passed on prose alone. A gate a comment can satisfy is not
+a gate.

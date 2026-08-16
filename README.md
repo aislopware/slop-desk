@@ -25,12 +25,20 @@ Apple silicon, macOS 26 or newer. Signed and notarized; two packages, installed 
 
 ```sh
 brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
-brew install aislopware/tap/slopdesk         # slopdesk, slopdesk-hostd, slopdesk-ctl
+brew services start slopdesk                 # slopdesk-superd — required, see below
 ```
 
-The app bundles carry no copy of the CLI, so wanting both means running both commands. Signed
-artifacts also live on the [releases page](https://github.com/aislopware/slop-desk/releases);
-how they are built and signed is [`docs/49-release-pipeline.md`](docs/49-release-pipeline.md).
+The cask depends on the formula, so that first command also installs the CLI (`slopdesk`,
+`slopdesk-hostd`, `slopdesk-ctl`) and the sidecar daemons. `brew install aislopware/tap/slopdesk`
+alone gets you those without the apps.
+
+`brew services start slopdesk` is not optional. `slopdesk-superd` holds every pane's PTY master —
+that is what lets you restart the host without killing the agents under it — and neither the host
+app nor `slopdesk-hostd` forks a shell itself, so without the service running there are no panes.
+
+The app bundles carry no copy of the CLI. Signed artifacts also live on the
+[releases page](https://github.com/aislopware/slop-desk/releases); how they are built and signed is
+[`docs/49-release-pipeline.md`](docs/49-release-pipeline.md).
 
 ## Build & run
 

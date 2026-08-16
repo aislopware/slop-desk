@@ -180,6 +180,58 @@ def every_script_sets_pipefail() -> Report:
     return missing, "a shell script does not set pipefail — a death inside a pipe would read green"
 
 
+_LOCATE_CALL = re.compile(
+    r"RustServicePaths\.locate(?:Beside)?\(\s*(?:\"(?P<literal>slopdesk-[a-z]+)\"|(?P<symbol>\w+))",
+)
+_BINARY_NAME_CONSTANT = re.compile(r"""\bbinaryName\s*=\s*"(slopdesk-[a-z]+)\"""")
+
+
+def the_release_ships_every_sidecar_the_host_needs() -> Report:
+    """A daemon hostd resolves at runtime and the tarball omits is a feature that cannot run.
+
+    This gate exists because the tarball was three binaries — `slopdesk`, `slopdesk-hostd`,
+    `slopdesk-ctl` — while hostd resolved eight more, superd among them. superd forks every PTY
+    master, so a `brew install` produced a host that could not open a single pane, and no gate
+    could see it: the release path is exercised by TAGGING, and a change that moves an
+    implementation out of the Swift graph is invisible to everything that is not a release.
+
+    Derived from the call sites, not from a list: every `RustServicePaths.locate`/`locateBeside`
+    names the binary it wants, so a seventh daemon is covered the day someone writes the lookup.
+    Two names cannot be found that way and are added explicitly rather than left to an
+    approximation that would quietly drop them — `slopdesk-superd`, which hostd reaches by SOCKET
+    and never by path, and `slopdesk-hook`, which `slopdesk-agenthooks` copies from its own
+    directory (`rust/slopdesk-hook/src/bin/agenthooks.rs`, `executable.parent()/RELAY_NAME`).
+
+    The shipped set is read from the tool ARRAYS, not from the file: a first draft grepped
+    `package-release.sh` whole, which the comment above those arrays — it names every daemon —
+    satisfied on its own. A gate a comment can pass is not a gate.
+    """
+    wanted: set[str] = {"slopdesk-superd", "slopdesk-hook"}
+    for path in repo_files("Sources/*.swift"):
+        source = path.read_text(errors="ignore")
+        constants = _BINARY_NAME_CONSTANT.findall(source)
+        for match in _LOCATE_CALL.finditer(source):
+            if literal := match.group("literal"):
+                wanted.add(literal)
+            elif match.group("symbol") == "binaryName":
+                wanted.update(constants)
+
+    packaging = (REPO / "scripts/package-release.sh").read_text(errors="ignore")
+    arrays = re.findall(
+        r"^(?:SPM_TOOLS|RUST_ROOT_TOOLS|RUST_CRATE_TOOLS)=\((.*?)\)",
+        packaging,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not arrays:
+        blind = "the release tool arrays are gone — this gate is blind"
+        return ["scripts/package-release.sh"], blind
+    shipped = {name for body in arrays for name in re.findall(r"\bslopdesk-[a-z]+\b", body)}
+    missing = sorted(wanted - shipped)
+    if not missing:
+        return None
+    return missing, "the host resolves a sidecar the release tarball does not ship"
+
+
 def a_script_with_a_shebang_is_executable() -> Report:
     """A shebang is a promise that `scripts/foo.sh --flag` works; the mode bit is what keeps it.
 
@@ -322,6 +374,7 @@ GATES = [
     no_fused_multiply_add,
     every_script_sets_pipefail,
     a_script_with_a_shebang_is_executable,
+    the_release_ships_every_sidecar_the_host_needs,
     pkill_never_reaches_the_developers_host,
     shell_quoting_has_one_owner,
 ]

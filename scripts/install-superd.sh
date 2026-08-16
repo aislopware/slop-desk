@@ -122,9 +122,25 @@ cat > "${PLIST}" << PLIST_EOF
     <key>RunAtLoad</key>
     <true/>
     <!-- Restart if superd ever dies. Its death costs every pane, so coming back fast is the
-         difference between "the next pane you open works" and "nothing works until you notice". -->
+         difference between "the next pane you open works" and "nothing works until you notice".
+
+         SuccessfulExit false, never a bare true: superd exits 0 ON PURPOSE when another instance
+         already holds the lock file, and says so — "exiting rather than stealing its socket", in
+         rust/slopdesk-superd/src/main.rs. Its comment there reasons that launchd "would restart a
+         job that exited non-zero", which is only true of THIS form; a bare KeepAlive restarts on
+         ANY exit, so the loser respawned every 10 s forever and wrote that line to the log each
+         time. Two agents can now coexist — this one and the Homebrew formula's (docs/49) — with
+         whichever booted first holding the panes and the other quiet. A clean SIGTERM at logout
+         is also an exit 0, and must not be restarted either.
+
+         Prose here carries NO backticks, and that is not a style choice: this heredoc is unquoted
+         so the plist can interpolate the label and the paths, which makes a backtick command
+         substitution the shell would run. shellcheck caught the first draft. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <!-- No throttle below the default 10s: a superd crash-looping on a bad build should be
          visible in the log, not hidden behind a tight respawn. -->
     <key>ProcessType</key>

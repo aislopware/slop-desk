@@ -15,6 +15,15 @@ import Foundation
 /// to the test bundle sits one level deeper than `swift run`'s. A fixed count silently resolves to
 /// nothing for one of them, and "no binary" is a passthrough or an unavailable service that no
 /// assertion notices.
+///
+/// ## The two functions, and why the split is the build layout
+/// ``locate(_:crate:overrideVariable:environment:fileManager:executable:)`` walks for a per-crate
+/// `rust/<crate>/target/`; ``locateBeside(_:overrideVariable:environment:executableURL:)`` does not
+/// walk at all. That is not two styles — it is the cargo layout. `rust/Cargo.toml` is a workspace of
+/// four short-lived programs whose output lands in the SHARED `rust/target/`, and every daemon is
+/// EXCLUDED from it with a workspace of its own, so its output lands in `rust/<crate>/target/`.
+/// A root-workspace binary has no per-crate target directory for the walk to find, which is exactly
+/// why it is staged beside hostd instead. `scripts/package-release.sh` builds along the same seam.
 public enum RustServicePaths {
     /// Levels walked up from the running executable before giving up. A build tree is a handful of
     /// levels deep, and an unbounded walk from an executable somewhere else entirely would stat its
@@ -27,8 +36,21 @@ public enum RustServicePaths {
         home + "/Library/Application Support/SlopDesk/bin/" + name
     }
 
-    /// Locates `name`: the override variable, then the installed copy, then the crate's cargo target
-    /// directories found by walking up from `executable`. `nil` when this machine has none.
+    /// Locates `name`: the override variable, then the installed copy, then the directory the
+    /// running executable sits in, then the crate's cargo target directories found by walking up
+    /// from `executable`. `nil` when this machine has none.
+    ///
+    /// The third candidate is what makes a PACKAGED host work. A release tarball is one flat
+    /// directory of binaries — the formula's `bin.install` puts hostd and every daemon side by side
+    /// under `/opt/homebrew/bin`, and there is no cargo target tree within six levels of it and no
+    /// `~/Library/Application Support/SlopDesk/bin` unless somebody hand-made one. Without this
+    /// step `locate` answered `nil` on every brew install, which reads as "this machine has no
+    /// screen engine" rather than as a packaging bug (`docs/49`).
+    ///
+    /// It sits AFTER the installed copy so a deliberate hand-install still wins, and BEFORE the walk
+    /// so a checkout's staged copy beats a stale per-crate `target/`. In a dev tree it changes
+    /// nothing: `make build` stages only the root-workspace binaries beside hostd, and those are
+    /// ``locateBeside(_:overrideVariable:environment:executableURL:)``'s, not this function's.
     public static func locate(
         _ name: String,
         crate: String,
@@ -43,6 +65,8 @@ public enum RustServicePaths {
             if fileManager.isExecutableFile(atPath: candidate) { return candidate }
         }
         guard var directory = executable?.deletingLastPathComponent() else { return nil }
+        let beside = directory.appendingPathComponent(name).path
+        if fileManager.isExecutableFile(atPath: beside) { return beside }
         for _ in 0..<walkLimit {
             for profile in ["release", "debug"] {
                 let candidate = directory

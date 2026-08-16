@@ -16,7 +16,8 @@
 #
 # ARTIFACTS (into dist/):
 #   SlopDesk-<version>-arm64.dmg          SlopDesk.app + SlopDeskHost.app, signed + stapled
-#   slopdesk-cli-<version>-arm64.tar.gz   slopdesk, slopdesk-hostd (SwiftPM) + slopdesk-ctl (cargo), signed
+#   slopdesk-cli-<version>-arm64.tar.gz   slopdesk, slopdesk-hostd (SwiftPM) + every sidecar the
+#                                         host resolves at runtime (cargo), signed. See CLI_TOOLS.
 #   SHA256SUMS                            what the Homebrew tap's cask + formula pin
 #
 # SIGNING / NOTARIZATION inputs (env — CI pulls them from the better-update vault, see
@@ -47,11 +48,34 @@ BUILD_NUMBER="${SLOPDESK_BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${SLOPDESK_SIGN_IDENTITY:-Developer ID Application: WEEBUILD VIET NAM COMPANY LIMITED (AJ4R8GWM7A)}"
 SKIP_NOTARIZE="${SLOPDESK_SKIP_NOTARIZE:-0}"
 
-# SwiftPM products (Package.swift `products:`) and the cargo one. `slopdesk-ctl` is Rust
-# (rust/slopdesk-ctl) — it is forked once per agent command, so its whole cost is process startup.
-# Two lists because they are BUILT differently; everything after staging treats them as one set.
+# What the CLI tarball ships, in three lists because they are BUILT three ways. Everything after
+# staging treats them as one set.
+#
+# The tarball used to be three binaries, and that was a host that could not open a pane. superd
+# forks and owns every PTY master (`docs/51`), and `HostServiceSupervisor.connected()` puts the
+# consequence in one line — "hostd does not fork, so there is no fallback to have". The other five
+# daemons each cost a feature: no screen engine, no file drop, no inspector, no Android panel, no
+# profile seed. None of them shipped, because the release path is exercised by tagging and no gate
+# is a release. `check-invariants.py` derives the list below from the `RustServicePaths` call sites
+# now, so a seventh daemon cannot be forgotten the same way.
 SPM_TOOLS=(slopdesk slopdesk-hostd)
-RUST_TOOLS=(slopdesk-ctl)
+
+# `rust/Cargo.toml`'s workspace members: ONE shared `rust/target/`, built with `-p` from `rust/`.
+# `slopdesk-hook` is a package producing TWO binaries (the relay and `slopdesk-agenthooks`, which
+# installs it) — and `agenthooks` finds the relay at `executable.parent()/slopdesk-hook`, so the
+# two must land in the same directory or the hook install silently has nothing to copy.
+RUST_ROOT_PACKAGES=(slopdesk-ctl slopdesk-probe slopdesk-hook)
+RUST_ROOT_TOOLS=(slopdesk-ctl slopdesk-probe slopdesk-hook slopdesk-agenthooks)
+
+# The daemons. Each is `exclude`d from the root workspace and carries its own, so each builds from
+# its own directory into its own `rust/<crate>/target/` — the same seam `RustServicePaths.locate`
+# walks. Building these with `-p` from `rust/` fails: cargo cannot see a package it excluded.
+RUST_CRATE_TOOLS=(
+  slopdesk-superd slopdesk-screend slopdesk-dropd
+  slopdesk-inspectord slopdesk-androidd slopdesk-codeseed
+)
+
+RUST_TOOLS=("${RUST_ROOT_TOOLS[@]}" "${RUST_CRATE_TOOLS[@]}")
 CLI_TOOLS=("${SPM_TOOLS[@]}" "${RUST_TOOLS[@]}")
 XCFRAMEWORK="${REPO_ROOT}/ThirdParty/ghostty/libghostty.xcframework"
 
@@ -128,8 +152,11 @@ done
 # to. Naming the target also fixes the output directory, so `locate_tool` needs no search for these.
 step "Building CLI (cargo build --release)"
 RUST_BIN="${REPO_ROOT}/rust/target/aarch64-apple-darwin/release"
-for tool in "${RUST_TOOLS[@]}"; do
-  (cd "${REPO_ROOT}/rust" && cargo build --release --target aarch64-apple-darwin -p "${tool}")
+for package in "${RUST_ROOT_PACKAGES[@]}"; do
+  (cd "${REPO_ROOT}/rust" && cargo build --release --target aarch64-apple-darwin -p "${package}")
+done
+for crate in "${RUST_CRATE_TOOLS[@]}"; do
+  (cd "${REPO_ROOT}/rust/${crate}" && cargo build --release --target aarch64-apple-darwin)
 done
 
 # Where the binaries land is NOT a constant. `.build/arm64-apple-macosx/release` is right for the
@@ -145,22 +172,40 @@ CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --scratch-pa
 # never assumed.
 SEARCH_ROOTS=("${SPM_SCRATCH}" "${REPO_ROOT}/.build" "${HOME}/Library/Developer/Xcode/DerivedData")
 
-is_rust_tool() {
-  local tool="$1" candidate
-  for candidate in "${RUST_TOOLS[@]}"; do
-    [[ "${candidate}" == "${tool}" ]] && return 0
+contains() {
+  local needle="$1" candidate
+  shift
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
   done
   return 1
 }
 
+# The cargo directory a tool's binary lands in, or nothing if it is not a cargo tool. The two
+# answers are the two workspaces: a root member writes to the shared `rust/target/`, an excluded
+# daemon to its own `rust/<crate>/target/`. `slopdesk-agenthooks` is the one name that is not its
+# own crate — it rides `slopdesk-hook`'s package into the shared directory.
+rust_bin_dir() {
+  local tool="$1"
+  if contains "${tool}" "${RUST_ROOT_TOOLS[@]}"; then
+    printf '%s\n' "${RUST_BIN}"
+    return 0
+  fi
+  if contains "${tool}" "${RUST_CRATE_TOOLS[@]}"; then
+    printf '%s\n' "${REPO_ROOT}/rust/${tool}/target/aarch64-apple-darwin/release"
+    return 0
+  fi
+  return 1
+}
+
 locate_tool() {
-  local tool="$1" cand root
+  local tool="$1" cand root dir
   # A cargo tool resolves to its cargo path or to NOTHING. Falling through to the SwiftPM search
   # would let a stale `.build*/release/slopdesk-ctl` — the Swift binary this one replaced — ship
   # silently under the right name, which is the one failure the version check cannot catch.
-  if is_rust_tool "${tool}"; then
-    [[ -f "${RUST_BIN}/${tool}" ]] || return 1
-    printf '%s\n' "${RUST_BIN}/${tool}"
+  if dir="$(rust_bin_dir "${tool}")"; then
+    [[ -f "${dir}/${tool}" ]] || return 1
+    printf '%s\n' "${dir}/${tool}"
     return 0
   fi
   if [[ -n "${CLI_BIN}" && -f "${CLI_BIN}/${tool}" ]]; then
@@ -208,7 +253,7 @@ for tool in "${CLI_TOOLS[@]}"; do
   if ! built="$(locate_tool "${tool}")"; then
     dump_build_layout
     die "the build reported success but no release ${tool} executable exists
-  (--show-bin-path said: ${CLI_BIN:-<nothing>}; cargo dir: ${RUST_BIN})"
+  (--show-bin-path said: ${CLI_BIN:-<nothing>}; cargo dir: $(rust_bin_dir "${tool}" || echo '<not a cargo tool>'))"
   fi
   echo "  ${tool} <- ${built}"
   cp "${built}" "${CLI_STAGE}/${tool}"
