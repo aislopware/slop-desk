@@ -120,8 +120,8 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor
-LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor
+.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-supervisor
+LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-supervisor
 
 # The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
@@ -163,6 +163,13 @@ lint-ds-leaks: ## Design-system token-leak ratchet (raw font/radius literals)
 # WorkspaceCommands.swift — the NSEvent dispatcher owns chords (text-only, no compile). See the script.
 lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut in WorkspaceCommands)
 	bash scripts/check-menu-shortcutless.sh
+
+# DEAD FFI DOOR ratchet. `build-ffi.sh --check` catches the loud failure of a linked port — an
+# artifact older than its sources. This catches the quiet one: a door nothing calls, which costs
+# nothing at runtime and everything at read time, because the next reader cannot tell a second way
+# to ask from the only way to ask. Text-only, no compile. See scripts/check-ffi-doors.py.
+lint-ffi-doors: ## Dead-FFI-door ratchet (every exported door is called, or named deliberate)
+	python3 scripts/check-ffi-doors.py
 
 # hostd ↔ superd CONTRACT ratchet: the constants that are necessarily typed in both languages
 # (rendezvous socket name, protocol version, verbs, frame tags, body cap, PTY read chunk) compared

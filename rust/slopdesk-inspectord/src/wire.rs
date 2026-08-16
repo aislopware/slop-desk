@@ -384,6 +384,11 @@ mod tests {
         let message = decoder.next_message().expect("decodes").expect("a whole frame");
         assert_eq!(message, WireMessage::Event(Box::new(sample_event())));
         assert!(decoder.next_message().expect("no error").is_none());
+        assert_eq!(
+            decoder.buffered_len(),
+            0,
+            "a drained splitter has compacted its consumed head away"
+        );
     }
 
     #[test]

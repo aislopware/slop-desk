@@ -16309,3 +16309,33 @@ took the same edge for the width table.
 **Not a sixth copy:** `slopdesk-screend/src/model.rs` walks CSI too, but incrementally, byte at a
 time, into a cell grid — it interprets parameters, where `vtscan` only answers "where does this
 end" over a whole buffer. Different question, correctly separate.
+
+## Every FFI door is called, or is a written-down decision (2026-08-17)
+
+The audit swept all 803 doors in `slopdesk_ffi.h` against every Swift call site. Four had no caller,
+and they were three different problems wearing one symptom:
+
+- `slopdesk_replay_result_count` — a SECOND way to ask something a live door already answers.
+  `slopdesk_replay_messages` and `slopdesk_replay_replay` RETURN the count they staged, so the
+  caller holds it before it can index anything. Two doors answering one question can only ever agree
+  or be a bug. **Deleted**, with a comment in its place naming the one way.
+- `slopdesk_inspector_decoder_buffered` — a hook held open for a Swift test that was never written.
+  `FrameDecoder::buffered_len` is asserted natively in `slopdesk-wire`, on the side that owns the
+  buffer. A door kept for the other language's test is the cross-language mirror fixture the
+  one-implementation rule bans. **Deleted.**
+- `slopdesk_swipe_nav_config_free` and `slopdesk_zoom_reset_policy_free` — destructors whose only
+  shipped owners are process-lifetime `static let`s that say, in their own doc comments, that
+  nothing frees them. A singleton is not a leak. **Kept**: a constructor whose ABI offers no
+  destructor is what makes the next owner — one that is per-window rather than per-process — leak
+  for real.
+
+**The gate is the point, not the four.** `scripts/check-ffi-doors.py` now runs in `make lint`: every
+door is called from Swift, or is named in its `DELIBERATE` map WITH the reason. A bare name added
+there is the failure the file exists to prevent, so the allowlist is the review. It also fails on a
+STALE exemption — a door that is now called, or that no longer exists — for the same reason
+clippy's `#[expect]` warns when unfulfilled.
+
+This is the second failure mode of a linked port. `build-ffi.sh --check` catches the loud one, an
+artifact older than its sources. A dead door is the quiet one: it costs nothing at runtime and
+everything at read time, because the next reader cannot tell "the way to ask" from "a way nobody
+asks" without doing what this audit did by hand, four times.

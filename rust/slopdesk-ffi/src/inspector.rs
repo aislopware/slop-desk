@@ -238,7 +238,7 @@ pub unsafe extern "C" fn slopdesk_inspector_decoder_append(
 ///
 /// The payload is copied into `body` and the record's `body_offset`/`body_length` point into THAT
 /// buffer, so the caller reads an event's JSON straight out of it. Sizing is the caller's: a
-/// payload cannot outrun [`slopdesk_inspector_decoder_buffered`], so one call always suffices.
+/// payload cannot outrun what the splitter is holding, so one call always suffices.
 ///
 /// A payload that arrives with too small a buffer answers [`INSPECTOR_TRUNCATED`] having consumed
 /// the frame — which is the same in-band recovery a body that does not parse gets, and the reason
@@ -309,19 +309,10 @@ pub unsafe extern "C" fn slopdesk_inspector_decoder_next(
     }
 }
 
-/// How many bytes the splitter is holding — the assertion that a drained decoder is empty.
-///
-/// # Safety
-/// `handle` must be live per [`held`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_inspector_decoder_buffered(handle: *mut FrameDecoder) -> usize {
-    // SAFETY: the caller's obligation is this function's.
-    unsafe { held(handle).map_or(0, |decoder| decoder.buffered_len()) }
-}
+// There is no `slopdesk_inspector_decoder_buffered`. It existed to let a Swift test assert that a
+// drained decoder is empty, and no such test was ever written — `FrameDecoder::buffered_len` is
+// asserted natively in `slopdesk-inspectord`, on the side that owns the buffer. A door held open
+// for a test in the other language is the cross-language mirror fixture the rule bans.
 
 /// The numbers this protocol is pinned to, by index.
 ///
@@ -361,8 +352,8 @@ mod tests {
         INSPECTOR_AGAIN, INSPECTOR_FRAME_TOO_LARGE, INSPECTOR_OK, INSPECTOR_PENDING, INSPECTOR_TRUNCATED,
         INSPECTOR_UNKNOWN_TYPE, SlopDeskInspectorFrame, slopdesk_inspector_constant,
         slopdesk_inspector_decode_payload, slopdesk_inspector_decoder_append,
-        slopdesk_inspector_decoder_buffered, slopdesk_inspector_decoder_free, slopdesk_inspector_decoder_new,
-        slopdesk_inspector_decoder_next, slopdesk_inspector_encode_subscribe,
+        slopdesk_inspector_decoder_free, slopdesk_inspector_decoder_new, slopdesk_inspector_decoder_next,
+        slopdesk_inspector_encode_subscribe,
     };
 
     fn frame(tag: u8, body: &[u8]) -> Vec<u8> {
@@ -422,8 +413,9 @@ mod tests {
         for byte in &stream {
             unsafe { slopdesk_inspector_decoder_append(handle, byte, 1) };
             loop {
-                let buffered = unsafe { slopdesk_inspector_decoder_buffered(handle) };
-                let mut body = vec![0u8; buffered.max(1)];
+                // A fixed guess, not a size door: this is the §4 shape Swift uses, and the frames
+                // this test feeds are far under it. An undersized call is covered by its own test.
+                let mut body = vec![0u8; 64];
                 let mut record = SlopDeskInspectorFrame::default();
                 let verdict = unsafe {
                     slopdesk_inspector_decoder_next(handle, &raw mut record, body.as_mut_ptr(), body.len())
@@ -471,11 +463,9 @@ mod tests {
             slopdesk_inspector_decoder_next(handle, &raw mut record, body.as_mut_ptr(), body.len())
         };
         assert_eq!(verdict, INSPECTOR_PENDING);
-        assert_eq!(
-            unsafe { slopdesk_inspector_decoder_buffered(handle) },
-            0,
-            "a drained splitter has compacted its consumed head away"
-        );
+        // "a drained splitter has compacted its consumed head away" is asserted natively, on
+        // `FrameDecoder::buffered_len` in `slopdesk-inspectord` — the side that owns the buffer.
+        // Reaching for it through a C door existed only to let this line be written here.
         unsafe { slopdesk_inspector_decoder_free(handle) };
     }
 

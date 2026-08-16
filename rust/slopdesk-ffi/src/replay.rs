@@ -622,19 +622,11 @@ pub unsafe extern "C" fn slopdesk_replay_adopt_folded_ring(
 
 // MARK: Reading the slots
 
-/// How many messages the message slot holds.
-///
-/// # Safety
-/// `handle` must be null, or a live handle with no other call on it in flight.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_replay_result_count(handle: *mut SlopDeskReplay) -> usize {
-    // SAFETY: the caller's obligation, restated above.
-    unsafe { held(handle) }.map_or(0, |held| held.results.len())
-}
+// There is no `slopdesk_replay_result_count`. The calls that FILL the slot —
+// `slopdesk_replay_messages` and `slopdesk_replay_replay` — return the count they staged, so the
+// caller already holds it before it can index anything. A second door answering the same question
+// is a second source of truth for how many slots are live, and the two can only ever agree or be a
+// bug; Swift never called it.
 
 /// The seq of message `index`, or `-1` when out of range — a valid seq is always positive.
 ///
@@ -778,10 +770,9 @@ mod tests {
     use super::{
         SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq, slopdesk_replay_append,
         slopdesk_replay_free, slopdesk_replay_highest_seq, slopdesk_replay_messages, slopdesk_replay_new,
-        slopdesk_replay_replay, slopdesk_replay_result_copy, slopdesk_replay_result_count,
-        slopdesk_replay_result_len, slopdesk_replay_result_seq, slopdesk_replay_retained_bytes,
-        slopdesk_replay_ring_bytes, slopdesk_replay_ring_len, slopdesk_replay_set_client_online,
-        slopdesk_replay_should_pause_drain,
+        slopdesk_replay_replay, slopdesk_replay_result_copy, slopdesk_replay_result_len,
+        slopdesk_replay_result_seq, slopdesk_replay_retained_bytes, slopdesk_replay_ring_bytes,
+        slopdesk_replay_ring_len, slopdesk_replay_set_client_online, slopdesk_replay_should_pause_drain,
     };
 
     /// A handle at tiny caps, so the gates are reachable without allocating 256 MiB.
@@ -795,11 +786,13 @@ mod tests {
         unsafe { slopdesk_replay_append(handle, bytes.as_ptr(), bytes.len()) }
     }
 
-    /// Reads the message slot the way the Swift wrapper does: count, length, copy.
-    fn results(handle: *mut SlopDeskReplay) -> Vec<(i64, Vec<u8>)> {
+    /// Reads the message slot the way the Swift wrapper does: the PRODUCER's return is the count
+    /// (there is no separate count door — see the note above the reading section), then length,
+    /// then copy.
+    fn results(handle: *mut SlopDeskReplay, staged: usize) -> Vec<(i64, Vec<u8>)> {
         // SAFETY: the handle is this test's and every buffer below is a live local.
         unsafe {
-            (0..slopdesk_replay_result_count(handle))
+            (0..staged)
                 .map(|index| {
                     let mut payload = vec![0_u8; slopdesk_replay_result_len(handle, index)];
                     let copied =
@@ -828,7 +821,7 @@ mod tests {
             assert_eq!(slopdesk_replay_ring_bytes(handle), 4);
             assert_eq!(slopdesk_replay_messages(handle, 0), 2, "ring + tail");
         }
-        assert_eq!(results(handle), vec![
+        assert_eq!(results(handle, 2), vec![
             (1, b"one\n".to_vec()),
             (2, b"two\n".to_vec())
         ]);
@@ -864,13 +857,21 @@ mod tests {
         // SAFETY: the handle is this test's, unshared.
         unsafe {
             assert_eq!(slopdesk_replay_messages(handle, 0), 2);
-            assert_eq!(slopdesk_replay_result_count(handle), 2, "still there, unread");
+            // Out-of-range reads `-1`, so the slot's extent is observable through the doors Swift
+            // actually uses rather than through a second door that only says the same thing.
+            assert_ne!(slopdesk_replay_result_seq(handle, 1), -1, "still there, unread");
+            assert_eq!(slopdesk_replay_result_seq(handle, 2), -1, "and no further");
             assert_eq!(
                 slopdesk_replay_replay(handle, 1),
                 1,
                 "a producer replaces the slot"
             );
-            assert_eq!(slopdesk_replay_result_count(handle), 1);
+            assert_ne!(slopdesk_replay_result_seq(handle, 0), -1);
+            assert_eq!(
+                slopdesk_replay_result_seq(handle, 1),
+                -1,
+                "the slot shrank to one"
+            );
             slopdesk_replay_free(handle);
         }
     }
@@ -905,7 +906,7 @@ mod tests {
             assert_eq!(slopdesk_replay_append(null, b"x".as_ptr(), 1), 0);
             assert_eq!(slopdesk_replay_highest_seq(null), 0);
             assert_eq!(slopdesk_replay_messages(null, 0), 0);
-            assert_eq!(slopdesk_replay_result_count(null), 0);
+            assert_eq!(slopdesk_replay_result_seq(null, 0), -1);
             slopdesk_replay_ack(null, 5);
             slopdesk_replay_free(null);
         }
@@ -931,7 +932,10 @@ mod tests {
             slopdesk_replay_ack(handle, 1);
             assert_eq!(slopdesk_replay_replay(handle, 0), 1);
         }
-        let emitted: Vec<u8> = results(handle).into_iter().flat_map(|(_, bytes)| bytes).collect();
+        let emitted: Vec<u8> = results(handle, 1)
+            .into_iter()
+            .flat_map(|(_, bytes)| bytes)
+            .collect();
         let text = String::from_utf8_lossy(&emitted).into_owned();
         assert!(
             text.contains("before"),

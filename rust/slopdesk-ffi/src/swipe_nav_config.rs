@@ -101,6 +101,11 @@ pub unsafe extern "C" fn slopdesk_swipe_nav_config_parse(
 ///
 /// # Safety
 /// `handle` must be null or a pointer from [`slopdesk_swipe_nav_config_parse`], freed exactly once.
+///
+/// **No shipped caller, deliberately.** `SwipeNavHostConfig` parses once into a `static let` and
+/// says so: "nothing ever frees it". A process-lifetime singleton is not a leak, and the door stays
+/// because a constructor whose ABI offers no destructor is the shape that makes the NEXT owner —
+/// one that is per-window rather than per-process — leak for real.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,

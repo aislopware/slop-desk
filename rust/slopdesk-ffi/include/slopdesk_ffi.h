@@ -138,7 +138,6 @@ bool slopdesk_replay_adopt_folded_ring(SlopDeskReplay *handle,
                                        const int64_t *seqs, size_t seqs_len, uint64_t generation);
 
 // Reading the slots. result_seq answers -1 out of range; a valid seq is always positive.
-size_t  slopdesk_replay_result_count(SlopDeskReplay *handle);
 int64_t slopdesk_replay_result_seq(SlopDeskReplay *handle, size_t index);
 size_t  slopdesk_replay_result_len(SlopDeskReplay *handle, size_t index);
 size_t  slopdesk_replay_result_copy(SlopDeskReplay *handle, size_t index, uint8_t *out, size_t cap);
@@ -4911,7 +4910,6 @@ void slopdesk_inspector_decoder_append(SlopDeskInspectorDecoder *handle,
 uint32_t slopdesk_inspector_decoder_next(SlopDeskInspectorDecoder *handle,
                                          SlopDeskInspectorFrame *out,
                                          unsigned char *body, size_t body_cap);
-size_t slopdesk_inspector_decoder_buffered(SlopDeskInspectorDecoder *handle);
 
 // 0 the frame payload cap, 1 the length prefix's width, 2 the client's outbound
 // tag. An unknown index answers -1.

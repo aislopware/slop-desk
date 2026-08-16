@@ -225,6 +225,10 @@ pub unsafe extern "C" fn slopdesk_zoom_reset_policy_parse(
 /// # Safety
 /// `handle` must be null or a pointer from [`slopdesk_zoom_reset_policy_parse`], freed exactly
 /// once.
+///
+/// **No shipped caller, deliberately** — same as [`slopdesk_swipe_nav_config_free`].
+/// `PinchZeroPolicy` parses once into a `static let` and says so: "nothing frees it, and the parse
+/// outlives every caller". The door stays so the next owner that is not process-lifetime has one.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
