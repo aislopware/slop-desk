@@ -1,5 +1,4 @@
 import SlopDeskAgentDetect
-import SlopDeskInspector
 import XCTest
 @testable import SlopDeskHost
 
@@ -40,56 +39,57 @@ final class AgentGoneEdgeTests: XCTestCase {
 
     // MARK: Stop — the work that outlives the turn
 
-    /// `background_tasks` rides the real `Stop` payload (verified against the shipped CLI), already
-    /// filtered producer-side to running/pending backgrounded tasks.
-    func testStopParsesBackgroundTaskCount() {
-        let body = #"""
-        {"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"done",
-         "background_tasks":[{"id":"a","type":"local_bash","status":"running","description":"npm run dev"},
-                             {"id":"b","type":"local_agent","status":"pending","description":"review"}]}
-        """#
-        guard case let .stop(info)? = HookParser.parse(Data(body.utf8)) else {
-            XCTFail("expected a Stop payload")
-            return
+    /// The label a `Stop` arrives with, read through the one door. `background_tasks` rides the
+    /// real payload (verified against the shipped CLI), already filtered producer-side to
+    /// running/pending backgrounded tasks — a turn that left work running says so.
+    private func stopLabel(_ body: String) -> String? {
+        guard case let .stop(_, label)? = ClaudeHookBody.read(Data(body.utf8))?.event else {
+            XCTFail("expected a Stop event for \(body)")
+            return nil
         }
-        XCTAssertEqual(info.backgroundTaskCount, 2)
-        XCTAssertEqual(info.lastAssistantMessage, "done")
-    }
-
-    /// Tolerant on an undocumented seam: absent, null or a wrong-shaped value all read `0` rather
-    /// than failing the parse of an otherwise good Stop.
-    func testMissingOrMalformedBackgroundTasksCountZero() {
-        for body in [
-            #"{"hook_event_name":"Stop","last_assistant_message":"ok"}"#,
-            #"{"hook_event_name":"Stop","background_tasks":null}"#,
-            #"{"hook_event_name":"Stop","background_tasks":{"a":1}}"#,
-            #"{"hook_event_name":"Stop","background_tasks":7}"#,
-        ] {
-            guard case let .stop(info)? = HookParser.parse(Data(body.utf8)) else {
-                XCTFail("expected a Stop payload for \(body)")
-                continue
-            }
-            XCTAssertEqual(info.backgroundTaskCount, 0, "tolerated: \(body)")
-        }
+        return label
     }
 
     /// A turn that SPOKE keeps its own words — the count is a fallback, never a prefix that buries
     /// the assistant's message.
     func testStopLabelPrefersTheAssistantMessage() {
-        let info = StopInfo(lastAssistantMessage: "Fixed the parser", backgroundTaskCount: 3)
-        XCTAssertEqual(AgentHookHandler.stopLabel(info), "Fixed the parser")
+        XCTAssertEqual(
+            stopLabel(#"""
+            {"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"Fixed the parser",
+             "background_tasks":[{"id":"a","status":"running"},{"id":"b","status":"pending"}]}
+            """#),
+            "Fixed the parser",
+        )
     }
 
     /// A silent turn that left work running says so, instead of showing an empty done chip.
     func testStopLabelFallsBackToLiveWork() {
         XCTAssertEqual(
-            AgentHookHandler.stopLabel(StopInfo(backgroundTaskCount: 3)),
+            stopLabel(#"""
+            {"hook_event_name":"Stop","background_tasks":[{"id":"a","type":"local_bash","status":"running",
+             "description":"npm run dev"},{"id":"b","type":"local_agent","status":"pending","description":"review"},
+             {"id":"c","status":"running"}]}
+            """#),
             "3 background tasks running",
         )
         XCTAssertEqual(
-            AgentHookHandler.stopLabel(StopInfo(lastAssistantMessage: "   ", backgroundTaskCount: 1)),
+            stopLabel(
+                #"{"hook_event_name":"Stop","last_assistant_message":"   ","background_tasks":[{"status":"running"}]}"#,
+            ),
             "1 background task running",
         )
-        XCTAssertNil(AgentHookHandler.stopLabel(StopInfo()), "nothing to say stays nothing")
+        XCTAssertNil(stopLabel(#"{"hook_event_name":"Stop"}"#), "nothing to say stays nothing")
+    }
+
+    /// Tolerant on an undocumented seam: absent, null or a wrong-shaped value all read as no live
+    /// work rather than failing the reading of an otherwise good Stop.
+    func testMissingOrMalformedBackgroundTasksSayNothing() {
+        for body in [
+            #"{"hook_event_name":"Stop","background_tasks":null}"#,
+            #"{"hook_event_name":"Stop","background_tasks":{"a":1}}"#,
+            #"{"hook_event_name":"Stop","background_tasks":7}"#,
+        ] {
+            XCTAssertNil(stopLabel(body), "tolerated: \(body)")
+        }
     }
 }

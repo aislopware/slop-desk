@@ -257,7 +257,7 @@ public enum HostEnvironment {
     //
     // Off, the product is wrong rather than reduced. `ClaudeStatus.done` exists only on this path
     // (the screen engine has no `done` verdict at all), so a finished turn was indistinguishable
-    // from one that never happened; `HookParser.classifyNotification`'s `idle_prompt` filter had
+    // from one that never happened; the hook reading's `idle_prompt` notification filter had
     // nothing to filter; and `suppressesChildNotifications` stayed false, so claude's own OSC 9
     // notifications passed through as a second banner. A user cannot be expected to diagnose any of
     // that — they see a grey pane and a phantom prompt.

@@ -613,7 +613,12 @@ let package = Package(
         // W7: the pure detection core — state-machine transitions (incl. injected-clock
         // timeouts, idempotent/out-of-order signals), the conservative manifest matcher,
         // and the rollup most-urgent order. No GUI/socket/PTY — signals are fed directly.
-        .testTarget(name: "SlopDeskAgentDetectTests", dependencies: ["SlopDeskAgentDetect"]),
+        // `exclude: ["Fixtures"]` — the hook bodies are read off disk via `#filePath`, not bundled.
+        .testTarget(
+            name: "SlopDeskAgentDetectTests",
+            dependencies: ["SlopDeskAgentDetect"],
+            exclude: ["Fixtures"],
+        ),
         .testTarget(name: "SlopDeskTransportTests", dependencies: ["SlopDeskTransport"]),
         .testTarget(
             name: "SlopDeskHostTests",

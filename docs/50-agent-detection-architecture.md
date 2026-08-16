@@ -58,7 +58,7 @@ So: tiers.
 
 | Signal | Source | Reaches the machine as |
 | --- | --- | --- |
-| Claude Code hooks | `AgentHookListener` AF_UNIX socket → `HookParser` | `.hook(ClaudeHookEvent)` |
+| Claude Code hooks | `AgentHookListener` AF_UNIX socket → `ClaudeHookBody` | `.hook(ClaudeHookEvent)` |
 | ctl `report` verb | `slopdesk ctl report working\|blocked\|done\|idle` | `.hook(…)` (synthetic event) |
 | presence ABSENCE | ~1 Hz foreground poll | `.processPresent(false)` |
 | a CANCEL keystroke | client → PTY, `PaneInputClassifier` | `.userInput` |
@@ -174,11 +174,10 @@ still looking at it — the same failure the ledger was built to fix, left open 
 denial it stood in for is announced properly now (`PermissionDenied`), so **every** kind resolves by
 identity, and a hand nothing answers still comes down on Esc, on `Stop`, and on the watchdog.
 
-⚠️ **`HookParser` mints a UUID when the payload omits `tool_use_id`** — a DIFFERENT one on the pre
-and the post hook. Carrying that through as identity would make a call unresolvable forever, so the
-W10 adapter passes `ToolUseBlock.stableID` (nil when synthesised) and a nil id degrades to the
-id-less rule. If you ever key anything else on `ToolUseBlock.id` across two events, read
-`idIsFromPayload` first.
+⚠️ **A body that sends no `tool_use_id` arrives with none.** Minting one is tempting and wrong: it
+would be a DIFFERENT string on the pre and the post hook, so the ledger entry it opened could never
+be resolved and the call would block the pane forever. `rust/slopdesk-hookevent` leaves it `None`
+and a nil id degrades to the id-less rule (resolved by the next `Stop`, an Esc, or the watchdog).
 
 A SCREEN-raised block carries no call identity and never touches the ledger; its `BlockSource`
 provenance flag governs it exactly as before.
@@ -237,9 +236,9 @@ So a pane belongs to ONE session (`ClaudeStatusMachine.ownerSessionID`):
 - an event carrying **no** session id always applies and never claims, so ctl `report` and every
   unattributed feed behave exactly as before.
 
-`session_id` rides the hook ENVELOPE, not the tool, so the payload cases that model a call carry
-none. `HookParser.sessionID(_:)` reads it off the raw body and `ClaudeHookEvent.attributed(to:)`
-stamps it into every empty slot before the fold.
+`session_id` rides the hook ENVELOPE, not the tool, so the cases that model a call carry none.
+`rust/slopdesk-hookevent` reads it off the envelope and stamps it into every empty slot, so a
+reading arrives already attributed — the fold never sees an unattributed hook.
 
 **Why this is safe for `/clear` and `/resume`** — the everyday way a pane changes session. Verified
 against the shipped CLI (2.1.227): `clearConversation` **awaits** the `SessionEnd` hook

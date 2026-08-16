@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import SlopDeskAgentDetect
-import SlopDeskInspector
 import SlopDeskProtocol
 
 /// W10 — the Claude-Code HOOK listener (docs/41 §4.2 signal 2, docs/42 W10). The RICHEST
@@ -17,11 +16,10 @@ import SlopDeskProtocol
 ///
 /// **Pure handler / thin shim split (hang-safety).** Two pieces:
 ///
-/// - ``AgentHookHandler`` — the PURE core. Given received BYTES + the originating session id,
-///   it parses via the W8-extended ``SlopDeskInspector/HookParser``, maps the typed
-///   ``SlopDeskInspector/HookPayload`` → an ``SlopDeskAgentDetect/ClaudeHookEvent``, folds
-///   it through the embedded ``ClaudeStatusMachine``, and produces the type-27 message (with
-///   dedupe). It NEVER binds a socket — it is fed bytes directly in
+/// - ``AgentHookHandler`` — the PURE core. It asks ``SlopDeskAgentDetect/ClaudeHookBody`` what the
+///   received bytes SAY (one door over `rust/slopdesk-hookevent`: which event, which block class,
+///   whose session), folds the answer through the embedded ``ClaudeStatusMachine``, and produces the
+///   type-27 message with dedupe. It NEVER binds a socket — it is fed bytes directly in
 ///   `AgentHookListenerTests` with real Claude hook JSON. Validate-then-drop: malformed /
 ///   short / non-JSON bytes yield `nil` (ignored, never trap).
 ///
@@ -57,18 +55,16 @@ public struct AgentHookHandler: Sendable {
     ///
     /// Pure + total: any byte sequence is tolerated. Never traps, never force-unwraps.
     public mutating func handle(bytes: Data, at now: TimeInterval) -> WireMessage? {
-        guard let payload = HookParser.parse(bytes) else { return nil } // validate-then-drop
-        let (mapped, kindByte) = Self.mapToHookEvent(payload)
-        // Attribute it before folding. `session_id` rides the hook ENVELOPE, so the payload cases
-        // that model a call (a tool block, a notification) never carry it — and those are exactly
-        // the events a nested `claude -p` would otherwise use to drive this pane.
-        let event = mapped.attributed(to: HookParser.sessionID(bytes))
+        // Validate-then-drop, and already ATTRIBUTED: the door reads the envelope's `session_id`
+        // into every event that describes a call, which is exactly what a nested `claude -p` would
+        // otherwise use to drive this pane.
+        guard let read = ClaudeHookBody.read(bytes) else { return nil }
         // ⚠️ The machine drops a foreign session silently, but emitting on the way out would still
         // ship the DROPPED record's `kind` byte — a wire frame announcing a block class change that
         // never happened. Ask before folding, exactly as `ClaudePaneDetector` does.
-        guard machine.accepts(event) else { return nil }
-        machine.reduce(.hook(event), at: now)
-        return statusEmissionIfChanged(kindByte: kindByte)
+        guard machine.accepts(read.event) else { return nil }
+        machine.reduce(.hook(read.event), at: now)
+        return statusEmissionIfChanged(kindByte: read.kindByte)
     }
 
     /// A bare clock tick (drives the machine's `done → idle` decay) — emits type-27 iff the
@@ -80,179 +76,6 @@ public struct AgentHookHandler: Sendable {
 
     /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
     public var status: ClaudeStatus { machine.status }
-
-    /// The ledger key for an elicitation pair.
-    ///
-    /// ⚠️ Falls back to the SERVER name when the payload names no `elicitation_id`. An id-less
-    /// ledger entry is swept by any unrelated call's `PostToolUse` (that is the documented rule for
-    /// an entry that names nothing), so a nil id would hand the pane back as "working" while the
-    /// MCP prompt was still on screen — and the mirror case, an id-less `ElicitationResult`, would
-    /// wipe somebody else's id-less block. The server name is stable across the pair and unique
-    /// enough in practice: one server does not stack two elicitations on one human.
-    static func elicitationKey(id: String?, server: String?) -> String? {
-        if let id, !id.isEmpty { return id }
-        guard let server, !server.isEmpty else { return nil }
-        return "elicitation:\(server)"
-    }
-
-    // MARK: - HookPayload → ClaudeHookEvent (the W10 adapter)
-
-    /// Maps the inspector's typed ``HookPayload`` → the detection target's ``ClaudeHookEvent``
-    /// (1:1 per the doc-comments on both enums) AND the wire `kind` byte for the type-27 frame.
-    /// The two vocabularies were kept structurally identical on purpose so this is a trivial,
-    /// total map (no default-trap branch).
-    static func mapToHookEvent(_ payload: HookPayload) -> (ClaudeHookEvent, UInt8) {
-        switch payload {
-        case let .sessionStart(info):
-            return (.sessionStart(sessionID: info.sessionID), 0)
-
-        case let .userPromptSubmit(info, _):
-            return (.userPromptSubmit(sessionID: info.sessionID), 0)
-
-        case let .preToolUse(use):
-            // `AskUserQuestion` is Claude ASKING, not working: the tool call blocks on the human
-            // answering, so it maps to the waiting-for-input block with the question as the label
-            // (the t3code/herdr special case). The answer resolves it via the tool's PostToolUse
-            // (→ working), like any answered prompt.
-            if use.name == "AskUserQuestion" {
-                // The call's OWN id rides along: it is what the matching `PostToolUse` resolves,
-                // and it is what keeps a sibling call in the same batch from resolving it instead
-                // (the machine's block ledger).
-                return (
-                    .notification(kind: .waitingForInput, label: questionLabel(use), toolUseID: use.stableID),
-                    notificationKindByte(.waitingForInput),
-                )
-            }
-            return (.preToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
-
-        case let .permissionRequest(use):
-            // The structured permission dialog — the same authoritative block as a
-            // Notification(permission_prompt); the gated tool names the label. The id is the
-            // GATED call's, so the `PreToolUse` that follows an approval resolves exactly it.
-            return (
-                .notification(
-                    kind: .permission,
-                    label: "Permission needed: \(use.name)",
-                    toolUseID: use.stableID,
-                ),
-                notificationKindByte(.permission),
-            )
-
-        case let .stopFailure(info):
-            // An API-error termination ends the turn like a Stop, with the error text as the
-            // label — without it the pane sits `working` until presence absence finally wins.
-            return (.stop(sessionID: info.sessionID, label: info.lastAssistantMessage), 0)
-
-        case let .postToolUse(use, _):
-            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
-
-        case let .postToolUseFailure(use, isInterrupt):
-            // ⚠️ An INTERRUPT is not a failed call, it is a FINISHED TURN. Claude Code emits no
-            // `Stop` when the human presses Esc, so mapping this to "a tool ended, carry on
-            // working" pinned the pane `working` with the spinner up until the watchdog corrected
-            // it — into a false "turn finished" ten seconds after the person cancelled it.
-            if isInterrupt { return (.interrupted(), 0) }
-            // Otherwise: a call that ended badly ended all the same. Claude Code sends this INSTEAD
-            // of `PostToolUse`, with the same `tool_use_id`, so it is what resolves that call's
-            // ledger entry — without it a failed `AskUserQuestion` leaves a hand raised over a
-            // dialog that is gone, and `.ask` entries survive every later `PreToolUse` by design.
-            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
-
-        case let .elicitation(id, server, message):
-            // An MCP server asking the human is the same authoritative block a permission dialog
-            // is. The `elicitation_id` seats in the ledger's call slot (a different id namespace,
-            // the same job: this block is resolved by ITS OWN answer, not by a sibling's).
-            let text = message ?? server.map { "\($0) needs input" }
-            return (
-                .notification(
-                    kind: .waitingForInput,
-                    label: text,
-                    toolUseID: Self.elicitationKey(id: id, server: server),
-                ),
-                notificationKindByte(.waitingForInput),
-            )
-
-        case let .elicitationResult(id, server):
-            // Answered or dismissed — either way that dialog is gone.
-            return (
-                .postToolUse(
-                    sessionID: nil, tool: nil, toolUseID: Self.elicitationKey(id: id, server: server),
-                ),
-                0,
-            )
-
-        case let .permissionDenied(use):
-            // "No" ends the gated call and the turn goes on: the same resolution a result gives,
-            // announced rather than inferred from the next tool starting.
-            return (.postToolUse(sessionID: nil, tool: use.name, toolUseID: use.stableID), 0)
-
-        case let .notification(info):
-            let kind = mapNotificationKind(info.kind)
-            return (.notification(kind: kind, label: info.message), notificationKindByte(kind))
-
-        case let .stop(info):
-            return (.stop(sessionID: info.sessionID, label: stopLabel(info)), 0)
-
-        case let .subagentStop(node):
-            return (.subagentStop(agentID: node.id), 0)
-
-        case let .sessionEnd(info):
-            return (.sessionEnd(sessionID: info.sessionID), 0)
-
-        case let .preCompact(info):
-            // No status byte of its own — it arms the machine's compaction marker so the `Stop`
-            // that ends a `/compact` lands on idle instead of announcing a finished task.
-            return (.preCompact(sessionID: info.sessionID), 0)
-        }
-    }
-
-    /// The done-chip text for a finished turn: the last assistant message, or — when the turn ended
-    /// without one — what it left RUNNING. A `Stop` carrying live `background_tasks` is a turn whose
-    /// work outlives it, and "3 background tasks running" is a truer thing for the row to say than
-    /// nothing at all. Deliberately only the FALLBACK: a turn that spoke keeps its own words, and
-    /// the coarse status stays `.done` either way (there is no hook when a background task finishes,
-    /// so any richer state this set would have no way back).
-    static func stopLabel(_ info: StopInfo) -> String? {
-        if let message = info.lastAssistantMessage,
-           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return message
-        }
-        guard info.backgroundTaskCount > 0 else { return nil }
-        let noun = info.backgroundTaskCount == 1 ? "background task" : "background tasks"
-        return "\(info.backgroundTaskCount) \(noun) running"
-    }
-
-    /// `SlopDeskInspector.NotificationKind` → `SlopDeskAgentDetect.ClaudeHookEvent.NotificationKind`
-    /// (the two are intentionally the same three cases — see the inspector enum's doc-comment).
-    static func mapNotificationKind(_ kind: NotificationKind) -> ClaudeHookEvent.NotificationKind {
-        switch kind {
-        case .permission: .permission
-        case .waitingForInput: .waitingForInput
-        case .other: .other
-        }
-    }
-
-    /// The first question text inside an `AskUserQuestion` tool input (`questions[0].question`),
-    /// `nil` when the shape is unexpected (validate-then-drop on a hostile/foreign input — the
-    /// waiting block then stands without a label).
-    static func questionLabel(_ use: ToolUseBlock) -> String? {
-        guard case let .array(questions)? = use.input["questions"],
-              case let .object(first)? = questions.first,
-              let text = first["question"]?.stringValue,
-              !text.isEmpty
-        else { return nil }
-        return text
-    }
-
-    /// The wire `kind` byte for a notification class (`1 permission / 2 waitingForInput / 3 other`).
-    static func notificationKindByte(_ kind: ClaudeHookEvent.NotificationKind) -> UInt8 {
-        switch kind {
-        case .permission: 1
-        case .waitingForInput: 2
-        case .other: 3
-        }
-    }
 
     // MARK: - Status dedupe
 

@@ -61,6 +61,7 @@ pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
 pub mod hevc_parameter_sets;
+pub mod hookevent;
 pub mod host_policy;
 pub mod host_state;
 pub mod input_box;

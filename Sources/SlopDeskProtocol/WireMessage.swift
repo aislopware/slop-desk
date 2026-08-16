@@ -152,7 +152,7 @@ public enum WireMessage: Equatable, Sendable {
 
     /// A rich Claude-Code agent-status update (W9, type 27, host → client, CONTROL). The
     /// HOOK path (docs/41 §4.2): the host folds Claude Code hook events (`Notification` /
-    /// `Stop` / `SessionEnd`, via `SlopDeskInspector.HookParser`, W8/W10) into a coarse
+    /// `Stop` / `SessionEnd`, via `SlopDeskAgentDetect.ClaudeHookBody`) into a coarse
     /// state + notification class + optional human-readable label.
     ///
     /// - `state`: raw `UInt8` of `SlopDeskAgentDetect.ClaudeStatus.urgency`

@@ -1580,6 +1580,14 @@ size_t slopdesk_fuzzy_score(const uint8_t *query, size_t query_len, const uint8_
 int64_t slopdesk_fuzzy_rank(const uint8_t *query, size_t query_len, const uint8_t *candidate,
                             size_t candidate_len);
 
+/* ---- hook events: what one Claude Code hook body says ----------------------------------- */
+
+/* `rust/slopdesk-hookevent`. The answer is a fixed 12-byte header followed by the present fields:
+ *   [uint8 hook][uint8 notification][uint8 kind][uint8 present]  [uint16 BE len] x4  [bytes]...
+ * `present` is a bitmask (bit 0 session id, 1 tool, 2 tool-use id, 3 label) because ABSENT and
+ * EMPTY are different answers. 0 means the body is not a hook this codebase reads. */
+size_t slopdesk_hook_event_parse(const uint8_t *body, size_t len, uint8_t *out, size_t cap);
+
 /* ---- watch: what `slopdesk watch` decides, and the bytes it prints ---------------------- */
 
 /* One poll's observation of an `agent-status` reply. */

@@ -3511,6 +3511,35 @@ for rule in 'pub fn score' 'pub fn rank' 'pub fn match_pattern' 'fn bonus_for'; 
 done
 printf 'check-supervisor: one fuzzy ranking, for every search field.\n'
 
+# ── One reading of a hook body ─────────────────────────────────────────────────────────────────
+# A hook body used to be read TWICE over: a typed `HookPayload` enum modelling the JSON in
+# `SlopDeskInspector`, and a `mapToHookEvent` adapter a module away in `SlopDeskHost` turning a
+# payload into the event the machine folds. Splitting an event's IDENTITY from its MEANING is what
+# let them drift — a payload case could gain a field the adapter never read, and the rules that
+# decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a FINISHED TURN, the idle
+# nudge is not a raised hand) lived nowhere near the case they governed. `rust/slopdesk-hookevent`
+# owns both halves now; Swift marshals.
+SWIFT_HOOKBODY=Sources/SlopDeskAgentDetect/ClaudeHookBody.swift
+parser_revived=$(grep -rlE '(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b' Sources/ || true)
+if [[ -n "${parser_revived}" ]]; then
+  printf '%s\n' "${parser_revived}" >&2
+  fail "a Swift hook-body parser is back in Sources/ — rust/slopdesk-hookevent owns the reading AND the mapping"
+fi
+if ! spells 'slopdesk_hook_event_parse' "${SWIFT_HOOKBODY}" > /dev/null; then
+  fail "${SWIFT_HOOKBODY} stopped asking the door — it is a marshaller over the reader, not a second one"
+fi
+for caller in Sources/SlopDeskHost/AgentHookListener.swift Sources/SlopDeskHost/ClaudePaneDetector.swift; do
+  if ! spells 'ClaudeHookBody\.read' "${caller}" > /dev/null; then
+    fail "${caller} reads a hook body some other way — every body enters through ClaudeHookBody"
+  fi
+done
+for rule in 'pub fn parse' 'fn classify' 'fn stop_label' 'fn question_label'; do
+  if ! spells "${rule}" rust/slopdesk-hookevent/src/lib.rs > /dev/null; then
+    fail "rust/slopdesk-hookevent/src/lib.rs lost ${rule} — one body, one reading, one meaning"
+  fi
+done
+printf 'check-supervisor: one reading of a hook body.\n'
+
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
 # heuristic decided whether typing the clipboard would leak one. Both read the SAME shapes, and the

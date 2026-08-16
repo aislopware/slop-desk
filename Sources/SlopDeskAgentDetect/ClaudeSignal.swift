@@ -1,9 +1,7 @@
 /// A semantic Claude Code hook event, decoupled from any transport. Each case carries
-/// ONLY the fields the state machine needs — not the full hook JSON. The adapter that
-/// maps `SlopDeskInspector.HookPayload` / the wire `claudeStatus` message → this enum
-/// lives in W8/W10; W7 stays standalone (this vocabulary is expressible from what
-/// `HookIngest` can already produce: SessionStart/PostToolUse/SubagentStop, plus the
-/// W8-added Notification/Stop/SessionEnd).
+/// ONLY the fields the state machine needs — not the full hook JSON. One reading produces it:
+/// ``ClaudeHookBody``, over `rust/slopdesk-hookevent`. The wire `claudeStatus` message maps here
+/// too, on the client side.
 ///
 /// Maps to the Claude Code hook events (docs/41 §2.6):
 /// `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PostToolUse` /
@@ -51,12 +49,12 @@ public enum ClaudeHookEvent: Sendable, Equatable {
 
     /// Returns this event with `id` filled into every session slot it left empty.
     ///
-    /// The W10 adapter maps a typed ``HookPayload``, and the payload cases that model a CALL
-    /// (`ToolUseBlock`, `NotificationInfo`) carry no session — Claude Code stamps `session_id` on
-    /// the envelope, not on the tool. The host reads it off the raw body (`HookParser.sessionID`)
-    /// and stamps it here, so every authoritative event arrives attributed and
-    /// `ClaudeStatusMachine` can tell its own pane agent from a nested `claude -p`. Only nil slots
-    /// are filled: an id the payload itself named always wins.
+    /// The cases that model a CALL carry no session of their own — Claude Code stamps `session_id`
+    /// on the envelope, not on the tool. ``ClaudeHookBody`` reads it off the raw body and the
+    /// reading arrives already attributed, so `ClaudeStatusMachine` can tell its own pane agent
+    /// from a nested `claude -p`. This entry point remains for the signals that arrive by other
+    /// roads (a ctl self-report, a wire status). Only nil slots are filled: an id the event itself
+    /// named always wins.
     public func attributed(to id: String?) -> Self {
         guard let id, !id.isEmpty else { return self }
         switch self {

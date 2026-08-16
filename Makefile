@@ -243,7 +243,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test hookevent-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -472,6 +472,13 @@ altscreen-test: ## cargo test for the alt-screen cut scanner (rust/slopdesk-alts
 fuzzy-test: ## cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
 	cd rust/slopdesk-fuzzy && cargo test
 
+# What one Claude Code hook body SAYS, in the detection vocabulary — the mapping that used to be a
+# typed payload enum plus an adapter a module away, which is how the two drifted. Its own crate
+# because it takes `serde_json`, which `slopdesk-agent` (zero-dependency, every input untrusted)
+# will not, and because it wants `opt-level = 3` where the relay wants `"z"`.
+hookevent-test: ## cargo test for the hook body reader (rust/slopdesk-hookevent)
+	cd rust/slopdesk-hookevent && cargo test
+
 # Stage 5 of the same port: the PATH-2 video protocol, opening at the FEC math (GF(2^8),
 # Reed-Solomon, the erasure codec). A LIBRARY like `wire` — nothing links it yet, so `video-test` is
 # the only thing between it and a silent drift away from `Sources/SlopDeskVideoProtocol`. It replays
@@ -580,7 +587,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test hookevent-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + hook bodies + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

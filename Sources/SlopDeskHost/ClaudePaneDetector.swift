@@ -19,7 +19,7 @@ import SlopDeskProtocol
 /// - ``sample(name:at:)`` — the ~1 Hz foreground poll: `.processPresent(isClaude)` (exact-basename
 ///   classified via ``ClaudeProcessMatcher``) drives the presence FLOOR, and emits type-26 on a
 ///   basename EDGE (a coarse process-name hint for display, NOT a status source).
-/// - ``hook(bytes:at:)`` — the hook socket: parsed via ``HookParser`` and folded as `.hook(event)`.
+/// - ``hook(bytes:at:)`` — the hook socket: read via ``ClaudeHookBody`` and folded as `.hook(event)`.
 /// - ``tick(at:)`` — the per-poll clock tick (~1 Hz) that drives the `.done → .idle` decay.
 /// - ``manifestVerdict(_:at:)`` — the no-hooks screen-text/title fallback (Decision #5 signal 3).
 ///
@@ -252,27 +252,26 @@ public struct ClaudePaneDetector: Sendable {
         return emission
     }
 
-    /// Fold one received hook record (raw POST body bytes) at `now`. Parses via ``HookParser``
-    /// (validate-then-drop: malformed/short/non-JSON bytes change nothing) and folds the event through
-    /// the SAME machine. Emits type-27 iff the status triple changed; never a type-26 (the foreground
-    /// process did not change).
+    /// Fold one received hook record (raw POST body bytes) at `now`. Reads it through
+    /// ``ClaudeHookBody`` (validate-then-drop: malformed/short/non-JSON bytes change nothing) and
+    /// folds the event through the SAME machine. Emits type-27 iff the status triple changed; never
+    /// a type-26 (the foreground process did not change).
     public mutating func hook(bytes: Data, at now: TimeInterval) -> Emission {
         var emission = Emission()
-        guard let payload = HookParser.parse(bytes) else { return emission } // validate-then-drop
-        let (mapped, kindByte) = AgentHookHandler.mapToHookEvent(payload)
+        guard let read = ClaudeHookBody.read(bytes) else { return emission } // validate-then-drop
+        let event = read.event
         // ⚠️ WHOSE hook is this? The relay routes by `SLOPDESK_PANE_ID`, an environment variable
         // every descendant of the pane's shell inherits — so a `claude -p …` run from a script or
-        // from the pane agent's own Bash tool posts its whole hook set HERE. Attribute the record
-        // (`session_id` rides the envelope, so the mapped event may not carry it) and drop it
-        // whole if it names a different live session: not the status, not the liveness anchor,
-        // and not the session TITLE, which a nested prompt would otherwise rewrite.
-        let event = mapped.attributed(to: HookParser.sessionID(bytes))
+        // from the pane agent's own Bash tool posts its whole hook set HERE. The door already
+        // ATTRIBUTED the record from the envelope's `session_id`; drop it whole if it names a
+        // different live session: not the status, not the liveness anchor, and not the session
+        // TITLE, which a nested prompt would otherwise rewrite.
         guard machine.accepts(event) else { return emission }
-        // The INTENT fold (wire type 36) reads the payload BEFORE the status mapping strips the
-        // prompt: each titleable prompt re-titles the session, SessionEnd clears.
-        switch payload {
-        case let .userPromptSubmit(info, prompt):
-            foldIntent(sessionID: info.sessionID, prompt: prompt)
+        // The INTENT fold (wire type 36) reads the prompt the door carried BESIDE the event: each
+        // titleable prompt re-titles the session, SessionEnd clears.
+        switch event {
+        case let .userPromptSubmit(sessionID):
+            foldIntent(sessionID: sessionID, prompt: read.prompt ?? "")
         case .sessionEnd:
             intentSessionID = nil
             sessionIntent = nil
@@ -291,7 +290,7 @@ public struct ClaudePaneDetector: Sendable {
         // here inverted the mechanism — the one signal announcing the end became what kept the dead
         // state alive, for the full grace window. Clear the anchor instead, so the next absence
         // terminates on contact.
-        if case .sessionEnd = payload {
+        if case .sessionEnd = event {
             lastAuthoritativeAt = nil
         } else {
             lastAuthoritativeAt = now
@@ -311,7 +310,7 @@ public struct ClaudePaneDetector: Sendable {
         lastNotificationKind = Self.blockKind(
             standing: lastNotificationKind,
             ledger: machine.standingBlockKind,
-            event: kindByte,
+            event: read.kindByte,
             blocked: machine.status == .needsPermission,
         )
         emission.status = statusEmissionIfChanged()

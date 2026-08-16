@@ -105,9 +105,9 @@ final class ClaudeStatusMachineBlockLedgerTests: XCTestCase {
         XCTAssertEqual(other.reduce(pre("Bash", "bash-1"), at: 0.5), .working)
     }
 
-    /// ⚠️ `HookParser` mints a UUID when the payload omits `tool_use_id` — a DIFFERENT one on the
-    /// pre and the post hook. Carrying that through as identity would make a question unresolvable
-    /// forever, so the adapter passes `stableID` (nil), and a nil id degrades to the id-less rule.
+    /// ⚠️ A body that omits `tool_use_id` arrives with none. Minting one would be a DIFFERENT
+    /// string on the pre and the post hook, so the ledger entry it opened could never be resolved
+    /// and the question would block the pane forever. A nil id degrades to the id-less rule.
     func testASynthesisedIdWouldNeverMatchSoNilIsTheSafeDegradation() {
         var m = ClaudeStatusMachine()
         m.reduce(ask(nil), at: 0)

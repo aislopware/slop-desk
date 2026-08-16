@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import SlopDeskAgentDetect
-import SlopDeskInspector
 import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
@@ -154,19 +153,29 @@ final class AgentHookListenerTests: XCTestCase {
         XCTAssertEqual(decayed, .claudeStatus(state: 1, kind: 0, label: ""), "done → idle decay emits type 27")
     }
 
-    // MARK: payload → event mapping unit (the adapter)
+    // MARK: body → event, at the door
 
-    func testNotificationKindByteMapping() {
-        XCTAssertEqual(AgentHookHandler.notificationKindByte(.permission), 1)
-        XCTAssertEqual(AgentHookHandler.notificationKindByte(.waitingForInput), 2)
-        XCTAssertEqual(AgentHookHandler.notificationKindByte(.other), 3)
+    /// The type-27 `kind` byte says which class of block the pane is in, and only a BLOCK has one.
+    func testTheKindByteNamesTheBlockClassAndNothingElse() {
+        func kind(_ body: String) -> UInt8? { ClaudeHookBody.read(json(body))?.kindByte }
+        XCTAssertEqual(
+            kind(#"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#),
+            1,
+        )
+        XCTAssertEqual(
+            kind(#"{"hook_event_name":"Notification","notification_type":"agent_needs_input","message":"?"}"#),
+            2,
+        )
+        // The idle nudge is not a raised hand — it is informational, kind 3.
+        XCTAssertEqual(kind(#"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#), 3)
+        XCTAssertEqual(kind(#"{"hook_event_name":"Notification","message":"Authentication succeeded"}"#), 3)
+        XCTAssertEqual(kind(#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"done"}"#), 0)
     }
 
-    func testStopPayloadMapsToStopEventKindZero() {
-        let payload = HookPayload.stop(StopInfo(sessionID: "s", lastAssistantMessage: "done"))
-        let (event, kind) = AgentHookHandler.mapToHookEvent(payload)
-        XCTAssertEqual(event, .stop(sessionID: "s", label: "done"))
-        XCTAssertEqual(kind, 0)
+    func testAStopBodyReadsAsAStopEvent() {
+        let reading = ClaudeHookBody
+            .read(json(#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"done"}"#))
+        XCTAssertEqual(reading?.event, .stop(sessionID: "s", label: "done"))
     }
 
     // MARK: record framing split (pane= header + JSON) — the pure routing piece

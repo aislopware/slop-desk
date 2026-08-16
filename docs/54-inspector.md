@@ -42,7 +42,7 @@ the hook wants `"z"` and `"abort"`.
 
 ```
 Sources/SlopDeskInspector/   the CLIENT end: the event types, subscribe encode, frame + event decode,
-                             InspectorClient, InspectorViewModel — plus HookIngest, see §7
+                             InspectorClient, InspectorViewModel. Hook bodies are NOT here — §7
 Sources/SlopDeskHost/InspectorServiceManager.swift   spawn-or-adopt + port re-learn (no bytes)
 rust/slopdesk-inspectord/
   src/json.rs         accessors over serde_json::Value (sorted-key rendering, tolerant lookups)
@@ -160,24 +160,26 @@ window stays empty — the honest state of an inspector with nothing to inspect 
 The `subagents/` directory is derived, not configured: it is the sibling of the transcript path,
 which is where Claude Code puts it. It need not exist.
 
-## 7. What did NOT move: `HookIngest`
+## 7. What LEFT instead: the hook body
 
-`Sources/SlopDeskInspector/HookIngest.swift` stays in Swift, and it is worth being explicit about
-why, because the file lives in the inspector's target and its types are named after transcript
-blocks.
+A hook record was read here once — a `HookIngest` file in this target holding a typed `HookPayload`
+enum that modelled the JSON, with a `mapToHookEvent` adapter a module away in `SlopDeskHost` turning
+a payload into the event the status machine folds. Both halves are gone. The
+reading is `rust/slopdesk-hookevent`, and Swift marshals it through
+`SlopDeskAgentDetect.ClaudeHookBody`.
 
-A hook record is an **agent-detection** signal (`docs/50`): `AgentHookListener` folds it into
-`ClaudeStatusMachine`. It never fed the inspector's event stream — the Swift `EventBuilder` had an
-`ingest(hook:)` fold, and nothing in production ever called it, so it was deleted rather than ported.
-A separate daemon could not receive one anyway: the hook socket is bound by superd and served by
-hostd, and inspectord is not in that path.
+It is worth being explicit about why it was ever here, because the file lived in the inspector's
+target and its types were named after transcript blocks. It never fed the inspector's event stream:
+a hook record is an **agent-detection** signal (`docs/50`), folded into `ClaudeStatusMachine`. The
+Swift `EventBuilder` had an `ingest(hook:)` fold and nothing in production ever called it, so it was
+deleted rather than ported. A separate daemon could not receive one anyway — the hook socket is
+bound by superd and served by hostd, and inspectord is not in that path.
 
-`ToolUseBlock` and `ToolResultBlock` moved INTO that file when `TranscriptLine.swift` was deleted.
-They model a hook's tool call, not a transcript block; the name survives because it is the shape
-Claude Code reuses across both surfaces. `agentHash` is the same **scheme** as
-`slopdesk_inspectord::subagents::agent_hash` — that is what makes a node linked by a `SubagentStop`
-and one discovered by the directory watcher the same node — but neither calls the other and each
-reads a filename it was handed by a different producer.
+What DID stay is the hash scheme: `slopdesk_inspectord::subagents::agent_hash` is what makes a node
+linked by a `SubagentStop` and one discovered by the directory watcher the same node. The
+`SubagentStop` half has no reader left — the status machine ignores a subagent's identity entirely
+(`rust/slopdesk-agent/src/machine.rs`) — so the scheme now lives in exactly one place, on the side
+that watches the directory.
 
 ## 8. Gates
 

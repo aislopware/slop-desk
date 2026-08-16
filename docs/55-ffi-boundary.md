@@ -373,6 +373,34 @@ Swift original — passed unchanged the first time the door was wired in. That s
 is: it is the boundary's own test, not a mirror of `apply.rs`, and a dozen of its cases have no
 counterpart there.
 
+### The answer whose FIELDS are optional, and why a bitmask rides with them
+
+`slopdesk_hook_event_parse` reads one Claude Code hook body — three discriminants and five optional
+strings (session id, tool, tool-use id, label, prompt), all written by whatever forked the agent's
+hook. It is §4-shaped, with one addition:
+
+```text
+[u8 hook][u8 notification][u8 kind][u8 present]  [u16 BE len]×5  [bytes]×present
+```
+
+`present` is a bitmask, and it is not redundant with the lengths. **ABSENT and EMPTY are different
+answers here.** A body that sent no `session_id` must not read as one that sent `""`: the empty
+string is a session, and attributing a record to it attributes the record to a PANE rather than to
+nobody — which is exactly the confusion the attribution exists to prevent (a nested `claude -p` that
+inherited `SLOPDESK_PANE_ID` driving the pane's own status). A zero length cannot carry that
+distinction, so a bit does.
+
+The refusal is 0 bytes, which no answer can be: the header alone is fourteen. That is what the
+caller drops on — not JSON, an event name nothing knows, a tool event with no `tool_name`.
+
+What made this port worth doing is not speed. The body was read TWICE over: a typed `HookPayload`
+enum modelling the JSON in one target, and a `mapToHookEvent` adapter a module away in another
+turning a payload into the event the status machine folds. Splitting an event's IDENTITY from its
+MEANING is what let the two drift — a payload case could gain a field the adapter never read, and
+the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a FINISHED
+TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One crate
+holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears.
+
 ## 4c. What the boundary costs, measured
 
 A/B against the deleted Swift implementation, release build, 32 KiB chunks, 64 MiB ring
